@@ -4,6 +4,7 @@ import routes from "./routes/index";
 import logRequestResponse from "./middlewares/logger.middleware";
 import compression from "compression";
 import cors from "cors";
+import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 
 const app = express();
 
@@ -11,11 +12,18 @@ app.use(express.json());
 app.use(express.static("./public"));
 // Enable CORS for all routes
 app.use(
-  cors({
-    origin: "*",
-    credentials: true,
-    optionsSuccessStatus: 200,
-  }),
+    cors({
+        origin: [
+            FRONTEND_URL,
+            BETTER_AUTH_URL,
+            "http://localhost:3000",
+            "http://localhost:5000",
+        ],
+        credentials: true,
+        methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+        // allowedHeaders: ["Content-Type", "Authorization"],
+        allowedHeaders: ["*"], //? 🔥 allow all headers
+    }),
 );
 
 // parse urlencoded request body
