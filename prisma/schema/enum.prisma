@@ -3,3 +3,10 @@ enum UserRole {
     ADMIN
     STAFF
 }
+
+enum AccountStatus {
+    PENDING
+    ACTIVE
+    SUSPENDED
+    DELETED
+}

@@ -1,174 +1,107 @@
-import { sendEmail } from "../../lib/mail.service";
-import { createRefreshToken, createToken } from "./auth.token.services";
-import bcrypt from "bcryptjs";
+import status from "http-status";
+import AppError from "../../errorHelper/AppError";
+import { prisma } from "../../lib/prisma/prisma";
+import { IRegisterUserPayload, ILoginUserPayload } from "./auth.interface";
+import { auth } from "../../lib/auth";
+import { tokenUtils } from "../../lib/utils/token";
 
-// Demo In-Memory Users
-interface IUser {
-  id: string;
-  name: string;
-  email: string;
-  password: string;
-  phoneNumber: string;
-  image?: string;
-  role?: string;
-  isEmailVerified?: boolean;
-  oneTimeCode?: number | null;
-  isDeleted?: boolean;
-  isResetPassword?: boolean;
-}
+const register = async ({ name, email, password }: IRegisterUserPayload) => {
+    const existingUser = await prisma.user.findUnique({
+        where: {
+            email,
+        },
+    });
 
-const users: IUser[] = [];
+    if (existingUser) {
+        throw new AppError(status.BAD_REQUEST, "User already exists");
+    }
 
-// Register User
-const register = async (userData: {
-  name: string;
-  email: string;
-  password: string;
-  phoneNumber: string;
-}) => {
-  const { email, password, phoneNumber, name } = userData;
+    const data = await auth.api.signUpEmail({
+        body: {
+            name,
+            email,
+            password,
+        },
+    });
 
-  const existingUser = users.find(
-    (user) => user.email === email || user.phoneNumber === phoneNumber,
-  );
+    if (!data.user) {
+        throw new AppError(status.BAD_REQUEST, "Failed to register user");
+    }
 
-  if (existingUser) throw new Error("Email or Phone number is already taken");
+    // const accessToken = tokenUtils.getAccessToken({
+    //     userId: data.user.id,
+    //     role: data.user.role,
+    //     name: data.user.name,
+    //     email: data.user.email,
+    //     emailVerified: data.user.emailVerified,
+    // });
 
-  const oneTimeCode =
-    Math.floor(Math.random() * (999999 - 100000 + 1)) + 100000;
+    // const refreshToken = tokenUtils.getRefreshToken({
+    //     userId: data.user.id,
+    //     role: data.user.role,
+    //     name: data.user.name,
+    //     email: data.user.email,
+    //     emailVerified: data.user.emailVerified,
+    // });
 
-  const hashedPassword = await bcrypt.hash(password, 10);
-
-  const newUser: IUser = {
-    id: Date.now().toString(),
-    name,
-    email,
-    password: hashedPassword,
-    phoneNumber,
-    oneTimeCode,
-    isEmailVerified: false,
-    role: "user",
-  };
-
-  users.push(newUser);
-
-  const verificationLink = `${process.env.FRONTEND_URL}/verify-email?code=${oneTimeCode}`;
-  const emailText = `Please click the following link to verify your email address: ${verificationLink}`;
-
-  await sendEmail(newUser.email, "Verify Your Email Address", emailText);
-
-  return newUser;
+    // return {
+    //     ...data,
+    //     accessToken,
+    //     refreshToken,
+    // };
+    return data;
 };
 
-// Verify Email
-const verifyEmail = async (email: string, code: number) => {
-  const user = users.find((u) => u.email === email);
+const login = async ({ email, password }: ILoginUserPayload) => {
+    const user = await prisma.user.findUnique({
+        where: {
+            email,
+        },
+    });
 
-  if (!user) throw new Error("User not found");
-  if (user.oneTimeCode !== code) throw new Error("Invalid verification code");
+    if (!user) {
+        throw new AppError(status.NOT_FOUND, "User not found");
+    }
 
-  user.isEmailVerified = true;
-  user.oneTimeCode = null;
+    const data = await auth.api.signInEmail({
+        body: {
+            email,
+            password,
+        },
+    });
 
-  return "Email Verification Successful";
-};
+    const accessToken = tokenUtils.getAccessToken({
+        userId: data.user.id,
+        role: data.user.role,
+        name: data.user.name,
+        email: data.user.email,
+        emailVerified: data.user.emailVerified,
+    });
 
-// Login User
-const loginUser = async (email: string, password: string) => {
-  const user = users.find((u) => u.email === email);
+    const refreshToken = tokenUtils.getRefreshToken({
+        userId: data.user.id,
+        role: data.user.role,
+        name: data.user.name,
+        email: data.user.email,
+        emailVerified: data.user.emailVerified,
+    });
 
-  if (!user) throw new Error("User not found");
-
-  if (!user.isEmailVerified) throw new Error("Email is not verified");
-
-  const isMatch = await bcrypt.compare(password, user.password);
-
-  if (!isMatch) throw new Error("Invalid credentials");
-
-  return { user };
-};
-
-// Forgot Password
-const forgotPassword = async (email: string) => {
-  const user = users.find((u) => u.email === email);
-
-  if (!user) throw new Error("User not found");
-
-  const resetCode = Math.floor(Math.random() * (999999 - 100000 + 1)) + 100000;
-
-  user.oneTimeCode = resetCode;
-
-  const resetLink = `${process.env.FRONTEND_URL}/reset-password?code=${resetCode}`;
-  const emailText = `Reset Password Link: ${resetLink}`;
-
-  await sendEmail(user.email, "Reset Password", emailText);
-
-  return { message: "Password reset email sent" };
-};
-
-// Reset Password
-const resetPassword = async (
-  email: string,
-  code: string,
-  newPassword: string,
-) => {
-  const user = users.find(
-    (u) => u.email === email && u.oneTimeCode === Number(code),
-  );
-
-  if (!user) throw new Error("Invalid reset code");
-
-  user.password = await bcrypt.hash(newPassword, 10);
-  user.oneTimeCode = null;
-  user.isResetPassword = true;
-
-  return { message: "Password successfully reset" };
-};
-
-// Resend Verification Email
-const resendVerificationEmail = async (email: string) => {
-  const user = users.find((u) => u.email === email);
-
-  if (!user) throw new Error("User not found");
-
-  const oneTimeCode =
-    Math.floor(Math.random() * (999999 - 100000 + 1)) + 100000;
-
-  user.oneTimeCode = oneTimeCode;
-
-  const verificationLink = `${process.env.FRONTEND_URL}/verify-email?code=${oneTimeCode}`;
-  const emailText = `Verify Email: ${verificationLink}`;
-
-  await sendEmail(user.email, "Verify Email", emailText);
-
-  return { message: "Verification email resent" };
-};
-
-// Delete User
-const deleteUser = async (userId: string) => {
-  const user = users.find((u) => u.id === userId);
-
-  if (!user) throw new Error("User not found");
-
-  user.isDeleted = true;
-
-  return { message: "User deleted successfully" };
-};
-
-// Logout
-const logout = (refreshToken: string) => {
-  return { message: "User logged out" };
+    return {
+        ...data,
+        accessToken,
+        refreshToken,
+    };
 };
 
 const userService = {
-  register,
-  verifyEmail,
-  loginUser,
-  forgotPassword,
-  resetPassword,
-  resendVerificationEmail,
-  deleteUser,
-  logout,
+    register,
+    // verifyEmail,
+    login,
+    // forgotPassword,
+    // resetPassword,
+    // resendVerificationEmail,
+    // deleteUser,
+    // logout,
 };
 
 export default userService;

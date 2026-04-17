@@ -10,7 +10,7 @@ const io = setUpSocketIO(server);
 
 //using the post and ip over here
 const backendIp = process.env.BACKEND_IP;
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 5000;
 
 // server.listen(PORT, BACKEND_IP, () => {
 //   console.log(`Server is running at http://${BACKEND_IP}:${PORT}`);

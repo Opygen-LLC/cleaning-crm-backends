@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 import { BETTER_AUTH_SECRET, BETTER_AUTH_URL } from "../config/ENV";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "./prisma/prisma";
-import { UserRole } from "../generated/prisma/enums";
+import { AccountStatus, UserRole } from "../generated/prisma/enums";
 
 export const auth = betterAuth({
     baseURL: BETTER_AUTH_URL,
@@ -33,7 +33,16 @@ export const auth = betterAuth({
                 type: "string",
                 required: true,
                 defaultValue: UserRole.ADMIN,
-            }
-        }
-    }
+            },
+            status: {
+                type: "string",
+                required: true,
+                defaultValue: AccountStatus.PENDING,
+            },
+            mobileNumber: {
+                type: "string",
+                required: false,
+            },
+        },
+    },
 });

@@ -5,6 +5,8 @@ import logRequestResponse from "./middlewares/logger.middleware";
 import compression from "compression";
 import cors from "cors";
 import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
+import { globalErrorHandler } from "./middlewares/globalErrorHandler";
+import { notFound } from "./middlewares/notFound";
 
 const app = express();
 
@@ -36,8 +38,14 @@ app.use(compression());
 app.use(logRequestResponse);
 // Use the centralized routes
 app.get("/", (req: Request, res: Response) => {
-  res.send("Hello, TypeScript with Node and Express!");
+    res.status(200).json({
+        success: true,
+        message: "Cleaning CRM API is running....",
+    });
 });
 app.use("/api/v1", routes); // This mounts all the routes under the /api prefix (e.g., /api/user)fgh
+
+app.use(globalErrorHandler);
+app.use(notFound);
 
 export default app;
