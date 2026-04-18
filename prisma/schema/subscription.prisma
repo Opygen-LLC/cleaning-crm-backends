@@ -1,0 +1,58 @@
+model Plan {
+    id       String                   @id @default(uuid())
+    price    Decimal                  @db.Decimal(10, 2)
+    interval SubscriptionPlanInterval
+
+    maxStaff            Int?
+    maxClient           Int?
+    maxBookingsPerMonth Int?
+
+    subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+    subscriptionPlanId String
+
+    @@unique([subscriptionPlanId, interval])
+}
+
+model SubscriptionPlan {
+    id          String           @id @default(uuid())
+    name        SubscriptionName @unique @default(STARTER)
+    description String?
+    currency    Currency         @default(USD)
+
+    features      String[]
+    subscriptions Subscription[]
+    plans         Plan[]
+}
+
+model Subscription {
+    id     String             @id @default(uuid())
+    status SubscriptionStatus @default(ACTIVE)
+
+    isTrial     Boolean   @default(true)
+    trialEndsAt DateTime? //? 15 days from now
+
+    currentPeriodStart DateTime?
+    currentPeriodEnd   DateTime?
+
+    cancelAtPeriodEnd Boolean   @default(false) //? User requested cancellation, but keep access until the current period ends.
+    canceledAt        DateTime?
+
+    extraStaff            Int     @default(0) //? 5 dollar per staff member
+    extraClient           Int     @default(0) //? 5 dollar per 50 clients
+    extraBookingsPerMonth Int     @default(0) //? 5 dollar per 100 bookings per month
+    totalCost             Decimal @db.Decimal(10, 2)
+
+    // admin   AdminProfile @relation(fields: [adminId], references: [id])
+    adminId String
+
+    subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+    subscriptionPlanId String
+
+    billingHistory BillingHistory[]
+
+    coupon   Coupon? @relation(fields: [couponId], references: [id])
+    couponId String?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}

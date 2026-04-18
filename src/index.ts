@@ -1,5 +1,6 @@
 import { PORT } from "./config/ENV";
 import setUpSocketIO from "./config/socketio";
+import { seedSubscriptionPlans } from "./lib/utils/seedSubscriptionPlan";
 import { seedSuperAdmin } from "./lib/utils/seedSuperAdmin";
 import app from "./server";
 import http from "http";
@@ -17,8 +18,9 @@ const port = process.env.PORT || 5000;
 //   console.log(`Server is running at http://${BACKEND_IP}:${PORT}`);
 // });
 
-server.listen(PORT, () => {
-    seedSuperAdmin();
+server.listen(PORT, async () => {
+    await seedSuperAdmin();
+    await seedSubscriptionPlans();
     console.log(`Server is running on http://localhost:${PORT}`);
 });
 

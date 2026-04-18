@@ -1,5 +1,6 @@
+//? User
 enum UserRole {
-	SUPER_ADMIN
+    SUPER_ADMIN
     ADMIN
     STAFF
 }
@@ -9,4 +10,45 @@ enum AccountStatus {
     ACTIVE
     SUSPENDED
     DELETED
+}
+
+enum Currency {
+    USD
+}
+
+//? Subscription
+enum SubscriptionName {
+    STARTER
+    GROWTH
+    PRO
+}
+
+enum SubscriptionPlanInterval {
+    MONTHLY
+    YEARLY
+}
+
+enum SubscriptionStatus {
+    ACTIVE
+    CANCELLED
+    EXPIRED
+}
+
+//? Coupon
+enum DiscountType {
+    PERCENTAGE // e.g. 20%
+    FIXED // e.g. €10 off
+}
+
+//? Payment
+enum PaymentMethod {
+    STRIPE
+}
+
+enum PaymentStatus {
+    UNPAID
+    PENDING
+    PAID
+    FAILED
+    REFUNDED
 }

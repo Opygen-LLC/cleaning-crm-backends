@@ -1,0 +1,19 @@
+model BillingHistory {
+    id String @id @default(cuid())
+
+    amount   Decimal  @db.Decimal(10, 2)
+    currency Currency @default(USD)
+
+    method PaymentMethod
+    status PaymentStatus @default(UNPAID)
+    note   String?
+
+    transactionId  String?
+    invoiceUrl     String?
+
+    paidAt    DateTime?
+    createdAt DateTime  @default(now())
+
+    subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+    subscriptionId String
+}

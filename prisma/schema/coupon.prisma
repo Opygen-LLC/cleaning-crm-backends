@@ -1,0 +1,22 @@
+model Coupon {
+    id String @id @default(uuid())
+
+    code        String  @unique
+    description String?
+
+    discountType  DiscountType
+    discountValue Decimal      @db.Decimal(10, 2)
+
+    // 🔢 Limits (null = unlimited)
+    maxUses   Int?
+    usedCount Int  @default(0)
+
+    validFrom  DateTime?
+    validUntil DateTime?
+
+    isActive Boolean @default(true)
+
+    subscriptions Subscription[]
+
+    createdAt DateTime @default(now())
+}
