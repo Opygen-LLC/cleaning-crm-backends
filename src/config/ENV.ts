@@ -25,3 +25,7 @@ export const ACCESS_TOKEN_SECRET: string = process.env.ACCESS_TOKEN_SECRET as st
 export const REFRESH_TOKEN_SECRET: string = process.env.REFRESH_TOKEN_SECRET as string;
 export const ACCESS_TOKEN_EXPIRES_IN: string = process.env.ACCESS_TOKEN_EXPIRES_IN as string;
 export const REFRESH_TOKEN_EXPIRES_IN: string = process.env.REFRESH_TOKEN_EXPIRES_IN as string;
+
+export const SUPER_ADMIN_EMAIL: string = process.env.SUPER_ADMIN_EMAIL as string;
+export const SUPER_ADMIN_PASSWORD: string = process.env.SUPER_ADMIN_PASSWORD as string;
+
