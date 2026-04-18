@@ -29,16 +29,12 @@ router.get(
     authController.me,
 );
 
-// router.post("/verify-email", authController.verifyEmail);
+router.post("/refresh-token", authController.getNewToken);
 
-// router.post("/forgot-password", authController.forgotPassword);
-
-// router.post("/reset-password", authController.resetPassword);
-
-// router.post("/resend-verification", authController.resendVerification);
-
-// router.delete("/delete/:userId", authController.deleteUser);
-
-// router.post("/logout", authController.logout);
+router.post(
+    "/logout",
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    authController.logout,
+);
 
 export default router;

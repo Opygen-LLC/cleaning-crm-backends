@@ -7,11 +7,13 @@ import cors from "cors";
 import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 import { globalErrorHandler } from "./middlewares/globalErrorHandler";
 import { notFound } from "./middlewares/notFound";
+import cookieParser from "cookie-parser";
 
 const app = express();
 
 app.use(express.json());
 app.use(express.static("./public"));
+app.use(cookieParser());
 // Enable CORS for all routes
 app.use(
     cors({

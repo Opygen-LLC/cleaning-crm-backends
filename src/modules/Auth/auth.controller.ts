@@ -3,6 +3,8 @@ import httpStatus from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { tokenUtils } from "../../lib/utils/token";
+import AppError from "../../errorHelper/AppError";
+import { CookieUtils } from "../../lib/utils/cookie";
 
 const register = catchAsync(async (req, res) => {
     const result = await authService.register(req.body);
@@ -44,122 +46,68 @@ const me = catchAsync(async (req, res) => {
     });
 });
 
-// const verifyEmail = async (req: Request, res: Response) => {
-//     try {
-//         const { email, code } = req.body;
-//         await authService.verifyEmail(email, Number(code));
-//         res.status(httpStatus.OK).json(
-//             response({
-//                 message: "Verification Successful",
-//                 status: "OK",
-//                 statusCode: httpStatus.OK,
-//             }),
-//         );
-//     } catch (error) {
-//         const handledError = handleError(error); // Handle the error using the utility
-//         res.status(500).json({ error: handledError.message });
-//     }
-// };
+const getNewToken = catchAsync(async (req, res, next) => {
+    const refreshToken = req.cookies.refreshToken;
+    const betterAuthSessionToken = req.cookies["better-auth.session_token"];
+    if (!refreshToken) {
+        throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token is missing");
+    }
+    const result = await authService.getNewToken(
+        refreshToken,
+        betterAuthSessionToken,
+    );
 
-// const forgotPassword = async (req: Request, res: Response) => {
-//     try {
-//         const user = await authService.forgotPassword(req.body.email);
-//         res.status(httpStatus.OK).json(
-//             response({
-//                 message: "Verification Sended Successful",
-//                 status: "OK",
-//                 statusCode: httpStatus.OK,
-//                 data: user,
-//             }),
-//         );
-//     } catch (error) {
-//         const handledError = handleError(error); // Handle the error using the utility
-//         res.status(500).json({ error: handledError.message });
-//     }
-// };
-// const resetPassword = async (req: Request, res: Response) => {
-//     try {
-//         const { code, newPassword, email } = req.body;
-//         const user = await authService.resetPassword(email, code, newPassword);
-//         res.status(httpStatus.OK).json(
-//             response({
-//                 message: "Password Reset Successful",
-//                 status: "OK",
-//                 statusCode: httpStatus.OK,
-//                 data: user,
-//             }),
-//         );
-//     } catch (error) {
-//         const handledError = handleError(error); // Handle the error using the utility
-//         res.status(500).json({ error: handledError.message });
-//     }
-// };
+    const { accessToken, refreshToken: newRefreshToken, sessionToken } = result;
 
-// const resendVerification = async (req: Request, res: Response) => {
-//     try {
-//         const user = await authService.resendVerificationEmail(req.body.email);
-//         res.status(httpStatus.OK).json(
-//             response({
-//                 message: "Resend Verification Code Successful",
-//                 status: "OK",
-//                 statusCode: httpStatus.OK,
-//                 data: user,
-//             }),
-//         );
-//     } catch (error) {
-//         const handledError = handleError(error); // Handle the error using the utility
-//         res.status(500).json({ error: handledError.message });
-//     }
-// };
+    tokenUtils.setAccessTokenCookie(res, accessToken);
+    tokenUtils.setRefreshTokenCookie(res, newRefreshToken);
+    tokenUtils.setBetterAuthSessionCookie(res, sessionToken);
 
-// const deleteUser = async (req: Request, res: Response) => {
-//     try {
-//         const user = await authService.deleteUser(req.params.userId as string);
-//         res.status(httpStatus.OK).json(
-//             response({
-//                 message: "User Delete Successful",
-//                 status: "OK",
-//                 statusCode: httpStatus.OK,
-//                 data: user,
-//             }),
-//         );
-//     } catch (error) {
-//         const handledError = handleError(error); // Handle the error using the utility
-//         res.status(500).json({ error: handledError.message });
-//     }
-// };
+    sendResponse(res, {
+        httpStatusCode: httpStatus.OK,
+        success: true,
+        message: "New tokens generated successfully",
+        data: {
+            accessToken,
+            refreshToken: newRefreshToken,
+            sessionToken,
+        },
+    });
+});
 
-// const logout = async (req: Request, res: Response) => {
-//     try {
-//         const refreshToken = req.headers.authorization?.split(" ")[1];
-//         if (!refreshToken)
-//             return res.status(400).json({ error: "Refresh token required" });
+const logout = catchAsync(async (req, res, next) => {
+    const betterAuthSessionToken = req.cookies["better-auth.session_token"];
+    const result = await authService.logout(betterAuthSessionToken);
+    CookieUtils.clearCookie(res, "accessToken", {
+        httpOnly: true,
+        secure: true,
+        sameSite: "none",
+    });
+    CookieUtils.clearCookie(res, "refreshToken", {
+        httpOnly: true,
+        secure: true,
+        sameSite: "none",
+    });
+    CookieUtils.clearCookie(res, "better-auth.session_token", {
+        httpOnly: true,
+        secure: true,
+        sameSite: "none",
+    });
 
-//         const user = await authService.logout(refreshToken);
-//         res.status(httpStatus.OK).json(
-//             response({
-//                 message: "User Created Successful",
-//                 status: "OK",
-//                 statusCode: httpStatus.OK,
-//                 data: user,
-//             }),
-//         );
-//     } catch (error) {
-//         const handledError = handleError(error); // Handle the error using the utility
-//         res.status(500).json({ error: handledError.message });
-//     }
-// };
+    sendResponse(res, {
+        httpStatusCode: httpStatus.OK,
+        success: true,
+        message: "User logged out successfully",
+        data: result,
+    });
+});
 
 const authController = {
     register,
-    // verifyEmail,
     login,
     me,
-    // forgotPassword,
-    // resetPassword,
-    // resendVerification,
-    // deleteUser,
-    // logout,
+    getNewToken,
+    logout,
 };
 
 export default authController;
