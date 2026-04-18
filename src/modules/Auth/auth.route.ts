@@ -5,6 +5,8 @@ import {
     zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
 import authValidator from "./auth.validation";
+import { checkAuth } from "../../middlewares/checkAuth";
+import { UserRole } from "../../generated/prisma/enums";
 
 const router = Router();
 
@@ -19,6 +21,12 @@ router.post(
     "/login",
     zodValidate(authValidator.loginValidation, ValidationProperty.BODY),
     authController.login,
+);
+
+router.get(
+    "/me",
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    authController.me,
 );
 
 // router.post("/verify-email", authController.verifyEmail);

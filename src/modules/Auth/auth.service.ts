@@ -4,6 +4,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import { IRegisterUserPayload, ILoginUserPayload } from "./auth.interface";
 import { auth } from "../../lib/auth";
 import { tokenUtils } from "../../lib/utils/token";
+import { IRequestUser } from "../../types/requestUser.interface";
 
 const register = async ({ name, email, password }: IRegisterUserPayload) => {
     const existingUser = await prisma.user.findUnique({
@@ -28,27 +29,6 @@ const register = async ({ name, email, password }: IRegisterUserPayload) => {
         throw new AppError(status.BAD_REQUEST, "Failed to register user");
     }
 
-    // const accessToken = tokenUtils.getAccessToken({
-    //     userId: data.user.id,
-    //     role: data.user.role,
-    //     name: data.user.name,
-    //     email: data.user.email,
-    //     emailVerified: data.user.emailVerified,
-    // });
-
-    // const refreshToken = tokenUtils.getRefreshToken({
-    //     userId: data.user.id,
-    //     role: data.user.role,
-    //     name: data.user.name,
-    //     email: data.user.email,
-    //     emailVerified: data.user.emailVerified,
-    // });
-
-    // return {
-    //     ...data,
-    //     accessToken,
-    //     refreshToken,
-    // };
     return data;
 };
 
@@ -93,10 +73,25 @@ const login = async ({ email, password }: ILoginUserPayload) => {
     };
 };
 
+const me = async (user: IRequestUser) => {
+    const isUserExist = await prisma.user.findUnique({
+        where: {
+            id: user.id,
+        },
+    });
+
+    if (!isUserExist) {
+        throw new AppError(status.NOT_FOUND, "User not found");
+    }
+
+    return isUserExist;
+};
+
 const userService = {
     register,
     // verifyEmail,
     login,
+    me,
     // forgotPassword,
     // resetPassword,
     // resendVerificationEmail,

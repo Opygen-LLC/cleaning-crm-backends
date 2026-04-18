@@ -32,6 +32,18 @@ const login = catchAsync(async (req, res) => {
     });
 });
 
+const me = catchAsync(async (req, res) => {
+    const user = req.user;
+    const result = await authService.me(user);
+
+    sendResponse(res, {
+        httpStatusCode: httpStatus.OK,
+        success: true,
+        message: "User fetched successfully",
+        data: result,
+    });
+});
+
 // const verifyEmail = async (req: Request, res: Response) => {
 //     try {
 //         const { email, code } = req.body;
@@ -142,6 +154,7 @@ const authController = {
     register,
     // verifyEmail,
     login,
+    me,
     // forgotPassword,
     // resetPassword,
     // resendVerification,
