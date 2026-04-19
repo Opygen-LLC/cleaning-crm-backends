@@ -11,14 +11,15 @@ model AdminProfile {
     subscription Subscription[]
     staff        StaffProfile[]
     couponUsage  CouponUsage[]
+    payment      Payment[]
 
-	review Review?
+    review Review?
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
     @@index([createdAt])
-}
+} //? also admin can add his work location in array like city names or something
 
 model StaffProfile {
     id        String @id @default(uuid())

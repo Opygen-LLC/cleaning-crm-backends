@@ -5,7 +5,7 @@ model BillingHistory {
     currency Currency @default(USD)
 
     method PaymentMethod
-    status PaymentStatus @default(UNPAID)
+    status PaymentStatus @default(PENDING)
     note   String?
 
     transactionId  String?
