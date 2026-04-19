@@ -1,0 +1,30 @@
+model AdminProfile {
+    id           String   @id @default(uuid())
+    businessName String
+    businessLogo String?
+    address      String?
+    currency     Currency @default(USD)
+
+    userId String @unique
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    subscription Subscription[]
+    staff        StaffProfile[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model StaffProfile {
+    id        String @id @default(uuid())
+    staffRole String
+
+    userId String @unique
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    adminId String
+    admin   AdminProfile @relation(fields: [adminId], references: [id])
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}

@@ -42,8 +42,8 @@ model Subscription {
     extraBookingsPerMonth Int     @default(0) //? 5 dollar per 100 bookings per month
     totalCost             Decimal @db.Decimal(10, 2)
 
-    // admin   AdminProfile @relation(fields: [adminId], references: [id])
     adminId String
+    admin   AdminProfile @relation(fields: [adminId], references: [id])
 
     subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Cascade, onUpdate: Cascade)
     subscriptionPlanId String
