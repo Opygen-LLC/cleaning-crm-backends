@@ -10,6 +10,9 @@ model AdminProfile {
 
     subscription Subscription[]
     staff        StaffProfile[]
+    couponUsage  CouponUsage[]
+
+	review Review?
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt

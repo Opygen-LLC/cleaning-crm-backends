@@ -17,6 +17,24 @@ model Coupon {
     isActive Boolean @default(true)
 
     subscriptions Subscription[]
+    couponUsage   CouponUsage[]
 
     createdAt DateTime @default(now())
+}
+
+model CouponUsage {
+    id String @id @default(uuid())
+
+    couponId String
+    coupon   Coupon @relation(fields: [couponId], references: [id])
+
+    adminId String
+    admin   AdminProfile @relation(fields: [adminId], references: [id])
+
+    subscriptionId String
+    subscription   Subscription @relation(fields: [subscriptionId], references: [id])
+
+    usedAt DateTime @default(now())
+
+    @@unique([couponId, adminId])
 }
