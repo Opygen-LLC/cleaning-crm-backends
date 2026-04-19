@@ -2,3 +2,5 @@
 /logs
 /public
 /src/generated
+.vercel
+dist

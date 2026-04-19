@@ -123,10 +123,9 @@ export async function seedSubscriptionPlans() {
                     features: sub.features,
                 },
             });
-			console.log(true)
+
             for (const plan of sub.plans) {
 				try {
-					console.log(false)
                     await prisma.plan.upsert({
                         where: {
                             subscriptionPlanId_interval: {

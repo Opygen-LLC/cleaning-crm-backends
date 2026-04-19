@@ -18,11 +18,11 @@ const port = process.env.PORT || 5000;
 //   console.log(`Server is running at http://${BACKEND_IP}:${PORT}`);
 // });
 
-server.listen(PORT, async () => {
-    await seedSuperAdmin();
-    await seedSubscriptionPlans();
-    console.log(`Server is running on http://localhost:${PORT}`);
-});
+// server.listen(PORT, async () => {
+//     await seedSuperAdmin();
+//     await seedSubscriptionPlans();
+//     console.log(`Server is running on http://localhost:${PORT}`);
+// });
 
 // TODO: vercel code running
 
@@ -35,25 +35,20 @@ server.listen(PORT, async () => {
 
 // const PORT = process.env.PORT || 3000;
 
-// async function main() {
-//   try {
-//     // Connect to MongoDB
-//     // await connectionToDb(); // assumes connectionToDb() returns a Promise
-//     console.log("Connected to the database");
+async function main() {
+    try {
+        const server = http.createServer(app);
 
-//     // Create HTTP server
-//     const server = http.createServer(app);
+        await seedSuperAdmin();
+        await seedSubscriptionPlans();
 
-//     // Initialize Socket.IO
-//     setUpSocketIO(server);
+        // Start server
+        server.listen(PORT, () => {
+            console.log(`Server is running at http://localhost:${PORT}`);
+        });
+    } catch (error) {
+        console.error("Error starting the server:", error);
+    }
+}
 
-//     // Start server
-//     server.listen(PORT, () => {
-//       console.log(`Server is running at http://localhost:${PORT}`);
-//     });
-//   } catch (error) {
-//     console.error("Error starting the server:", error);
-//   }
-// }
-
-// main();
+main();
