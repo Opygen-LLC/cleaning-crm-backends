@@ -13,6 +13,8 @@ model AdminProfile {
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
+
+    @@index([createdAt])
 }
 
 model StaffProfile {
@@ -27,4 +29,6 @@ model StaffProfile {
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
+
+    @@index([adminId, staffRole])
 }

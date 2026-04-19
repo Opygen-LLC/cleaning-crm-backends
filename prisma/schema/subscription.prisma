@@ -9,6 +9,7 @@ model Plan {
 
     subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Cascade, onUpdate: Cascade)
     subscriptionPlanId String
+    subscriptions      Subscription[]
 
     @@unique([subscriptionPlanId, interval])
 }
@@ -43,10 +44,13 @@ model Subscription {
     totalCost             Decimal @db.Decimal(10, 2)
 
     adminId String
-    admin   AdminProfile @relation(fields: [adminId], references: [id])
+    admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
-    subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+    planId String
+    plan   Plan   @relation(fields: [planId], references: [id])
+
     subscriptionPlanId String
+    subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
     billingHistory BillingHistory[]
 
@@ -55,4 +59,6 @@ model Subscription {
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
+
+    @@index([adminId])
 }
