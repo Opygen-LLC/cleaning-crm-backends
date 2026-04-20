@@ -40,8 +40,8 @@ const setRefreshTokenCookie = (res: Response, token: string) => {
         secure: true,
         sameSite: "none",
         path: "/",
-        //7d
-        maxAge: 60 * 60 * 24 * 1000 * 7,
+        //30d
+        maxAge: 60 * 60 * 24 * 1000 * 30,
     });
 };
 

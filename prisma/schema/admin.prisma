@@ -2,8 +2,14 @@ model AdminProfile {
     id           String   @id @default(uuid())
     businessName String
     businessLogo String?
-    address      String?
     currency     Currency @default(USD)
+
+    address       String
+    city          String
+    state         String
+    zipcode       String
+    country       String
+    workLocations String[] //city names
 
     userId String @unique
     user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -19,7 +25,7 @@ model AdminProfile {
     updatedAt DateTime @updatedAt
 
     @@index([createdAt])
-} //? also admin can add his work location in array like city names or something
+}
 
 model StaffProfile {
     id        String @id @default(uuid())

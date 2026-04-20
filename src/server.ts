@@ -6,10 +6,14 @@ import compression from "compression";
 import cors from "cors";
 import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 import { globalErrorHandler } from "./middlewares/globalErrorHandler";
-import { notFound } from "./middlewares/notFound";
 import cookieParser from "cookie-parser";
+import { notFound } from "./middlewares/notFound";
+import path from "path";
 
 const app = express();
+
+app.set("view engine", "ejs");
+app.set("views", path.resolve(process.cwd(), `src/lib/templates`));
 
 app.use(express.json());
 app.use(express.static("./public"));
@@ -38,7 +42,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(compression());
 
 // Use the logging middleware for all routes
-app.use(logRequestResponse);
+// app.use(logRequestResponse);
 // Use the centralized routes
 app.get("/", (req: Request, res: Response) => {
     res.status(200).json({

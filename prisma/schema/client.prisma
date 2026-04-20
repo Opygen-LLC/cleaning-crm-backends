@@ -1,0 +1,12 @@
+model Client {
+    id           String  @id @default(uuid())
+    name         String
+    email        String
+    mobileNumber String?
+
+    address String
+    city    String
+    state   String
+    zipcode String
+    country String
+}
