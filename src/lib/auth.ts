@@ -5,6 +5,7 @@ import { prisma } from "./prisma/prisma";
 import { AccountStatus, UserRole } from "../generated/prisma/enums";
 import { bearer, emailOTP } from "better-auth/plugins";
 import chalk from "chalk";
+import { sendEmail } from "./email";
 
 export const auth = betterAuth({
     baseURL: BETTER_AUTH_URL,
@@ -71,6 +72,15 @@ export const auth = betterAuth({
                     }
 
                     if (user && !user.emailVerified) {
+                        sendEmail({
+                            to: email,
+                            subject: "Verify your email",
+                            templateName: "otp",
+                            templateData: {
+                                name: user.name,
+                                otp,
+                            },
+                        });
                     }
                 } else if (type === "forget-password") {
                     const user = await prisma.user.findUnique({
@@ -79,7 +89,17 @@ export const auth = betterAuth({
                         },
                     });
 
-                    if (user) {}
+                    if (user) {
+                        sendEmail({
+                            to: email,
+                            subject: "Password Reset OTP",
+                            templateName: "otp",
+                            templateData: {
+                                name: user.name,
+                                otp,
+                            },
+                        });
+                    }
                 }
             },
         }),
