@@ -30,7 +30,7 @@ export const REFRESH_TOKEN_EXPIRES_IN: string = process.env.REFRESH_TOKEN_EXPIRE
 export const SUPER_ADMIN_EMAIL: string = process.env.SUPER_ADMIN_EMAIL as string;
 export const SUPER_ADMIN_PASSWORD: string = process.env.SUPER_ADMIN_PASSWORD as string;
 
-export const SMTP_EMAIl: string = process.env.SMTP_EMAIl as string;
+export const SMTP_EMAIL: string = process.env.SMTP_EMAIL as string;
 export const SMTP_PASSWORD: string = process.env.SMTP_PASSWORD as string;
 export const SMTP_HOST: string = process.env.SMTP_HOST as string;
 export const SMTP_PORT: string = process.env.SMTP_PORT as string;

@@ -56,6 +56,19 @@ export const auth = betterAuth({
             expiresIn: 5 * 60, // 5 minutes in seconds
             otpLength: 6,
             async sendVerificationOTP({ email, otp, type }) {
+                const sendEmailSafely = async (
+                    options: Parameters<typeof sendEmail>[0],
+                ) => {
+                    return await sendEmail(options).catch((err) => {
+                        console.error(
+                            chalk.red(
+                                `[EMAIL ERROR] Failed to send "${options.subject}" to ${options.to}`,
+                            ),
+                            err,
+                        );
+                    });
+                };
+
                 if (type === "email-verification") {
                     const user = await prisma.user.findUnique({
                         where: {
@@ -74,7 +87,7 @@ export const auth = betterAuth({
 
                     if (user && !user.emailVerified) {
                         waitUntil(
-                            sendEmail({
+                            sendEmailSafely({
                                 to: email,
                                 subject: "Verify your email",
                                 templateName: "otp",
@@ -94,7 +107,7 @@ export const auth = betterAuth({
 
                     if (user) {
                         waitUntil(
-                            sendEmail({
+                            sendEmailSafely({
                                 to: email,
                                 subject: "Password Reset OTP",
                                 templateName: "otp",

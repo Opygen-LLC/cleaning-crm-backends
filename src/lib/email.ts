@@ -3,13 +3,13 @@ import nodemailer from "nodemailer";
 import path from "path";
 import AppError from "../errorHelper/AppError";
 import status from "http-status";
-import { SMTP_EMAIl, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT } from "../config/ENV";
+import { SMTP_EMAIL, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT } from "../config/ENV";
 
 const transporter = nodemailer.createTransport({
     host: SMTP_HOST,
     secure: true,
     auth: {
-        user: SMTP_EMAIl,
+        user: SMTP_EMAIL,
         pass: SMTP_PASSWORD,
     },
     port: Number(SMTP_PORT),
@@ -45,7 +45,7 @@ export const sendEmail = async ({
         const html = await ejs.renderFile(templatePath, templateData);
 
         const info = await transporter.sendMail({
-            from: SMTP_EMAIl,
+            from: SMTP_EMAIL,
             to: to,
             subject: subject,
             html: html,
