@@ -30,6 +30,11 @@ router.get(
 );
 
 router.post("/refresh-token", authController.getNewToken);
+router.post(
+    "/verify-email",
+    zodValidate(authValidator.verifyEmailValidation, ValidationProperty.BODY),
+    authController.verifyEmail,
+);
 
 router.post(
     "/logout",

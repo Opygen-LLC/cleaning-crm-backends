@@ -6,6 +6,7 @@ import { AccountStatus, UserRole } from "../generated/prisma/enums";
 import { bearer, emailOTP } from "better-auth/plugins";
 import chalk from "chalk";
 import { sendEmail } from "./email";
+import { waitUntil } from "@vercel/functions";
 
 export const auth = betterAuth({
     baseURL: BETTER_AUTH_URL,
@@ -28,7 +29,7 @@ export const auth = betterAuth({
     emailVerification: {
         sendOnSignUp: true,
         sendOnSignIn: true,
-        // autoSignInAfterVerification: true,
+        autoSignInAfterVerification: true,
     },
     user: {
         additionalFields: {
@@ -71,17 +72,17 @@ export const auth = betterAuth({
                         return;
                     }
 
-                    // if (user && !user.emailVerified) {
-                    //     sendEmail({
-                    //         to: email,
-                    //         subject: "Verify your email",
-                    //         templateName: "otp",
-                    //         templateData: {
-                    //             name: user.name,
-                    //             otp,
-                    //         },
-                    //     });
-                    // }
+                    if (user && !user.emailVerified) {
+                        sendEmail({
+                            to: email,
+                            subject: "Verify your email",
+                            templateName: "otp",
+                            templateData: {
+                                name: user.name,
+                                otp,
+                            },
+                        });
+                    }
                 } else if (type === "forget-password") {
                     const user = await prisma.user.findUnique({
                         where: {
@@ -90,15 +91,17 @@ export const auth = betterAuth({
                     });
 
                     if (user) {
-                        sendEmail({
-                            to: email,
-                            subject: "Password Reset OTP",
-                            templateName: "otp",
-                            templateData: {
-                                name: user.name,
-                                otp,
-                            },
-                        });
+                        waitUntil(
+                            sendEmail({
+                                to: email,
+                                subject: "Password Reset OTP",
+                                templateName: "otp",
+                                templateData: {
+                                    name: user.name,
+                                    otp,
+                                },
+                            }),
+                        );
                     }
                 }
             },

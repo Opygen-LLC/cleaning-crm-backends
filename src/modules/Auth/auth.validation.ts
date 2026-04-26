@@ -1,6 +1,6 @@
-import z, { email } from "zod";
+import z from "zod";
 
-export const registerValidation = z.object({
+const registerValidation = z.object({
     name: z
         .string()
         .min(2, "Name must be at least 2 characters")
@@ -19,7 +19,7 @@ export const registerValidation = z.object({
         .regex(/[^A-Za-z0-9]/, "Must include at least one special character"),
 }).strict();
 
-export const loginValidation = z.object({
+const loginValidation = z.object({
     email: z.string().email("Invalid email address").toLowerCase(),
 
     password: z
@@ -32,13 +32,15 @@ export const loginValidation = z.object({
         // .regex(/[^A-Za-z0-9]/, "Must include at least one special character"),
 }).strict();
 
+const verifyEmailValidation = z.object({
+    email: z.string().email("Invalid email address").toLowerCase(),
+    otp: z.string().length(6, "OTP must be 6 characters"),
+}).strict();
+
 const authValidator = {
     registerValidation,
     loginValidation,
-    // forgotPasswordValidation,
-    // resetPasswordValidation,
-    // resendVerificationValidation,
-    // verificationValidation,
+    verifyEmailValidation,
 };
 
 export default authValidator;
