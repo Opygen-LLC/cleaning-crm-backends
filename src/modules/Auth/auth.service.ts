@@ -32,7 +32,27 @@ const register = async ({ name, email, password }: IRegisterUserPayload) => {
         throw new AppError(status.BAD_REQUEST, "Failed to register user");
     }
 
-    return data;
+    const accessToken = tokenUtils.getAccessToken({
+        userId: data.user.id,
+        role: data.user.role,
+        name: data.user.name,
+        email: data.user.email,
+        emailVerified: data.user.emailVerified,
+    });
+
+    const refreshToken = tokenUtils.getRefreshToken({
+        userId: data.user.id,
+        role: data.user.role,
+        name: data.user.name,
+        email: data.user.email,
+        emailVerified: data.user.emailVerified,
+    });
+
+    return {
+        ...data,
+        accessToken,
+        refreshToken,
+    };
 };
 
 const login = async ({ email, password }: ILoginUserPayload) => {
@@ -162,7 +182,6 @@ const logout = async (sessionToken: string) => {
 
     return result;
 };
-
 
 const userService = {
     register,

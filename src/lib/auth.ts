@@ -14,21 +14,21 @@ export const auth = betterAuth({
         provider: "postgresql",
     }),
     session: {
-        expiresIn: 60 * 60 * 60 * 24, // 1 day in seconds
-        updateAge: 60 * 60 * 60 * 24, // 1 day in seconds
+        expiresIn: 60 * 60 * 60 * 24, // 60 days in seconds
+        updateAge: 60 * 60 * 60 * 24, // 50 days in seconds
         cookieCache: {
             enabled: true,
-            maxAge: 60 * 60 * 60 * 24, // 1 day in seconds
+            maxAge: 60 * 60 * 60 * 24, // 60 days in seconds
         },
     },
     emailAndPassword: {
         enabled: true,
-        requireEmailVerification: true,
+        // requireEmailVerification: true,
     },
     emailVerification: {
         sendOnSignUp: true,
         sendOnSignIn: true,
-        autoSignInAfterVerification: true,
+        // autoSignInAfterVerification: true,
     },
     user: {
         additionalFields: {
@@ -71,17 +71,17 @@ export const auth = betterAuth({
                         return;
                     }
 
-                    if (user && !user.emailVerified) {
-                        sendEmail({
-                            to: email,
-                            subject: "Verify your email",
-                            templateName: "otp",
-                            templateData: {
-                                name: user.name,
-                                otp,
-                            },
-                        });
-                    }
+                    // if (user && !user.emailVerified) {
+                    //     sendEmail({
+                    //         to: email,
+                    //         subject: "Verify your email",
+                    //         templateName: "otp",
+                    //         templateData: {
+                    //             name: user.name,
+                    //             otp,
+                    //         },
+                    //     });
+                    // }
                 } else if (type === "forget-password") {
                     const user = await prisma.user.findUnique({
                         where: {

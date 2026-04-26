@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OTP Verification — Opygen CleanCRM</title>
+</head>
+<body style="margin:0;padding:0;background:#F0F2F5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="padding:48px 16px;">
+  <tr>
+    <td align="center">
+      <table width="480" cellpadding="0" cellspacing="0" role="presentation"
+        style="background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.07);">
+
+        <!-- ── Top accent bar ── -->
+        <tr>
+          <td style="background:#0A0A0A;height:4px;font-size:0;line-height:0;">&nbsp;</td>
+        </tr>
+
+        <!-- ── Header ── -->
+        <tr>
+          <td align="center" style="padding:36px 40px 0;">
+
+            <!-- Logo mark -->
+            <table cellpadding="0" cellspacing="0" role="presentation">
+              <tr>
+                <td align="center" style="padding-bottom:24px;">
+                  <table cellpadding="0" cellspacing="0" role="presentation">
+                    <tr>
+                      <td style="background:#0A0A0A;border-radius:14px;padding:10px 12px;vertical-align:middle;">
+                        <!-- Opygen SVG logo mark inline -->
+                        <svg width="20" height="20" viewBox="0 0 64 64" fill="none" style="display:block;">
+                          <path d="M32 6 A26 26 0 1 1 53.5 45.5" stroke="#3ECFB2" stroke-width="6" stroke-linecap="round" fill="none"/>
+                          <path d="M32 58 A26 26 0 1 1 10.5 18.5" stroke="#ffffff" stroke-width="6" stroke-linecap="round" fill="none" opacity="0.8"/>
+                          <circle cx="32" cy="32" r="4" fill="#3ECFB2"/>
+                          <circle cx="53.5" cy="45.5" r="2.5" fill="#3ECFB2"/>
+                        </svg>
+                      </td>
+                      <td style="padding-left:10px;vertical-align:middle;">
+                        <span style="font-size:20px;font-weight:700;color:#0A0A0A;letter-spacing:-0.5px;">Opygen</span>
+                        <span style="display:block;font-size:10px;font-weight:600;color:#1A7A5E;letter-spacing:0.12em;text-transform:uppercase;margin-top:2px;">Cleaning CRM</span>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Divider -->
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+              <tr><td style="border-top:1px solid #F0F0F0;font-size:0;">&nbsp;</td></tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- ── Body ── -->
+        <tr>
+          <td style="padding:32px 40px 0;">
+
+            <!-- Greeting -->
+            <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#0A0A0A;letter-spacing:-0.4px;">
+              Verify your identity
+            </p>
+            <p style="margin:0 0 24px;font-size:15px;color:#6B6B6B;line-height:1.6;">
+              Hello <strong style="color:#0A0A0A;font-weight:600;"><%= name %></strong>, use the one-time code below to continue. It expires in <strong style="color:#0A0A0A;">5 minutes</strong>.
+            </p>
+
+            <!-- OTP box -->
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:28px;">
+              <tr>
+                <td align="center">
+                  <table cellpadding="0" cellspacing="0" role="presentation">
+                    <tr>
+                      <td style="background:#F6F6F6;border:1.5px solid #E8E8E8;border-radius:14px;padding:20px 36px;text-align:center;">
+                        <span style="font-size:36px;font-weight:800;letter-spacing:10px;color:#0A0A0A;font-variant-numeric:tabular-nums;">
+                          <%= otp %>
+                        </span>
+                        <p style="margin:10px 0 0;font-size:11px;font-weight:600;color:#AAAAAA;text-transform:uppercase;letter-spacing:0.12em;">
+                          One-Time Password
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Timer pill -->
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:28px;">
+              <tr>
+                <td align="center">
+                  <table cellpadding="0" cellspacing="0" role="presentation">
+                    <tr>
+                      <td style="background:#E8F5F0;border-radius:100px;padding:8px 20px;">
+                        <span style="font-size:12px;font-weight:600;color:#1A7A5E;letter-spacing:0.04em;">
+                          ⏱ Expires in 5 minutes
+                        </span>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Security note -->
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+              style="background:#F9F9F9;border-radius:12px;margin-bottom:32px;">
+              <tr>
+                <td style="padding:16px 20px;">
+                  <table cellpadding="0" cellspacing="0" role="presentation" width="100%">
+                    <tr>
+                      <td style="vertical-align:top;width:20px;padding-right:10px;">
+                        <span style="font-size:14px;">🔒</span>
+                      </td>
+                      <td>
+                        <p style="margin:0;font-size:12.5px;color:#6B6B6B;line-height:1.65;">
+                          <strong style="color:#0A0A0A;font-weight:600;">Security notice:</strong>
+                          Opygen staff will never ask for this code. If you didn't request this, you can safely ignore this email — your account remains secure.
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- ── Footer ── -->
+        <tr>
+          <td style="padding:0 40px 36px;">
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+              <tr><td style="border-top:1px solid #F0F0F0;padding-top:24px;">
+                <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                  <tr>
+                    <td>
+                      <p style="margin:0;font-size:11px;color:#AAAAAA;line-height:1.7;">
+                        This email was sent to you because you requested a verification code for your <strong style="color:#6B6B6B;">Opygen CleanCRM</strong> account.
+                      </p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding-top:12px;">
+                      <p style="margin:0;font-size:11px;color:#CCCCCC;">
+                        © <%= new Date().getFullYear() %> Opygen · Cleaning CRM · Powered by IXYRON
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td></tr>
+            </table>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
+
+</body>
+</html>

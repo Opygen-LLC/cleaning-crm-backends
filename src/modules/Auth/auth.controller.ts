@@ -9,6 +9,12 @@ import { CookieUtils } from "../../lib/utils/cookie";
 const register = catchAsync(async (req, res) => {
     const result = await authService.register(req.body);
 
+    const { accessToken, refreshToken, token, ...rest } = result;
+
+    tokenUtils.setAccessTokenCookie(res, accessToken);
+    tokenUtils.setRefreshTokenCookie(res, refreshToken);
+    tokenUtils.setBetterAuthSessionCookie(res, token as string);
+
     sendResponse(res, {
         httpStatusCode: httpStatus.CREATED,
         success: true,
