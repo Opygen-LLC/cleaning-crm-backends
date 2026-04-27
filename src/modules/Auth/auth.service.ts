@@ -32,27 +32,28 @@ const register = async ({ name, email, password }: IRegisterUserPayload) => {
         throw new AppError(status.BAD_REQUEST, "Failed to register user");
     }
 
-    const accessToken = tokenUtils.getAccessToken({
-        userId: data.user.id,
-        role: data.user.role,
-        name: data.user.name,
-        email: data.user.email,
-        emailVerified: data.user.emailVerified,
-    });
+    // const accessToken = tokenUtils.getAccessToken({
+    //     userId: data.user.id,
+    //     role: data.user.role,
+    //     name: data.user.name,
+    //     email: data.user.email,
+    //     emailVerified: data.user.emailVerified,
+    // });
 
-    const refreshToken = tokenUtils.getRefreshToken({
-        userId: data.user.id,
-        role: data.user.role,
-        name: data.user.name,
-        email: data.user.email,
-        emailVerified: data.user.emailVerified,
-    });
+    // const refreshToken = tokenUtils.getRefreshToken({
+    //     userId: data.user.id,
+    //     role: data.user.role,
+    //     name: data.user.name,
+    //     email: data.user.email,
+    //     emailVerified: data.user.emailVerified,
+    // });
 
-    return {
-        ...data,
-        accessToken,
-        refreshToken,
-    };
+    // return {
+    //     ...data,
+    //     accessToken,
+    //     refreshToken,
+    // };
+    return data;
 };
 
 const login = async ({ email, password }: ILoginUserPayload) => {
@@ -72,6 +73,14 @@ const login = async ({ email, password }: ILoginUserPayload) => {
             password,
         },
     });
+
+    if (!data.user.emailVerified) {
+        return {
+            data,
+            accessToken: null,
+            refreshToken: null,
+        };
+    }
 
     const accessToken = tokenUtils.getAccessToken({
         userId: data.user.id,
@@ -219,6 +228,35 @@ const verifyEmail = async (email: string, otp: string) => {
             },
         });
     }
+
+    const accessToken = tokenUtils.getAccessToken({
+        userId: result.user.id,
+        role: result.user.role,
+        name: result.user.name,
+        email: result.user.email,
+        emailVerified: result.user.emailVerified,
+    });
+
+    const refreshToken = tokenUtils.getRefreshToken({
+        userId: result.user.id,
+        role: result.user.role,
+        name: result.user.name,
+        email: result.user.email,
+        emailVerified: result.user.emailVerified,
+    });
+
+    return {
+        ...result,
+        accessToken,
+        refreshToken,
+    };
+};
+
+const resendOtp = async (email: string) => {
+    await auth.api.sendVerificationOTP({
+        body: { email, type: "email-verification" },
+        //? type: "sign-in" | "email-verification" | "forget-password" | "change-email";
+    });
 };
 
 const forgotPassword = async (email: string) => {
@@ -314,6 +352,7 @@ const userService = {
     me,
     getNewToken,
     verifyEmail,
+    resendOtp,
     forgotPassword,
     resetPassword,
     logout,

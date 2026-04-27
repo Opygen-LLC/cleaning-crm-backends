@@ -36,6 +36,14 @@ router.post(
     authController.verifyEmail,
 );
 router.post(
+    "/resend-otp",
+    zodValidate(
+        authValidator.forgotPasswordValidation,
+        ValidationProperty.BODY,
+    ),
+    authController.resendOtp,
+);
+router.post(
     "/forgot-password",
     zodValidate(
         authValidator.forgotPasswordValidation,
