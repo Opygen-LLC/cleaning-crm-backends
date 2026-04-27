@@ -221,6 +221,83 @@ const verifyEmail = async (email: string, otp: string) => {
     }
 };
 
+const forgotPassword = async (email: string) => {
+    const user = await prisma.user.findUnique({
+        where: { email },
+        select: {
+            id: true,
+        },
+    });
+
+    if (!user) {
+        throw new AppError(status.NOT_FOUND, "User not found");
+    }
+
+    const passwordAccount = await prisma.account.findFirst({
+        where: {
+            userId: user.id,
+            providerId: "credential",
+        },
+        select: { id: true },
+    });
+
+    if (!passwordAccount) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "Password reset is not available for social login accounts.",
+        );
+    }
+
+    await auth.api.requestPasswordResetEmailOTP({
+        body: { email },
+    });
+};
+
+const resetPassword = async (
+    email: string,
+    otp: string,
+    newPassword: string,
+) => {
+    const isUserExist = await prisma.user.findUnique({
+        where: {
+            email,
+        },
+    });
+
+    if (!isUserExist) {
+        throw new AppError(status.NOT_FOUND, "User not found");
+    }
+
+    const passwordAccount = await prisma.account.findFirst({
+        where: {
+            userId: isUserExist.id,
+            providerId: "credential",
+        },
+        select: { id: true },
+    });
+
+    if (!passwordAccount) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "Password reset is not available for social login accounts.",
+        );
+    }
+
+    await auth.api.resetPasswordEmailOTP({
+        body: {
+            email,
+            otp,
+            password: newPassword,
+        },
+    });
+
+    await prisma.session.deleteMany({
+        where: {
+            userId: isUserExist.id,
+        },
+    });
+};
+
 const logout = async (sessionToken: string) => {
     const result = await auth.api.signOut({
         headers: new Headers({
@@ -237,6 +314,8 @@ const userService = {
     me,
     getNewToken,
     verifyEmail,
+    forgotPassword,
+    resetPassword,
     logout,
 };
 

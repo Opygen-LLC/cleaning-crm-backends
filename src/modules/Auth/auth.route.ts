@@ -35,6 +35,19 @@ router.post(
     zodValidate(authValidator.verifyEmailValidation, ValidationProperty.BODY),
     authController.verifyEmail,
 );
+router.post(
+    "/forgot-password",
+    zodValidate(
+        authValidator.forgotPasswordValidation,
+        ValidationProperty.BODY,
+    ),
+    authController.forgotPassword,
+);
+router.post(
+    "/reset-password",
+    zodValidate(authValidator.resetPasswordValidation, ValidationProperty.BODY),
+    authController.resetPassword,
+);
 
 router.post(
     "/logout",

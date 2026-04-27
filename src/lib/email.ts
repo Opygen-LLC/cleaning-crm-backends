@@ -7,14 +7,14 @@ import { SMTP_EMAIL, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT } from "../config/ENV";
 
 const transporter = nodemailer.createTransport({
     host: SMTP_HOST,
+    port: Number(SMTP_PORT),
     secure: true,
     auth: {
         user: SMTP_EMAIL,
         pass: SMTP_PASSWORD,
     },
-    port: Number(SMTP_PORT),
     tls: {
-        rejectUnauthorized: false, // ← add this
+        rejectUnauthorized: false,
     },
 });
 
