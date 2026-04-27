@@ -65,13 +65,40 @@
           "response": []
         },
         {
-          "name": "verify email",
+          "name": "resend otp",
           "request": {
             "method": "POST",
             "header": [],
             "body": {
               "mode": "raw",
-              "raw": "{\r\n    \"email\": \"syedmohiuddinmeshal24@gmail.com\",\r\n    \"otp\": \"308678\"\r\n}",
+              "raw": "{\r\n    \"email\": \"syedmohiuddinmeshal24@gmail.com\"\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{serverURL}}/auth/resend-otp",
+              "host": [
+                "{{serverURL}}"
+              ],
+              "path": [
+                "auth",
+                "resend-otp"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "verify email Copy",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n    \"email\": \"syedmohiuddinmeshal24@gmail.com\",\r\n    \"otp\": \"012283\"\r\n}",
               "options": {
                 "raw": {
                   "language": "json"
