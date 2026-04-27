@@ -65,6 +65,87 @@
           "response": []
         },
         {
+          "name": "verify email",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n    \"email\": \"syedmohiuddinmeshal24@gmail.com\",\r\n    \"otp\": \"308678\"\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{serverURL}}/auth/verify-email",
+              "host": [
+                "{{serverURL}}"
+              ],
+              "path": [
+                "auth",
+                "verify-email"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "reset password",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n    \"email\": \"syedmohiuddinmeshal24@gmail.com\",\r\n    \"otp\": \"412292\",\r\n    \"newPassword\": \"Cleaning@123\"\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{serverURL}}/auth/reset-password",
+              "host": [
+                "{{serverURL}}"
+              ],
+              "path": [
+                "auth",
+                "reset-password"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "forgot password",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n    \"email\": \"syedmohiuddinmeshal24@gmail.com\"\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{serverURL}}/auth/forgot-password",
+              "host": [
+                "{{serverURL}}"
+              ],
+              "path": [
+                "auth",
+                "forgot-password"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
           "name": "get new token",
           "request": {
             "method": "POST",
@@ -149,6 +230,11 @@
     {
       "key": "serverURL",
       "value": ""
+    },
+    {
+      "key": "serverURL",
+      "value": "",
+      "disabled": true
     }
   ]
 }
