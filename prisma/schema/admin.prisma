@@ -6,11 +6,11 @@ model AdminProfile {
     currency     Currency @default(USD)
     mobileNumber String?
 
-    address String
-    city    String
-    state   String
-    zipcode String
-    country String
+    address String?
+    city    String?
+    state   String?
+    zipcode String?
+    country String?
 
     userId String @unique
     user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -29,6 +29,7 @@ model AdminProfile {
     expenses           Expense[]
     bookingForms       BookingForm[]
     estimateForms      EstimateForm[]
+
     notificationPrefs NotificationPreference?
     paymentGateway    PaymentGatewayConfig?
     review Review?

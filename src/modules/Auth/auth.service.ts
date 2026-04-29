@@ -9,52 +9,26 @@ import { JwtPayload } from "jsonwebtoken";
 import { jwtUtils } from "../../lib/utils/jwt";
 import { REFRESH_TOKEN_SECRET } from "../../config/ENV";
 import { AccountStatus } from "../../generated/prisma/enums";
+import { adminService } from "../Admin/admin.service";
 
 const register = async ({ name, email, password }: IRegisterUserPayload) => {
-    const existingUser = await prisma.user.findUnique({
-        where: {
-            email,
-        },
-    });
-
-    if (existingUser) {
-        throw new AppError(status.BAD_REQUEST, "User already exists");
-    }
-
     const data = await auth.api.signUpEmail({
-        body: {
-            name,
-            email,
-            password,
-        },
+        body: { name, email, password },
     });
 
-    if (!data.user) {
+    if (!data.user?.id) {
         throw new AppError(status.BAD_REQUEST, "Failed to register user");
     }
 
-    // const accessToken = tokenUtils.getAccessToken({
-    //     userId: data.user.id,
-    //     role: data.user.role,
-    //     name: data.user.name,
-    //     email: data.user.email,
-    //     emailVerified: data.user.emailVerified,
-    // });
+    const admin = await adminService.createAdmin({
+        userId: data.user.id,
+        businessName: name, //? replace later if needed
+    });
 
-    // const refreshToken = tokenUtils.getRefreshToken({
-    //     userId: data.user.id,
-    //     role: data.user.role,
-    //     name: data.user.name,
-    //     email: data.user.email,
-    //     emailVerified: data.user.emailVerified,
-    // });
-
-    // return {
-    //     ...data,
-    //     accessToken,
-    //     refreshToken,
-    // };
-    return data;
+    return {
+        user: data.user,
+        admin,
+    };
 };
 
 const login = async ({ email, password }: ILoginUserPayload) => {
@@ -120,6 +94,11 @@ const me = async (user: IRequestUser) => {
         where: {
             id: user.id,
         },
+        include: {
+            sessions: true,
+            admin: true,
+            staff: true,
+        }
     });
 
     if (!isUserExist) {
