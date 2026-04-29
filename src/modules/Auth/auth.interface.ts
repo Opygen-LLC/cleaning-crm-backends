@@ -1,4 +1,5 @@
 export interface IRegisterUserPayload {
+    businessName: string;
     name: string;
     email: string;
     password: string;

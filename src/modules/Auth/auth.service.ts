@@ -11,7 +11,12 @@ import { REFRESH_TOKEN_SECRET } from "../../config/ENV";
 import { AccountStatus } from "../../generated/prisma/enums";
 import { adminService } from "../Admin/admin.service";
 
-const register = async ({ name, email, password }: IRegisterUserPayload) => {
+const register = async ({
+    businessName,
+    name,
+    email,
+    password,
+}: IRegisterUserPayload) => {
     const data = await auth.api.signUpEmail({
         body: { name, email, password },
     });
@@ -22,7 +27,7 @@ const register = async ({ name, email, password }: IRegisterUserPayload) => {
 
     const admin = await adminService.createAdmin({
         userId: data.user.id,
-        businessName: name, //? replace later if needed
+        businessName,
     });
 
     return {
@@ -98,7 +103,7 @@ const me = async (user: IRequestUser) => {
             sessions: true,
             admin: true,
             staff: true,
-        }
+        },
     });
 
     if (!isUserExist) {

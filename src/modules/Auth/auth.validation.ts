@@ -2,6 +2,7 @@ import z from "zod";
 
 const registerValidation = z
     .object({
+        businessName: z.string().trim(),
         name: z
             .string()
             .min(2, "Name must be at least 2 characters")
