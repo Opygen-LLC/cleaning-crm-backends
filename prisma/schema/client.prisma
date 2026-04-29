@@ -1,12 +1,57 @@
 model Client {
-    id           String  @id @default(uuid())
-    name         String
-    email        String
-    mobileNumber String?
+    id     String       @id @default(uuid())
+    name   String
+    email  String
+    phone  String?
+    status ClientStatus @default(ACTIVE)
 
-    address String
-    city    String
-    state   String
-    zipcode String
-    country String
+    //? Address
+    addressLine1 String
+    addressLine2 String?
+    city         String
+    postcode     String
+    country      String?
+
+    servicePreference ServiceType?
+
+    //? Aggregates (can be computed or cached)
+    totalSpend    Decimal @default(0) @db.Decimal(10, 2)
+    totalBookings Int     @default(0)
+
+    avatar          String?
+    lastBookingDate DateTime?
+    joinedDate      DateTime  @default(now())
+
+    //? Relations
+    adminId String
+    admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+    notes    ClientNote[]
+    bookings Booking[]
+    quotes   Quote[]
+    estimates Estimate[]
+    invoices Invoice[]
+    jobs     Job[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([email, adminId])
+    @@index([adminId])
+    @@index([status])
+    @@map("client")
+}
+
+model ClientNote {
+    id        String @id @default(uuid())
+    text      String
+    createdBy String //? staff name or "Admin"
+
+    clientId String
+    client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+    createdAt DateTime @default(now())
+
+    @@index([clientId])
+    @@map("client_note")
 }

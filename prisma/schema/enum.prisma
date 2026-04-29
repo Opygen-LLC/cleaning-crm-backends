@@ -14,6 +14,10 @@ enum AccountStatus {
 
 enum Currency {
     USD
+    EUR
+    GBP
+    CAD
+    AUD
 }
 
 //? Subscription
@@ -43,6 +47,12 @@ enum DiscountType {
 //? Payment
 enum PaymentMethod {
     STRIPE
+}
+
+enum PaymentGateway {
+    STRIPE
+    PAYPAL
+    NONE
 }
 
 enum PaymentStatus {
@@ -273,4 +283,124 @@ enum Country {
 
     ZAMBIA
     ZIMBABWE
+}
+
+
+//? ─── Client ──────────────────────────────────────────────────────────────────
+enum ClientStatus {
+    ACTIVE
+    INACTIVE
+    BLOCKED
+}
+
+//? ─── Service ─────────────────────────────────────────────────────────────────
+
+enum ServiceType {
+    RESIDENTIAL_CLEAN
+    DEEP_CLEAN
+    OFFICE_CLEAN
+    END_OF_TENANCY
+    CARPET_CLEAN
+    WINDOW_CLEAN
+    MOVE_IN_OUT_CLEAN
+}
+
+//? ─── Booking / Job ───────────────────────────────────────────────────────────
+
+enum BookingStatus {
+    SCHEDULED
+    IN_PROGRESS
+    COMPLETED
+    CANCELLED
+}
+
+enum JobStatus {
+    SCHEDULED
+    IN_PROGRESS
+    COMPLETED
+    CANCELLED
+}
+
+//? ─── Quote / Estimate ────────────────────────────────────────────────────────
+
+enum QuoteStatus {
+    DRAFT
+    SENT
+    ACCEPTED
+    DECLINED
+    EXPIRED
+}
+
+enum EstimateStatus {
+    DRAFT
+    SENT
+    APPROVED
+    REJECTED
+    CONVERTED
+}
+
+//? ─── Invoice ─────────────────────────────────────────────────────────────────
+
+enum InvoiceStatus {
+    DRAFT
+    SENT
+    PAID
+    OVERDUE
+    CANCELLED
+}
+
+//? ─── Expense ─────────────────────────────────────────────────────────────────
+
+enum ExpenseCategory {
+    EQUIPMENT_AND_SUPPLIES
+    STAFF_WAGES
+    VEHICLE_AND_FUEL
+    MARKETING
+    INSURANCE
+    SOFTWARE_AND_TOOLS
+    TRAINING
+    OFFICE_AND_ADMIN
+    OTHER
+}
+
+enum ExpenseFrequency {
+    WEEKLY
+    MONTHLY
+    QUARTERLY
+    ANNUALLY
+}
+
+//? ─── Online Forms ────────────────────────────────────────────────────────────
+
+enum FormSubmissionStatus {
+    NEW
+    REVIEWED
+    CONVERTED
+    DECLINED
+}
+
+enum EstimateSubmissionStatus {
+    NEW
+    QUOTED
+    CONVERTED
+    DISMISSED
+}
+
+enum FormFieldType {
+    TEXT
+    EMAIL
+    PHONE
+    TEXTAREA
+    SELECT
+    ADDRESS
+    DATE
+    NUMBER
+}
+
+//? ─── Notification ────────────────────────────────────────────────────────────
+
+enum NotificationChannel {
+    EMAIL
+    APP
+    SMS
 }
