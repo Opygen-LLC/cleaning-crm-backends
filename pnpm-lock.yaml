@@ -74,6 +74,9 @@ importers:
       multer:
         specifier: ^2.0.2
         version: 2.1.1
+      multer-storage-cloudinary:
+        specifier: ^4.0.0
+        version: 4.0.0(cloudinary@2.9.0)
       nodemailer:
         specifier: ^7.0.10
         version: 7.0.13
@@ -2555,6 +2558,11 @@ packages:
 
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
+
+  multer-storage-cloudinary@4.0.0:
+    resolution: {integrity: sha512-25lm9R6o5dWrHLqLvygNX+kBOxprzpmZdnVKH4+r68WcfCt8XV6xfQaMuAg+kUE5Xmr8mJNA4gE0AcBj9FJyWA==}
+    peerDependencies:
+      cloudinary: ^1.21.0
 
   multer@2.1.1:
     resolution: {integrity: sha512-mo+QTzKlx8R7E5ylSXxWzGoXoZbOsRMpyitcht8By2KHvMbf3tjwosZ/Mu/XYU6UuJ3VZnODIrak5ZrPiPyB6A==}
@@ -5743,6 +5751,10 @@ snapshots:
   ms@2.1.2: {}
 
   ms@2.1.3: {}
+
+  multer-storage-cloudinary@4.0.0(cloudinary@2.9.0):
+    dependencies:
+      cloudinary: 2.9.0
 
   multer@2.1.1:
     dependencies:

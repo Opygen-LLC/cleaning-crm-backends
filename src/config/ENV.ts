@@ -6,7 +6,6 @@ export const BACKEND_IP: string = process.env.BACKEND_IP as string;
 export const PORT: number = parseInt(process.env.PORT as string, 10);
 export const DATABASE_URL: string = process.env.DATABASE_URL as string;
 
-
 export const CLOUDINARY_CLOUD_NAME: string = process.env
     .CLOUDINARY_CLOUD_NAME as string;
 export const CLOUDINARY_API_KEY: string = process.env
@@ -34,5 +33,3 @@ export const SMTP_EMAIL: string = process.env.SMTP_EMAIL as string;
 export const SMTP_PASSWORD: string = process.env.SMTP_PASSWORD as string;
 export const SMTP_HOST: string = process.env.SMTP_HOST as string;
 export const SMTP_PORT: string = process.env.SMTP_PORT as string;
-
-
