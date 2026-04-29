@@ -4,3 +4,7 @@
 /src/generated
 .vercel
 dist
+
+# Local env files
+.env.local
+task.md
