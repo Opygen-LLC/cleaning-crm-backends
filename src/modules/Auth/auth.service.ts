@@ -8,6 +8,7 @@ import { IRequestUser } from "../../types/requestUser.interface";
 import { JwtPayload } from "jsonwebtoken";
 import { jwtUtils } from "../../lib/utils/jwt";
 import { REFRESH_TOKEN_SECRET } from "../../config/ENV";
+import { AccountStatus } from "../../generated/prisma/enums";
 
 const register = async ({ name, email, password }: IRegisterUserPayload) => {
     const existingUser = await prisma.user.findUnique({
@@ -67,39 +68,48 @@ const login = async ({ email, password }: ILoginUserPayload) => {
         throw new AppError(status.NOT_FOUND, "User not found");
     }
 
-    const data = await auth.api.signInEmail({
-        body: {
-            email,
-            password,
-        },
+    // ✅ Sign-in
+    const signIn = await auth.api.signInEmail({
+        body: { email, password },
     });
 
-    if (!data.user.emailVerified) {
+    if (!signIn.user.emailVerified) {
         return {
-            data,
+            data: signIn,
             accessToken: null,
             refreshToken: null,
         };
     }
 
-    const accessToken = tokenUtils.getAccessToken({
-        userId: data.user.id,
-        role: data.user.role,
-        name: data.user.name,
-        email: data.user.email,
-        emailVerified: data.user.emailVerified,
+    // ✅ Enforce max 3 sessions: evict only the oldest if limit exceeded
+    const sessions = await prisma.session.findMany({
+        where: { userId: signIn.user.id },
+        orderBy: { createdAt: "asc" },
     });
 
-    const refreshToken = tokenUtils.getRefreshToken({
-        userId: data.user.id,
-        role: data.user.role,
-        name: data.user.name,
-        email: data.user.email,
-        emailVerified: data.user.emailVerified,
-    });
+    if (sessions.length > 3) {
+        // Delete oldest sessions, keep the 3 most recent (including the new one)
+        const sessionsToDelete = sessions.slice(0, sessions.length - 3);
+        await prisma.session.deleteMany({
+            where: {
+                id: { in: sessionsToDelete.map((s) => s.id) },
+            },
+        });
+    }
+
+    const tokenPayload = {
+        userId: signIn.user.id,
+        role: signIn.user.role,
+        name: signIn.user.name,
+        email: signIn.user.email,
+        emailVerified: signIn.user.emailVerified,
+    };
+
+    const accessToken = tokenUtils.getAccessToken(tokenPayload);
+    const refreshToken = tokenUtils.getRefreshToken(tokenPayload);
 
     return {
-        ...data,
+        ...signIn,
         accessToken,
         refreshToken,
     };
@@ -225,6 +235,7 @@ const verifyEmail = async (email: string, otp: string) => {
             },
             data: {
                 emailVerified: true,
+                status: AccountStatus.ACTIVE,
             },
         });
     }

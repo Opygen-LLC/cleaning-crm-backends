@@ -3,21 +3,22 @@ model AdminProfile {
     businessName String
     businessLogo String?
     currency     Currency @default(USD)
+    mobileNumber String?
 
     address       String
     city          String
     state         String
     zipcode       String
     country       String
-    workLocations String[] //city names
 
     userId String @unique
     user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-    subscription Subscription[]
-    staff        StaffProfile[]
-    couponUsage  CouponUsage[]
-    payment      Payment[]
+    subscription  Subscription[]
+    staff         StaffProfile[]
+    couponUsage   CouponUsage[]
+    payment       Payment[]
+    workLocations WorkLocation[]
 
     review Review?
 
@@ -27,9 +28,23 @@ model AdminProfile {
     @@index([createdAt])
 }
 
+model WorkLocation {
+    id       String  @id @default(uuid())
+    city     String
+    postcode String?
+
+    adminId String
+    admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+    createdAt DateTime @default(now())
+
+    @@index([adminId])
+}
+
 model StaffProfile {
-    id        String @id @default(uuid())
-    staffRole String
+    id           String  @id @default(uuid())
+    staffRole    String
+    mobileNumber String?
 
     userId String @unique
     user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)

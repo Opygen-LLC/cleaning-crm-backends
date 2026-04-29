@@ -7,7 +7,6 @@ model User {
 
     role         UserRole
     status       AccountStatus @default(PENDING)
-    mobileNumber String?
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
