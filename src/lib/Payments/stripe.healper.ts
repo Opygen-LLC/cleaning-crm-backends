@@ -1,5 +1,5 @@
 import Stripe from "stripe";
-import { FRONT_END_URL, STRIPE_SECRET_KEY } from "../../config/ENV";
+import { FRONTEND_URL, STRIPE_SECRET_KEY } from "../../config/ENV";
 // import { ObjectId } from "mongoose";
 
 const stripe = new Stripe(STRIPE_SECRET_KEY);
@@ -19,8 +19,8 @@ interface PaymentData {
 const createStripePaymentLink = async (paymentData: PaymentData) => {
   try {
     const { amount, name, author_id, booking_id } = paymentData;
-    const successUrl = `${FRONT_END_URL}/bookings/success`;
-    const cancelUrl = `${FRONT_END_URL}/bookings/cancel`;
+    const successUrl = `${FRONTEND_URL}/bookings/success`;
+    const cancelUrl = `${FRONTEND_URL}/bookings/cancel`;
     // Create a Stripe Checkout Session
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
