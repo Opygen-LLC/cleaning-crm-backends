@@ -7,6 +7,7 @@ import {
     zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
 import { userValidation } from "./user.validation";
+import { multerUpload } from "../../config/multer";
 
 const router = Router();
 
@@ -19,21 +20,22 @@ router.get(
 
 // Get all users (Super Admin only)
 router.get(
-    "/", 
-    checkAuth(UserRole.SUPER_ADMIN), 
+    "/",
+    checkAuth(UserRole.SUPER_ADMIN),
     userController.getAllUsers
 );
 
 // Manage User routes
 router.get(
-    "/:id", 
-    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF), 
+    "/:id",
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
     userController.getUserById
 );
 
 router.patch(
     "/:id",
     checkAuth(UserRole.ADMIN, UserRole.STAFF, UserRole.SUPER_ADMIN),
+    multerUpload.single("image"),
     zodValidate(userValidation.updateUser, ValidationProperty.BODY),
     userController.updateUser,
 );
