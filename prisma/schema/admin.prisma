@@ -10,29 +10,29 @@ model AdminProfile {
     city    String?
     state   String?
     zipcode String?
-    country String?
+    country Country?
 
     userId String @unique
     user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-    subscription      Subscription[]
-    staff             StaffProfile[]
-    couponUsage       CouponUsage[]
-    payment           Payment[]
-    workLocations     WorkLocation[]
-    clients           Client[]
-    bookings          Booking[]
-    jobs              Job[]
-    quotes            Quote[]
-    estimates         Estimate[]
-    invoices           Invoice[]
-    expenses           Expense[]
-    bookingForms       BookingForm[]
-    estimateForms      EstimateForm[]
+    subscription  Subscription[]
+    staff         StaffProfile[]
+    couponUsage   CouponUsage[]
+    payment       Payment[]
+    workLocations WorkLocation[]
+    clients       Client[]
+    bookings      Booking[]
+    jobs          Job[]
+    quotes        Quote[]
+    estimates     Estimate[]
+    invoices      Invoice[]
+    expenses      Expense[]
+    bookingForms  BookingForm[]
+    estimateForms EstimateForm[]
 
     notificationPrefs NotificationPreference?
     paymentGateway    PaymentGatewayConfig?
-    review Review?
+    review            Review?
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
@@ -42,7 +42,7 @@ model AdminProfile {
 
 model WorkLocation {
     id       String  @id @default(uuid())
-    city     String
+    city     String  @unique
     postcode String?
     notes    String?
 

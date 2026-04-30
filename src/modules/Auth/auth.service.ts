@@ -68,7 +68,7 @@ const login = async ({ email, password }: ILoginUserPayload) => {
 
     if (sessions.length > 3) {
         // Delete oldest sessions, keep the 3 most recent (including the new one)
-        const sessionsToDelete = sessions.slice(0, sessions.length - 3);
+        const sessionsToDelete = sessions.slice(0, sessions.length - 1);
         await prisma.session.deleteMany({
             where: {
                 id: { in: sessionsToDelete.map((s) => s.id) },
