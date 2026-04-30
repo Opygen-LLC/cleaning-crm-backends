@@ -4,9 +4,10 @@ import { UserRole } from "../../generated/prisma/enums";
 import { auth } from "../../lib/auth";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
+import { generateRandomPassword } from "../../lib/utils/generateRandomPassword";
 
 const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
-    const { email, name, password, staffRole, mobileNumber } = payload;
+    const { email, name, staffRole, mobileNumber } = payload;
 
     // 1. Get Admin Profile
     const adminProfile = await prisma.adminProfile.findFirst({
@@ -23,12 +24,14 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
         throw new AppError(status.BAD_REQUEST, "User with this email already exists");
     }
 
+    const password = await generateRandomPassword();
+
     // 2. Create User via better-auth (to handle hashing etc.)
     const signUpResult = await auth.api.signUpEmail({
-        body: { 
-            name, 
-            email, 
-            password: password || "123456",
+        body: {
+            name,
+            email,
+            password: password || "Staff@123",
         },
     });
 
@@ -38,11 +41,12 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
 
     const userId = signUpResult.user.id;
 
-    // 3. Update user role to STAFF explicitly and activate status
+    // 3. Update user needpasswordchange to true so that staff has to change it on first login && set email verified to true since admin is creating the account
     await prisma.user.update({
         where: { id: userId },
-        data: { 
+        data: {
             role: UserRole.STAFF,
+            needPasswordChange: true, // Require password change on first login
             emailVerified: true // Auto verify for staff created by admin
         }
     });
