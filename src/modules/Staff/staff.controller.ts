@@ -3,6 +3,17 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { staffService } from "./staff.service";
 
+const createStaff = catchAsync(async (req, res) => {
+  const result = await staffService.createStaff(req.body, req.user);
+
+  sendResponse(res, {
+    httpStatusCode: status.CREATED,
+    success: true,
+    message: "Staff created successfully",
+    data: result,
+  });
+});
+
 const getMyProfile = catchAsync(async (req, res) => {
   const userId = req.user.id;
   const result = await staffService.getMyProfile(userId);
@@ -70,6 +81,7 @@ const deleteStaff = catchAsync(async (req, res) => {
 });
 
 export const staffController = {
+  createStaff,
   getMyProfile,
   getAllStaff,
   getStaffById,

@@ -10,6 +10,14 @@ import { staffValidation } from "./staff.validation";
 
 const router = Router();
 
+// Create staff member
+router.post(
+    "/",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    zodValidate(staffValidation.createStaff, ValidationProperty.BODY),
+    staffController.createStaff
+);
+
 // Get own profile
 router.get(
     "/me", 

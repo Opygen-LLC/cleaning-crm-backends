@@ -1,6 +1,68 @@
 import { prisma } from "../../lib/prisma/prisma";
-import { StaffFilterOptions, UpdateStaffPayload } from "./staff.interface";
+import { CreateStaffPayload, StaffFilterOptions, UpdateStaffPayload } from "./staff.interface";
 import { UserRole } from "../../generated/prisma/enums";
+import { auth } from "../../lib/auth";
+import AppError from "../../errorHelper/AppError";
+import status from "http-status";
+
+const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
+    const { email, name, password, staffRole, mobileNumber } = payload;
+
+    // 1. Get Admin Profile
+    const adminProfile = await prisma.adminProfile.findFirst({
+        where: { userId: adminUser.id }
+    });
+
+    if (!adminProfile) {
+        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    }
+
+    // Check if user already exists
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+        throw new AppError(status.BAD_REQUEST, "User with this email already exists");
+    }
+
+    // 2. Create User via better-auth (to handle hashing etc.)
+    const signUpResult = await auth.api.signUpEmail({
+        body: { 
+            name, 
+            email, 
+            password: password || "123456",
+        },
+    });
+
+    if (!signUpResult || !signUpResult.user) {
+        throw new AppError(status.INTERNAL_SERVER_ERROR, "Failed to create user for staff");
+    }
+
+    const userId = signUpResult.user.id;
+
+    // 3. Update user role to STAFF explicitly and activate status
+    await prisma.user.update({
+        where: { id: userId },
+        data: { 
+            role: UserRole.STAFF,
+            emailVerified: true // Auto verify for staff created by admin
+        }
+    });
+
+    // 4. Create StaffProfile
+    const staffProfile = await prisma.staffProfile.create({
+        data: {
+            userId,
+            adminId: adminProfile.id,
+            staffRole,
+            mobileNumber,
+        },
+        include: {
+            user: true,
+            admin: true
+        }
+    });
+
+    return staffProfile;
+};
 
 const getMyProfile = async (userId: string) => {
     const staff = await prisma.staffProfile.findUnique({
@@ -82,6 +144,7 @@ const deleteStaff = async (id: string) => {
 };
 
 export const staffService = {
+    createStaff,
     getMyProfile,
     getAllStaff,
     getStaffById,
