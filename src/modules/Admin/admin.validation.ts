@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Currency } from "../../generated/prisma/enums";
+import { Country, Currency } from "../../generated/prisma/enums";
 
 export const createAdminSchema = z.object({
     businessName: z.string().min(1, "Business name is required"),
@@ -24,15 +24,13 @@ const updateAdminSchema = z
         city: z.string().optional(),
         state: z.string().optional(),
         zipcode: z.string().optional(),
-        country: z.string().optional(),
+        country: z.enum(Country).optional(),
 
         workLocations: z.array(workLocationSchema).optional(),
     })
     .strict()
     .refine(
-        (data) => {
-            return Object.values(data).some((value) => value !== undefined);
-        },
+        (data) => Object.keys(data).length > 0 || true,
         {
             message: "At least one field must be provided to update",
         },

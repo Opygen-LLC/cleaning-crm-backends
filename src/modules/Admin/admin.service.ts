@@ -1,3 +1,4 @@
+import { deleteFileFromCloudinary } from "../../config/cloudinary";
 import { prisma } from "../../lib/prisma/prisma";
 import { UpdateAdminPayload } from "./admin.interface";
 
@@ -41,30 +42,32 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
 
         let updatedAdmin = admin;
 
+        const cleanAdminData = Object.fromEntries(
+            Object.entries(adminData).filter(([_, v]) => v !== undefined),
+        );
+
+        if (adminData.businessLogo && admin.businessLogo) {
+            await deleteFileFromCloudinary(admin.businessLogo);
+        }
+
         // ✅ Only update if adminData has at least one field
-        if (Object.keys(adminData).length > 0) {
+        if (Object.keys(cleanAdminData).length > 0) {
             updatedAdmin = await tx.adminProfile.update({
                 where: { userId },
-                data: adminData,
+                data: cleanAdminData,
             });
         }
 
         // ✅ Handle workLocations separately
-        if (workLocations !== undefined) {
-            await tx.workLocation.deleteMany({
-                where: { adminId: admin.id },
+        if (workLocations?.length) {
+            await tx.workLocation.createMany({
+                data: workLocations.map((loc) => ({
+                    city: loc.city,
+                    postcode: loc.postcode,
+                    notes: loc.notes,
+                    adminId: admin.id,
+                })),
             });
-
-            if (workLocations.length > 0) {
-                await tx.workLocation.createMany({
-                    data: workLocations.map((loc) => ({
-                        city: loc.city,
-                        postcode: loc.postcode,
-                        notes: loc.notes,
-                        adminId: admin.id,
-                    })),
-                });
-            }
         }
 
         // ✅ Return final state
