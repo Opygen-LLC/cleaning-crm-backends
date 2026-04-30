@@ -60,14 +60,34 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
 
         // ✅ Handle workLocations separately
         if (workLocations?.length) {
-            await tx.workLocation.createMany({
-                data: workLocations.map((loc) => ({
-                    city: loc.city,
-                    postcode: loc.postcode,
-                    notes: loc.notes,
+            const existingLocations = await tx.workLocation.findMany({
+                where: {
                     adminId: admin.id,
-                })),
+                    city: { in: workLocations.map((loc) => loc.city) },
+                },
             });
+
+            // Get existing city names
+            const existingCities = new Set(
+                existingLocations.map((loc) => loc.city),
+            );
+
+            // Filter only new cities
+            const newLocations = workLocations.filter(
+                (loc) => !existingCities.has(loc.city),
+            );
+
+            // Create only non-existing ones
+            if (newLocations.length) {
+                await tx.workLocation.createMany({
+                    data: newLocations.map((loc) => ({
+                        city: loc.city,
+                        postcode: loc.postcode,
+                        notes: loc.notes,
+                        adminId: admin.id,
+                    })),
+                });
+            }
         }
 
         // ✅ Return final state

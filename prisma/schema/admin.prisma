@@ -42,7 +42,7 @@ model AdminProfile {
 
 model WorkLocation {
     id       String  @id @default(uuid())
-    city     String  @unique
+    city     String
     postcode String?
     notes    String?
 
