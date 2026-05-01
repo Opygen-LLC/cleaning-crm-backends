@@ -97,7 +97,7 @@ const getAllStaff = async (filters: StaffFilterOptions, userReq: any) => {
     if (staffRole) {
         andConditions.push({ staffRole });
     }
-    
+
     // If Admin is requesting, restrict to their own adminId
     if (userReq.role === UserRole.ADMIN) {
         const adminProfile = await prisma.adminProfile.findUnique({ where: { userId: userReq.id } });
