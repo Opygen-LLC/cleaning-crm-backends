@@ -17,12 +17,14 @@ const updateAdminSchema = z
     .object({
         businessName: z.string().optional(),
         brandColor: z.string().optional(),
+        businessType: z.string().optional(),
+        businessEmail: z.string().email().optional(),
+        website: z.string().url().optional(),
         currency: z.enum(Currency).optional(),
         mobileNumber: z.string().optional(),
 
         address: z.string().optional(),
         city: z.string().optional(),
-        state: z.string().optional(),
         zipcode: z.string().optional(),
         country: z.enum(Country).optional(),
 

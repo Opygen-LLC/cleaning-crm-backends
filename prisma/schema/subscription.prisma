@@ -1,7 +1,9 @@
 model Plan {
-    id       String                   @id @default(uuid())
-    price    Decimal                  @db.Decimal(10, 2)
-    interval SubscriptionPlanInterval
+    id              String                   @id @default(uuid())
+    price           Decimal                  @db.Decimal(10, 2)
+    discount        Decimal                  @default(0.00) @db.Decimal(10, 2)
+    discountEndDate DateTime?
+    interval        SubscriptionPlanInterval
 
     maxStaff            Int?
     maxClient           Int?
@@ -16,7 +18,7 @@ model Plan {
 
 model SubscriptionPlan {
     id          String           @id @default(uuid())
-    name        SubscriptionName @unique @default(STARTER)
+    name        SubscriptionName @unique @default(GROWTH)
     description String?
     currency    Currency         @default(USD)
 
@@ -30,7 +32,7 @@ model Subscription {
     status SubscriptionStatus @default(ACTIVE)
 
     isTrial     Boolean   @default(true)
-    trialEndsAt DateTime? //? 15 days from now
+    trialEndsAt DateTime? //? 7 days from now
 
     currentPeriodStart DateTime?
     currentPeriodEnd   DateTime?
