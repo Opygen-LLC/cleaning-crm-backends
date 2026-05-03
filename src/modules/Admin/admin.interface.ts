@@ -3,13 +3,15 @@ import { Currency } from "../../generated/prisma/enums";
 export interface UpdateAdminPayload {
     businessName?: string;
 	businessLogo?: string;
+    businessType?: string;
+    businessEmail?: string;
+    website?: string;
     brandColor?: string;
     currency?: Currency;
     mobileNumber?: string;
 
     address?: string;
     city?: string;
-    state?: string;
     zipcode?: string;
     country?: string;
 
@@ -18,4 +20,10 @@ export interface UpdateAdminPayload {
         postcode?: string;
         notes?: string;
     }[];
+}
+
+export interface UpdateWorkLocationPayload {
+    city?: string;
+    postcode?: string;
+    notes?: string;
 }

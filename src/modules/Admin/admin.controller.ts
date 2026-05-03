@@ -21,6 +21,41 @@ const updateAdmin = catchAsync(async (req, res) => {
     });
 });
 
+const updateWorkLocation = catchAsync(async (req, res) => {
+    const userId = req.user.id;
+    const locationId = req.params.id;
+    const payload = req.body;
+
+    const result = await adminService.updateWorkLocation(
+        userId,
+        locationId as string,
+        payload
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Work location updated successfully",
+        data: result,
+    });
+});
+
+const deleteWorkLocation = catchAsync(async (req, res) => {
+    const userId = req.user.id;
+    const locationId = req.params.id;
+
+    const result = await adminService.deleteWorkLocation(userId, locationId as string);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Work location deleted successfully",
+        data: result,
+    });
+});
+
 export const adminController = {
     updateAdmin,
+    updateWorkLocation,
+    deleteWorkLocation,
 };

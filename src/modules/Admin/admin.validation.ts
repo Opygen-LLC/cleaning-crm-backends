@@ -17,12 +17,14 @@ const updateAdminSchema = z
     .object({
         businessName: z.string().optional(),
         brandColor: z.string().optional(),
+        businessType: z.string().optional(),
+        businessEmail: z.string().email().optional(),
+        website: z.string().url().optional(),
         currency: z.enum(Currency).optional(),
         mobileNumber: z.string().optional(),
 
         address: z.string().optional(),
         city: z.string().optional(),
-        state: z.string().optional(),
         zipcode: z.string().optional(),
         country: z.enum(Country).optional(),
 
@@ -36,7 +38,16 @@ const updateAdminSchema = z
         },
     );
 
+const updateWorkLocationSchema = z
+    .object({
+        city: z.string().min(1, "City is required").optional(),
+        postcode: z.string().optional(),
+        notes: z.string().optional(),
+    })
+    .strict();
+
 export const adminValidation = {
 	createAdmin: createAdminSchema,
 	updateAdmin: updateAdminSchema,
+    updateWorkLocation: updateWorkLocationSchema,
 };
