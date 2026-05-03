@@ -34,8 +34,15 @@ app.use(
         ],
         credentials: true,
         methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-        // allowedHeaders: ["Content-Type", "Authorization"],
-        allowedHeaders: ["*"], //? 🔥 allow all headers
+        allowedHeaders: [
+            "Content-Type",
+            "Authorization",
+            "Cookie",
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+        ],
+        // allowedHeaders: ["*"], //? 🔥 allow all headers
     }),
 );
 
