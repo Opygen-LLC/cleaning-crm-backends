@@ -19,6 +19,7 @@ app.use(express.json());
 app.use(express.static("./public"));
 app.use(cookieParser());
 app.use(express.json());
+
 // Enable CORS for all routes
 app.use(
     cors({
@@ -27,7 +28,7 @@ app.use(
             BETTER_AUTH_URL,
             "http://localhost:3000",
             "http://localhost:5000",
-            "https://cleaning-crm-clients.vercel.app"
+            "https://cleaning-crm-clients.vercel.app",
         ],
         credentials: true,
         methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
