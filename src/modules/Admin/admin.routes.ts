@@ -19,4 +19,17 @@ router.patch(
     adminController.updateAdmin,
 );
 
+router.patch(
+    "/work-location/:id",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(adminValidation.updateWorkLocation, ValidationProperty.BODY),
+    adminController.updateWorkLocation,
+);
+
+router.delete(
+    "/work-location/:id",
+    checkAuth(UserRole.ADMIN),
+    adminController.deleteWorkLocation,
+);
+
 export const adminRoutes = router;

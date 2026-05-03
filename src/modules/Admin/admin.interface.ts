@@ -21,3 +21,9 @@ export interface UpdateAdminPayload {
         notes?: string;
     }[];
 }
+
+export interface UpdateWorkLocationPayload {
+    city?: string;
+    postcode?: string;
+    notes?: string;
+}

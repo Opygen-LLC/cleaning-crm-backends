@@ -38,7 +38,16 @@ const updateAdminSchema = z
         },
     );
 
+const updateWorkLocationSchema = z
+    .object({
+        city: z.string().min(1, "City is required").optional(),
+        postcode: z.string().optional(),
+        notes: z.string().optional(),
+    })
+    .strict();
+
 export const adminValidation = {
 	createAdmin: createAdminSchema,
 	updateAdmin: updateAdminSchema,
+    updateWorkLocation: updateWorkLocationSchema,
 };

@@ -1,6 +1,6 @@
 import { deleteFileFromCloudinary } from "../../config/cloudinary";
 import { prisma } from "../../lib/prisma/prisma";
-import { UpdateAdminPayload } from "./admin.interface";
+import { UpdateAdminPayload, UpdateWorkLocationPayload } from "./admin.interface";
 
 const createAdmin = async (payload: {
     userId: string;
@@ -100,7 +100,68 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
     });
 };
 
+const updateWorkLocation = async (
+    userId: string,
+    locationId: string,
+    payload: UpdateWorkLocationPayload
+) => {
+    return await prisma.$transaction(async (tx) => {
+        const admin = await tx.adminProfile.findUnique({
+            where: { userId },
+        });
+
+        if (!admin) {
+            throw new Error("Admin profile not found");
+        }
+
+        const workLocation = await tx.workLocation.findFirst({
+            where: {
+                id: locationId,
+                adminId: admin.id,
+            },
+        });
+
+        if (!workLocation) {
+            throw new Error("Work location not found");
+        }
+
+        return await tx.workLocation.update({
+            where: { id: locationId },
+            data: payload,
+        });
+    });
+};
+
+const deleteWorkLocation = async (userId: string, locationId: string) => {
+    return await prisma.$transaction(async (tx) => {
+        const admin = await tx.adminProfile.findUnique({
+            where: { userId },
+        });
+
+        if (!admin) {
+            throw new Error("Admin profile not found");
+        }
+
+        const workLocation = await tx.workLocation.findFirst({
+            where: {
+                id: locationId,
+                adminId: admin.id,
+            },
+        });
+
+        if (!workLocation) {
+            throw new Error("Work location not found");
+        }
+
+        return await tx.workLocation.delete({
+            where: { id: locationId },
+        });
+    });
+};
+
 export const adminService = {
     createAdmin,
     updateAdmin,
+    updateWorkLocation,
+    deleteWorkLocation,
 };
