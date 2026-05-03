@@ -60,6 +60,10 @@ router.post(
 router.post(
     "/change-password",
     checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    zodValidate(
+        authValidator.changePasswordValidation,
+        ValidationProperty.BODY,
+    ),
     authController.changePassword,
 );
 
