@@ -1,14 +1,13 @@
 import express, { Request, Response } from "express";
 import routes from "./routes/index";
 // TODO: for development parpuse
-import logRequestResponse from "./middlewares/logger.middleware";
 import compression from "compression";
 import cors from "cors";
-import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 import { globalErrorHandler } from "./middlewares/globalErrorHandler";
 import cookieParser from "cookie-parser";
 import { notFound } from "./middlewares/notFound";
 import path from "path";
+import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 
 const app = express();
 
@@ -19,6 +18,9 @@ app.use(express.json());
 app.use(express.static("./public"));
 app.use(cookieParser());
 app.use(express.json());
+
+// parse urlencoded request body
+app.use(express.urlencoded({ extended: true }));
 
 // Enable CORS for all routes
 app.use(
@@ -36,9 +38,6 @@ app.use(
         allowedHeaders: ["*"], //? 🔥 allow all headers
     }),
 );
-
-// parse urlencoded request body
-app.use(express.urlencoded({ extended: true }));
 
 // compression the all data
 app.use(compression());
