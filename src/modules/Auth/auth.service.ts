@@ -1,7 +1,7 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import { prisma } from "../../lib/prisma/prisma";
-import { IRegisterUserPayload, ILoginUserPayload } from "./auth.interface";
+import { IRegisterUserPayload, ILoginUserPayload, IChangePasswordPayload } from "./auth.interface";
 import { auth } from "../../lib/auth";
 import { tokenUtils } from "../../lib/utils/token";
 import { IRequestUser } from "../../types/requestUser.interface";
@@ -331,6 +331,65 @@ const resetPassword = async (
     });
 };
 
+const changePassword = async (
+    payload: IChangePasswordPayload,
+    sessionToken: string,
+) => {
+    const session = await auth.api.getSession({
+        headers: new Headers({
+            Authorization: `Bearer ${sessionToken}`,
+        }),
+    });
+
+    if (!session) {
+        throw new AppError(status.UNAUTHORIZED, "Invalid session token");
+    }
+
+    const isGoogleAccount = await prisma.account.count({
+        where: {
+            userId: session.user.id,
+            providerId: "google",
+        },
+    });
+
+    if (isGoogleAccount > 0) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "Password cannot be changed for Google accounts.",
+        );
+    }
+
+    const { currentPassword, newPassword } = payload;
+
+    const result = await auth.api.changePassword({
+        body: {
+            currentPassword,
+            newPassword,
+            revokeOtherSessions: true,
+        },
+        headers: new Headers({
+            Authorization: `Bearer ${sessionToken}`,
+        }),
+    });
+
+    const tokenPayload = {
+        userId: result.user.id,
+        role: result.user.role,
+        name: result.user.name,
+        email: result.user.email,
+        emailVerified: result.user.emailVerified,
+    };
+
+    const accessToken = tokenUtils.getAccessToken(tokenPayload);
+    const refreshToken = tokenUtils.getRefreshToken(tokenPayload);
+
+    return {
+        ...result,
+        accessToken,
+        refreshToken,
+    };
+};
+
 const logout = async (sessionToken: string) => {
     const result = await auth.api.signOut({
         headers: new Headers({
@@ -350,6 +409,7 @@ const userService = {
     resendOtp,
     forgotPassword,
     resetPassword,
+    changePassword,
     logout,
 };
 

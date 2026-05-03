@@ -1,7 +1,11 @@
 import { v2 as cloudinary, UploadApiResponse } from "cloudinary";
 import AppError from "../errorHelper/AppError";
 import status from "http-status";
-import { CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET, CLOUDINARY_CLOUD_NAME } from "./ENV";
+import {
+    CLOUDINARY_API_KEY,
+    CLOUDINARY_API_SECRET,
+    CLOUDINARY_CLOUD_NAME,
+} from "./ENV";
 
 cloudinary.config({
     cloud_name: CLOUDINARY_CLOUD_NAME,
@@ -39,7 +43,6 @@ export const uploadFileToCloudinary = async (
         fileNameWithoutExtension;
 
     const folder = extension === "pdf" ? "pdfs" : "images";
-
 
     return new Promise((resolve, reject) => {
         cloudinary.uploader

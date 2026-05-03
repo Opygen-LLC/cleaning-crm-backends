@@ -58,6 +58,12 @@ router.post(
 );
 
 router.post(
+    "/change-password",
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    authController.changePassword,
+);
+
+router.post(
     "/logout",
     checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
     authController.logout,
