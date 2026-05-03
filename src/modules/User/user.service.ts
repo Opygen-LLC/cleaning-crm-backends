@@ -1,3 +1,4 @@
+import { deleteFileFromCloudinary } from "../../config/cloudinary";
 import { prisma } from "../../lib/prisma/prisma";
 import { UpdateUserPayload } from "./user.interface";
 
@@ -7,7 +8,7 @@ const getMe = async (userId: string) => {
         include: {
             admin: true,
             staff: true,
-        }
+        },
     });
     if (!user) {
         throw new Error("User not found");
@@ -20,7 +21,7 @@ const getAllUsers = async () => {
         include: {
             admin: true,
             staff: true,
-        }
+        },
     });
 };
 
@@ -30,7 +31,7 @@ const getUserById = async (id: string) => {
         include: {
             admin: true,
             staff: true,
-        }
+        },
     });
     if (!user) {
         throw new Error("User not found");
@@ -42,6 +43,10 @@ const updateUser = async (id: string, payload: UpdateUserPayload) => {
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) {
         throw new Error("User not found");
+    }
+
+    if (user.image && payload.image) {
+        await deleteFileFromCloudinary(user.image);
     }
 
     return await prisma.user.update({

@@ -11,12 +11,31 @@ import { multerUpload } from "../../config/multer";
 
 const router = Router();
 
+router.get(
+    "/profile",
+    checkAuth(UserRole.ADMIN),
+    adminController.getAdmin,
+);
+
 router.patch(
     "/profile",
     checkAuth(UserRole.ADMIN),
     multerUpload.single("businessLogo"),
     zodValidate(adminValidation.updateAdmin, ValidationProperty.BODY),
     adminController.updateAdmin,
+);
+
+router.patch(
+    "/work-location/:id",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(adminValidation.updateWorkLocation, ValidationProperty.BODY),
+    adminController.updateWorkLocation,
+);
+
+router.delete(
+    "/work-location/:id",
+    checkAuth(UserRole.ADMIN),
+    adminController.deleteWorkLocation,
 );
 
 export const adminRoutes = router;

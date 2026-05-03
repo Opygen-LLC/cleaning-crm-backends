@@ -43,9 +43,10 @@ export const auth = betterAuth({
                 required: true,
                 defaultValue: AccountStatus.PENDING,
             },
-            mobileNumber: {
-                type: "string",
-                required: false,
+            needPasswordChange: {
+                type: "boolean",
+                required: true,
+                defaultValue: false,
             },
         },
     },

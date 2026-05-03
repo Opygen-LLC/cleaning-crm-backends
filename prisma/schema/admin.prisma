@@ -2,13 +2,15 @@ model AdminProfile {
     id           String   @id @default(uuid())
     businessName String
     businessLogo String?
+    businessType String?
+    businessEmail String?
+    website      String?
     brandColor   String?  @default("#000000")
     currency     Currency @default(USD)
     mobileNumber String?
 
     address String?
     city    String?
-    state   String?
     zipcode String?
     country Country?
 
@@ -42,7 +44,7 @@ model AdminProfile {
 
 model WorkLocation {
     id       String  @id @default(uuid())
-    city     String  @unique
+    city     String
     postcode String?
     notes    String?
 

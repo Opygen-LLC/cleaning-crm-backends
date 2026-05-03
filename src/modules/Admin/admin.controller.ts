@@ -3,6 +3,19 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { adminService } from "./admin.service";
 
+const getAdmin = catchAsync(async (req, res) => {
+    const userId = req.user.id;
+
+    const result = await adminService.getAdmin(userId);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Admin profile fetched successfully",
+        data: result,
+    });
+});
+
 const updateAdmin = catchAsync(async (req, res) => {
     const userId = req.user.id;
     const payload = req.body;
@@ -21,6 +34,42 @@ const updateAdmin = catchAsync(async (req, res) => {
     });
 });
 
+const updateWorkLocation = catchAsync(async (req, res) => {
+    const userId = req.user.id;
+    const locationId = req.params.id;
+    const payload = req.body;
+
+    const result = await adminService.updateWorkLocation(
+        userId,
+        locationId as string,
+        payload
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Work location updated successfully",
+        data: result,
+    });
+});
+
+const deleteWorkLocation = catchAsync(async (req, res) => {
+    const userId = req.user.id;
+    const locationId = req.params.id;
+
+    const result = await adminService.deleteWorkLocation(userId, locationId as string);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Work location deleted successfully",
+        data: result,
+    });
+});
+
 export const adminController = {
+    getAdmin,
     updateAdmin,
+    updateWorkLocation,
+    deleteWorkLocation,
 };
