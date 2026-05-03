@@ -3,6 +3,19 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { adminService } from "./admin.service";
 
+const getAdmin = catchAsync(async (req, res) => {
+    const userId = req.user.id;
+
+    const result = await adminService.getAdmin(userId);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Admin profile fetched successfully",
+        data: result,
+    });
+});
+
 const updateAdmin = catchAsync(async (req, res) => {
     const userId = req.user.id;
     const payload = req.body;
@@ -55,6 +68,7 @@ const deleteWorkLocation = catchAsync(async (req, res) => {
 });
 
 export const adminController = {
+    getAdmin,
     updateAdmin,
     updateWorkLocation,
     deleteWorkLocation,

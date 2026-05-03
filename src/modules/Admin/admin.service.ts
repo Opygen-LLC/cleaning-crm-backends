@@ -28,6 +28,21 @@ const createAdmin = async (payload: {
     return admin;
 };
 
+const getAdmin = async (userId: string) => {
+    const admin = await prisma.adminProfile.findUnique({
+        where: { userId },
+        include: {
+            workLocations: true,
+        },
+    });
+
+    if (!admin) {
+        throw new Error("Admin profile not found");
+    }
+
+    return admin;
+};
+
 const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
     const { workLocations, ...adminData } = payload;
 
@@ -161,6 +176,7 @@ const deleteWorkLocation = async (userId: string, locationId: string) => {
 
 export const adminService = {
     createAdmin,
+    getAdmin,
     updateAdmin,
     updateWorkLocation,
     deleteWorkLocation,
