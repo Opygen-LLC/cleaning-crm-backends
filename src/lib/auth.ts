@@ -7,6 +7,7 @@ import { bearer, emailOTP } from "better-auth/plugins";
 import chalk from "chalk";
 import { sendEmail } from "./email";
 import { waitUntil } from "@vercel/functions";
+import { sendEmailSafely } from "./utils/sendEmailSafely";
 
 export const auth = betterAuth({
     baseURL: BETTER_AUTH_URL,
@@ -57,19 +58,6 @@ export const auth = betterAuth({
             expiresIn: 5 * 60, // 5 minutes in seconds
             otpLength: 6,
             async sendVerificationOTP({ email, otp, type }) {
-                const sendEmailSafely = async (
-                    options: Parameters<typeof sendEmail>[0],
-                ) => {
-                    return await sendEmail(options).catch((err) => {
-                        console.error(
-                            chalk.red(
-                                `[EMAIL ERROR] Failed to send "${options.subject}" to ${options.to}`,
-                            ),
-                            err,
-                        );
-                    });
-                };
-
                 if (type === "email-verification") {
                     const user = await prisma.user.findUnique({
                         where: {
@@ -77,10 +65,10 @@ export const auth = betterAuth({
                         },
                     });
 
-                    if (user && user.role === UserRole.SUPER_ADMIN) {
+                    if (user && (user.role === UserRole.SUPER_ADMIN || user.role === UserRole.STAFF)) {
                         console.log(
                             chalk.green(
-                                `User with email ${email} is a admin. Skipping sending verification OTP.`,
+                                `Skipping sending verification OTP.`,
                             ),
                         );
                         return;

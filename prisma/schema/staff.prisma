@@ -1,0 +1,46 @@
+model StaffProfile {
+    id           String  @id @default(uuid())
+    staffRole    String
+    mobileNumber String
+    address      String?
+
+    hourlyRate Float?
+    startDate  DateTime
+    specialty  String[]  @default([])
+
+    emergencyName         String?
+    emergencyMobileNumber String?
+    adminNote             String?
+
+    userId String @unique
+    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    adminId String
+    admin   AdminProfile @relation(fields: [adminId], references: [id])
+
+    staffAvailability  StaffAvailability[]
+    jobAssignments     JobStaffAssignment[]
+    bookingAssignments BookingStaffAssignment[]
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([adminId, staffRole])
+}
+
+model StaffAvailability {
+    id String @id @default(uuid())
+
+    day       WeekDay
+    startTime String? // "09:00"
+    endTime   String? // "17:00"
+    isActive  Boolean @default(true)
+
+    staffId String
+    staff   StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([staffId, day]) // one entry per day per staff
+}

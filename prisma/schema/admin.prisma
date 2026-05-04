@@ -1,13 +1,13 @@
 model AdminProfile {
-    id           String   @id @default(uuid())
-    businessName String
-    businessLogo String?
-    businessType String?
+    id            String   @id @default(uuid())
+    businessName  String
+    businessLogo  String?
+    businessType  String?
     businessEmail String?
-    website      String?
-    brandColor   String?  @default("#000000")
-    currency     Currency @default(USD)
-    mobileNumber String?
+    website       String?
+    brandColor    String?  @default("#000000")
+    currency      Currency @default(USD)
+    mobileNumber  String?
 
     address String?
     city    String?
@@ -54,26 +54,6 @@ model WorkLocation {
     createdAt DateTime @default(now())
 
     @@index([adminId])
-}
-
-model StaffProfile {
-    id           String  @id @default(uuid())
-    staffRole    String
-    mobileNumber String?
-
-    userId String @unique
-    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-    adminId String
-    admin   AdminProfile @relation(fields: [adminId], references: [id])
-
-    jobAssignments     JobStaffAssignment[]
-    bookingAssignments BookingStaffAssignment[]
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    @@index([adminId, staffRole])
 }
 
 model PaymentGatewayConfig {

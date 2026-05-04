@@ -13,14 +13,14 @@ const router = Router();
 // Create staff member
 router.post(
     "/",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checkAuth(UserRole.ADMIN),
     zodValidate(staffValidation.createStaff, ValidationProperty.BODY),
     staffController.createStaff
 );
 
 // Get own profile
 router.get(
-    "/me", 
+    "/me",
     checkAuth(UserRole.STAFF, UserRole.ADMIN, UserRole.SUPER_ADMIN), 
     staffController.getMyProfile
 );

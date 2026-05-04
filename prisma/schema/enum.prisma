@@ -285,7 +285,6 @@ enum Country {
     ZIMBABWE
 }
 
-
 //? ─── Client ──────────────────────────────────────────────────────────────────
 enum ClientStatus {
     ACTIVE
@@ -403,4 +402,15 @@ enum NotificationChannel {
     EMAIL
     APP
     SMS
+}
+
+//? ─── Staff ────────────────────────────────────────────────────────────────
+enum WeekDay {
+    SUNDAY
+    MONDAY
+    TUESDAY
+    WEDNESDAY
+    THURSDAY
+    FRIDAY
+    SATURDAY
 }

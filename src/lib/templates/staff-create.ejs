@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Staff Account Created — Opygen CleanCRM</title>
+        <style>
+            .copy-btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                background: #ffffff;
+                border: 1.5px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: 700;
+                color: #0a0a0a;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+                cursor: pointer;
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
+                    Arial, sans-serif;
+                transition:
+                    background 0.15s,
+                    border-color 0.15s,
+                    color 0.15s;
+                white-space: nowrap;
+                line-height: 1;
+            }
+            .copy-btn:hover {
+                background: #f0f0f0;
+                border-color: #cccccc;
+            }
+            .copy-btn.copied {
+                background: #e8f5f0;
+                border-color: #3ecfb2;
+                color: #1a7a5e;
+            }
+        </style>
+    </head>
+    <body
+        style="
+            margin: 0;
+            padding: 0;
+            background: #f0f2f5;
+            font-family:
+                -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;,
+                Helvetica, Arial, sans-serif;
+        "
+    >
+        <table
+            width="100%"
+            cellpadding="0"
+            cellspacing="0"
+            role="presentation"
+            style="padding: 48px 16px"
+        >
+            <tr>
+                <td align="center">
+                    <table
+                        width="480"
+                        cellpadding="0"
+                        cellspacing="0"
+                        role="presentation"
+                        style="
+                            background: #ffffff;
+                            border-radius: 20px;
+                            overflow: hidden;
+                            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.07);
+                        "
+                    >
+                        <!-- ── Top accent bar ── -->
+                        <tr>
+                            <td
+                                style="
+                                    background: #0a0a0a;
+                                    height: 4px;
+                                    font-size: 0;
+                                    line-height: 0;
+                                "
+                            >
+                                &nbsp;
+                            </td>
+                        </tr>
+
+                        <!-- ── Header ── -->
+                        <tr>
+                            <td align="center" style="padding: 36px 40px 0">
+                                <table
+                                    cellpadding="0"
+                                    cellspacing="0"
+                                    role="presentation"
+                                >
+                                    <tr>
+                                        <td
+                                            align="center"
+                                            style="padding-bottom: 24px"
+                                        >
+                                            <table
+                                                cellpadding="0"
+                                                cellspacing="0"
+                                                role="presentation"
+                                            >
+                                                <tr>
+                                                    <td
+                                                        style="
+                                                            border-radius: 14px;
+                                                            padding: 10px 12px;
+                                                            vertical-align: middle;
+                                                        "
+                                                    >
+                                                        <svg
+                                                            viewBox="0 0 64 64"
+                                                            width="38"
+                                                            height="38"
+                                                            fill="none"
+                                                            xmlns="http://www.w3.org/2000/svg"
+                                                        >
+                                                            <path
+                                                                d="M32 6 A26 26 0 1 1 53.5 45.5"
+                                                                stroke="#3ECFB2"
+                                                                stroke-width="5"
+                                                                stroke-linecap="round"
+                                                                fill="none"
+                                                            ></path>
+                                                            <path
+                                                                d="M32 58 A26 26 0 1 1 10.5 18.5"
+                                                                stroke="#000000"
+                                                                stroke-width="5"
+                                                                stroke-linecap="round"
+                                                                fill="none"
+                                                                opacity="0.75"
+                                                            ></path>
+                                                            <circle
+                                                                cx="32"
+                                                                cy="32"
+                                                                r="4"
+                                                                fill="#3ECFB2"
+                                                            ></circle>
+                                                            <circle
+                                                                cx="53.5"
+                                                                cy="45.5"
+                                                                r="2.5"
+                                                                fill="#3ECFB2"
+                                                            ></circle>
+                                                            <circle
+                                                                cx="10.5"
+                                                                cy="18.5"
+                                                                r="2.5"
+                                                                fill="#ffffff"
+                                                                opacity="0.3"
+                                                            ></circle>
+                                                        </svg>
+                                                    </td>
+                                                    <td
+                                                        style="
+                                                            padding-left: 10px;
+                                                            vertical-align: middle;
+                                                        "
+                                                    >
+                                                        <span
+                                                            style="
+                                                                font-size: 20px;
+                                                                font-weight: 700;
+                                                                color: #0a0a0a;
+                                                                letter-spacing: -0.5px;
+                                                            "
+                                                            >Opygen</span
+                                                        >
+                                                        <span
+                                                            style="
+                                                                display: block;
+                                                                font-size: 10px;
+                                                                font-weight: 600;
+                                                                color: #1a7a5e;
+                                                                letter-spacing: 0.12em;
+                                                                text-transform: uppercase;
+                                                                margin-top: 2px;
+                                                            "
+                                                            >Cleaning CRM</span
+                                                        >
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                        </td>
+                                    </tr>
+                                </table>
+                                <!-- Divider -->
+                                <table
+                                    width="100%"
+                                    cellpadding="0"
+                                    cellspacing="0"
+                                    role="presentation"
+                                >
+                                    <tr>
+                                        <td
+                                            style="
+                                                border-top: 1px solid #f0f0f0;
+                                                font-size: 0;
+                                            "
+                                        >
+                                            &nbsp;
+                                        </td>
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+
+                        <!-- ── Body ── -->
+                        <tr>
+                            <td style="padding: 32px 40px 0">
+                                <!-- Welcome badge -->
+                                <table
+                                    cellpadding="0"
+                                    cellspacing="0"
+                                    role="presentation"
+                                    style="margin-bottom: 20px"
+                                >
+                                    <tr>
+                                        <td
+                                            style="
+                                                background: #e8f5f0;
+                                                border-radius: 100px;
+                                                padding: 6px 14px;
+                                            "
+                                        >
+                                            <span
+                                                style="
+                                                    font-size: 11px;
+                                                    font-weight: 700;
+                                                    color: #1a7a5e;
+                                                    letter-spacing: 0.1em;
+                                                    text-transform: uppercase;
+                                                "
+                                                >✦ Staff Account Created</span
+                                            >
+                                        </td>
+                                    </tr>
+                                </table>
+
+                                <!-- Greeting -->
+                                <p
+                                    style="
+                                        margin: 0 0 6px;
+                                        font-size: 22px;
+                                        font-weight: 700;
+                                        color: #0a0a0a;
+                                        letter-spacing: -0.4px;
+                                    "
+                                >
+                                    Welcome to the team, <%= name %>!
+                                </p>
+                                <p
+                                    style="
+                                        margin: 0 0 28px;
+                                        font-size: 15px;
+                                        color: #6b6b6b;
+                                        line-height: 1.6;
+                                    "
+                                >
+                                    Your staff account has been created for
+                                    <strong
+                                        style="color: #0a0a0a; font-weight: 600"
+                                        >Opygen CleanCRM</strong
+                                    >. Use the credentials below to sign in for
+                                    the first time.
+                                </p>
+
+                                <!-- Credentials box -->
+                                <table
+                                    width="100%"
+                                    cellpadding="0"
+                                    cellspacing="0"
+                                    role="presentation"
+                                    style="
+                                        background: #f6f6f6;
+                                        border: 1.5px solid #e8e8e8;
+                                        border-radius: 14px;
+                                        margin-bottom: 28px;
+                                        overflow: hidden;
+                                    "
+                                >
+                                    <!-- Email row -->
+                                    <tr>
+                                        <td
+                                            class="credential-row"
+                                            style="padding: 18px 20px 14px 24px"
+                                        >
+                                            <table
+                                                width="100%"
+                                                cellpadding="0"
+                                                cellspacing="0"
+                                                role="presentation"
+                                            >
+                                                <tr>
+                                                    <td
+                                                        style="
+                                                            vertical-align: middle;
+                                                        "
+                                                    >
+                                                        <p
+                                                            style="
+                                                                margin: 0 0 4px;
+                                                                font-size: 10px;
+                                                                font-weight: 700;
+                                                                color: #aaaaaa;
+                                                                text-transform: uppercase;
+                                                                letter-spacing: 0.12em;
+                                                            "
+                                                        >
+                                                            Email Address
+                                                        </p>
+                                                        <p
+                                                            style="
+                                                                margin: 0;
+                                                                font-size: 15px;
+                                                                font-weight: 600;
+                                                                color: #0a0a0a;
+                                                                letter-spacing: -0.1px;
+                                                            "
+                                                        >
+                                                            <%= email %>
+                                                        </p>
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                        </td>
+                                    </tr>
+
+                                    <!-- Separator -->
+                                    <tr>
+                                        <td
+                                            style="
+                                                border-top: 1px solid #e8e8e8;
+                                                font-size: 0;
+                                                line-height: 0;
+                                            "
+                                        >
+                                            &nbsp;
+                                        </td>
+                                    </tr>
+
+                                    <!-- Password row -->
+                                    <tr>
+                                        <td
+                                            class="credential-row"
+                                            style="padding: 14px 20px 18px 24px"
+                                        >
+                                            <table
+                                                width="100%"
+                                                cellpadding="0"
+                                                cellspacing="0"
+                                                role="presentation"
+                                            >
+                                                <tr>
+                                                    <td
+                                                        style="
+                                                            vertical-align: middle;
+                                                        "
+                                                    >
+                                                        <p
+                                                            style="
+                                                                margin: 0 0 4px;
+                                                                font-size: 10px;
+                                                                font-weight: 700;
+                                                                color: #aaaaaa;
+                                                                text-transform: uppercase;
+                                                                letter-spacing: 0.12em;
+                                                            "
+                                                        >
+                                                            Temporary Password
+                                                        </p>
+                                                        <p
+                                                            style="
+                                                                margin: 0;
+                                                                font-size: 18px;
+                                                                font-weight: 800;
+                                                                color: #0a0a0a;
+                                                                letter-spacing: 3px;
+                                                                font-family:
+                                                                    &quot;Courier New&quot;,
+                                                                    Courier,
+                                                                    monospace;
+                                                            "
+                                                        >
+                                                            <%= password %>
+                                                        </p>
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                        </td>
+                                    </tr>
+                                </table>
+
+                                <!-- CTA Button -->
+                                <table
+                                    width="100%"
+                                    cellpadding="0"
+                                    cellspacing="0"
+                                    role="presentation"
+                                    style="margin-bottom: 28px"
+                                >
+                                    <tr>
+                                        <td align="center">
+                                            <a
+                                                href="<%= loginUrl %>?email=<%= encodeURIComponent(email) %>&password=<%= encodeURIComponent(password) %>"
+                                                target="_blank"
+                                                style="
+                                                    display: inline-block;
+                                                    background: #0a0a0a;
+                                                    color: #ffffff;
+                                                    text-decoration: none;
+                                                    font-size: 14px;
+                                                    font-weight: 700;
+                                                    letter-spacing: 0.02em;
+                                                    padding: 15px 40px;
+                                                    border-radius: 100px;
+                                                "
+                                                >Sign In to Your Account →</a
+                                            >
+                                        </td>
+                                    </tr>
+                                </table>
+
+                                <!-- Security note -->
+                                <table
+                                    width="100%"
+                                    cellpadding="0"
+                                    cellspacing="0"
+                                    role="presentation"
+                                    style="
+                                        background: #fffbeb;
+                                        border: 1.5px solid #fde68a;
+                                        border-radius: 12px;
+                                        margin-bottom: 32px;
+                                    "
+                                >
+                                    <tr>
+                                        <td style="padding: 16px 20px">
+                                            <table
+                                                cellpadding="0"
+                                                cellspacing="0"
+                                                role="presentation"
+                                                width="100%"
+                                            >
+                                                <tr>
+                                                    <td
+                                                        style="
+                                                            vertical-align: top;
+                                                            width: 20px;
+                                                            padding-right: 10px;
+                                                        "
+                                                    >
+                                                        <span
+                                                            style="
+                                                                font-size: 14px;
+                                                            "
+                                                            >⚠️</span
+                                                        >
+                                                    </td>
+                                                    <td>
+                                                        <p
+                                                            style="
+                                                                margin: 0;
+                                                                font-size: 12.5px;
+                                                                color: #6b6b6b;
+                                                                line-height: 1.65;
+                                                            "
+                                                        >
+                                                            <strong
+                                                                style="
+                                                                    color: #0a0a0a;
+                                                                    font-weight: 600;
+                                                                "
+                                                                >Important:</strong
+                                                            >
+                                                            Please change your
+                                                            password immediately
+                                                            after your first
+                                                            login. Do not share
+                                                            your credentials
+                                                            with anyone,
+                                                            including Opygen
+                                                            staff.
+                                                        </p>
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+
+                        <!-- ── Footer ── -->
+                        <tr>
+                            <td style="padding: 0 40px 36px">
+                                <table
+                                    width="100%"
+                                    cellpadding="0"
+                                    cellspacing="0"
+                                    role="presentation"
+                                >
+                                    <tr>
+                                        <td
+                                            style="
+                                                border-top: 1px solid #f0f0f0;
+                                                padding-top: 24px;
+                                            "
+                                        >
+                                            <table
+                                                width="100%"
+                                                cellpadding="0"
+                                                cellspacing="0"
+                                                role="presentation"
+                                            >
+                                                <tr>
+                                                    <td>
+                                                        <p
+                                                            style="
+                                                                margin: 0;
+                                                                font-size: 11px;
+                                                                color: #aaaaaa;
+                                                                line-height: 1.7;
+                                                            "
+                                                        >
+                                                            This email was sent
+                                                            to you because a
+                                                            staff account was
+                                                            created for you on
+                                                            <strong
+                                                                style="
+                                                                    color: #6b6b6b;
+                                                                "
+                                                                >Opygen
+                                                                CleanCRM</strong
+                                                            >. If you believe
+                                                            this was a mistake,
+                                                            please contact your
+                                                            administrator.
+                                                        </p>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td
+                                                        style="
+                                                            padding-top: 12px;
+                                                        "
+                                                    >
+                                                        <p
+                                                            style="
+                                                                margin: 0;
+                                                                font-size: 11px;
+                                                                color: #cccccc;
+                                                            "
+                                                        >
+                                                            © <%= new
+                                                            Date().getFullYear()
+                                                            %> Opygen · Cleaning
+                                                            CRM
+                                                        </p>
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+        </table>
+
+        <script>
+            function copyValue(btnId, labelId, iconId) {
+                var btn = document.getElementById(btnId);
+                var label = document.getElementById(labelId);
+                var icon = document.getElementById(iconId);
+                var value = btn.getAttribute("data-value");
+
+                function onSuccess() {
+                    btn.classList.add("copied");
+                    label.textContent = "Copied!";
+                    icon.innerHTML =
+                        '<polyline points="20 6 9 17 4 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"></polyline>';
+                    setTimeout(function () {
+                        btn.classList.remove("copied");
+                        label.textContent = "Copy";
+                        icon.innerHTML =
+                            '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>' +
+                            '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>';
+                    }, 2000);
+                }
+
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard
+                        .writeText(value)
+                        .then(onSuccess)
+                        .catch(function () {
+                            fallbackCopy(value, onSuccess);
+                        });
+                } else {
+                    fallbackCopy(value, onSuccess);
+                }
+            }
+
+            function fallbackCopy(value, onSuccess) {
+                var textarea = document.createElement("textarea");
+                textarea.value = value;
+                textarea.style.cssText =
+                    "position:fixed;top:0;left:0;opacity:0;pointer-events:none;";
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                try {
+                    document.execCommand("copy");
+                    onSuccess();
+                } catch (e) {
+                    console.error("Copy failed:", e);
+                }
+                document.body.removeChild(textarea);
+            }
+        </script>
+    </body>
+</html>
