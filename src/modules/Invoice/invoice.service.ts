@@ -108,7 +108,12 @@ const getAllInvoices = async (filters: IInvoiceFilters, user: any) => {
   return await prisma.invoice.findMany({
     where: whereConditions,
     include: {
-      serviceCatalog: true,
+      serviceCatalog: {
+        select: {
+          id: true,
+          serviceName: true,
+        },
+      },
     },
     orderBy: {
       createdAt: "desc",
@@ -120,8 +125,12 @@ const getInvoiceById = async (id: string) => {
   const invoice = await prisma.invoice.findUnique({
     where: { id },
     include: {
-      serviceCatalog: true,
-      admin: true,
+      serviceCatalog: {
+        select: {
+          id: true,
+          serviceName: true,
+        },
+      },
     },
   });
 
