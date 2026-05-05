@@ -132,7 +132,6 @@ const me = async (user: IRequestUser) => {
             id: user.id,
         },
         include: {
-            sessions: true,
             admin: true,
             staff: true,
         },
