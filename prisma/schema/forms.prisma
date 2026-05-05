@@ -1,201 +1,160 @@
-//? ─── Online Booking Form ─────────────────────────────────────────────────────
-//? Admin configures a public booking form; clients submit it from a public URL.
-
 model BookingForm {
-    id        String  @id @default(uuid())
-    slug      String  @unique //? e.g. "book-a-service" — used in public URL
-    published Boolean @default(false)
+  id                  String                  @id @default(uuid())
+  slug                String                  @unique
+  published           Boolean                 @default(false)
+  headline            String
+  subheading          String?
+  accentColor         String                  @default("#000000")
+  showReviews         Boolean                 @default(true)
+  ctaLabel            String?                 @default("Request booking")
+  confirmationMessage String?
+  availableDays       String[]
+  blockedDates        String[]
+  timeSlots           String[]
+  adminId             String
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  admin               AdminProfile            @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  fields              BookingFormField[]
+  services            BookingFormService[]
+  submissions         BookingFormSubmission[]
 
-    //? Branding
-    headline            String
-    subheading          String?
-    accentColor         String  @default("#000000")
-    showReviews         Boolean @default(true)
-    ctaLabel            String? @default("Request booking")
-    confirmationMessage String?
-
-    //? Availability
-    availableDays String[] //? JSON array of day ints [1,2,3,4,5] (Mon=1 … Sun=7)
-    blockedDates  String[] //? ISO date strings e.g. ["2026-05-01"]
-    timeSlots     String[] //? e.g. ["09:00","10:00"]
-
-    //? Relations
-    adminId String
-    admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
-
-    fields      BookingFormField[]
-    services    BookingFormService[]
-    submissions BookingFormSubmission[]
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    @@index([adminId])
-    @@map("booking_form")
+  @@index([adminId])
+  @@map("booking_form")
 }
 
 model BookingFormField {
-    id          String      @id @default(uuid())
-    type        FormFieldType
-    label       String
-    placeholder String?
-    required    Boolean     @default(false)
-    enabled     Boolean     @default(true)
-    options     String[]    //? For SELECT type
-    sortOrder   Int         @default(0)
+  id          String        @id @default(uuid())
+  type        FormFieldType
+  label       String
+  placeholder String?
+  required    Boolean       @default(false)
+  enabled     Boolean       @default(true)
+  options     String[]
+  sortOrder   Int           @default(0)
+  formId      String
+  form        BookingForm   @relation(fields: [formId], references: [id], onDelete: Cascade)
 
-    formId String
-    form   BookingForm @relation(fields: [formId], references: [id], onDelete: Cascade)
-
-    @@index([formId])
-    @@map("booking_form_field")
+  @@index([formId])
+  @@map("booking_form_field")
 }
 
 model BookingFormService {
-    id         String      @id @default(uuid())
-    serviceType ServiceType
-    enabled    Boolean     @default(true)
-    priceLabel String?     //? e.g. "from £75"
-    duration   String?     //? e.g. "2–3 hrs"
+  id          String      @id @default(uuid())
+  serviceType ServiceType
+  enabled     Boolean     @default(true)
+  priceLabel  String?
+  duration    String?
+  formId      String
+  form        BookingForm @relation(fields: [formId], references: [id], onDelete: Cascade)
 
-    formId String
-    form   BookingForm @relation(fields: [formId], references: [id], onDelete: Cascade)
-
-    @@unique([formId, serviceType])
-    @@map("booking_form_service")
+  @@unique([formId, serviceType])
+  @@map("booking_form_service")
 }
 
 model BookingFormSubmission {
-    id     String              @id @default(uuid())
-    ref    String              @unique //? e.g. "BK-X7K2A" — short public ref
-    status FormSubmissionStatus @default(NEW)
+  id          String               @id @default(uuid())
+  ref         String               @unique
+  status      FormSubmissionStatus @default(NEW)
+  serviceType ServiceType
+  date        DateTime
+  timeSlot    String
+  name        String
+  email       String
+  phone       String
+  address     String
+  notes       String?
+  formId      String
+  createdAt   DateTime             @default(now())
+  form        BookingForm          @relation(fields: [formId], references: [id], onDelete: Cascade)
 
-    serviceType ServiceType
-    date        DateTime
-    timeSlot    String
-    name        String
-    email       String
-    phone       String
-    address     String
-    notes       String?
-
-    formId String
-    form   BookingForm @relation(fields: [formId], references: [id], onDelete: Cascade)
-
-    //? If converted, link to the created booking
-    // bookingId String?  @unique
-    // booking   Booking? @relation(fields: [bookingId], references: [id])
-
-    createdAt DateTime @default(now())
-
-    @@index([formId, status])
-    @@map("booking_form_submission")
+  @@index([formId, status])
+  @@map("booking_form_submission")
 }
 
-//? ─── Online Estimate Form ────────────────────────────────────────────────────
-//? Admin configures a public estimate form; clients get an instant estimate.
-
 model EstimateForm {
-    id        String  @id @default(uuid())
-    slug      String  @unique
-    published Boolean @default(false)
+  id                  String                   @id @default(uuid())
+  slug                String                   @unique
+  published           Boolean                  @default(false)
+  headline            String
+  subheading          String?
+  accentColor         String                   @default("#000000")
+  showReviews         Boolean                  @default(true)
+  ctaLabel            String?                  @default("Get my free estimate")
+  confirmationMessage String?
+  coveredPostcodes    String[]
+  coveredCities       String[]
+  showLiveEstimate    Boolean                  @default(true)
+  adminId             String
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  admin               AdminProfile             @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  addOns              EstimateFormAddOn[]
+  fields              EstimateFormField[]
+  services            EstimateFormService[]
+  submissions         EstimateFormSubmission[]
 
-    //? Branding
-    headline            String
-    subheading          String?
-    accentColor         String  @default("#000000")
-    showReviews         Boolean @default(true)
-    ctaLabel            String? @default("Get my free estimate")
-    confirmationMessage String?
-
-    //? Coverage
-    coveredPostcodes String[] //? e.g. ["M","BL","WN"]
-    coveredCities    String[]
-    showLiveEstimate Boolean  @default(true)
-
-    //? Relations
-    adminId String
-    admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
-
-    fields      EstimateFormField[]
-    services    EstimateFormService[]
-    addOns      EstimateFormAddOn[]
-    submissions EstimateFormSubmission[]
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    @@index([adminId])
-    @@map("estimate_form")
+  @@index([adminId])
+  @@map("estimate_form")
 }
 
 model EstimateFormField {
-    id          String        @id @default(uuid())
-    type        FormFieldType
-    label       String
-    placeholder String?
-    required    Boolean       @default(false)
-    enabled     Boolean       @default(true)
-    options     String[]
-    sortOrder   Int           @default(0)
+  id          String        @id @default(uuid())
+  type        FormFieldType
+  label       String
+  placeholder String?
+  required    Boolean       @default(false)
+  enabled     Boolean       @default(true)
+  options     String[]
+  sortOrder   Int           @default(0)
+  formId      String
+  form        EstimateForm  @relation(fields: [formId], references: [id], onDelete: Cascade)
 
-    formId String
-    form   EstimateForm @relation(fields: [formId], references: [id], onDelete: Cascade)
-
-    @@index([formId])
-    @@map("estimate_form_field")
+  @@index([formId])
+  @@map("estimate_form_field")
 }
 
 model EstimateFormService {
-    id          String      @id @default(uuid())
-    serviceType ServiceType
-    enabled     Boolean     @default(true)
-    basePrice   Decimal?    @db.Decimal(10, 2)
+  id          String       @id @default(uuid())
+  serviceType ServiceType
+  enabled     Boolean      @default(true)
+  basePrice   Decimal?     @db.Decimal(10, 2)
+  formId      String
+  form        EstimateForm @relation(fields: [formId], references: [id], onDelete: Cascade)
 
-    formId String
-    form   EstimateForm @relation(fields: [formId], references: [id], onDelete: Cascade)
-
-    @@unique([formId, serviceType])
-    @@map("estimate_form_service")
+  @@unique([formId, serviceType])
+  @@map("estimate_form_service")
 }
 
 model EstimateFormAddOn {
-    id      String  @id @default(uuid())
-    label   String
-    price   Decimal @db.Decimal(10, 2)
-    enabled Boolean @default(true)
+  id      String       @id @default(uuid())
+  label   String
+  price   Decimal      @db.Decimal(10, 2)
+  enabled Boolean      @default(true)
+  formId  String
+  form    EstimateForm @relation(fields: [formId], references: [id], onDelete: Cascade)
 
-    formId String
-    form   EstimateForm @relation(fields: [formId], references: [id], onDelete: Cascade)
-
-    @@index([formId])
-    @@map("estimate_form_add_on")
+  @@index([formId])
+  @@map("estimate_form_add_on")
 }
 
 model EstimateFormSubmission {
-    id     String                   @id @default(uuid())
-    ref    String                   @unique
-    status EstimateSubmissionStatus  @default(NEW)
+  id          String                   @id @default(uuid())
+  ref         String                   @unique
+  status      EstimateSubmissionStatus @default(NEW)
+  serviceType ServiceType
+  bedrooms    Int
+  bathrooms   Int
+  addOnIds    String[]
+  postcode    String
+  name        String
+  email       String
+  phone       String
+  notes       String?
+  formId      String
+  createdAt   DateTime                 @default(now())
+  form        EstimateForm             @relation(fields: [formId], references: [id], onDelete: Cascade)
 
-    serviceType ServiceType
-    bedrooms    Int
-    bathrooms   Int
-    addOnIds    String[] //? references EstimateFormAddOn ids
-    postcode    String
-    name        String
-    email       String
-    phone       String
-    notes       String?
-
-    formId String
-    form   EstimateForm @relation(fields: [formId], references: [id], onDelete: Cascade)
-
-    //? If converted, link to the created estimate
-    // estimateId String?   @unique
-    // estimate   Estimate? @relation(fields: [estimateId], references: [id])
-
-    createdAt DateTime @default(now())
-
-    @@index([formId, status])
-    @@map("estimate_form_submission")
+  @@index([formId, status])
+  @@map("estimate_form_submission")
 }

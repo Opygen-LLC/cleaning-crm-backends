@@ -1,20 +1,17 @@
 model ServiceCatalog {
-    id              String         @id @default(uuid())
-    serviceName     String
-    description     String
-    basePriceGbp    Float          @default(0.0)
-    duration        String
-    category        String
-    status          ServiceStatus  @default(ACTIVE)
-    
-    adminId         String
-    admin           AdminProfile   @relation(fields: [adminId], references: [id], onDelete: Cascade)
-    
-    addOns          Json?          @default("[]")
-    
-    createdAt       DateTime       @default(now())
-    updatedAt       DateTime       @updatedAt
+  id           String        @id @default(uuid())
+  serviceName  String
+  description  String
+  basePriceGbp Float         @default(0.0)
+  duration     String
+  category     String
+  status       ServiceStatus @default(ACTIVE)
+  adminId      String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  addOns       Json?         @default("[]")
+  admin        AdminProfile  @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
-    @@index([adminId, category, status])
-    @@map("service_catalog")
+  @@index([adminId, category, status])
+  @@map("service_catalog")
 }

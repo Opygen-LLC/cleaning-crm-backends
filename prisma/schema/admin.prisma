@@ -1,128 +1,103 @@
 model AdminProfile {
-    id            String   @id @default(uuid())
-    businessName  String
-    businessLogo  String?
-    businessType  String?
-    businessEmail String?
-    website       String?
-    brandColor    String?  @default("#000000")
-    currency      Currency @default(USD)
-    mobileNumber  String?
+  id                String                  @id @default(uuid())
+  businessName      String
+  businessLogo      String?
+  address           String?
+  currency          Currency                @default(USD)
+  userId            String                  @unique
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  brandColor        String?                 @default("#000000")
+  city              String?
+  mobileNumber      String?
+  zipcode           String?
+  country           Country?
+  businessEmail     String?
+  businessType      String?
+  website           String?
+  user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  couponUsage       CouponUsage[]
+  review            Review?
+  staff             StaffProfile[]
+  subscription      Subscription[]
+  workLocations     WorkLocation[]
+  bookings          Booking[]
+  bookingForms      BookingForm[]
+  clients           Client[]
+  estimates         Estimate[]
+  estimateForms     EstimateForm[]
+  expenses          Expense[]
+  invoices          Invoice[]
+  jobs              Job[]
+  notificationPrefs NotificationPreference?
+  payment           Payment[]
+  paymentGateway    PaymentGatewayConfig?
+  quotes            Quote[]
+  serviceCatalogs   ServiceCatalog[]
 
-    address String?
-    city    String?
-    zipcode String?
-    country Country?
-
-    userId String @unique
-    user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-    subscription    Subscription[]
-    staff           StaffProfile[]
-    couponUsage     CouponUsage[]
-    payment         Payment[]
-    workLocations   WorkLocation[]
-    clients         Client[]
-    bookings        Booking[]
-    jobs            Job[]
-    quotes          Quote[]
-    estimates       Estimate[]
-    invoices        Invoice[]
-    expenses        Expense[]
-    bookingForms    BookingForm[]
-    estimateForms   EstimateForm[]
-    serviceCatalogs ServiceCatalog[]
-
-    notificationPrefs NotificationPreference?
-    paymentGateway    PaymentGatewayConfig?
-    review            Review?
-
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-
-    @@index([createdAt])
+  @@index([createdAt])
 }
 
 model WorkLocation {
-    id       String  @id @default(uuid())
-    city     String
-    postcode String?
-    notes    String?
+  id        String       @id @default(uuid())
+  city      String
+  postcode  String?
+  notes     String?
+  adminId   String
+  createdAt DateTime     @default(now())
+  admin     AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
-    adminId String
-    admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
-
-    createdAt DateTime @default(now())
-
-    @@index([adminId])
+  @@index([adminId])
 }
 
 model PaymentGatewayConfig {
-    id            String         @id @default(uuid())
-    activeGateway PaymentGateway @default(NONE)
+  id                        String         @id @default(uuid())
+  activeGateway             PaymentGateway @default(NONE)
+  stripeEnabled             Boolean        @default(false)
+  stripePublishableKey      String?
+  stripeSecretKeyMasked     String?
+  stripeWebhookSecretMasked String?
+  stripeTestMode            Boolean        @default(true)
+  stripeConnectedAccountId  String?
+  paypalEnabled             Boolean        @default(false)
+  paypalClientId            String?
+  paypalClientSecretMasked  String?
+  paypalTestMode            Boolean        @default(true)
+  paypalConnectedMerchantId String?
+  invoicePaymentLink        Boolean        @default(true)
+  quotePaymentLink          Boolean        @default(false)
+  autoSendReceipt           Boolean        @default(true)
+  adminId                   String         @unique
+  updatedAt                 DateTime       @updatedAt
+  admin                     AdminProfile   @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
-    //? Stripe
-    stripeEnabled             Boolean @default(false)
-    stripePublishableKey      String?
-    stripeSecretKeyMasked     String? //? masked — never store plaintext secret
-    stripeWebhookSecretMasked String?
-    stripeTestMode            Boolean @default(true)
-    stripeConnectedAccountId  String?
-
-    //? PayPal
-    paypalEnabled             Boolean @default(false)
-    paypalClientId            String?
-    paypalClientSecretMasked  String?
-    paypalTestMode            Boolean @default(true)
-    paypalConnectedMerchantId String?
-
-    //? Options
-    invoicePaymentLink Boolean @default(true)
-    quotePaymentLink   Boolean @default(false)
-    autoSendReceipt    Boolean @default(true)
-
-    adminId String       @unique
-    admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
-
-    updatedAt DateTime @updatedAt
-
-    @@map("payment_gateway_config")
+  @@map("payment_gateway_config")
 }
 
 model NotificationPreference {
-    id String @id @default(uuid())
+  id                    String       @id @default(uuid())
+  emailNewBooking       Boolean      @default(true)
+  emailBookingCancelled Boolean      @default(true)
+  emailBookingReminder  Boolean      @default(true)
+  emailQuoteAccepted    Boolean      @default(true)
+  emailQuoteDeclined    Boolean      @default(true)
+  emailInvoicePaid      Boolean      @default(true)
+  emailInvoiceOverdue   Boolean      @default(true)
+  emailNewClient        Boolean      @default(false)
+  emailStaffAssigned    Boolean      @default(false)
+  emailWeeklySummary    Boolean      @default(true)
+  appNewBooking         Boolean      @default(true)
+  appJobStatusChange    Boolean      @default(true)
+  appQuoteUpdate        Boolean      @default(true)
+  appInvoiceUpdate      Boolean      @default(false)
+  appClientMessage      Boolean      @default(true)
+  smsBookingReminder    Boolean      @default(false)
+  smsJobAssigned        Boolean      @default(false)
+  reminderHoursBefore   Int          @default(24)
+  digestTime            String       @default("08:00")
+  adminId               String       @unique
+  updatedAt             DateTime     @updatedAt
+  admin                 AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
-    //? Email
-    emailNewBooking       Boolean @default(true)
-    emailBookingCancelled Boolean @default(true)
-    emailBookingReminder  Boolean @default(true)
-    emailQuoteAccepted    Boolean @default(true)
-    emailQuoteDeclined    Boolean @default(true)
-    emailInvoicePaid      Boolean @default(true)
-    emailInvoiceOverdue   Boolean @default(true)
-    emailNewClient        Boolean @default(false)
-    emailStaffAssigned    Boolean @default(false)
-    emailWeeklySummary    Boolean @default(true)
-
-    //? In-app
-    appNewBooking      Boolean @default(true)
-    appJobStatusChange Boolean @default(true)
-    appQuoteUpdate     Boolean @default(true)
-    appInvoiceUpdate   Boolean @default(false)
-    appClientMessage   Boolean @default(true)
-
-    //? SMS
-    smsBookingReminder Boolean @default(false)
-    smsJobAssigned     Boolean @default(false)
-
-    //? Timing
-    reminderHoursBefore Int    @default(24)
-    digestTime          String @default("08:00") //? HH:mm
-
-    adminId String       @unique
-    admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
-
-    updatedAt DateTime @updatedAt
-
-    @@map("notification_preference")
+  @@map("notification_preference")
 }
