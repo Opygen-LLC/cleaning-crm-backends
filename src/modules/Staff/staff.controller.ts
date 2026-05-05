@@ -30,6 +30,18 @@ const getMyStaff = catchAsync(async (req, res) => {
     });
 });
 
+const getStaffById = catchAsync(async (req, res) => {
+    const { id } = req.params;
+    const result = await staffService.getStaffById(id as string, req.user);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Staff retrieved successfully",
+        data: result,
+    });
+});
+
 const updateStaff = catchAsync(async (req, res) => {
     const { id } = req.params;
     const payload = req.body;
@@ -58,6 +70,7 @@ const deleteStaff = catchAsync(async (req, res) => {
 export const staffController = {
     createStaff,
     getMyStaff,
+    getStaffById,
     updateStaff,
     deleteStaff,
 };

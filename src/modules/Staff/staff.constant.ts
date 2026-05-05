@@ -1,8 +1,5 @@
-export const staffSearchableFields = [
-    "user.name",
-    "user.email",
-];
+export const staffSearchableFields = ["user.name", "user.email", "staffRole"];
 
-export const staffFilterableFields = [
-    "staffRole",
-];
+// export const staffExactMatchFields = ["status"];
+
+export const staffFilterableFields = ["status"];

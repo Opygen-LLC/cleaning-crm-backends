@@ -1,9 +1,6 @@
 import { prisma } from "../../lib/prisma/prisma";
-import {
-    CreateStaffPayload,
-    UpdateStaffPayload,
-} from "./staff.interface";
-import { UserRole } from "../../generated/prisma/enums";
+import { CreateStaffPayload, UpdateStaffPayload } from "./staff.interface";
+import { AccountStatus, StaffStatus, UserRole } from "../../generated/prisma/enums";
 import { auth } from "../../lib/auth";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
@@ -15,8 +12,12 @@ import chalk from "chalk";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { IQueryParams } from "../../interface/query.interface";
 import { Prisma, StaffProfile } from "../../generated/prisma/client";
-import { staffFilterableFields, staffSearchableFields } from "./staff.constant";
+import {
+    staffFilterableFields,
+    staffSearchableFields,
+} from "./staff.constant";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
+import { IRequestUser } from "../../types/requestUser.interface";
 
 const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
     const {
@@ -86,6 +87,8 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
               }))
             : [];
 
+    const StaffRole = staffRole.toUpperCase();
+        
     // 5. DB operations in transaction (atomic + faster consistency)
     const staffProfile = await prisma.$transaction(async (tx) => {
         // Update user metadata
@@ -94,7 +97,7 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
             data: {
                 needPasswordChange: true,
                 emailVerified: true,
-                status: "ACTIVE",
+                status: AccountStatus.ACTIVE,
             },
         });
 
@@ -103,7 +106,7 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
             data: {
                 userId,
                 adminId: adminProfile.id,
-                staffRole,
+                staffRole: StaffRole,
 
                 mobileNumber,
                 address,
@@ -166,9 +169,7 @@ const getMyStaff = async (query: IQueryParams, userReq: any) => {
     const result = await queryBuilder
         .search()
         .filter()
-        .where({
-            // isDeleted: false,
-        })
+        .where({})
         .include({
             user: true,
             staffAvailability: true,
@@ -180,6 +181,22 @@ const getMyStaff = async (query: IQueryParams, userReq: any) => {
         .execute();
 
     return result;
+};
+
+const getStaffById = async (id: string, userReq: IRequestUser) => {
+    if(userReq.role !== UserRole.ADMIN) {
+        throw new AppError(status.FORBIDDEN, "Forbidden");
+    }
+
+    const staff = await prisma.staffProfile.findUniqueOrThrow({
+        where: { id, adminId: userReq.id },
+        include: {
+            user: true,
+            staffAvailability: true,
+        },
+    });
+    
+    return staff;
 };
 
 const updateStaff = async (id: string, payload: UpdateStaffPayload) => {
@@ -204,6 +221,7 @@ const deleteStaff = async (id: string) => {
 export const staffService = {
     createStaff,
     getMyStaff,
+    getStaffById,
     updateStaff,
     deleteStaff,
 };
