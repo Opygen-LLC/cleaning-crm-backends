@@ -10,7 +10,6 @@ import {
     PrismaWhereConditions,
 } from "../../interface/query.interface";
 
-
 // T = Model Type
 export class QueryBuilder<
     T,
@@ -110,8 +109,86 @@ export class QueryBuilder<
 
         return this;
     }
-    // /doctors?searchTerm=john&page=1&sortBy=name&specialty=cardiology&appointmentFee[lt]=100 => {}
-    // { specialty: 'cardiology', appointmentFee: { lt: '100' } }
+
+    // search(): this {
+    //     if (!this.queryParams) return this;
+
+    //     const { searchTerm } = this.queryParams;
+    //     const { searchableFields, exactMatchFields } = this.config;
+
+    //     if (!searchTerm) return this;
+
+    //     const searchConditions: Record<string, unknown>[] = [];
+
+    //     // 🔍 STRING SEARCH
+    //     if (searchableFields?.length) {
+    //         for (const field of searchableFields) {
+    //             const stringFilter = {
+    //                 contains: searchTerm,
+    //                 mode: "insensitive" as const,
+    //             };
+
+    //             if (field.includes(".")) {
+    //                 const parts = field.split(".");
+
+    //                 if (parts.length === 2) {
+    //                     const [relation, nestedField] = parts;
+
+    //                     searchConditions.push({
+    //                         [relation]: {
+    //                             [nestedField]: stringFilter,
+    //                         },
+    //                     });
+    //                 } else if (parts.length === 3) {
+    //                     const [relation, nestedRelation, nestedField] = parts;
+
+    //                     searchConditions.push({
+    //                         [relation]: {
+    //                             some: {
+    //                                 [nestedRelation]: {
+    //                                     [nestedField]: stringFilter,
+    //                                 },
+    //                             },
+    //                         },
+    //                     });
+    //                 }
+    //             } else {
+    //                 searchConditions.push({
+    //                     [field]: stringFilter,
+    //                 });
+    //             }
+    //         }
+    //     }
+
+    //     // 🎯 ENUM / EXACT MATCH
+    //     if (exactMatchFields?.length) {
+    //         for (const field of exactMatchFields) {
+    //             searchConditions.push({
+    //                 [field]: {
+    //                     equals: searchTerm,
+    //                 },
+    //             });
+    //         }
+    //     }
+
+    //     if (searchConditions.length === 0) return this;
+
+    //     const applySearch = (where: PrismaWhereConditions) => {
+    //         if (!where.AND) {
+    //             where.AND = [];
+    //         }
+
+    //         where.AND.push({
+    //             OR: searchConditions,
+    //         });
+    //     };
+
+    //     applySearch(this.query.where as PrismaWhereConditions);
+    //     applySearch(this.countQuery.where as PrismaWhereConditions);
+
+    //     return this;
+    // }
+
     filter(): this {
         if (!this.queryParams) return this;
         const { filterableFields } = this.config;
