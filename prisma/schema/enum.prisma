@@ -285,6 +285,7 @@ enum Country {
     ZIMBABWE
 }
 
+
 //? ─── Client ──────────────────────────────────────────────────────────────────
 enum ClientStatus {
     ACTIVE
@@ -302,6 +303,11 @@ enum ServiceType {
     CARPET_CLEAN
     WINDOW_CLEAN
     MOVE_IN_OUT_CLEAN
+}
+
+enum ServiceStatus {
+    ACTIVE
+    INACTIVE
 }
 
 //? ─── Booking / Job ───────────────────────────────────────────────────────────

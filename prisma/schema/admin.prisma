@@ -17,20 +17,21 @@ model AdminProfile {
     userId String @unique
     user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-    subscription  Subscription[]
-    staff         StaffProfile[]
-    couponUsage   CouponUsage[]
-    payment       Payment[]
-    workLocations WorkLocation[]
-    clients       Client[]
-    bookings      Booking[]
-    jobs          Job[]
-    quotes        Quote[]
-    estimates     Estimate[]
-    invoices      Invoice[]
-    expenses      Expense[]
-    bookingForms  BookingForm[]
-    estimateForms EstimateForm[]
+    subscription    Subscription[]
+    staff           StaffProfile[]
+    couponUsage     CouponUsage[]
+    payment         Payment[]
+    workLocations   WorkLocation[]
+    clients         Client[]
+    bookings        Booking[]
+    jobs            Job[]
+    quotes          Quote[]
+    estimates       Estimate[]
+    invoices        Invoice[]
+    expenses        Expense[]
+    bookingForms    BookingForm[]
+    estimateForms   EstimateForm[]
+    serviceCatalogs ServiceCatalog[]
 
     notificationPrefs NotificationPreference?
     paymentGateway    PaymentGatewayConfig?
