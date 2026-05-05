@@ -22,7 +22,6 @@ model Client {
   admin             AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
   notes             ClientNote[]
   estimates         Estimate[]
-  invoices          Invoice[]
   jobs              Job[]
   quotes            Quote[]
 

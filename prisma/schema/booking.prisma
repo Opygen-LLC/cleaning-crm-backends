@@ -17,7 +17,6 @@ model Booking {
   client           Client                   @relation(fields: [clientId], references: [id])
   quote            Quote?                   @relation(fields: [quoteId], references: [id])
   staffAssignments BookingStaffAssignment[]
-  invoice          Invoice?
   job              Job?
 
   @@index([adminId, status])
