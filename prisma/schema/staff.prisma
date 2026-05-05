@@ -6,7 +6,8 @@ model StaffProfile {
 
     hourlyRate Float?
     startDate  DateTime
-    specialty  String[]  @default([])
+    specialty  String[]    @default([])
+    status     StaffStatus @default(ACTIVE)
 
     emergencyName         String?
     emergencyMobileNumber String?
@@ -19,6 +20,7 @@ model StaffProfile {
     admin   AdminProfile @relation(fields: [adminId], references: [id])
 
     staffAvailability  StaffAvailability[]
+    staffLeave         StaffLeave[]
     jobAssignments     JobStaffAssignment[]
     bookingAssignments BookingStaffAssignment[]
 
@@ -43,4 +45,21 @@ model StaffAvailability {
     updatedAt DateTime @updatedAt
 
     @@unique([staffId, day]) // one entry per day per staff
+}
+
+model StaffLeave {
+    id        String   @id @default(uuid())
+    startDate DateTime
+    endDate   DateTime
+    reason    String?
+
+    status     LeaveStatus @default(PENDING)
+    adminNote  String?
+    reviewedAt DateTime?
+
+    staffId String
+    staff   StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
 }

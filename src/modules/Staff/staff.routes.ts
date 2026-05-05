@@ -18,25 +18,11 @@ router.post(
     staffController.createStaff
 );
 
-// Get own profile
+// Get my staff (Admin only)
 router.get(
-    "/me",
-    checkAuth(UserRole.STAFF, UserRole.ADMIN, UserRole.SUPER_ADMIN), 
-    staffController.getMyProfile
-);
-
-// Get all staff (Super Admin sees all, Admin/Staff see within their company context)
-router.get(
-    "/", 
-    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF), 
-    staffController.getAllStaff
-);
-
-// Get specific staff
-router.get(
-    "/:id", 
-    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF), 
-    staffController.getStaffById
+    "/",
+    checkAuth(UserRole.ADMIN),
+    staffController.getMyStaff
 );
 
 // Manage Staff
