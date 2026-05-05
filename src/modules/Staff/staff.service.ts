@@ -17,6 +17,7 @@ import {
     staffSearchableFields,
 } from "./staff.constant";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
+import { IRequestUser } from "../../types/requestUser.interface";
 
 const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
     const {
@@ -182,6 +183,22 @@ const getMyStaff = async (query: IQueryParams, userReq: any) => {
     return result;
 };
 
+const getStaffById = async (id: string, userReq: IRequestUser) => {
+    if(userReq.role !== UserRole.ADMIN) {
+        throw new AppError(status.FORBIDDEN, "Forbidden");
+    }
+
+    const staff = await prisma.staffProfile.findUniqueOrThrow({
+        where: { id, adminId: userReq.id },
+        include: {
+            user: true,
+            staffAvailability: true,
+        },
+    });
+    
+    return staff;
+};
+
 const updateStaff = async (id: string, payload: UpdateStaffPayload) => {
     const staff = await prisma.staffProfile.findUnique({ where: { id } });
     if (!staff) throw new Error("Staff profile not found");
@@ -204,6 +221,7 @@ const deleteStaff = async (id: string) => {
 export const staffService = {
     createStaff,
     getMyStaff,
+    getStaffById,
     updateStaff,
     deleteStaff,
 };

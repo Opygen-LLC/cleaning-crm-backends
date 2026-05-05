@@ -25,6 +25,13 @@ router.get(
     staffController.getMyStaff
 );
 
+// Get staff by id (Admin only)
+router.get(
+    "/:id",
+    checkAuth(UserRole.ADMIN),
+    staffController.getStaffById
+);
+
 // Manage Staff
 router.patch(
     "/:id",
