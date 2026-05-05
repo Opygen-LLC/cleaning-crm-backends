@@ -4,6 +4,7 @@ import { userRoutes } from "../modules/User/user.routes";
 import { adminRoutes } from "../modules/Admin/admin.routes";
 import { staffRoutes } from "../modules/Staff/staff.routes";
 import { serviceCatalogRoutes } from "../modules/ServiceCatalog/serviceCatalog.routes";
+import { invoiceRoutes } from "../modules/Invoice/invoice.routes";
 
 const router = Router();
 
@@ -27,6 +28,10 @@ const routes: { path: string; route: Router }[] = [
   {
     path: "/service-catalog",
     route: serviceCatalogRoutes,
+  },
+  {
+    path: "/invoice",
+    route: invoiceRoutes,
   },
 ];
 
