@@ -50,7 +50,9 @@ const getAllServiceCatalogs = async (
   }
 
   if (serviceStatus) {
-    andConditions.push({ status: serviceStatus });
+    // Handle case-insensitivity for status (e.g., "active" -> "ACTIVE")
+    const statusValue = (serviceStatus as string).toUpperCase();
+    andConditions.push({ status: statusValue as any });
   }
 
   // Filter by adminId if provided or restrict by user role
