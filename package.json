@@ -16,7 +16,7 @@
         "stripe:webhook": "stripe listen --forward-to localhost:5000/webhook"
     },
     "keywords": [],
-    "author": "opyzen",
+    "author": "opygen",
     "license": "ISC",
     "type": "module",
     "dependencies": {
