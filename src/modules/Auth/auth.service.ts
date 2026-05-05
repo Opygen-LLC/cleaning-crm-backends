@@ -12,7 +12,11 @@ import { IRequestUser } from "../../types/requestUser.interface";
 import { JwtPayload } from "jsonwebtoken";
 import { jwtUtils } from "../../lib/utils/jwt";
 import { REFRESH_TOKEN_SECRET } from "../../config/ENV";
-import { AccountStatus } from "../../generated/prisma/enums";
+import {
+    AccountStatus,
+    StaffStatus,
+    UserRole,
+} from "../../generated/prisma/enums";
 import { adminService } from "../Admin/admin.service";
 
 const register = async ({
@@ -55,10 +59,24 @@ const login = async ({ email, password }: ILoginUserPayload) => {
         where: {
             email,
         },
+        include: {
+            admin: true,
+            staff: true,
+        },
     });
 
     if (!user) {
         throw new AppError(status.NOT_FOUND, "User not found");
+    }
+
+    if (
+        user.role === UserRole.STAFF &&
+        user.staff?.status === StaffStatus.DEACTIVE
+    ) {
+        throw new AppError(
+            status.FORBIDDEN,
+            "You are not allowed to login. Please contact with admin.",
+        );
     }
 
     // ✅ Sign-in
