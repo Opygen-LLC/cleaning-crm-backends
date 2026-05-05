@@ -1,7 +1,11 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import { prisma } from "../../lib/prisma/prisma";
-import { IRegisterUserPayload, ILoginUserPayload, IChangePasswordPayload } from "./auth.interface";
+import {
+    IRegisterUserPayload,
+    ILoginUserPayload,
+    IChangePasswordPayload,
+} from "./auth.interface";
 import { auth } from "../../lib/auth";
 import { tokenUtils } from "../../lib/utils/token";
 import { IRequestUser } from "../../types/requestUser.interface";
@@ -17,6 +21,16 @@ const register = async ({
     email,
     password,
 }: IRegisterUserPayload) => {
+    const isUserExist = await prisma.user.findUnique({
+        where: {
+            email,
+        },
+    });
+
+    if (isUserExist) {
+        throw new AppError(status.BAD_REQUEST, "User already exist");
+    }
+
     const data = await auth.api.signUpEmail({
         body: { name, email, password },
     });

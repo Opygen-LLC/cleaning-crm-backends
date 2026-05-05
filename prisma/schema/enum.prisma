@@ -366,6 +366,14 @@ enum NotificationChannel {
   SMS
 }
 
+//? ─── Staff ────────────────────────────────────────────────────────────────
+enum StaffStatus {
+  ACTIVE
+  DEACTIVE
+  INACTIVE
+  ON_LEAVE
+}
+
 enum WeekDay {
   SUNDAY
   MONDAY
@@ -374,4 +382,10 @@ enum WeekDay {
   THURSDAY
   FRIDAY
   SATURDAY
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  DECLINED
 }

@@ -33,8 +33,8 @@ model AdminProfile {
   payment           Payment[]
   paymentGateway    PaymentGatewayConfig?
   quotes            Quote[]
-  serviceCatalogs   ServiceCatalog[]
 
+  serviceCatalogs   ServiceCatalog[]
   @@index([createdAt])
 }
 
