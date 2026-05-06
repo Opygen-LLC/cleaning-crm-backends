@@ -5,6 +5,7 @@ import { adminRoutes } from "../modules/Admin/admin.routes";
 import { staffRoutes } from "../modules/Staff/staff.routes";
 import { serviceCatalogRoutes } from "../modules/ServiceCatalog/serviceCatalog.routes";
 import { invoiceRoutes } from "../modules/Invoice/invoice.routes";
+import { expenseRoutes } from "../modules/Expense/expense.routes";
 import { sessionRoutes } from "../modules/Session/session.routes";
 
 const router = Router();
@@ -37,6 +38,10 @@ const routes: { path: string; route: Router }[] = [
   {
     path: "/invoice",
     route: invoiceRoutes,
+  },
+  {
+    path: "/expense",
+    route: expenseRoutes,
   },
 ];
 
