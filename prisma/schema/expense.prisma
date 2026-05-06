@@ -1,20 +1,19 @@
 model Expense {
   id                 String            @id @default(uuid())
-  expenseRef         String            @unique
-  category           ExpenseCategory
+  expenseRef         String            @unique // e.g. #OP-EXP-0011
   description        String
+  category           ExpenseCategory
   amount             Decimal           @db.Decimal(10, 2)
-  currency           Currency          @default(USD)
   date               DateTime
   paidBy             String
-  receipt            String?
   isRecurring        Boolean           @default(false)
-  recurringFrequency ExpenseFrequency?
-  notes              String?
+  notes              String?           @db.Text
+  
   adminId            String
+  admin              AdminProfile      @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
-  admin              AdminProfile      @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
   @@index([adminId, category])
   @@index([date])
