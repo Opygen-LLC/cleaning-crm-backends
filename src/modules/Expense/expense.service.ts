@@ -7,7 +7,7 @@ import {
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
 import { UserRole } from "../../generated/prisma/enums";
-import { startOfMonth, endOfMonth, subMonths } from "date-fns";
+import { startOfMonth, endOfMonth, subMonths, subDays } from "date-fns";
 
 /**
  * Generates a unique expense reference in the format #OP-EXP-0011
@@ -185,6 +185,7 @@ const getExpenseStats = async (user: any) => {
   const currentMonthEnd = endOfMonth(now);
   const lastMonthStart = startOfMonth(subMonths(now, 1));
   const lastMonthEnd = endOfMonth(subMonths(now, 1));
+  const last30DaysStart = subDays(now, 30);
 
   // Current Month Total
   const currentMonthTotal = await prisma.expense.aggregate({
@@ -224,12 +225,12 @@ const getExpenseStats = async (user: any) => {
     trendPercentage = 100;
   }
 
-  // Group by Category (Current Month)
+  // Group by Category (Last 30 Days - As requested)
   const categorySummary = await prisma.expense.groupBy({
     by: ["category"],
     where: {
       adminId,
-      date: { gte: currentMonthStart, lte: currentMonthEnd },
+      date: { gte: last30DaysStart, lte: now },
     },
     _sum: { amount: true },
   });
