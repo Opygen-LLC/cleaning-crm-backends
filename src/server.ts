@@ -9,6 +9,9 @@ import { notFound } from "./middlewares/notFound";
 import path from "path";
 import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 
+//? Cron jobs
+import "../src/cron/staffStatus.cron";
+
 const app = express();
 
 app.set("view engine", "ejs");
