@@ -24,6 +24,12 @@ router.get(
 );
 
 router.get(
+  "/statistics",
+  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+  expenseController.getExpenseStats,
+);
+
+router.get(
   "/:id",
   checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.STAFF),
   expenseController.getExpenseById,

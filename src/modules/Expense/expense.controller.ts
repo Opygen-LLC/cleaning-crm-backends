@@ -81,10 +81,22 @@ const deleteExpense = catchAsync(async (req, res) => {
   });
 });
 
+const getExpenseStats = catchAsync(async (req, res) => {
+  const result = await expenseService.getExpenseStats(req.user);
+
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Expense statistics retrieved successfully",
+    data: result,
+  });
+});
+
 export const expenseController = {
   createExpense,
   getAllExpenses,
   getExpenseById,
   updateExpense,
   deleteExpense,
+  getExpenseStats,
 };

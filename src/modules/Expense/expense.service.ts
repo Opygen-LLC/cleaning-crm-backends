@@ -7,6 +7,7 @@ import {
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
 import { UserRole } from "../../generated/prisma/enums";
+import { startOfMonth, endOfMonth, subMonths } from "date-fns";
 
 /**
  * Generates a unique expense reference in the format #OP-EXP-0011
@@ -19,7 +20,7 @@ const generateExpenseRef = async () => {
 
   let nextNumber = 1;
 
-  if (lastExpense && lastExpense.expenseRef) {
+  if (lastExpense && lastExpense.expenseRef && lastExpense.expenseRef.includes("-")) {
     const parts = lastExpense.expenseRef.split("-");
     if (parts.length === 3) {
       const lastNumber = parseInt(parts[2]);
@@ -169,10 +170,90 @@ const deleteExpense = async (id: string) => {
   });
 };
 
+const getExpenseStats = async (user: any) => {
+  const adminProfile = await prisma.adminProfile.findUnique({
+    where: { userId: user.id },
+  });
+
+  if (!adminProfile) {
+    throw new AppError(status.NOT_FOUND, "Admin profile not found");
+  }
+
+  const adminId = adminProfile.id;
+  const now = new Date();
+  const currentMonthStart = startOfMonth(now);
+  const currentMonthEnd = endOfMonth(now);
+  const lastMonthStart = startOfMonth(subMonths(now, 1));
+  const lastMonthEnd = endOfMonth(subMonths(now, 1));
+
+  // Current Month Total
+  const currentMonthTotal = await prisma.expense.aggregate({
+    where: {
+      adminId,
+      date: { gte: currentMonthStart, lte: currentMonthEnd },
+    },
+    _sum: { amount: true },
+  });
+
+  // Last Month Total
+  const lastMonthTotal = await prisma.expense.aggregate({
+    where: {
+      adminId,
+      date: { gte: lastMonthStart, lte: lastMonthEnd },
+    },
+    _sum: { amount: true },
+  });
+
+  // Total All Time
+  const allTimeTotal = await prisma.expense.aggregate({
+    where: {
+      adminId,
+    },
+    _sum: { amount: true },
+  });
+
+  const currentTotal = Number(currentMonthTotal._sum.amount || 0);
+  const lastTotal = Number(lastMonthTotal._sum.amount || 0);
+  const totalSpendAllTime = Number(allTimeTotal._sum.amount || 0);
+
+  // Calculate Trend
+  let trendPercentage = 0;
+  if (lastTotal > 0) {
+    trendPercentage = ((currentTotal - lastTotal) / lastTotal) * 100;
+  } else if (currentTotal > 0) {
+    trendPercentage = 100;
+  }
+
+  // Group by Category (Current Month)
+  const categorySummary = await prisma.expense.groupBy({
+    by: ["category"],
+    where: {
+      adminId,
+      date: { gte: currentMonthStart, lte: currentMonthEnd },
+    },
+    _sum: { amount: true },
+  });
+
+  return {
+    totalSummary: {
+      totalAllTime: totalSpendAllTime,
+      currentMonth: currentTotal,
+      lastMonth: lastTotal,
+      trend: Number(trendPercentage.toFixed(2)),
+      isUpTrend: currentTotal >= lastTotal,
+    },
+    categorySummary: categorySummary.map((item) => ({
+      category: item.category,
+      amount: Number(item._sum.amount || 0),
+    })),
+  };
+};
+
 export const expenseService = {
   createExpense,
   getAllExpenses,
   getExpenseById,
   updateExpense,
   deleteExpense,
+  getExpenseStats,
 };
