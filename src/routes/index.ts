@@ -6,6 +6,7 @@ import { staffRoutes } from "../modules/Staff/staff.routes";
 import { clientRoutes } from "../modules/Client/client.routes";
 import { serviceCatalogRoutes } from "../modules/ServiceCatalog/serviceCatalog.routes";
 import { invoiceRoutes } from "../modules/Invoice/invoice.routes";
+import { expenseRoutes } from "../modules/Expense/expense.routes";
 import { sessionRoutes } from "../modules/Session/session.routes";
 
 const router = Router();
@@ -43,6 +44,38 @@ const routes: { path: string; route: Router }[] = [
         path: "/invoice",
         route: invoiceRoutes,
     },
+  {
+    path: "/auth",
+    route: authRoutes,
+  },
+  {
+    path: "/user",
+    route: userRoutes,
+  },
+  {
+    path: "/session",
+    route: sessionRoutes,
+  },
+  {
+    path: "/admin",
+    route: adminRoutes,
+  },
+  {
+    path: "/staff",
+    route: staffRoutes,
+  },
+  {
+    path: "/service-catalog",
+    route: serviceCatalogRoutes,
+  },
+  {
+    path: "/invoice",
+    route: invoiceRoutes,
+  },
+  {
+    path: "/expense",
+    route: expenseRoutes,
+  },
 ];
 
 routes.forEach((route) => {
