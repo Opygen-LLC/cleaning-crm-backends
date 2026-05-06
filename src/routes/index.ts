@@ -33,6 +33,38 @@ const routes: { path: string; route: Router }[] = [
         route: staffRoutes,
     },
     {
+        path: "/service-catalog",
+        route: serviceCatalogRoutes,
+    },
+    {
+        path: "/invoice",
+        route: invoiceRoutes,
+    },
+    {
+        path: "/expense",
+        route: expenseRoutes,
+    },
+    {
+        path: "/auth",
+        route: authRoutes,
+    },
+    {
+        path: "/user",
+        route: userRoutes,
+    },
+    {
+        path: "/session",
+        route: sessionRoutes,
+    },
+    {
+        path: "/admin",
+        route: adminRoutes,
+    },
+    {
+        path: "/staff",
+        route: staffRoutes,
+    },
+    {
         path: "/client",
         route: clientRoutes,
     },
@@ -44,38 +76,10 @@ const routes: { path: string; route: Router }[] = [
         path: "/invoice",
         route: invoiceRoutes,
     },
-  {
-    path: "/auth",
-    route: authRoutes,
-  },
-  {
-    path: "/user",
-    route: userRoutes,
-  },
-  {
-    path: "/session",
-    route: sessionRoutes,
-  },
-  {
-    path: "/admin",
-    route: adminRoutes,
-  },
-  {
-    path: "/staff",
-    route: staffRoutes,
-  },
-  {
-    path: "/service-catalog",
-    route: serviceCatalogRoutes,
-  },
-  {
-    path: "/invoice",
-    route: invoiceRoutes,
-  },
-  {
-    path: "/expense",
-    route: expenseRoutes,
-  },
+    {
+        path: "/expense",
+        route: expenseRoutes,
+    },
 ];
 
 routes.forEach((route) => {
