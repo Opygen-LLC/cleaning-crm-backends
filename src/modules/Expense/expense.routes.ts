@@ -30,6 +30,12 @@ router.get(
 );
 
 router.get(
+  "/spend-analysis",
+  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+  expenseController.getExpenseSpendAnalysis,
+);
+
+router.get(
   "/:id",
   checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.STAFF),
   expenseController.getExpenseById,

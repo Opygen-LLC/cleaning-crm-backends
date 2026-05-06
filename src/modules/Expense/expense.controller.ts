@@ -92,6 +92,21 @@ const getExpenseStats = catchAsync(async (req, res) => {
   });
 });
 
+const getExpenseSpendAnalysis = catchAsync(async (req, res) => {
+  const { startDate, endDate } = req.query;
+  const result = await expenseService.getExpenseSpendAnalysis(req.user, {
+    startDate: startDate as string,
+    endDate: endDate as string,
+  });
+
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Expense spend analysis retrieved successfully",
+    data: result,
+  });
+});
+
 export const expenseController = {
   createExpense,
   getAllExpenses,
@@ -99,4 +114,5 @@ export const expenseController = {
   updateExpense,
   deleteExpense,
   getExpenseStats,
+  getExpenseSpendAnalysis,
 };

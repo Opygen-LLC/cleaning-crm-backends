@@ -6,8 +6,8 @@ import {
 } from "./expense.interface";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
-import { UserRole } from "../../generated/prisma/enums";
-import { startOfMonth, endOfMonth, subMonths, subDays } from "date-fns";
+import { UserRole, ExpenseCategory } from "../../generated/prisma/enums";
+import { startOfMonth, endOfMonth, subMonths, subDays, format, eachDayOfInterval } from "date-fns";
 
 /**
  * Generates a unique expense reference in the format #OP-EXP-0011
@@ -225,7 +225,7 @@ const getExpenseStats = async (user: any) => {
     trendPercentage = 100;
   }
 
-  // Group by Category (Last 30 Days - As requested)
+  // Group by Category (Last 30 Days)
   const categorySummary = await prisma.expense.groupBy({
     by: ["category"],
     where: {
@@ -250,6 +250,53 @@ const getExpenseStats = async (user: any) => {
   };
 };
 
+const getExpenseSpendAnalysis = async (
+  user: any,
+  query: { startDate?: string; endDate?: string },
+) => {
+  const adminProfile = await prisma.adminProfile.findUnique({
+    where: { userId: user.id },
+  });
+
+  if (!adminProfile) {
+    throw new AppError(status.NOT_FOUND, "Admin profile not found");
+  }
+
+  const adminId = adminProfile.id;
+  const now = new Date();
+  const endDate = query.endDate ? new Date(query.endDate) : now;
+  const startDate = query.startDate ? new Date(query.startDate) : subDays(endDate, 30);
+
+  // Fetch all categories from the enum
+  const allCategories = Object.values(ExpenseCategory);
+
+  // Group expenses by category in the range
+  const categorySummary = await prisma.expense.groupBy({
+    by: ["category"],
+    where: {
+      adminId,
+      date: {
+        gte: startDate,
+        lte: endDate,
+      },
+    },
+    _sum: {
+      amount: true,
+    },
+  });
+
+  // Map all categories, ensuring those with no spend are included with 0
+  const analysisData = allCategories.map((cat) => {
+    const summary = categorySummary.find((item) => item.category === cat);
+    return {
+      category: cat,
+      amount: Number(summary?._sum.amount || 0),
+    };
+  });
+
+  return analysisData;
+};
+
 export const expenseService = {
   createExpense,
   getAllExpenses,
@@ -257,4 +304,5 @@ export const expenseService = {
   updateExpense,
   deleteExpense,
   getExpenseStats,
+  getExpenseSpendAnalysis,
 };
