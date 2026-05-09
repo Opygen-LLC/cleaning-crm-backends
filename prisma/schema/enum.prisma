@@ -23,6 +23,7 @@ enum SubscriptionName {
   STARTER
   GROWTH
   PRO
+  CUSTOM
 }
 
 enum SubscriptionPlanInterval {
