@@ -18,8 +18,7 @@ import {
     UserRole,
 } from "../../generated/prisma/enums";
 import { adminService } from "../Admin/admin.service";
-import { any } from "zod";
-import { Prisma } from "../../generated/prisma/client";
+import { subscriptionService } from "../Subscription/subscription.service";
 
 //? Max sessions per user
 const MAX_SESSIONS = 3;
@@ -35,43 +34,37 @@ const register = async ({
             body: { name, email, password },
         })
         .catch((err) => {
-            // Normalize Better Auth's duplicate email error into your AppError shape
             if (err?.body?.code === "USER_ALREADY_EXISTS") {
                 throw new AppError(status.BAD_REQUEST, "User already exists.");
             }
-            throw err; // re-throw anything unexpected
+            throw err;
         });
 
     if (!data.user?.id) {
         throw new AppError(status.BAD_REQUEST, "Failed to register user.");
     }
 
-    const admin = await prisma
-        .$transaction(
-            async (tx: Prisma.TransactionClient | typeof prisma = prisma) => {
-                return adminService.createAdmin({
-                    userId: data.user.id,
-                    businessName,
-                });
-            },
-        )
+    // ✅ Create admin first — subscription depends on admin.id
+    const admin = await adminService
+        .createAdmin({ userId: data.user.id, businessName })
         .catch(async () => {
-            await prisma.user
-                .delete({
-                    where: {
-                        id: data.user.id,
-                    },
-                })
-                .catch(() => {});
-            throw new AppError(
-                status.INTERNAL_SERVER_ERROR,
-                "Registration failed. Please try again.",
-            );
+            await prisma.user.delete({ where: { id: data.user.id } }).catch(() => {});
+            throw new AppError(status.INTERNAL_SERVER_ERROR, "Registration failed. Please try again.");
+        });
+
+    // ✅ Create trial subscription using admin.id
+    const subscription = await subscriptionService
+        .createTrialSubscription(admin.id)
+        .catch(async () => {
+            // Roll back admin + user if subscription fails
+            await prisma.user.delete({ where: { id: data.user.id } }).catch(() => {});
+            throw new AppError(status.INTERNAL_SERVER_ERROR, "Registration failed. Please try again.");
         });
 
     return {
         user: data.user,
         admin,
+        subscription,
     };
 };
 
