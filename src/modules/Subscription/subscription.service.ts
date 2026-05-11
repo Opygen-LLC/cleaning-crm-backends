@@ -3,7 +3,6 @@ import AppError from "../../errorHelper/AppError";
 import { Prisma, SubscriptionName, SubscriptionPlanInterval, SubscriptionStatus } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
 import { IRequestUser } from "../../types/requestUser.interface";
-import { ICreateTrialSubscription } from "./subscription.interface";
 import { Decimal } from "@prisma/client/runtime/client";
 
 const TRIAL_DAYS = 7;
