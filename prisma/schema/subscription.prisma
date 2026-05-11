@@ -40,8 +40,10 @@ model Subscription {
   trialEndsAt           DateTime?
   currentPeriodStart    DateTime?
   currentPeriodEnd      DateTime?
+
   cancelAtPeriodEnd     Boolean            @default(false)
   canceledAt            DateTime?
+  
   extraStaff            Int                @default(0)
   extraClient           Int                @default(0)
   extraBookingsPerMonth Int                @default(0)
