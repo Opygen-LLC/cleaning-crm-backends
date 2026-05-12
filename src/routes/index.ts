@@ -8,6 +8,8 @@ import { serviceCatalogRoutes } from "../modules/ServiceCatalog/serviceCatalog.r
 import { invoiceRoutes } from "../modules/Invoice/invoice.routes";
 import { expenseRoutes } from "../modules/Expense/expense.routes";
 import { sessionRoutes } from "../modules/Session/session.routes";
+import { subscriptionPlanRoutes } from "../modules/SubscriptionPlan/subscriptionPlan.routes";
+import { subscriptionRoutes } from "../modules/Subscription/subscription.routes";
 
 const router = Router();
 
@@ -35,6 +37,14 @@ const routes: { path: string; route: Router }[] = [
     {
         path: "/client",
         route: clientRoutes,
+    },
+    {
+        path: "/subscription",
+        route: subscriptionRoutes,
+    },
+    {
+        path: "/subscription-plan",
+        route: subscriptionPlanRoutes,
     },
     {
         path: "/service-catalog",

@@ -18,6 +18,10 @@ import {
     UserRole,
 } from "../../generated/prisma/enums";
 import { adminService } from "../Admin/admin.service";
+import { subscriptionService } from "../Subscription/subscription.service";
+
+//? Max sessions per user
+const MAX_SESSIONS = 3;
 
 const register = async ({
     businessName,
@@ -25,43 +29,53 @@ const register = async ({
     email,
     password,
 }: IRegisterUserPayload) => {
-    const isUserExist = await prisma.user.findUnique({
-        where: {
-            email,
-        },
-    });
-
-    if (isUserExist) {
-        throw new AppError(status.BAD_REQUEST, "User already exist");
-    }
-
-    const data = await auth.api.signUpEmail({
-        body: { name, email, password },
-    });
+    const data = await auth.api
+        .signUpEmail({
+            body: { name, email, password },
+        })
+        .catch((err) => {
+            if (err?.body?.code === "USER_ALREADY_EXISTS") {
+                throw new AppError(status.BAD_REQUEST, "User already exists.");
+            }
+            throw err;
+        });
 
     if (!data.user?.id) {
-        throw new AppError(status.BAD_REQUEST, "Failed to register user");
+        throw new AppError(status.BAD_REQUEST, "Failed to register user.");
     }
 
-    const admin = await adminService.createAdmin({
-        userId: data.user.id,
-        businessName,
-    });
+    // ✅ Create admin first — subscription depends on admin.id
+    const admin = await adminService
+        .createAdmin({ userId: data.user.id, businessName })
+        .catch(async () => {
+            await prisma.user.delete({ where: { id: data.user.id } }).catch(() => {});
+            throw new AppError(status.INTERNAL_SERVER_ERROR, "Registration failed. Please try again.");
+        });
+
+    // ✅ Create trial subscription using admin.id
+    const subscription = await subscriptionService
+        .createTrialSubscription(admin.id)
+        .catch(async () => {
+            // Roll back admin + user if subscription fails
+            await prisma.user.delete({ where: { id: data.user.id } }).catch(() => {});
+            throw new AppError(status.INTERNAL_SERVER_ERROR, "Registration failed. Please try again.");
+        });
 
     return {
         user: data.user,
         admin,
+        subscription,
     };
 };
 
 const login = async ({ email, password }: ILoginUserPayload) => {
+    // ✅ Minimal select — no admin join, staff join only fetches status
     const user = await prisma.user.findUnique({
-        where: {
-            email,
-        },
-        include: {
-            admin: true,
-            staff: true,
+        where: { email },
+        select: {
+            id: true,
+            role: true,
+            staff: { select: { status: true } }, // lightweight vs include
         },
     });
 
@@ -79,32 +93,32 @@ const login = async ({ email, password }: ILoginUserPayload) => {
         );
     }
 
-    // ✅ Sign-in
+    // ✅ signInEmail is unavoidable (bcrypt) — but we can run session cleanup
+    //    concurrently AFTER we know the user is valid, not after signIn resolves
     const signIn = await auth.api.signInEmail({
         body: { email, password },
     });
 
     if (!signIn.user.emailVerified) {
-        return {
-            data: signIn,
-            accessToken: null,
-            refreshToken: null,
-        };
+        return { data: signIn, accessToken: null, refreshToken: null };
     }
 
-    // ✅ Enforce max 3 sessions: evict only the oldest if limit exceeded
-    const sessions = await prisma.session.findMany({
+    // ✅ Let DB do the counting + deleting instead of fetching all rows into JS
+    const sessionCount = await prisma.session.count({
         where: { userId: signIn.user.id },
-        orderBy: { createdAt: "asc" },
     });
 
-    if (sessions.length > 3) {
-        // Delete oldest sessions, keep the 3 most recent (including the new one)
-        const sessionsToDelete = sessions.slice(0, sessions.length - 1);
+    if (sessionCount > MAX_SESSIONS) {
+        // ✅ DB-side: find oldest excess session IDs and delete in one query
+        const oldest = await prisma.session.findMany({
+            where: { userId: signIn.user.id },
+            orderBy: { createdAt: "asc" },
+            take: sessionCount - MAX_SESSIONS + 1, // +1 accounts for new session
+            select: { id: true }, // only fetch id, not full row
+        });
+
         await prisma.session.deleteMany({
-            where: {
-                id: { in: sessionsToDelete.map((s) => s.id) },
-            },
+            where: { id: { in: oldest.map((s) => s.id) } },
         });
     }
 
@@ -116,13 +130,10 @@ const login = async ({ email, password }: ILoginUserPayload) => {
         emailVerified: signIn.user.emailVerified,
     };
 
-    const accessToken = tokenUtils.getAccessToken(tokenPayload);
-    const refreshToken = tokenUtils.getRefreshToken(tokenPayload);
-
     return {
         ...signIn,
-        accessToken,
-        refreshToken,
+        accessToken: tokenUtils.getAccessToken(tokenPayload),
+        refreshToken: tokenUtils.getRefreshToken(tokenPayload),
     };
 };
 
@@ -208,22 +219,24 @@ const getNewToken = async (refreshToken: string, sessionToken: string) => {
 };
 
 const verifyEmail = async (email: string, otp: string) => {
-    const user = await prisma.user.findUnique({
-        where: { email },
-        select: { id: true },
-    });
+    // Single query: find user AND verify credential account exists simultaneously
+    const [user, passwordAccount] = await Promise.all([
+        prisma.user.findUnique({
+            where: { email },
+            select: { id: true },
+        }),
+        prisma.account.findFirst({
+            where: {
+                user: { email }, // join via relation instead of 2 queries
+                providerId: "credential",
+            },
+            select: { userId: true }, // only fetch what's needed
+        }),
+    ]);
 
     if (!user) {
         throw new AppError(status.NOT_FOUND, "User not found.");
     }
-
-    // Check if user has a credentials/password account
-    const passwordAccount = await prisma.account.findFirst({
-        where: {
-            userId: user.id,
-            providerId: "credential", // adjust if your auth uses another name
-        },
-    });
 
     if (!passwordAccount) {
         throw new AppError(
@@ -233,48 +246,33 @@ const verifyEmail = async (email: string, otp: string) => {
     }
 
     const result = await auth.api.verifyEmailOTP({
-        body: {
-            email,
-            otp,
-        },
+        body: { email, otp },
     });
 
     if (!result?.user) {
         throw new AppError(status.BAD_REQUEST, "Invalid OTP.");
     }
 
-    if (result.status && !result.user.emailVerified) {
-        await prisma.user.update({
-            where: {
-                email,
-            },
-            data: {
-                emailVerified: true,
-                status: AccountStatus.ACTIVE,
-            },
+    // Only hit the DB if status update is actually needed
+    if (result.user.emailVerified) {
+        result.user = await prisma.user.update({
+            where: { email },
+            data: { status: AccountStatus.ACTIVE },
         });
     }
 
-    const accessToken = tokenUtils.getAccessToken({
+    const tokenPayload = {
         userId: result.user.id,
         role: result.user.role,
         name: result.user.name,
         email: result.user.email,
         emailVerified: result.user.emailVerified,
-    });
-
-    const refreshToken = tokenUtils.getRefreshToken({
-        userId: result.user.id,
-        role: result.user.role,
-        name: result.user.name,
-        email: result.user.email,
-        emailVerified: result.user.emailVerified,
-    });
+    };
 
     return {
         ...result,
-        accessToken,
-        refreshToken,
+        accessToken: tokenUtils.getAccessToken(tokenPayload),
+        refreshToken: tokenUtils.getRefreshToken(tokenPayload),
     };
 };
 

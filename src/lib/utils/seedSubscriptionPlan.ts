@@ -16,6 +16,12 @@ const SUBSCRIPTION_PLANS: {
         maxStaff: number | null;
         maxClient: number | null;
         maxBookingsPerMonth: number | null;
+
+        //? For custom plans
+        baseCharge?: number;
+        pricePerStaff?: number;
+        pricePerClient?: number;
+        pricePerBooking?: number;
     }[];
 }[] = [
     {
@@ -102,14 +108,107 @@ const SUBSCRIPTION_PLANS: {
             },
         ],
     },
+    {
+        name: SubscriptionName.CUSTOM,
+        description: "Fully flexible pricing — pay only for what you use.",
+        currency: "USD",
+        features: [
+            "Choose your staff count",
+            "Choose your client limit",
+            "Choose your bookings per month",
+            "$10 base charge",
+            "$5 per staff member",
+            "$0.10 per client (10 clients / $1)",
+            "$0.10 per booking (10 bookings / $1)",
+            "Priority support",
+        ],
+        plans: [
+            {
+                interval: SubscriptionPlanInterval.MONTHLY,
+                price: 0,
+                maxStaff: null,
+                maxClient: null,
+                maxBookingsPerMonth: null,
+                baseCharge: 10.0,
+                pricePerStaff: 5.0,
+                pricePerClient: 0.1,
+                pricePerBooking: 0.1,
+            },
+            {
+                interval: SubscriptionPlanInterval.YEARLY,
+                price: 0,
+                maxStaff: null,
+                maxClient: null,
+                maxBookingsPerMonth: null,
+                baseCharge: 120.0,
+                pricePerStaff: 5.0,
+                pricePerClient: 0.1,
+                pricePerBooking: 0.1,
+            },
+        ],
+    },
 ];
 
 export async function seedSubscriptionPlans() {
     console.log("🌱 Seeding subscription plans...");
 
+    // for (const sub of SUBSCRIPTION_PLANS) {
+    //     try {
+    //         const subscriptionPlan = await prisma.subscriptionPlan.upsert({
+    //             where: { name: sub.name },
+    //             update: {
+    //                 description: sub.description,
+    //                 currency: sub.currency,
+    //                 features: sub.features,
+    //             },
+    //             create: {
+    //                 name: sub.name,
+    //                 description: sub.description,
+    //                 currency: sub.currency,
+    //                 features: sub.features,
+    //             },
+    //         });
+
+    //         for (const plan of sub.plans) {
+    // 			try {
+    //                 await prisma.plan.upsert({
+    //                     where: {
+    //                         subscriptionPlanId_interval: {
+    //                             subscriptionPlanId: subscriptionPlan.id,
+    //                             interval: plan.interval,
+    //                         },
+    //                     },
+    //                     update: {
+    //                         price: plan.price,
+    //                         maxStaff: plan.maxStaff,
+    //                         maxClient: plan.maxClient,
+    //                         maxBookingsPerMonth: plan.maxBookingsPerMonth,
+    //                     },
+    //                     create: {
+    //                         price: plan.price,
+    //                         interval: plan.interval,
+    //                         maxStaff: plan.maxStaff,
+    //                         maxClient: plan.maxClient,
+    //                         maxBookingsPerMonth: plan.maxBookingsPerMonth,
+    //                         subscriptionPlanId: subscriptionPlan.id,
+    //                     },
+    //                 });
+    //             } catch (err) {
+    //                 console.log(
+    //                     `⚠️ Plan already exists or failed for ${sub.name} (${plan.interval})`,
+    //                 );
+    //             }
+    //         }
+    //     } catch (err) {
+    //         console.log(`⚠️ SubscriptionPlan exists: ${sub.name}`);
+    //     }
+    // }
+
     for (const sub of SUBSCRIPTION_PLANS) {
+        let subscriptionPlan;
+
         try {
-            const subscriptionPlan = await prisma.subscriptionPlan.upsert({
+            subscriptionPlan = await prisma.subscriptionPlan.upsert({
                 where: { name: sub.name },
                 update: {
                     description: sub.description,
@@ -124,38 +223,57 @@ export async function seedSubscriptionPlans() {
                 },
             });
 
-            for (const plan of sub.plans) {
-				try {
-                    await prisma.plan.upsert({
-                        where: {
-                            subscriptionPlanId_interval: {
-                                subscriptionPlanId: subscriptionPlan.id,
-                                interval: plan.interval,
-                            },
-                        },
-                        update: {
-                            price: plan.price,
-                            maxStaff: plan.maxStaff,
-                            maxClient: plan.maxClient,
-                            maxBookingsPerMonth: plan.maxBookingsPerMonth,
-                        },
-                        create: {
-                            price: plan.price,
-                            interval: plan.interval,
-                            maxStaff: plan.maxStaff,
-                            maxClient: plan.maxClient,
-                            maxBookingsPerMonth: plan.maxBookingsPerMonth,
-                            subscriptionPlanId: subscriptionPlan.id,
-                        },
-                    });
-                } catch (err) {
-                    console.log(
-                        `⚠️ Plan already exists or failed for ${sub.name} (${plan.interval})`,
-                    );
-                }
-            }
+            console.log(`✅ SubscriptionPlan upserted: ${sub.name}`);
         } catch (err) {
-            console.log(`⚠️ SubscriptionPlan exists: ${sub.name}`);
+            console.error(
+                `❌ Failed to upsert SubscriptionPlan: ${sub.name}`,
+                err,
+            );
+            continue; // skip inner loop if the plan itself failed
+        }
+
+        for (const plan of sub.plans) {
+            try {
+                await prisma.plan.upsert({
+                    where: {
+                        subscriptionPlanId_interval: {
+                            subscriptionPlanId: subscriptionPlan.id,
+                            interval: plan.interval,
+                        },
+                    },
+                    update: {
+                        price: plan.price,
+                        maxStaff: plan.maxStaff,
+                        maxClient: plan.maxClient,
+                        maxBookingsPerMonth: plan.maxBookingsPerMonth,
+                        baseCharge: plan.baseCharge ?? 0,
+                        pricePerStaff: plan.pricePerStaff ?? 0,
+                        pricePerClient: plan.pricePerClient ?? 0,
+                        pricePerBooking: plan.pricePerBooking ?? 0,
+                    },
+                    create: {
+                        price: plan.price,
+                        interval: plan.interval,
+                        maxStaff: plan.maxStaff,
+                        maxClient: plan.maxClient,
+                        maxBookingsPerMonth: plan.maxBookingsPerMonth,
+                        baseCharge: plan.baseCharge ?? 0,
+                        pricePerStaff: plan.pricePerStaff ?? 0,
+                        pricePerClient: plan.pricePerClient ?? 0,
+                        pricePerBooking: plan.pricePerBooking ?? 0,
+                        subscriptionPlanId: subscriptionPlan.id,
+                    },
+                });
+
+                console.log(
+                    `  ✅ Plan upserted: ${sub.name} (${plan.interval})`,
+                );
+            } catch (err) {
+                console.error(
+                    `  ❌ Failed to upsert Plan: ${sub.name} (${plan.interval})`,
+                    err,
+                );
+            }
         }
     }
 
