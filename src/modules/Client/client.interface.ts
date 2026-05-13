@@ -11,3 +11,15 @@ export interface createClientPayload {
     country: string;
     notes?: string;
 }
+
+export interface updateClientPayload {
+    name?: string;
+    phone?: string;
+    servicePreference?: string;
+
+    addressLine1?: string;
+    addressLine2?: string;
+    city?: string;
+    zipcode?: string;
+    country?: string;
+}
