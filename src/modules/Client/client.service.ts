@@ -1,45 +1,40 @@
-import status from "http-status";
-import AppError from "../../errorHelper/AppError";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { createClientPayload } from "./client.interface";
 import { prisma } from "../../lib/prisma/prisma";
+import AppError from "../../errorHelper/AppError";
 
 const createClient = async (
-    adminId: string,
     payload: createClientPayload,
-    user?: IRequestUser,
+    user: IRequestUser,
 ) => {
-    if (user && user.id !== adminId) {
-        throw new AppError(
-            status.FORBIDDEN,
-            "You are not allowed to create client.",
-        );
-    }
-
     const { notes, servicePreference, email, ...rest } = payload;
 
     // validate service exists
-    await prisma.serviceCatalog.findUniqueOrThrow({
+    const service = await prisma.serviceCatalog.findUnique({
         where: {
             serviceName_adminId: {
                 serviceName: servicePreference,
-                adminId,
+                adminId: user.id,
             },
         },
     });
+
+    if (!service) {
+        throw new AppError(400, "Service not found");
+    }
 
     return await prisma.client.upsert({
         where: {
             email_adminId: {
                 email,
-                adminId,
+                adminId: user.id,
             },
         },
         create: {
             ...rest,
             email,
             servicePreference,
-            adminId,
+            adminId: user.id,
 
             notes: notes
                 ? {
