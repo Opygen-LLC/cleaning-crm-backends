@@ -14,6 +14,19 @@ const createClientSchema = z.object({
 	notes: z.string().optional(),
 });
 
+const updateClientSchema = z.object({
+	name: z.string().min(1, "Name is required").optional(),
+	phone: z.string().optional(),
+	servicePreference: z.string().optional(),
+
+	addressLine1: z.string().optional(),
+	addressLine2: z.string().optional(),
+	city: z.string().optional(),
+	zipcode: z.string().optional(),
+	country: z.string().optional(),
+});
+
 export const clientValidation = {
 	createClient: createClientSchema,
+	updateClient: updateClientSchema,
 };
