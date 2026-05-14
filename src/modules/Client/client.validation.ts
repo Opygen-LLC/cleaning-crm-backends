@@ -18,6 +18,7 @@ const updateClientSchema = z.object({
 	name: z.string().min(1, "Name is required").optional(),
 	phone: z.string().optional(),
 	servicePreference: z.string().optional(),
+	status: z.enum(["ACTIVE", "INACTIVE", "BLOCKED"]).optional(),
 
 	addressLine1: z.string().optional(),
 	addressLine2: z.string().optional(),

@@ -390,3 +390,11 @@ enum LeaveStatus {
   APPROVED
   DECLINED
 }
+
+enum LeadStage {
+  NEW
+  CONTACTED
+  QUOTE_SENT
+  WON
+  LOST
+}

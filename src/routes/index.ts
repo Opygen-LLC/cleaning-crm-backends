@@ -13,77 +13,82 @@ import { subscriptionRoutes } from "../modules/Subscription/subscription.routes"
 import { notificationRoutes } from "../modules/Settings/notification.routes";
 import { paymentGatewayRoutes } from "../modules/Settings/paymentGateway.routes";
 import { bookingRoutes } from "../modules/Booking/booking.routes";
+import { leadRoutes } from "../modules/Lead/lead.routes";
 
 const router = Router();
 
 const routes: { path: string; route: Router }[] = [
-  {
-    path: "/auth",
-    route: authRoutes,
-  },
-  {
-    path: "/user",
-    route: userRoutes,
-  },
-  {
-    path: "/session",
-    route: sessionRoutes,
-  },
-  {
-    path: "/admin",
-    route: adminRoutes,
-  },
-  {
-    path: "/staff",
-    route: staffRoutes,
-  },
-  {
-    path: "/client",
-    route: clientRoutes,
-  },
-  {
-    path: "/subscription",
-    route: subscriptionRoutes,
-  },
-  {
-    path: "/subscription-plan",
-    route: subscriptionPlanRoutes,
-  },
-  {
-    path: "/service-catalog",
-    route: serviceCatalogRoutes,
-  },
-  {
-    path: "/invoice",
-    route: invoiceRoutes,
-  },
-  {
-    path: "/expense",
-    route: expenseRoutes,
-  },
-  // ── Bookings ───────────────────────────────────────────────────────────────
-  {
-    path: "/booking",
-    route: bookingRoutes,
-  },
-  //   ------------------Dashboard routes are registered in admin.routes.ts------------------
-  {
-    path: "/dashboard",
-    route: adminRoutes,
-  },
-  // ── Settings ──────────────────────────────────────────────────────────
-  {
-    path: "/settings",
-    route: notificationRoutes,
-  },
-  {
-    path: "/settings",
-    route: paymentGatewayRoutes,
-  },
+    {
+        path: "/auth",
+        route: authRoutes,
+    },
+    {
+        path: "/user",
+        route: userRoutes,
+    },
+    {
+        path: "/session",
+        route: sessionRoutes,
+    },
+    {
+        path: "/admin",
+        route: adminRoutes,
+    },
+    {
+        path: "/staff",
+        route: staffRoutes,
+    },
+    {
+        path: "/client",
+        route: clientRoutes,
+    },
+    {
+        path: "/subscription",
+        route: subscriptionRoutes,
+    },
+    {
+        path: "/subscription-plan",
+        route: subscriptionPlanRoutes,
+    },
+    {
+        path: "/service-catalog",
+        route: serviceCatalogRoutes,
+    },
+    {
+        path: "/invoice",
+        route: invoiceRoutes,
+    },
+    {
+        path: "/expense",
+        route: expenseRoutes,
+    },
+    // ── Bookings ───────────────────────────────────────────────────────────────
+    {
+        path: "/booking",
+        route: bookingRoutes,
+    },
+    {
+        path: "/lead",
+        route: leadRoutes,
+    },
+    //   ------------------Dashboard routes are registered in admin.routes.ts------------------
+    {
+        path: "/dashboard",
+        route: adminRoutes,
+    },
+    // ── Settings ──────────────────────────────────────────────────────────
+    {
+        path: "/settings",
+        route: notificationRoutes,
+    },
+    {
+        path: "/settings",
+        route: paymentGatewayRoutes,
+    },
 ];
 
 routes.forEach((route) => {
-  router.use(route.path, route.route);
+    router.use(route.path, route.route);
 });
 
 export default router;

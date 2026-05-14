@@ -29,12 +29,14 @@ model AdminProfile {
   expenses          Expense[]
   invoices          Invoice[]
   jobs              Job[]
+  leads             Lead[]
   notificationPrefs NotificationPreference?
   payment           Payment[]
   paymentGateway    PaymentGatewayConfig?
   quotes            Quote[]
 
-  serviceCatalogs   ServiceCatalog[]
+  serviceCatalogs ServiceCatalog[]
+
   @@index([createdAt])
 }
 

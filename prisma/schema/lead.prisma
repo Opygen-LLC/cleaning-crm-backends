@@ -1,0 +1,24 @@
+model Lead {
+    id              String    @id @default(uuid())
+    leadRef         String    @unique
+    name            String
+    email           String
+    phone           String?
+    serviceInterest String
+    estimatedMin    Decimal   @default(0) @db.Decimal(10, 2)
+    estimatedMax    Decimal   @default(0) @db.Decimal(10, 2)
+    stage           LeadStage @default(NEW)
+    notes           String?
+    sourceRef       String?
+
+    adminId String
+    admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([email, adminId])
+    @@index([adminId])
+    @@index([stage])
+    @@map("lead")
+}

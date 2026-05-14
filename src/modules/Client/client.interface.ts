@@ -16,6 +16,7 @@ export interface updateClientPayload {
     name?: string;
     phone?: string;
     servicePreference?: string;
+    status?: "ACTIVE" | "INACTIVE" | "BLOCKED";
 
     addressLine1?: string;
     addressLine2?: string;
