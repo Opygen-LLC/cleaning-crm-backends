@@ -11,6 +11,7 @@ import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 
 //? Cron jobs
 import "../src/cron/staffStatus.cron";
+import logRequestResponse from "./middlewares/logger.middleware";
 
 const app = express();
 
@@ -27,39 +28,39 @@ app.use(express.urlencoded({ extended: true }));
 
 // Enable CORS for all routes
 app.use(
-    cors({
-        origin: [
-            FRONTEND_URL,
-            BETTER_AUTH_URL,
-            "http://localhost:3000",
-            "http://localhost:5000",
-            "https://cleaning-crm-clients.vercel.app",
-        ],
-        credentials: true,
-        methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-        allowedHeaders: [
-            "Content-Type",
-            "Authorization",
-            "Cookie",
-            "X-Requested-With",
-            "Accept",
-            "Origin",
-        ],
-        // allowedHeaders: ["*"], //? 🔥 allow all headers
-    }),
+  cors({
+    origin: [
+      FRONTEND_URL,
+      BETTER_AUTH_URL,
+      "http://localhost:3000",
+      "http://localhost:5000",
+      "https://cleaning-crm-clients.vercel.app",
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Cookie",
+      "X-Requested-With",
+      "Accept",
+      "Origin",
+    ],
+    // allowedHeaders: ["*"], //? 🔥 allow all headers
+  }),
 );
 
 // compression the all data
 app.use(compression());
 
 // Use the logging middleware for all routes
-// app.use(logRequestResponse);
+app.use(logRequestResponse);
 // Use the centralized routes
 app.get("/", (req: Request, res: Response) => {
-    res.status(200).json({
-        success: true,
-        message: "Cleaning CRM API is running....",
-    });
+  res.status(200).json({
+    success: true,
+    message: "Cleaning CRM API is running....",
+  });
 });
 app.use("/api/v1", routes); // This mounts all the routes under the /api prefix (e.g., /api/user)fgh
 
