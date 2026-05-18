@@ -9,7 +9,7 @@ const router = Router();
 
 // Create client
 router.post(
-    "/:adminId",
+    "/",
     checkAuth(UserRole.ADMIN),
     zodValidate(clientValidation.createClient, ValidationProperty.BODY),
     clientController.createClient,

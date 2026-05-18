@@ -14,6 +14,10 @@ import { notificationRoutes } from "../modules/Settings/notification.routes";
 import { paymentGatewayRoutes } from "../modules/Settings/paymentGateway.routes";
 import { bookingRoutes } from "../modules/Booking/booking.routes";
 import { leadRoutes } from "../modules/Lead/lead.routes";
+import { jobRoutes } from "../modules/Job/job.routes";
+import { quoteRoutes } from "../modules/Quote/quote.routes";
+import { estimateRoutes } from "../modules/Estimate/estimate.routes";
+import { estimateFormRoutes } from "../modules/EstimateForm/estimateForm.routes";
 
 const router = Router();
 
@@ -62,7 +66,6 @@ const routes: { path: string; route: Router }[] = [
         path: "/expense",
         route: expenseRoutes,
     },
-    // ── Bookings ───────────────────────────────────────────────────────────────
     {
         path: "/booking",
         route: bookingRoutes,
@@ -71,19 +74,33 @@ const routes: { path: string; route: Router }[] = [
         path: "/lead",
         route: leadRoutes,
     },
-    //   ------------------Dashboard routes are registered in admin.routes.ts------------------
     {
         path: "/dashboard",
         route: adminRoutes,
     },
-    // ── Settings ──────────────────────────────────────────────────────────
     {
-        path: "/settings",
+        path: "/notification",
         route: notificationRoutes,
     },
     {
-        path: "/settings",
+        path: "/payment-gateway",
         route: paymentGatewayRoutes,
+    },
+    {
+        path: "/job",
+        route: jobRoutes,
+    },
+    {
+        path: "/quote",
+        route: quoteRoutes,
+    },
+    {
+        path: "/estimate",
+        route: estimateRoutes,
+    },
+    {
+        path: "/estimate-form",
+        route: estimateFormRoutes,
     },
 ];
 
