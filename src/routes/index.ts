@@ -15,6 +15,7 @@ import { paymentGatewayRoutes } from "../modules/Settings/paymentGateway.routes"
 import { bookingRoutes } from "../modules/Booking/booking.routes";
 import { leadRoutes } from "../modules/Lead/lead.routes";
 import { jobRoutes } from "../modules/Job/job.routes";
+import { quoteRoutes } from "../modules/Quote/quote.routes";
 
 const router = Router();
 
@@ -86,6 +87,10 @@ const routes: { path: string; route: Router }[] = [
     {
         path: "/job",
         route: jobRoutes,
+    },
+    {
+        path: "/quote",
+        route: quoteRoutes,
     }
 ];
 
