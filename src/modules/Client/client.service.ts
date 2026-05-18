@@ -7,31 +7,11 @@ import { IQueryParams } from "../../interface/query.interface";
 import { Client, Prisma } from "../../generated/prisma/client";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
 import { clientFilterableFields, clientSearchableFields } from "./client.constant";
-import { UserRole } from "../../generated/prisma/enums";
 
 const createClient = async (
-    adminId: string,
     payload: createClientPayload,
-    user?: IRequestUser,
+    user: IRequestUser,
 ) => {
-    if (user && user.role === UserRole.ADMIN) {
-        // Resolve adminId from the admin's profile
-        const adminProfile = await prisma.adminProfile.findFirst({
-            where: { userId: user.id },
-        });
-
-        if (!adminProfile) {
-            throw new AppError(status.NOT_FOUND, "Admin profile not found");
-        }
-
-        if (adminProfile.id !== adminId) {
-            throw new AppError(
-                status.FORBIDDEN,
-                "You are not allowed to create client for another admin.",
-            );
-        }
-    }
-
     const { notes, servicePreference, email, ...rest } = payload;
 
     // validate service exists
@@ -39,7 +19,7 @@ const createClient = async (
         where: {
             serviceName_adminId: {
                 serviceName: servicePreference,
-                adminId,
+                adminId: user.id,
             },
         },
     });
@@ -48,14 +28,14 @@ const createClient = async (
         where: {
             email_adminId: {
                 email,
-                adminId,
+                adminId: user.id,
             },
         },
         create: {
             ...rest,
             email,
             servicePreference,
-            adminId,
+            adminId: user.id,
 
             notes: notes
                 ? {
