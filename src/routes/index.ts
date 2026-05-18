@@ -17,6 +17,7 @@ import { leadRoutes } from "../modules/Lead/lead.routes";
 import { jobRoutes } from "../modules/Job/job.routes";
 import { quoteRoutes } from "../modules/Quote/quote.routes";
 import { estimateRoutes } from "../modules/Estimate/estimate.routes";
+import { estimateFormRoutes } from "../modules/EstimateForm/estimateForm.routes";
 
 const router = Router();
 
@@ -96,6 +97,10 @@ const routes: { path: string; route: Router }[] = [
     {
         path: "/estimate",
         route: estimateRoutes,
+    },
+    {
+        path: "/estimate-form",
+        route: estimateFormRoutes,
     },
 ];
 
