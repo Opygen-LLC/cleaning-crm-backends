@@ -3,10 +3,11 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { clientService } from "./client.service";
 import { IQueryParams } from "../../interface/query.interface";
+import { IRequestUser } from "../../types/requestUser.interface";
 
 const createClient = catchAsync(async (req, res) => {
     const user = req.user;
-    const result = await clientService.createClient(req.body, user);
+    const result = await clientService.createClient(req.body, user as IRequestUser);
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,
@@ -17,13 +18,9 @@ const createClient = catchAsync(async (req, res) => {
 });
 
 const getClients = catchAsync(async (req, res) => {
-    const { adminId } = req.params;
     const query = req.query as IQueryParams;
-    const result = await clientService.getClients(adminId as string, query, req.user);
+    const result = await clientService.getClients(query, req.user);
 
-    // FIX #6: result is IQueryResult — spread data and meta at the top level
-    //         so the frontend receives { data: [...], meta: {...} } rather
-    //         than the double-nested { data: { data: [...], meta: {...} } }.
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,

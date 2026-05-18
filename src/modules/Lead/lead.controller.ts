@@ -5,6 +5,8 @@ import { leadService } from "./lead.service";
 import { IQueryParams } from "../../interface/query.interface";
 import { LeadStage } from "../../generated/prisma/enums";
 
+const getParam = (value: string | string[]) => Array.isArray(value) ? value[0] : value;
+
 const createLead = catchAsync(async (req, res) => {
     const result = await leadService.createLead(req.body, req.user);
 
@@ -30,7 +32,7 @@ const getLeads = catchAsync(async (req, res) => {
 });
 
 const getLeadById = catchAsync(async (req, res) => {
-    const { id } = req.params;
+    const id = getParam(req.params.id);
     const result = await leadService.getLeadById(id, req.user);
 
     sendResponse(res, {
@@ -42,7 +44,7 @@ const getLeadById = catchAsync(async (req, res) => {
 });
 
 const updateLead = catchAsync(async (req, res) => {
-    const { id } = req.params;
+    const id = getParam(req.params.id);
     const result = await leadService.updateLead(id, req.body, req.user);
 
     sendResponse(res, {
@@ -54,7 +56,7 @@ const updateLead = catchAsync(async (req, res) => {
 });
 
 const updateLeadStage = catchAsync(async (req, res) => {
-    const { id } = req.params;
+    const id = getParam(req.params.id);
     const { stage } = req.body as { stage: LeadStage };
     const result = await leadService.updateLeadStage(id, stage, req.user);
 
@@ -67,7 +69,7 @@ const updateLeadStage = catchAsync(async (req, res) => {
 });
 
 const deleteLead = catchAsync(async (req, res) => {
-    const { id } = req.params;
+    const id = getParam(req.params.id);
     await leadService.deleteLead(id, req.user);
 
     sendResponse(res, {

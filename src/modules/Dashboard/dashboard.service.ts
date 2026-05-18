@@ -60,10 +60,8 @@ const getDashboardOverview = async (userId: string) => {
     recentInvoices,
 
     // Recent bookings — last 5
-    recentBookingsRaw,
 
     // Top staff — by completed jobs (last 90 days)
-    topStaffRaw,
   ] = await Promise.all([
     // Current revenue (PAID invoices in last 30 days)
     prisma.invoice.aggregate({
@@ -133,25 +131,26 @@ const getDashboardOverview = async (userId: string) => {
       select: { paidDate: true, total: true },
     }),
 
-    // Most recent 5 bookings with client + staff
+  ]);
+
+  const [recentBookingsRaw, topStaffRaw] = await Promise.all([
     prisma.booking.findMany({
       where: { adminId },
       orderBy: { createdAt: "desc" },
       take: 5,
       include: {
-        client: { select: { id: true, name: true, profilePhoto: true } },
+        client: { select: { id: true, name: true } },
         staffAssignments: {
           include: {
             staff: {
               include: { user: { select: { name: true } } },
             },
           },
-          take: 1, // first assigned staff name for the overview card
+          take: 1,
         },
       },
     }),
 
-    // Top 4 staff by completed job count in last 90 days
     prisma.staffProfile.findMany({
       where: { adminId },
       include: {
@@ -265,11 +264,11 @@ const getDashboardOverview = async (userId: string) => {
   // ── Shape recent bookings ────────────────────────────────────────────────
   const recentBookings = recentBookingsRaw.map((b) => {
     const firstStaff = b.staffAssignments[0]?.staff?.user?.name ?? null;
+
     return {
       id: b.id,
       bookingRef: b.bookingRef,
       clientName: b.client.name,
-      clientAvatar: b.client.profilePhoto ?? undefined,
       serviceType: b.serviceType,
       scheduledDate: b.scheduledDate.toISOString(),
       address: b.address,
@@ -411,7 +410,11 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
         status: InvoiceStatus.PAID,
         paidDate: { gte: from, lte: now },
       },
-      select: { paidDate: true, total: true, serviceType: true },
+      select: {
+        paidDate: true,
+        total: true,
+        serviceCatalog: { select: { serviceName: true } },
+      },
     }),
     // Expenses for chart bucketing
     prisma.expense.findMany({
@@ -427,7 +430,7 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
         id: true,
         invoiceRef: true,
         clientName: true,
-        serviceType: true,
+        serviceCatalog: { select: { serviceName: true } },
         issuedDate: true,
         total: true,
         status: true,
@@ -446,7 +449,7 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
             },
           },
           include: {
-            job: { select: { total: true } },
+            job: { select: { id: true } },
           },
         },
       },
@@ -495,7 +498,7 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
   // ── By service ───────────────────────────────────────────────────────────
   const serviceMap: Record<string, { revenue: number; jobs: number }> = {};
   for (const inv of allPaidInvoices) {
-    const key = inv.serviceType ?? "Other";
+    const key = inv.serviceCatalog?.serviceName ?? "Other";
     if (!serviceMap[key]) serviceMap[key] = { revenue: 0, jobs: 0 };
     serviceMap[key].revenue += Number(inv.total);
     serviceMap[key].jobs += 1;
@@ -512,20 +515,16 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
   // ── By staff ─────────────────────────────────────────────────────────────
   const byStaff = staffWithJobs
     .map((s) => {
-      const revenue = s.jobAssignments.reduce(
-        (sum, a) => sum + Number((a.job as any)?.total ?? 0),
-        0,
-      );
       return {
         staffId: s.user.id,
         name: s.user.name,
         avatar: s.user.image ?? undefined,
-        revenue,
+        revenue: 0,
         jobs: s.jobAssignments.length,
         avgRating: 0, // real value once Review model is fixed (Phase 4)
       };
     })
-    .sort((a, b) => b.revenue - a.revenue);
+    .sort((a, b) => b.jobs - a.jobs);
 
   // ── Recent transactions ──────────────────────────────────────────────────
   const statusMap: Record<string, "Paid" | "Pending" | "Overdue"> = {
@@ -540,7 +539,7 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
     id: inv.id,
     bookingRef: inv.invoiceRef,
     clientName: inv.clientName,
-    serviceType: inv.serviceType ?? "Other",
+    serviceType: inv.serviceCatalog?.serviceName ?? "Other",
     date: inv.issuedDate.toISOString(),
     amount: Number(inv.total),
     status: statusMap[inv.status] ?? "Pending",
