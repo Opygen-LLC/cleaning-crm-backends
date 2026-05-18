@@ -412,7 +412,6 @@ const convertEstimateToBooking = async (
                 durationMins: payload.durationMins,
                 total:        estimate.total,
                 notes:        payload.notes ?? estimate.notes,
-                estimateId:   estimate.id,
                 ...(payload.staffIds?.length && {
                     staffAssignments: {
                         createMany: {

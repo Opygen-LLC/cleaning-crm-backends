@@ -4,6 +4,8 @@ import { sendResponse } from "../../shared/sendResponse";
 import { estimateFormService } from "./estimateForm.service";
 import { IQueryParams } from "../../interface/query.interface";
 
+const getParam = (value: string | string[]) => Array.isArray(value) ? value[0] : value;
+
 // ── EstimateForm CRUD ─────────────────────────────────────────────────────────
 
 const createEstimateForm = catchAsync(async (req, res) => {
@@ -31,7 +33,7 @@ const getAllEstimateForms = catchAsync(async (req, res) => {
 
 const getEstimateFormById = catchAsync(async (req, res) => {
     const result = await estimateFormService.getEstimateFormById(
-        req.params.id,
+        getParam(req.params.id),
         req.user,
     );
     sendResponse(res, {
@@ -44,7 +46,7 @@ const getEstimateFormById = catchAsync(async (req, res) => {
 
 const updateEstimateForm = catchAsync(async (req, res) => {
     const result = await estimateFormService.updateEstimateForm(
-        req.params.id,
+        getParam(req.params.id),
         req.body,
         req.user,
     );
@@ -57,7 +59,7 @@ const updateEstimateForm = catchAsync(async (req, res) => {
 });
 
 const deleteEstimateForm = catchAsync(async (req, res) => {
-    await estimateFormService.deleteEstimateForm(req.params.id, req.user);
+    await estimateFormService.deleteEstimateForm(getParam(req.params.id), req.user);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -68,7 +70,7 @@ const deleteEstimateForm = catchAsync(async (req, res) => {
 
 const togglePublished = catchAsync(async (req, res) => {
     const result = await estimateFormService.togglePublished(
-        req.params.id,
+        getParam(req.params.id),
         req.user,
     );
     sendResponse(res, {
@@ -100,7 +102,7 @@ const getSubmissions = catchAsync(async (req, res) => {
 
 const getFormSubmissions = catchAsync(async (req, res) => {
     const result = await estimateFormService.getSubmissions(
-        req.params.id,
+        getParam(req.params.id),
         req.query as IQueryParams,
         req.user,
     );
@@ -115,7 +117,7 @@ const getFormSubmissions = catchAsync(async (req, res) => {
 
 const updateSubmissionStatus = catchAsync(async (req, res) => {
     const result = await estimateFormService.updateSubmissionStatus(
-        req.params.submissionId,
+        getParam(req.params.submissionId),
         req.body.status,
         req.user,
     );
@@ -130,7 +132,7 @@ const updateSubmissionStatus = catchAsync(async (req, res) => {
 // ── Public (unauthenticated) ──────────────────────────────────────────────────
 
 const getPublicEstimateForm = catchAsync(async (req, res) => {
-    const result = await estimateFormService.getPublicEstimateForm(req.params.slug);
+    const result = await estimateFormService.getPublicEstimateForm(getParam(req.params.slug));
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -141,7 +143,7 @@ const getPublicEstimateForm = catchAsync(async (req, res) => {
 
 const submitPublicEstimateForm = catchAsync(async (req, res) => {
     const result = await estimateFormService.submitPublicEstimateForm(
-        req.params.slug,
+        getParam(req.params.slug),
         req.body,
     );
     sendResponse(res, {
