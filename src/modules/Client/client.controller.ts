@@ -21,11 +21,15 @@ const getClients = catchAsync(async (req, res) => {
     const query = req.query as IQueryParams;
     const result = await clientService.getClients(adminId as string, query, req.user);
 
+    // FIX #6: result is IQueryResult — spread data and meta at the top level
+    //         so the frontend receives { data: [...], meta: {...} } rather
+    //         than the double-nested { data: { data: [...], meta: {...} } }.
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
         message: "Clients retrieved successfully",
-        data: result,
+        data: result.data,
+        meta: result.meta,
     });
 });
 
