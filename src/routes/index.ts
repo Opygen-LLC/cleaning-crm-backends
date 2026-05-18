@@ -16,6 +16,7 @@ import { bookingRoutes } from "../modules/Booking/booking.routes";
 import { leadRoutes } from "../modules/Lead/lead.routes";
 import { jobRoutes } from "../modules/Job/job.routes";
 import { quoteRoutes } from "../modules/Quote/quote.routes";
+import { estimateRoutes } from "../modules/Estimate/estimate.routes";
 
 const router = Router();
 
@@ -91,7 +92,11 @@ const routes: { path: string; route: Router }[] = [
     {
         path: "/quote",
         route: quoteRoutes,
-    }
+    },
+    {
+        path: "/estimate",
+        route: estimateRoutes,
+    },
 ];
 
 routes.forEach((route) => {
