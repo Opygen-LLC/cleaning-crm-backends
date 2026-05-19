@@ -10,6 +10,12 @@ import { invoiceValidation } from "./invoice.validation";
 
 const router = Router();
 
+router.get(
+  "/payment-history",
+  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+  invoiceController.getPaymentHistory,
+);
+
 router.post(
   "/",
   checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),

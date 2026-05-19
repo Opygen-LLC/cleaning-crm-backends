@@ -4,7 +4,7 @@ const createClientSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email address"),
   phone: z.string(),
-  servicePreference: z.string(),
+  servicePreference: z.string().optional(),
 
   addressLine1: z.string(),
   addressLine2: z.string().optional(),

@@ -213,6 +213,146 @@ const deleteInvoice = async (id: string) => {
   });
 };
 
+// ── Payment History ───────────────────────────────────────────────────────────
+
+interface IPaymentHistoryFilters {
+  page?: number;
+  limit?: number;
+  searchTerm?: string;
+  method?: string; // free-text: "Cash", "Card", "Bank Transfer", "Stripe", etc.
+  adminId?: string;
+}
+
+const generatePaymentRef = (index: number, invoiceRef: string) => {
+  // Derive a stable ref from invoice ref so it's idempotent
+  const num = invoiceRef.replace(/\D/g, "").padStart(4, "0").slice(-4);
+  return `#PAY-${num}`;
+};
+
+/**
+ * Payment history is derived from PAID invoices.
+ * The Payment model only stores Stripe gateway transactions;
+ * most "payments" in this CRM happen by marking an invoice PAID manually.
+ * This endpoint unifies both sources.
+ */
+const getPaymentHistory = async (filters: IPaymentHistoryFilters, user: any) => {
+  const { page = 1, limit = 10, searchTerm, method, adminId } = filters;
+
+  // ── Resolve adminId ────────────────────────────────────────────────────────
+  let resolvedAdminId: string | undefined = adminId;
+  if (!resolvedAdminId && user.role === "ADMIN") {
+    const adminProfile = await prisma.adminProfile.findUnique({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    resolvedAdminId = adminProfile?.id;
+  }
+
+  // ── Fetch paid invoices ────────────────────────────────────────────────────
+  const andConditions: any[] = [{ status: "PAID" }];
+
+  if (resolvedAdminId) {
+    andConditions.push({ adminId: resolvedAdminId });
+  }
+
+  if (searchTerm) {
+    andConditions.push({
+      OR: [
+        { invoiceRef: { contains: searchTerm, mode: "insensitive" } },
+        { clientName: { contains: searchTerm, mode: "insensitive" } },
+        { clientEmail: { contains: searchTerm, mode: "insensitive" } },
+      ],
+    });
+  }
+
+  // method filter applies to the paymentMethod field on the invoice (if stored)
+  // or we skip — most invoices don't store the method
+  if (method && method !== "All") {
+    andConditions.push({ paymentMethod: method });
+  }
+
+  const [paidInvoices, total] = await Promise.all([
+    prisma.invoice.findMany({
+      where: { AND: andConditions },
+      orderBy: { paidDate: "desc" },
+      skip: (page - 1) * limit,
+      take: limit,
+      select: {
+        id: true,
+        invoiceRef: true,
+        clientName: true,
+        total: true,
+        paidDate: true,
+        createdAt: true,
+      },
+    }),
+    prisma.invoice.count({ where: { AND: andConditions } }),
+  ]);
+
+  // ── Stats (across all paid invoices for this admin) ────────────────────────
+  const now = new Date();
+  const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const allPaidWhere: any = { status: "PAID" };
+  if (resolvedAdminId) allPaidWhere.adminId = resolvedAdminId;
+
+  const [allPaid, thisMonthPaid] = await Promise.all([
+    prisma.invoice.findMany({
+      where: allPaidWhere,
+      select: { total: true, paidDate: true },
+    }),
+    prisma.invoice.findMany({
+      where: { ...allPaidWhere, paidDate: { gte: startOfThisMonth } },
+      select: { total: true },
+    }),
+  ]);
+
+  const totalCollected = allPaid.reduce((sum, inv) => sum + Number(inv.total), 0);
+  const thisMonth = thisMonthPaid.reduce((sum, inv) => sum + Number(inv.total), 0);
+  const avgPayment = allPaid.length > 0 ? Math.round(totalCollected / allPaid.length) : 0;
+
+  // Payment method breakdown — placeholder since Invoice model doesn't store method
+  const byMethod = [
+    { method: "Bank Transfer", amount: 0, count: 0 },
+    { method: "Card", amount: 0, count: 0 },
+    { method: "Cash", amount: 0, count: 0 },
+    { method: "Stripe", amount: 0, count: 0 },
+  ];
+
+  // ── Shape payments list ───────────────────────────────────────────────────
+  const payments = paidInvoices.map((inv, i) => ({
+    id: inv.id,
+    paymentRef: generatePaymentRef(i, inv.invoiceRef),
+    invoiceRef: inv.invoiceRef,
+    clientName: inv.clientName,
+    clientAvatar: undefined,
+    amount: Number(inv.total),
+    method: "Bank Transfer" as const, // default until payment method stored on Invoice
+    date: inv.paidDate
+      ? new Date(inv.paidDate).toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        })
+      : new Date(inv.createdAt).toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        }),
+  }));
+
+  return {
+    payments,
+    total,
+    stats: {
+      totalCollected,
+      thisMonth,
+      avgPayment,
+      byMethod,
+    },
+  };
+};
+
 export const invoiceService = {
   createInvoice,
   getAllInvoices,
@@ -220,4 +360,5 @@ export const invoiceService = {
   updateInvoice,
   updateInvoiceStatus,
   deleteInvoice,
+  getPaymentHistory,
 };

@@ -27,7 +27,7 @@ const createClient = async (
         create: {
             ...rest,
             email,
-            servicePreference,
+            ...(servicePreference ? { servicePreference } : {}),
             adminId: user.id,
 
             notes: notes
@@ -40,7 +40,7 @@ const createClient = async (
         },
         update: {
             ...rest,
-            servicePreference,
+            ...(servicePreference ? { servicePreference } : {}),
 
             notes: notes
                 ? {
