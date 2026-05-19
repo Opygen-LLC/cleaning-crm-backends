@@ -18,94 +18,99 @@ import { jobRoutes } from "../modules/Job/job.routes";
 import { quoteRoutes } from "../modules/Quote/quote.routes";
 import { estimateRoutes } from "../modules/Estimate/estimate.routes";
 import { estimateFormRoutes } from "../modules/EstimateForm/estimateForm.routes";
+import { reviewRoutes } from "../modules/Review/review.routes";
 
 const router = Router();
 
 const routes: { path: string; route: Router }[] = [
-    {
-        path: "/auth",
-        route: authRoutes,
-    },
-    {
-        path: "/user",
-        route: userRoutes,
-    },
-    {
-        path: "/session",
-        route: sessionRoutes,
-    },
-    {
-        path: "/admin",
-        route: adminRoutes,
-    },
-    {
-        path: "/staff",
-        route: staffRoutes,
-    },
-    {
-        path: "/client",
-        route: clientRoutes,
-    },
-    {
-        path: "/subscription",
-        route: subscriptionRoutes,
-    },
-    {
-        path: "/subscription-plan",
-        route: subscriptionPlanRoutes,
-    },
-    {
-        path: "/service-catalog",
-        route: serviceCatalogRoutes,
-    },
-    {
-        path: "/invoice",
-        route: invoiceRoutes,
-    },
-    {
-        path: "/expense",
-        route: expenseRoutes,
-    },
-    {
-        path: "/booking",
-        route: bookingRoutes,
-    },
-    {
-        path: "/lead",
-        route: leadRoutes,
-    },
-    {
-        path: "/dashboard",
-        route: adminRoutes,
-    },
-    {
-        path: "/notification",
-        route: notificationRoutes,
-    },
-    {
-        path: "/payment-gateway",
-        route: paymentGatewayRoutes,
-    },
-    {
-        path: "/job",
-        route: jobRoutes,
-    },
-    {
-        path: "/quote",
-        route: quoteRoutes,
-    },
-    {
-        path: "/estimate",
-        route: estimateRoutes,
-    },
-    {
-        path: "/estimate-form",
-        route: estimateFormRoutes,
-    },
+  {
+    path: "/auth",
+    route: authRoutes,
+  },
+  {
+    path: "/user",
+    route: userRoutes,
+  },
+  {
+    path: "/session",
+    route: sessionRoutes,
+  },
+  {
+    path: "/admin",
+    route: adminRoutes,
+  },
+  {
+    path: "/staff",
+    route: staffRoutes,
+  },
+  {
+    path: "/client",
+    route: clientRoutes,
+  },
+  {
+    path: "/subscription",
+    route: subscriptionRoutes,
+  },
+  {
+    path: "/subscription-plan",
+    route: subscriptionPlanRoutes,
+  },
+  {
+    path: "/service-catalog",
+    route: serviceCatalogRoutes,
+  },
+  {
+    path: "/invoice",
+    route: invoiceRoutes,
+  },
+  {
+    path: "/expense",
+    route: expenseRoutes,
+  },
+  {
+    path: "/booking",
+    route: bookingRoutes,
+  },
+  {
+    path: "/lead",
+    route: leadRoutes,
+  },
+  {
+    path: "/dashboard",
+    route: adminRoutes,
+  },
+  {
+    path: "/notification",
+    route: notificationRoutes,
+  },
+  {
+    path: "/payment-gateway",
+    route: paymentGatewayRoutes,
+  },
+  {
+    path: "/job",
+    route: jobRoutes,
+  },
+  {
+    path: "/quote",
+    route: quoteRoutes,
+  },
+  {
+    path: "/estimate",
+    route: estimateRoutes,
+  },
+  {
+    path: "/estimate-form",
+    route: estimateFormRoutes,
+  },
+  {
+    path: "/review",
+    route: reviewRoutes,
+  },
 ];
 
 routes.forEach((route) => {
-    router.use(route.path, route.route);
+  router.use(route.path, route.route);
 });
 
 export default router;

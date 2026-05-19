@@ -245,6 +245,17 @@ const updateJobStatus = async (
             });
         }
 
+        // Auto-generate a review token when the job is marked COMPLETED
+        if (newStatus === JobStatus.COMPLETED) {
+            const expiresAt = new Date();
+            expiresAt.setDate(expiresAt.getDate() + 7);
+            await tx.reviewToken.upsert({
+                where: { jobId: id },
+                create: { jobId: id, adminId: job.adminId, expiresAt },
+                update: {}, // already exists — no-op
+            });
+        }
+
         if (job.bookingId && newStatus === JobStatus.CANCELLED) {
             await tx.booking.update({
                 where: { id: job.bookingId },

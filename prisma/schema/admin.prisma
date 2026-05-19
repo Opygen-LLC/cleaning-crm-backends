@@ -17,7 +17,8 @@ model AdminProfile {
   website           String?
   user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   couponUsage       CouponUsage[]
-  review            Review?
+  reviews           Review[]
+  reviewTokens      ReviewToken[]
   staff             StaffProfile[]
   subscription      Subscription[]
   workLocations     WorkLocation[]
