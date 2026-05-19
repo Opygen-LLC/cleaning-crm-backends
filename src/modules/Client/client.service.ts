@@ -7,131 +7,146 @@ import { IQueryParams } from "../../interface/query.interface";
 import { Client, Prisma } from "../../generated/prisma/client";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
 import {
-    clientFilterableFields,
-    clientSearchableFields,
+  clientFilterableFields,
+  clientSearchableFields,
 } from "./client.constant";
 
-const createClient = async (
-    payload: createClientPayload,
-    user: IRequestUser,
-) => {
-    const { notes, servicePreference, email, ...rest } = payload;
+const resolveAdminId = async (userId: string): Promise<string> => {
+  const adminProfile = await prisma.adminProfile.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
 
-    return await prisma.client.upsert({
-        where: {
-            email_adminId: {
-                email,
-                adminId: user.id,
-            },
-        },
-        create: {
-            ...rest,
-            email,
-            ...(servicePreference ? { servicePreference } : {}),
-            adminId: user.id,
+  if (!adminProfile) {
+    throw new AppError(status.NOT_FOUND, "Admin profile not found");
+  }
 
-            notes: notes
-                ? {
-                      create: {
-                          text: notes,
-                      },
-                  }
-                : undefined,
-        },
-        update: {
-            ...rest,
-            ...(servicePreference ? { servicePreference } : {}),
-
-            notes: notes
-                ? {
-                      create: {
-                          text: notes,
-                      },
-                  }
-                : undefined,
-        },
-        include: {
-            notes: true,
-        },
-    });
+  return adminProfile.id;
 };
 
-const getClients = async (
-    query: IQueryParams,
-    user: IRequestUser,
+const createClient = async (
+  payload: createClientPayload,
+  user: IRequestUser,
 ) => {
-    const queryBuilder = new QueryBuilder<
-        Client,
-        Prisma.ClientWhereInput,
-        Prisma.ClientInclude
-    >(prisma.client, query, {
-        searchableFields: clientSearchableFields,
-        filterableFields: clientFilterableFields,
-    });
+  const adminId = await resolveAdminId(user.id);
+  const { notes, servicePreference, email, ...rest } = payload;
 
-    const result = await queryBuilder
-        .search()
-        .filter()
-        .where({ adminId: user.id })
-        .include({ notes: true })
-        .paginate()
-        .sort()
-        .fields()
-        .execute();
+  return await prisma.client.upsert({
+    where: {
+      email_adminId: {
+        email,
+        adminId,
+      },
+    },
+    create: {
+      ...rest,
+      email,
+      ...(servicePreference ? { servicePreference } : {}),
+      adminId,
 
-    return result;
+      notes: notes
+        ? {
+            create: {
+              text: notes,
+            },
+          }
+        : undefined,
+    },
+    update: {
+      ...rest,
+      ...(servicePreference ? { servicePreference } : {}),
+
+      notes: notes
+        ? {
+            create: {
+              text: notes,
+            },
+          }
+        : undefined,
+    },
+    include: {
+      notes: true,
+    },
+  });
+};
+
+const getClients = async (query: IQueryParams, user: IRequestUser) => {
+  const adminId = await resolveAdminId(user.id);
+
+  const queryBuilder = new QueryBuilder<
+    Client,
+    Prisma.ClientWhereInput,
+    Prisma.ClientInclude
+  >(prisma.client, query, {
+    searchableFields: clientSearchableFields,
+    filterableFields: clientFilterableFields,
+  });
+
+  const result = await queryBuilder
+    .search()
+    .filter()
+    .where({ adminId })
+    .include({ notes: true })
+    .paginate()
+    .sort()
+    .fields()
+    .execute();
+
+  return result;
 };
 
 const getClientById = async (id: string, user: IRequestUser) => {
-    const client = await prisma.client.findUniqueOrThrow({
-        where: { id, adminId: user.id },
-        include: {
-            notes: true,
-            bookings: true,
-        },
-    });
+  const adminId = await resolveAdminId(user.id);
 
-    return client;
+  const client = await prisma.client.findUniqueOrThrow({
+    where: { id, adminId },
+    include: {
+      notes: true,
+      bookings: true,
+    },
+  });
+
+  return client;
 };
 
 const updateClient = async (
-    id: string,
-    payload: updateClientPayload,
-    user: IRequestUser,
+  id: string,
+  payload: updateClientPayload,
+  user: IRequestUser,
 ) => {
-    const existing = await prisma.client.findUnique({
-        where: { id },
-    });
+  const existing = await prisma.client.findUnique({
+    where: { id },
+  });
 
-    if (!existing) {
-        throw new AppError(status.NOT_FOUND, "Client not found");
-    }
+  if (!existing) {
+    throw new AppError(status.NOT_FOUND, "Client not found");
+  }
 
-    return await prisma.client.update({
-        where: { id },
-        data: payload,
-        include: { notes: true },
-    });
+  return await prisma.client.update({
+    where: { id },
+    data: payload,
+    include: { notes: true },
+  });
 };
 
 const deleteClient = async (id: string, user: IRequestUser) => {
-    const existing = await prisma.client.findUnique({
-        where: { id },
-    });
+  const existing = await prisma.client.findUnique({
+    where: { id },
+  });
 
-    if (!existing) {
-        throw new AppError(status.NOT_FOUND, "Client not found");
-    }
+  if (!existing) {
+    throw new AppError(status.NOT_FOUND, "Client not found");
+  }
 
-    return await prisma.client.delete({
-        where: { id },
-    });
+  return await prisma.client.delete({
+    where: { id },
+  });
 };
 
 export const clientService = {
-    createClient,
-    getClients,
-    getClientById,
-    updateClient,
-    deleteClient,
+  createClient,
+  getClients,
+  getClientById,
+  updateClient,
+  deleteClient,
 };
