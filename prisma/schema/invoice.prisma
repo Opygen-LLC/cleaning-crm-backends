@@ -31,11 +31,13 @@ model Invoice {
   
   // Relations
   adminId          String
-  
+  bookingId        String?           @unique
+
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
-  
+
   admin            AdminProfile      @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  booking          Booking?          @relation(fields: [bookingId], references: [id], onDelete: SetNull)
   payments         Payment[]
 
   @@index([adminId, status])

@@ -133,6 +133,7 @@ export const getRevenueReport = async (userId: string, period: Period) => {
                 invoiceRef: true,
                 total: true,
                 paidDate: true,
+                clientName: true,
                 booking: {
                     select: {
                         client: { select: { name: true } },
@@ -221,7 +222,7 @@ export const getRevenueReport = async (userId: string, period: Period) => {
     const transactions = recentTransactions.map((inv) => ({
         id: inv.id,
         invoiceRef: inv.invoiceRef,
-        clientName: inv.booking?.client?.name ?? "—",
+        clientName: inv.booking?.client?.name ?? inv.clientName ?? "—",
         serviceType: inv.booking?.serviceType ?? "—",
         amount: Number(inv.total),
         paidDate: inv.paidDate,
