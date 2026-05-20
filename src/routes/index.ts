@@ -19,6 +19,7 @@ import { quoteRoutes } from "../modules/Quote/quote.routes";
 import { estimateRoutes } from "../modules/Estimate/estimate.routes";
 import { estimateFormRoutes } from "../modules/EstimateForm/estimateForm.routes";
 import { reviewRoutes } from "../modules/Review/review.routes";
+import { reportsRoutes } from "../modules/Reports/reports.routes";
 
 const router = Router();
 
@@ -106,6 +107,10 @@ const routes: { path: string; route: Router }[] = [
   {
     path: "/review",
     route: reviewRoutes,
+  },
+  {
+    path: "/reports",
+    route: reportsRoutes,
   },
 ];
 
