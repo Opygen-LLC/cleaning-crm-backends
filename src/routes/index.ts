@@ -18,6 +18,7 @@ import { jobRoutes } from "../modules/Job/job.routes";
 import { quoteRoutes } from "../modules/Quote/quote.routes";
 import { estimateRoutes } from "../modules/Estimate/estimate.routes";
 import { estimateFormRoutes } from "../modules/EstimateForm/estimateForm.routes";
+import { dashboardRoutes } from "../modules/Dashboard/dashboard.routes";
 
 const router = Router();
 
@@ -76,7 +77,7 @@ const routes: { path: string; route: Router }[] = [
     },
     {
         path: "/dashboard",
-        route: adminRoutes,
+        route: dashboardRoutes,
     },
     {
         path: "/notification",
