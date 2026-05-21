@@ -10,14 +10,18 @@ import { UserRole } from "../../generated/prisma/enums";
 
 const router = Router();
 
+// Mounted at /notification in routes/index.ts
+// Full paths: GET /api/v1/notification  |  PATCH /api/v1/notification
+// (removed the nested /notifications segment to avoid /notification/notifications double-path)
+
 router.get(
-    "/notifications",
+    "/",
     checkAuth(UserRole.ADMIN),
     notificationController.getPrefs,
 );
 
 router.patch(
-    "/notifications",
+    "/",
     checkAuth(UserRole.ADMIN),
     zodValidate(notificationValidation.updatePrefs, ValidationProperty.BODY),
     notificationController.updatePrefs,

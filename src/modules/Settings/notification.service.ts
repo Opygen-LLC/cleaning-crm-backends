@@ -22,10 +22,15 @@ const updateNotificationPrefs = async (
     userId: string,
     payload: Record<string, unknown>,
 ) => {
+    // NotificationPreference.adminId references AdminProfile.id, NOT User.id.
+    // We must resolve the admin profile first, exactly like getNotificationPrefs does.
+    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
+    if (!admin) throw new Error("Admin profile not found");
+
     return prisma.notificationPreference.upsert({
-        where: { adminId: userId },
+        where:  { adminId: admin.id },
         update: payload,
-        create: { adminId: userId, ...payload },
+        create: { adminId: admin.id, ...payload },
     });
 };
 

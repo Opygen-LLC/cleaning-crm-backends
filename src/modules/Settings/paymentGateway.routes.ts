@@ -10,14 +10,18 @@ import { UserRole } from "../../generated/prisma/enums";
 
 const router = Router();
 
+// Mounted at /payment-gateway in routes/index.ts
+// Full paths: GET /api/v1/payment-gateway  |  PATCH /api/v1/payment-gateway
+// (removed the nested /payment-gateway segment to avoid /payment-gateway/payment-gateway double-path)
+
 router.get(
-    "/payment-gateway",
+    "/",
     checkAuth(UserRole.ADMIN),
     paymentGatewayController.getConfig,
 );
 
 router.patch(
-    "/payment-gateway",
+    "/",
     checkAuth(UserRole.ADMIN),
     zodValidate(paymentGatewayValidation.update, ValidationProperty.BODY),
     paymentGatewayController.updateConfig,
