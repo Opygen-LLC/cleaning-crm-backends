@@ -38,6 +38,17 @@ router.post(
 // GET    /api/v1/booking-form/submissions    — all submissions (optionally ?formId=)
 router.get("/submissions", bookingFormController.getSubmissions);
 
+// PATCH  /api/v1/booking-form/submissions/:submissionId/status — update submission status
+// NOTE: must be registered BEFORE /:id to prevent Express matching "submissions" as :id
+router.patch(
+  "/submissions/:submissionId/status",
+  zodValidate(
+    bookingFormValidation.updateSubmissionStatusSchema,
+    ValidationProperty.BODY,
+  ),
+  bookingFormController.updateSubmissionStatus,
+);
+
 // GET    /api/v1/booking-form/:id            — get single form
 router.get("/:id", bookingFormController.getBookingFormById);
 
@@ -59,15 +70,5 @@ router.patch("/:id/publish", bookingFormController.togglePublished);
 
 // GET    /api/v1/booking-form/:id/submissions — submissions for a specific form
 router.get("/:id/submissions", bookingFormController.getFormSubmissions);
-
-// PATCH  /api/v1/booking-form/submissions/:submissionId/status — update submission status
-router.patch(
-  "/submissions/:submissionId/status",
-  zodValidate(
-    bookingFormValidation.updateSubmissionStatusSchema,
-    ValidationProperty.BODY,
-  ),
-  bookingFormController.updateSubmissionStatus,
-);
 
 export const bookingFormRoutes = router;
