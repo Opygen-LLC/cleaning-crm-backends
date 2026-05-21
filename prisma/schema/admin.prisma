@@ -40,6 +40,8 @@ model AdminProfile {
 
   serviceCatalogs ServiceCatalog[]
 
+  activityLogs      ActivityLog[]
+
   @@index([createdAt])
 }
 

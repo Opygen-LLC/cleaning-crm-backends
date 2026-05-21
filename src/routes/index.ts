@@ -22,109 +22,39 @@ import { reviewRoutes } from "../modules/Review/review.routes";
 import { reportsRoutes } from "../modules/Reports/reports.routes";
 import { bookingFormRoutes } from "../modules/BookingForm/bookingForm.routes";
 import { checklistRoutes } from "../modules/Checklist/checklist.routes";
-// FIX: import dashboardRoutes directly instead of incorrectly reusing adminRoutes
 import { dashboardRoutes } from "../modules/Dashboard/dashboard.routes";
+// Phase 8: super-admin module
+import { superAdminRoutes } from "../modules/SuperAdmin/superAdmin.routes";
 
 const router = Router();
 
 const routes: { path: string; route: Router }[] = [
-  {
-    path: "/auth",
-    route: authRoutes,
-  },
-  {
-    path: "/user",
-    route: userRoutes,
-  },
-  {
-    path: "/session",
-    route: sessionRoutes,
-  },
-  {
-    path: "/admin",
-    route: adminRoutes,
-  },
-  {
-    path: "/staff",
-    route: staffRoutes,
-  },
-  {
-    path: "/client",
-    route: clientRoutes,
-  },
-  {
-    path: "/subscription",
-    route: subscriptionRoutes,
-  },
-  {
-    path: "/subscription-plan",
-    route: subscriptionPlanRoutes,
-  },
-  {
-    path: "/service-catalog",
-    route: serviceCatalogRoutes,
-  },
-  {
-    path: "/invoice",
-    route: invoiceRoutes,
-  },
-  {
-    path: "/expense",
-    route: expenseRoutes,
-  },
-  {
-    path: "/booking",
-    route: bookingRoutes,
-  },
-  {
-    path: "/lead",
-    route: leadRoutes,
-  },
-  // FIX: was incorrectly mapped to adminRoutes — now correctly uses dashboardRoutes
-  {
-    path: "/dashboard",
-    route: dashboardRoutes,
-  },
-  {
-    path: "/notification",
-    route: notificationRoutes,
-  },
-  {
-    path: "/payment-gateway",
-    route: paymentGatewayRoutes,
-  },
-  {
-    path: "/job",
-    route: jobRoutes,
-  },
-  {
-    path: "/quote",
-    route: quoteRoutes,
-  },
-  {
-    path: "/estimate",
-    route: estimateRoutes,
-  },
-  {
-    path: "/estimate-form",
-    route: estimateFormRoutes,
-  },
-  {
-    path: "/review",
-    route: reviewRoutes,
-  },
-  {
-    path: "/reports",
-    route: reportsRoutes,
-  },
-  {
-    path: "/booking-form",
-    route: bookingFormRoutes,
-  },
-  {
-    path: "/checklist",
-    route: checklistRoutes,
-  },
+  { path: "/auth",              route: authRoutes },
+  { path: "/user",              route: userRoutes },
+  { path: "/session",           route: sessionRoutes },
+  { path: "/admin",             route: adminRoutes },
+  { path: "/staff",             route: staffRoutes },
+  { path: "/client",            route: clientRoutes },
+  { path: "/subscription",      route: subscriptionRoutes },
+  { path: "/subscription-plan", route: subscriptionPlanRoutes },
+  { path: "/service-catalog",   route: serviceCatalogRoutes },
+  { path: "/invoice",           route: invoiceRoutes },
+  { path: "/expense",           route: expenseRoutes },
+  { path: "/booking",           route: bookingRoutes },
+  { path: "/lead",              route: leadRoutes },
+  { path: "/dashboard",         route: dashboardRoutes },
+  { path: "/notification",      route: notificationRoutes },
+  { path: "/payment-gateway",   route: paymentGatewayRoutes },
+  { path: "/job",               route: jobRoutes },
+  { path: "/quote",             route: quoteRoutes },
+  { path: "/estimate",          route: estimateRoutes },
+  { path: "/estimate-form",     route: estimateFormRoutes },
+  { path: "/review",            route: reviewRoutes },
+  { path: "/reports",           route: reportsRoutes },
+  { path: "/booking-form",      route: bookingFormRoutes },
+  { path: "/checklist",         route: checklistRoutes },
+  // Phase 8 — super admin
+  { path: "/super-admin",       route: superAdminRoutes },
 ];
 
 routes.forEach((route) => {
