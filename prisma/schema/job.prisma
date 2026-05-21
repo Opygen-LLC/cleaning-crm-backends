@@ -21,6 +21,7 @@ model Job {
   quote            Quote?               @relation(fields: [quoteId], references: [id])
   staffAssignments JobStaffAssignment[]
   reviewToken      ReviewToken?
+  checklists       JobChecklist[]
 
   @@index([adminId, status])
   @@index([clientId])

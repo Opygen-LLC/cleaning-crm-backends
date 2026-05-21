@@ -270,9 +270,10 @@ export const getStaffPerformanceReport = async (
             status: true,
             durationMins: true,
             staffAssignments: {
-                include: {
+                select: {
+                    staffId: true,
                     staff: {
-                        include: {
+                        select: {
                             user: {
                                 select: { id: true, name: true, image: true },
                             },
@@ -281,7 +282,7 @@ export const getStaffPerformanceReport = async (
                 },
             },
             reviewToken: {
-                include: {
+                select: {
                     reviews: {
                         where: { NOT: { staffId: null } },
                         select: { staffId: true, rating: true },
@@ -530,9 +531,10 @@ export const getJobCompletionReport = async (
             scheduledDate: true,
             serviceType: true,
             staffAssignments: {
-                include: {
+                select: {
+                    staffId: true,
                     staff: {
-                        include: {
+                        select: {
                             user: { select: { id: true, name: true } },
                         },
                     },

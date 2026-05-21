@@ -20,6 +20,8 @@ import { estimateRoutes } from "../modules/Estimate/estimate.routes";
 import { estimateFormRoutes } from "../modules/EstimateForm/estimateForm.routes";
 import { reviewRoutes } from "../modules/Review/review.routes";
 import { reportsRoutes } from "../modules/Reports/reports.routes";
+import { bookingFormRoutes } from "../modules/BookingForm/bookingForm.routes";
+import { checklistRoutes } from "../modules/Checklist/checklist.routes";
 
 const router = Router();
 
@@ -111,6 +113,14 @@ const routes: { path: string; route: Router }[] = [
   {
     path: "/reports",
     route: reportsRoutes,
+  },
+  {
+    path: "/booking-form",
+    route: bookingFormRoutes,
+  },
+  {
+    path: "/checklist",
+    route: checklistRoutes,
   },
 ];
 

@@ -35,6 +35,8 @@ model AdminProfile {
   payment           Payment[]
   paymentGateway    PaymentGatewayConfig?
   quotes            Quote[]
+  checklistTemplates ChecklistTemplate[]
+  jobChecklists      JobChecklist[]
 
   serviceCatalogs ServiceCatalog[]
 
