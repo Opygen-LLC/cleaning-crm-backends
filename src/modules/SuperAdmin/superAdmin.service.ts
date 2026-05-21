@@ -5,6 +5,7 @@ import {
   SubscriptionStatus,
   UserRole,
 } from "../../generated/prisma/enums";
+import { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
 import { IPaginationOptions } from "../../interface/query.interface";
 import { IActivityLogFilters, IAdminAccountFilters } from "./superAdmin.interface";
@@ -85,7 +86,7 @@ const getActivityLogs = async (
   ]);
 
   return {
-    meta: { page, limit, total, totalPage: Math.ceil(total / limit) },
+    meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
     data,
   };
 };
@@ -98,7 +99,12 @@ const createActivityLog = async (data: {
   description: string;
   metadata?: Record<string, unknown>;
 }) => {
-  return prisma.activityLog.create({ data });
+  return prisma.activityLog.create({
+    data: {
+      ...data,
+      metadata: data.metadata as Prisma.InputJsonValue | undefined,
+    },
+  });
 };
 
 const getActivityLogStats = async () => {
@@ -309,7 +315,7 @@ const getAllAdminAccounts = async (
       { name: { contains: searchTerm, mode: "insensitive" } },
       { email: { contains: searchTerm, mode: "insensitive" } },
       {
-        adminProfile: {
+        admin: {
           businessName: { contains: searchTerm, mode: "insensitive" },
         },
       },
@@ -321,7 +327,7 @@ const getAllAdminAccounts = async (
     prisma.user.findMany({
       where: userWhere,
       include: {
-        adminProfile: {
+        admin: {
           include: {
             subscription: {
               where: subscriptionStatus
@@ -347,7 +353,7 @@ const getAllAdminAccounts = async (
   ]);
 
   return {
-    meta: { page, limit, total, totalPage: Math.ceil(total / limit) },
+    meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
     data,
   };
 };
@@ -356,7 +362,7 @@ const getAdminAccountById = async (adminId: string) => {
   const admin = await prisma.user.findFirst({
     where: { id: adminId, role: UserRole.ADMIN },
     include: {
-      adminProfile: {
+      admin: {
         include: {
           subscription: {
             include: {
@@ -518,7 +524,10 @@ const createSubscriptionPlan = async (payload: {
 
   return prisma.subscriptionPlan.create({
     data: {
-      ...planData,
+      name: planData.name as import("../../generated/prisma/enums").SubscriptionName,
+      description: planData.description,
+      currency: planData.currency as import("../../generated/prisma/enums").Currency | undefined,
+      features: planData.features,
       plans: {
         create: plans.map((p) => ({
           interval: p.interval as never,
@@ -556,7 +565,11 @@ const updateSubscriptionPlan = async (
 
   return prisma.subscriptionPlan.update({
     where: { id },
-    data: payload,
+    data: {
+      description: payload.description,
+      features: payload.features,
+      currency: payload.currency as import("../../generated/prisma/enums").Currency | undefined,
+    },
     include: { plans: true },
   });
 };
@@ -651,7 +664,7 @@ const getAllSubscriptions = async (
   ]);
 
   return {
-    meta: { page, limit, total, totalPage: Math.ceil(total / limit) },
+    meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
     data,
   };
 };
@@ -716,7 +729,7 @@ const getBillingHistory = async (
   ]);
 
   return {
-    meta: { page, limit, total, totalPage: Math.ceil(total / limit) },
+    meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
     data,
   };
 };

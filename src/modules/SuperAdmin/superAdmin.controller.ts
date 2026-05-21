@@ -101,7 +101,7 @@ const getAllAdminAccounts = catchAsync(async (req, res) => {
 });
 
 const getAdminAccountById = catchAsync(async (req, res) => {
-  const result = await superAdminService.getAdminAccountById(req.params.adminId);
+  const result = await superAdminService.getAdminAccountById(req.params.adminId as string);
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
@@ -111,7 +111,7 @@ const getAdminAccountById = catchAsync(async (req, res) => {
 });
 
 const suspendAdminAccount = catchAsync(async (req, res) => {
-  const result = await superAdminService.suspendAdminAccount(req.params.adminId);
+  const result = await superAdminService.suspendAdminAccount(req.params.adminId as string);
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
@@ -121,7 +121,7 @@ const suspendAdminAccount = catchAsync(async (req, res) => {
 });
 
 const activateAdminAccount = catchAsync(async (req, res) => {
-  const result = await superAdminService.activateAdminAccount(req.params.adminId);
+  const result = await superAdminService.activateAdminAccount(req.params.adminId as string);
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
@@ -144,7 +144,7 @@ const createSubscriptionPlan = catchAsync(async (req, res) => {
 
 const updateSubscriptionPlan = catchAsync(async (req, res) => {
   const result = await superAdminService.updateSubscriptionPlan(
-    req.params.planId,
+    req.params.planId as string,
     req.body,
   );
   sendResponse(res, {
@@ -157,7 +157,7 @@ const updateSubscriptionPlan = catchAsync(async (req, res) => {
 
 const updatePricingTier = catchAsync(async (req, res) => {
   const result = await superAdminService.updatePricingTier(
-    req.params.tierId,
+    req.params.tierId as string,
     req.body,
   );
   sendResponse(res, {
@@ -169,7 +169,7 @@ const updatePricingTier = catchAsync(async (req, res) => {
 });
 
 const deleteSubscriptionPlan = catchAsync(async (req, res) => {
-  const result = await superAdminService.deleteSubscriptionPlan(req.params.planId);
+  const result = await superAdminService.deleteSubscriptionPlan(req.params.planId as string);
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
@@ -206,7 +206,7 @@ const getAllSubscriptions = catchAsync(async (req, res) => {
 
 const cancelSubscription = catchAsync(async (req, res) => {
   const result = await superAdminService.cancelSubscription(
-    req.params.subscriptionId,
+    req.params.subscriptionId as string,
   );
   sendResponse(res, {
     httpStatusCode: status.OK,

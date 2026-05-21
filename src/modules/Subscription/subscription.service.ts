@@ -128,7 +128,7 @@ const changePlan = async (
       where: {
         code: couponCode,
         isActive: true,
-        OR: [{ expiresAt: null }, { expiresAt: { gte: new Date() } }],
+        OR: [{ validUntil: null }, { validUntil: { gte: new Date() } }],
       },
     });
     if (!coupon) {
@@ -239,7 +239,7 @@ const getMyBillingHistory = async (
     select: { id: true },
   });
   if (!subscription) {
-    return { meta: { page, limit, total: 0, totalPage: 0 }, data: [] };
+    return { meta: { page, limit, total: 0, totalPages: 0 }, data: [] };
   }
 
   const [total, data] = await Promise.all([
@@ -255,7 +255,7 @@ const getMyBillingHistory = async (
   ]);
 
   return {
-    meta: { page, limit, total, totalPage: Math.ceil(total / limit) },
+    meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
     data,
   };
 };
