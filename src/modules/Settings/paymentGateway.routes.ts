@@ -11,8 +11,11 @@ import { UserRole } from "../../generated/prisma/enums";
 const router = Router();
 
 // Mounted at /payment-gateway in routes/index.ts
-// Full paths: GET /api/v1/payment-gateway  |  PATCH /api/v1/payment-gateway
-// (removed the nested /payment-gateway segment to avoid /payment-gateway/payment-gateway double-path)
+// Full paths:
+//   GET   /api/v1/payment-gateway
+//   PATCH /api/v1/payment-gateway
+//   POST  /api/v1/payment-gateway/oauth
+//   POST  /api/v1/payment-gateway/disconnect
 
 router.get(
     "/",
@@ -25,6 +28,19 @@ router.patch(
     checkAuth(UserRole.ADMIN),
     zodValidate(paymentGatewayValidation.update, ValidationProperty.BODY),
     paymentGatewayController.updateConfig,
+);
+
+// FIX: Added missing OAuth connect and disconnect endpoints
+router.post(
+    "/oauth",
+    checkAuth(UserRole.ADMIN),
+    paymentGatewayController.oauthConnect,
+);
+
+router.post(
+    "/disconnect",
+    checkAuth(UserRole.ADMIN),
+    paymentGatewayController.disconnectGateway,
 );
 
 export const paymentGatewayRoutes = router;

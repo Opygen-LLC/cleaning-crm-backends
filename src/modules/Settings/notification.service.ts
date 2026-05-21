@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma/prisma";
+import type { UpdateNotificationPrefsPayload } from "./notification.interface";
 
 const getNotificationPrefs = async (userId: string) => {
     const admin = await prisma.adminProfile.findUnique({
@@ -20,7 +21,7 @@ const getNotificationPrefs = async (userId: string) => {
 
 const updateNotificationPrefs = async (
     userId: string,
-    payload: Record<string, unknown>,
+    payload: UpdateNotificationPrefsPayload,
 ) => {
     // NotificationPreference.adminId references AdminProfile.id, NOT User.id.
     // We must resolve the admin profile first, exactly like getNotificationPrefs does.

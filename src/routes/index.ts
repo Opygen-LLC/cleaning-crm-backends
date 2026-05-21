@@ -22,6 +22,8 @@ import { reviewRoutes } from "../modules/Review/review.routes";
 import { reportsRoutes } from "../modules/Reports/reports.routes";
 import { bookingFormRoutes } from "../modules/BookingForm/bookingForm.routes";
 import { checklistRoutes } from "../modules/Checklist/checklist.routes";
+// FIX: import dashboardRoutes directly instead of incorrectly reusing adminRoutes
+import { dashboardRoutes } from "../modules/Dashboard/dashboard.routes";
 
 const router = Router();
 
@@ -78,9 +80,10 @@ const routes: { path: string; route: Router }[] = [
     path: "/lead",
     route: leadRoutes,
   },
+  // FIX: was incorrectly mapped to adminRoutes — now correctly uses dashboardRoutes
   {
     path: "/dashboard",
-    route: adminRoutes,
+    route: dashboardRoutes,
   },
   {
     path: "/notification",
