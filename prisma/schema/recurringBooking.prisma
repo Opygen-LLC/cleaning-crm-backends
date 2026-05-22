@@ -35,8 +35,8 @@ model RecurringSchedule {
   // Staff assigned to every generated booking
   staffAssignments RecurringStaffAssignment[]
 
-  // All bookings generated from this schedule
-  generatedBookings Booking[]         @relation("RecurringScheduleBookings")
+  // All bookings generated from this schedule (back-relation — FK is on Booking.recurringScheduleId)
+  generatedBookings Booking[]            @relation("RecurringScheduleBookings")
 
   admin        AdminProfile           @relation(fields: [adminId], references: [id], onDelete: Cascade)
   client       Client                 @relation(fields: [clientId], references: [id])

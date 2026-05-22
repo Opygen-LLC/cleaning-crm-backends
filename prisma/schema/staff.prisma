@@ -23,6 +23,7 @@ model StaffProfile {
     staffLeave         StaffLeave[]
     jobAssignments     JobStaffAssignment[]
     bookingAssignments BookingStaffAssignment[]
+    recurringAssignments RecurringStaffAssignment[]
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
