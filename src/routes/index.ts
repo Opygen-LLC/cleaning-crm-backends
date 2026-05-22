@@ -27,6 +27,7 @@ import { dashboardRoutes } from "../modules/Dashboard/dashboard.routes";
 import { recurringBookingRoutes } from "../modules/RecurringBooking/recurringBooking.routes";
 // Phase 8: super-admin module
 import { superAdminRoutes } from "../modules/SuperAdmin/superAdmin.routes";
+import { pricingRulesRoutes } from "../modules/PricingRules/pricingRules.routes";
 
 const router = Router();
 
@@ -59,6 +60,8 @@ const routes: { path: string; route: Router }[] = [
   { path: "/recurring-booking", route: recurringBookingRoutes },
   // Phase 8 — super admin
   { path: "/super-admin",       route: superAdminRoutes },
+  // Phase 2 — pricing rules
+  { path: "/pricing-rules",     route: pricingRulesRoutes },
 ];
 
 routes.forEach((route) => {
