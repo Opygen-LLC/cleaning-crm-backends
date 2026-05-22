@@ -10,6 +10,7 @@ import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 
 //? Cron jobs
 import "../src/cron/staffStatus.cron";
+import "../src/cron/recurringBooking.cron";
 import logRequestResponse from "./middlewares/logger.middleware";
 
 const app = express();

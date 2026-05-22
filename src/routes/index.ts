@@ -23,6 +23,8 @@ import { reportsRoutes } from "../modules/Reports/reports.routes";
 import { bookingFormRoutes } from "../modules/BookingForm/bookingForm.routes";
 import { checklistRoutes } from "../modules/Checklist/checklist.routes";
 import { dashboardRoutes } from "../modules/Dashboard/dashboard.routes";
+// Phase 1: recurring booking engine
+import { recurringBookingRoutes } from "../modules/RecurringBooking/recurringBooking.routes";
 // Phase 8: super-admin module
 import { superAdminRoutes } from "../modules/SuperAdmin/superAdmin.routes";
 
@@ -53,6 +55,8 @@ const routes: { path: string; route: Router }[] = [
   { path: "/reports",           route: reportsRoutes },
   { path: "/booking-form",      route: bookingFormRoutes },
   { path: "/checklist",         route: checklistRoutes },
+  // Phase 1 — recurring booking engine
+  { path: "/recurring-booking", route: recurringBookingRoutes },
   // Phase 8 — super admin
   { path: "/super-admin",       route: superAdminRoutes },
 ];

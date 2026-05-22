@@ -12,6 +12,8 @@ import {
 } from "./job.interface";
 import { jobSearchableFields, jobFilterableFields } from "./job.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
+import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
+import { FRONTEND_URL } from "../../config/ENV";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -256,6 +258,72 @@ const updateJobStatus = async (
             });
         }
 
+        // ── Auto-create a draft invoice when job is COMPLETED ─────────────────
+        // Creates exactly one invoice per booking — skips silently if one
+        // already exists, or if the job is not linked to a booking.
+        if (newStatus === JobStatus.COMPLETED && job.bookingId) {
+            const existingInvoice = await tx.invoice.findUnique({
+                where: { bookingId: job.bookingId },
+            });
+
+            if (!existingInvoice) {
+                const booking = await tx.booking.findUnique({
+                    where: { id: job.bookingId },
+                    include: {
+                        client: { select: { name: true, email: true } },
+                    },
+                });
+
+                if (booking) {
+                    // Mirror the same ref pattern as invoice.service.ts
+                    const lastInvoice = await tx.invoice.findFirst({
+                        orderBy: { createdAt: "desc" },
+                        select: { invoiceRef: true },
+                    });
+                    let nextNum = 1;
+                    if (lastInvoice?.invoiceRef) {
+                        const parts = lastInvoice.invoiceRef.split("-");
+                        const n = parseInt(parts[parts.length - 1]);
+                        if (!isNaN(n)) nextNum = n + 1;
+                    }
+                    const invoiceRef = `#OP-INV-${nextNum.toString().padStart(4, "0")}`;
+
+                    const issuedDate = new Date();
+                    const dueDate    = new Date();
+                    dueDate.setDate(dueDate.getDate() + 14); // Net-14 terms
+
+                    const lineTotal  = Number(booking.total);
+
+                    await tx.invoice.create({
+                        data: {
+                            invoiceRef,
+                            adminId:          job.adminId,
+                            bookingId:        job.bookingId,
+                            status:           "DRAFT",
+                            clientName:       booking.client.name,
+                            clientEmail:      booking.client.email,
+                            serviceAddress:   booking.address,
+                            linkedBookingRef: booking.bookingRef,
+                            lineItems: [
+                                {
+                                    description: `${booking.serviceType.replace(/_/g, " ")} — ${booking.address}`,
+                                    quantity:    1,
+                                    unitPrice:   lineTotal,
+                                    total:       lineTotal,
+                                },
+                            ],
+                            issuedDate,
+                            dueDate,
+                            subtotal:   lineTotal,
+                            taxRate:    0,
+                            taxAmount:  0,
+                            total:      lineTotal,
+                        },
+                    });
+                }
+            }
+        }
+
         if (job.bookingId && newStatus === JobStatus.CANCELLED) {
             await tx.booking.update({
                 where: { id: job.bookingId },
@@ -399,8 +467,53 @@ const assignStaff = async (
             where: { id: jobId },
             include: jobInclude,
         });
+    }).then(async (updatedJob) => {
+        // ── Dispatch notification email to each newly assigned staff member ──
+        // Runs after the transaction so a mail failure never rolls back the DB.
+        if (payload.staffIds.length && updatedJob) {
+            const staffList = await prisma.staffProfile.findMany({
+                where: { id: { in: payload.staffIds } },
+                include: { user: { select: { name: true, email: true } } },
+            });
+
+            const client = await prisma.client.findUnique({
+                where: { id: updatedJob.clientId },
+                select: { name: true },
+            });
+
+            const jobDetailUrl = `${FRONTEND_URL}/admin/jobs/${jobId}`;
+
+            await Promise.all(
+                staffList.map((staff) =>
+                    sendEmailSafely({
+                        to:           staff.user.email,
+                        subject:      `You've been assigned to job ${updatedJob.jobRef}`,
+                        templateName: "staff-job-dispatch",
+                        templateData: {
+                            staffName:    staff.user.name,
+                            jobRef:       updatedJob.jobRef,
+                            clientName:   client?.name ?? "Client",
+                            serviceType:  updatedJob.serviceType.replace(/_/g, " "),
+                            address:      updatedJob.address,
+                            scheduledDate: new Date(updatedJob.scheduledDate).toLocaleDateString("en-GB", {
+                                weekday: "long",
+                                day:     "numeric",
+                                month:   "long",
+                                year:    "numeric",
+                            }),
+                            scheduledTime: new Date(updatedJob.scheduledDate).toLocaleTimeString("en-GB", {
+                                hour:   "2-digit",
+                                minute: "2-digit",
+                            }),
+                            durationMins: updatedJob.durationMins,
+                            jobDetailUrl,
+                        },
+                    }),
+                ),
+            );
+        }
+        return updatedJob;
     });
-};
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
