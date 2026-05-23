@@ -7,6 +7,8 @@ import {
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
 import { UserRole, InvoiceStatus, PaymentMethod, PaymentStatus } from "../../generated/prisma/enums";
+import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
+import { FRONTEND_URL } from "../../config/ENV";
 
 /**
  * Generates a unique invoice reference in the format #OP-INV-0001
@@ -353,6 +355,68 @@ const getPaymentHistory = async (filters: IPaymentHistoryFilters, user: any) => 
   };
 };
 
+// ── Send Invoice ──────────────────────────────────────────────────────────────
+
+const sendInvoice = async (id: string, user: any) => {
+  const admin = await prisma.adminProfile.findUnique({ where: { userId: user.id } });
+  if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+
+  const invoice = await prisma.invoice.findFirst({ where: { id, adminId: admin.id } });
+  if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
+
+  if (invoice.status === InvoiceStatus.PAID) {
+    throw new AppError(status.BAD_REQUEST, "Invoice is already paid and cannot be re-sent");
+  }
+  if (invoice.status === InvoiceStatus.CANCELLED) {
+    throw new AppError(status.BAD_REQUEST, "Cancelled invoices cannot be sent");
+  }
+
+  if (!invoice.clientEmail) {
+    throw new AppError(status.BAD_REQUEST, "Invoice has no client email address");
+  }
+
+  // Format helpers
+  const fmt = (d: Date) =>
+    d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+
+  const fmt2dp = (n: any) => Number(n).toFixed(2);
+
+  // Optional "View Invoice" deep-link — works if public invoice pages exist
+  const invoiceViewUrl = FRONTEND_URL
+    ? `${FRONTEND_URL}/invoice/${invoice.invoiceRef}`
+    : null;
+
+  await sendEmailSafely({
+    to:           invoice.clientEmail,
+    subject:      `Invoice ${invoice.invoiceRef} — Payment due ${fmt(invoice.dueDate)}`,
+    templateName: "invoice-send",
+    templateData: {
+      invoiceRef:     invoice.invoiceRef,
+      clientName:     invoice.clientName,
+      serviceAddress: invoice.serviceAddress,
+      issuedDate:     fmt(invoice.issuedDate),
+      dueDate:        fmt(invoice.dueDate),
+      subtotal:       fmt2dp(invoice.subtotal),
+      taxRate:        Number(invoice.taxRate),
+      taxAmount:      fmt2dp(invoice.taxAmount),
+      total:          fmt2dp(invoice.total),
+      notes:          invoice.notes ?? null,
+      invoiceViewUrl,
+    },
+  });
+
+  // Stamp sentAt and move to SENT if still DRAFT
+  const updatedInvoice = await prisma.invoice.update({
+    where: { id },
+    data: {
+      sentAt: new Date(),
+      status: invoice.status === InvoiceStatus.DRAFT ? InvoiceStatus.SENT : invoice.status,
+    },
+  });
+
+  return updatedInvoice;
+};
+
 // ── Record Payment ────────────────────────────────────────────────────────────
 
 interface IRecordPayment {
@@ -427,6 +491,7 @@ export const invoiceService = {
   getInvoiceById,
   updateInvoice,
   updateInvoiceStatus,
+  sendInvoice,
   deleteInvoice,
   getPaymentHistory,
   recordPayment,

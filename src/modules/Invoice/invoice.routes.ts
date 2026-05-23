@@ -62,4 +62,10 @@ router.post(
   invoiceController.recordPayment,
 );
 
+router.post(
+  "/:id/send",
+  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+  invoiceController.sendInvoice,
+);
+
 export const invoiceRoutes = router;
