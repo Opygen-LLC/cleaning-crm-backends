@@ -1,4 +1,6 @@
 import { prisma } from "../../lib/prisma/prisma";
+import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
+import { FRONTEND_URL } from "../../config/ENV";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
 import { IReviewFilters, ISubmitPublicReview, IUpdateReview } from "./review.interface";
@@ -308,13 +310,57 @@ const getStaffReviewSummaries = async (user: any) => {
 const generateTokenForJob = async (jobId: string, _user: any) => {
   const job = await prisma.job.findUnique({
     where: { id: jobId },
-    select: { id: true, adminId: true, status: true },
+    select: {
+      id: true,
+      adminId: true,
+      status: true,
+      jobRef: true,
+      serviceType: true,
+      scheduledDate: true,
+      clientId: true,
+      staffAssignments: {
+        include: {
+          staff: { include: { user: { select: { name: true } } } },
+        },
+      },
+    },
   });
   if (!job) throw new AppError(status.NOT_FOUND, "Job not found.");
   if (job.status !== "COMPLETED") {
     throw new AppError(status.BAD_REQUEST, "Job must be COMPLETED to generate a review token.");
   }
-  return generateReviewToken(jobId, job.adminId);
+
+  const token = await generateReviewToken(jobId, job.adminId);
+
+  // Send (or resend) the review-request email to the client
+  const client = await prisma.client.findUnique({
+    where: { id: job.clientId },
+    select: { name: true, email: true },
+  });
+
+  if (client) {
+    const staffNames = job.staffAssignments.map((a: any) => a.staff.user.name);
+    await sendEmailSafely({
+      to: client.email,
+      subject: `How did we do? — ${job.jobRef}`,
+      templateName: "review-request",
+      templateData: {
+        clientName:   client.name,
+        jobRef:       job.jobRef,
+        serviceType:  job.serviceType.replace(/_/g, " "),
+        completedDate: new Date(job.scheduledDate).toLocaleDateString("en-GB", {
+          weekday: "long",
+          day:     "numeric",
+          month:   "long",
+          year:    "numeric",
+        }),
+        staffNames,
+        reviewUrl: `${FRONTEND_URL}/review/${token.token}`,
+      },
+    });
+  }
+
+  return token;
 };
 
 export const reviewService = {

@@ -21,7 +21,14 @@ const submitPublicReview = catchAsync(async (req, res) => {
 const getAllReviews = catchAsync(async (req, res) => {
   const filters = req.query as unknown as IReviewFilters;
   const result = await reviewService.getAllReviews(filters, req.user);
-  sendResponse(res, { httpStatusCode: httpStatus.OK, success: true, message: "Reviews retrieved.", data: result.data, meta: result.meta });
+  sendResponse(res, {
+    httpStatusCode: httpStatus.OK,
+    success: true,
+    message: "Reviews retrieved.",
+    data: result.data,
+    meta: result.meta,
+    stats: result.stats as Record<string, unknown>,
+  });
 });
 
 const getReviewById = catchAsync(async (req, res) => {
