@@ -358,6 +358,99 @@ const getScheduleStats = async (user: IRequestUser) => {
     return { total, active, paused, cancelled };
 };
 
+// ─── Manual generate ──────────────────────────────────────────────────────────
+
+/**
+ * Manually triggers booking generation for a single ACTIVE schedule,
+ * regardless of nextRunAt.  Used by the admin "Generate booking" button.
+ * After creating the booking it advances nextRunAt exactly as the cron does.
+ */
+const generateNextBooking = async (id: string, user: IRequestUser) => {
+    const adminId = await resolveAdminId(user.id);
+
+    const schedule = await prisma.recurringSchedule.findFirst({
+        where: { id, adminId },
+        include: { staffAssignments: { select: { staffId: true } } },
+    });
+
+    if (!schedule) throw new AppError(status.NOT_FOUND, "Recurring schedule not found");
+
+    if (schedule.status !== RecurringStatus.ACTIVE) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Only ACTIVE schedules can generate bookings. Current status: ${schedule.status}`,
+        );
+    }
+
+    const now = new Date();
+
+    // Generate booking ref — mirrors the cron helper
+    const lastBooking = await prisma.booking.findFirst({
+        orderBy: { createdAt: "desc" },
+        select: { bookingRef: true },
+    });
+    let nextNum = 1;
+    if (lastBooking?.bookingRef) {
+        const parts = lastBooking.bookingRef.split("-");
+        const num = parseInt(parts[parts.length - 1]);
+        if (!isNaN(num)) nextNum = num + 1;
+    }
+    const bookingRef = `#OP-BK-${nextNum.toString().padStart(4, "0")}`;
+
+    const result = await prisma.$transaction(async (tx) => {
+        const booking = await tx.booking.create({
+            data: {
+                bookingRef,
+                adminId:      schedule.adminId,
+                clientId:     schedule.clientId,
+                serviceType:  schedule.serviceType,
+                address:      schedule.address,
+                scheduledDate: schedule.nextRunAt,
+                durationMins: schedule.durationMins,
+                total:        schedule.total,
+                notes:        schedule.notes
+                    ? `[Manual from ${schedule.scheduleRef}] ${schedule.notes}`
+                    : `Manually generated from recurring schedule ${schedule.scheduleRef}`,
+                status: BookingStatus.SCHEDULED,
+                recurringScheduleId: schedule.id,
+                ...(schedule.staffAssignments.length && {
+                    staffAssignments: {
+                        createMany: {
+                            data: schedule.staffAssignments.map(({ staffId }) => ({ staffId })),
+                        },
+                    },
+                }),
+            },
+        });
+
+        await tx.client.update({
+            where: { id: schedule.clientId },
+            data: {
+                totalBookings:   { increment: 1 },
+                lastBookingDate: schedule.nextRunAt,
+            },
+        });
+
+        const nextRunAt = advanceNextRunAt(
+            schedule.nextRunAt,
+            schedule.dayOfWeek,
+            schedule.timeHour,
+            schedule.timeMinute,
+            schedule.frequency,
+        );
+
+        const updatedSchedule = await tx.recurringSchedule.update({
+            where: { id: schedule.id },
+            data: { lastRunAt: now, nextRunAt },
+            include: scheduleInclude,
+        });
+
+        return { booking, schedule: updatedSchedule };
+    });
+
+    return result;
+};
+
 // ─── Export ───────────────────────────────────────────────────────────────────
 
 export const recurringBookingService = {
@@ -370,4 +463,5 @@ export const recurringBookingService = {
     cancelSchedule,
     deleteSchedule,
     getScheduleStats,
+    generateNextBooking,
 };

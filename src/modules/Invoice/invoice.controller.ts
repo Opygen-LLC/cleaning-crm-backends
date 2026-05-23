@@ -101,6 +101,18 @@ const getPaymentHistory = catchAsync(async (req, res) => {
   });
 });
 
+const recordPayment = catchAsync(async (req, res) => {
+  const { id } = req.params;
+  const result = await invoiceService.recordPayment(id as string, req.body, req.user);
+
+  sendResponse(res, {
+    httpStatusCode: status.CREATED,
+    success: true,
+    message: "Payment recorded successfully",
+    data: result,
+  });
+});
+
 export const invoiceController = {
   createInvoice,
   getAllInvoices,
@@ -109,4 +121,5 @@ export const invoiceController = {
   updateInvoiceStatus,
   deleteInvoice,
   getPaymentHistory,
+  recordPayment,
 };

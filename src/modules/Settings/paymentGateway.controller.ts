@@ -56,4 +56,20 @@ const disconnectGateway = catchAsync(async (req, res) => {
   });
 });
 
-export const paymentGatewayController = { getConfig, updateConfig, oauthConnect, disconnectGateway };
+// PayPal sends webhook events to POST /payment-gateway/paypal-webhook
+// This endpoint must be public (no auth) — PayPal calls it server-to-server
+const paypalWebhook = catchAsync(async (req, res) => {
+  const result = await paymentGatewayService.handlePayPalWebhook(
+    req.body,
+    req.headers as Record<string, string>,
+  );
+
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Webhook received",
+    data: result,
+  });
+});
+
+export const paymentGatewayController = { getConfig, updateConfig, oauthConnect, disconnectGateway, paypalWebhook };

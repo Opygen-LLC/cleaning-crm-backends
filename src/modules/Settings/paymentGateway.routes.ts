@@ -43,4 +43,10 @@ router.post(
     paymentGatewayController.disconnectGateway,
 );
 
+// Public endpoint — PayPal calls this directly (no admin auth)
+router.post(
+    "/paypal-webhook",
+    paymentGatewayController.paypalWebhook,
+);
+
 export const paymentGatewayRoutes = router;

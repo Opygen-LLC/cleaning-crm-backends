@@ -6,7 +6,7 @@ import {
 } from "./invoice.interface";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
-import { UserRole, InvoiceStatus } from "../../generated/prisma/enums";
+import { UserRole, InvoiceStatus, PaymentMethod, PaymentStatus } from "../../generated/prisma/enums";
 
 /**
  * Generates a unique invoice reference in the format #OP-INV-0001
@@ -353,6 +353,74 @@ const getPaymentHistory = async (filters: IPaymentHistoryFilters, user: any) => 
   };
 };
 
+// ── Record Payment ────────────────────────────────────────────────────────────
+
+interface IRecordPayment {
+  amount: number;
+  method: PaymentMethod;
+  note?: string;
+  transactionId?: string;
+  paidAt?: string;
+}
+
+const recordPayment = async (invoiceId: string, payload: IRecordPayment, user: any) => {
+  // Resolve admin
+  const admin = await prisma.adminProfile.findUnique({ where: { userId: user.id } });
+  if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: invoiceId, adminId: admin.id },
+  });
+  if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
+
+  if (invoice.status === InvoiceStatus.PAID) {
+    throw new AppError(status.BAD_REQUEST, "Invoice is already marked as paid");
+  }
+  if (invoice.status === InvoiceStatus.CANCELLED) {
+    throw new AppError(status.BAD_REQUEST, "Cannot record payment on a cancelled invoice");
+  }
+
+  // Generate payment ref: #OP-PAY-0001
+  const lastPayment = await prisma.payment.findFirst({
+    orderBy: { createdAt: "desc" },
+    select: { paymentRef: true },
+  });
+  let nextNum = 1;
+  if (lastPayment?.paymentRef) {
+    const parts = lastPayment.paymentRef.split("-");
+    const num = parseInt(parts[parts.length - 1]);
+    if (!isNaN(num)) nextNum = num + 1;
+  }
+  const paymentRef = `#OP-PAY-${nextNum.toString().padStart(4, "0")}`;
+
+  const paidAt = payload.paidAt ? new Date(payload.paidAt) : new Date();
+
+  return prisma.$transaction(async (tx) => {
+    // Create Payment record
+    const payment = await tx.payment.create({
+      data: {
+        paymentRef,
+        amount:        payload.amount,
+        method:        payload.method,
+        status:        PaymentStatus.PAID,
+        note:          payload.note,
+        transactionId: payload.transactionId,
+        paidAt,
+        adminId:       admin.id,
+        invoiceId:     invoice.id,
+      },
+    });
+
+    // Mark invoice as PAID
+    const updatedInvoice = await tx.invoice.update({
+      where: { id: invoiceId },
+      data:  { status: InvoiceStatus.PAID, paidDate: paidAt },
+    });
+
+    return { payment, invoice: updatedInvoice };
+  });
+};
+
 export const invoiceService = {
   createInvoice,
   getAllInvoices,
@@ -361,4 +429,5 @@ export const invoiceService = {
   updateInvoiceStatus,
   deleteInvoice,
   getPaymentHistory,
+  recordPayment,
 };

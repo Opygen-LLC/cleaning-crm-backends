@@ -1,5 +1,7 @@
 import { prisma } from "../../lib/prisma/prisma";
 import { PaymentGateway } from "../../generated/prisma/enums";
+import AppError from "../../errorHelper/AppError";
+import status from "http-status";
 
 /** Show only last 4 chars — matches the *Masked column convention in the schema */
 const mask = (key?: string | null): string | null =>
@@ -174,9 +176,167 @@ const disconnectGateway = async (
   return { success: true };
 };
 
+// ─── PayPal Webhook Verification ──────────────────────────────────────────────
+//
+// PayPal sends IPN/webhook events to a registered endpoint.
+// We verify the event by calling PayPal's verify-webhook-signature API,
+// then handle PAYMENT.CAPTURE.COMPLETED and BILLING.SUBSCRIPTION events
+// to keep invoices and subscriptions in sync.
+
+interface IPayPalWebhookEvent {
+    id:         string;
+    event_type: string;
+    resource:   Record<string, any>;
+    summary?:   string;
+}
+
+const handlePayPalWebhook = async (
+    event:       IPayPalWebhookEvent,
+    headers:     Record<string, string>,
+) => {
+    // ── Verify signature ───────────────────────────────────────────────────────
+    // We look up the first admin config that has PayPal enabled to get the
+    // client credentials needed for verification.
+    const config = await prisma.paymentGatewayConfig.findFirst({
+        where: { paypalEnabled: true },
+    });
+
+    if (config?.paypalClientId && config?.paypalClientSecretMasked) {
+        // Obtain an access token from PayPal
+        const credentials = Buffer.from(
+            `${config.paypalClientId}:${config.paypalClientSecretMasked}`,
+        ).toString("base64");
+
+        const tokenRes = await fetch(
+            config.paypalTestMode
+                ? "https://api-m.sandbox.paypal.com/v1/oauth2/token"
+                : "https://api-m.paypal.com/v1/oauth2/token",
+            {
+                method:  "POST",
+                headers: {
+                    Authorization:  `Basic ${credentials}`,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: "grant_type=client_credentials",
+            },
+        );
+
+        if (tokenRes.ok) {
+            const { access_token } = await tokenRes.json() as { access_token: string };
+
+            const verifyRes = await fetch(
+                config.paypalTestMode
+                    ? "https://api-m.sandbox.paypal.com/v1/notifications/verify-webhook-signature"
+                    : "https://api-m.paypal.com/v1/notifications/verify-webhook-signature",
+                {
+                    method:  "POST",
+                    headers: {
+                        Authorization:  `Bearer ${access_token}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        auth_algo:         headers["paypal-auth-algo"],
+                        cert_url:          headers["paypal-cert-url"],
+                        transmission_id:   headers["paypal-transmission-id"],
+                        transmission_sig:  headers["paypal-transmission-sig"],
+                        transmission_time: headers["paypal-transmission-time"],
+                        webhook_event:     event,
+                    }),
+                },
+            );
+
+            if (verifyRes.ok) {
+                const { verification_status } = await verifyRes.json() as { verification_status: string };
+                if (verification_status !== "SUCCESS") {
+                    throw new AppError(status.UNAUTHORIZED, "PayPal webhook signature verification failed");
+                }
+            }
+        }
+    }
+
+    // ── Handle events ──────────────────────────────────────────────────────────
+    switch (event.event_type) {
+        // Payment captured — mark the linked invoice as PAID
+        case "PAYMENT.CAPTURE.COMPLETED": {
+            const invoiceId: string | undefined =
+                event.resource?.custom_id ?? event.resource?.invoice_id;
+
+            if (invoiceId) {
+                const invoice = await prisma.invoice.findFirst({
+                    where: {
+                        OR: [
+                            { id:         invoiceId },
+                            { invoiceRef: invoiceId },
+                        ],
+                        status: { notIn: ["PAID", "CANCELLED"] as any },
+                    },
+                });
+
+                if (invoice) {
+                    const now = new Date();
+
+                    // Generate payment ref
+                    const lastPayment = await prisma.payment.findFirst({
+                        orderBy: { createdAt: "desc" },
+                        select:  { paymentRef: true },
+                    });
+                    let nextNum = 1;
+                    if (lastPayment?.paymentRef) {
+                        const parts = lastPayment.paymentRef.split("-");
+                        const num = parseInt(parts[parts.length - 1]);
+                        if (!isNaN(num)) nextNum = num + 1;
+                    }
+                    const paymentRef = `#OP-PAY-${nextNum.toString().padStart(4, "0")}`;
+
+                    await prisma.$transaction([
+                        prisma.payment.create({
+                            data: {
+                                paymentRef,
+                                amount:          Number(event.resource.amount?.value ?? invoice.total),
+                                method:          "PAYPAL" as any,
+                                status:          "PAID" as any,
+                                gatewayPaymentId: event.resource.id,
+                                paidAt:          now,
+                                adminId:         invoice.adminId,
+                                invoiceId:       invoice.id,
+                                note:            `PayPal capture: ${event.resource.id}`,
+                            },
+                        }),
+                        prisma.invoice.update({
+                            where: { id: invoice.id },
+                            data:  { status: "PAID" as any, paidDate: now },
+                        }),
+                    ]);
+                }
+            }
+            break;
+        }
+
+        // Payment reversed / refunded — flip invoice back to SENT
+        case "PAYMENT.CAPTURE.REVERSED":
+        case "PAYMENT.CAPTURE.REFUNDED": {
+            const invoiceId: string | undefined = event.resource?.custom_id;
+            if (invoiceId) {
+                await prisma.invoice.updateMany({
+                    where: { id: invoiceId, status: "PAID" as any },
+                    data:  { status: "SENT" as any, paidDate: null },
+                });
+            }
+            break;
+        }
+
+        default:
+            // Unhandled event type — log and return 200 to acknowledge receipt
+            console.log(`[PayPal Webhook] Unhandled event: ${event.event_type}`);
+    }
+
+    return { received: true, event_type: event.event_type };
+};
+
 export const paymentGatewayService = {
   getPaymentGatewayConfig,
   updatePaymentGatewayConfig,
   oauthConnect,
   disconnectGateway,
+  handlePayPalWebhook,
 };

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { InvoiceStatus } from "../../generated/prisma/enums";
+import { InvoiceStatus, PaymentMethod } from "../../generated/prisma/enums";
 
 const lineItemSchema = z.object({
   description: z.string().min(1, "Description is required"),
@@ -57,8 +57,17 @@ const updateStatusSchema = z.object({
   status: z.nativeEnum(InvoiceStatus),
 });
 
+const recordPaymentSchema = z.object({
+  amount:        z.number().positive("Payment amount must be positive"),
+  method:        z.nativeEnum(PaymentMethod),
+  note:          z.string().optional(),
+  transactionId: z.string().optional(),
+  paidAt:        z.string().optional(),
+});
+
 export const invoiceValidation = {
   createInvoice: createInvoiceSchema,
   updateInvoice: updateInvoiceSchema,
   updateStatus: updateStatusSchema,
+  recordPayment: recordPaymentSchema,
 };

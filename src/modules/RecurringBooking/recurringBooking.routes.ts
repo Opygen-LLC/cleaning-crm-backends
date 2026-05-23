@@ -58,4 +58,11 @@ router.delete(
     recurringBookingController.deleteSchedule,
 );
 
+// Manually trigger booking generation for a schedule
+router.post(
+    "/:id/generate",
+    checkAuth(UserRole.ADMIN),
+    recurringBookingController.generateNextBooking,
+);
+
 export const recurringBookingRoutes = router;

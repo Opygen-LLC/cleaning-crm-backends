@@ -101,6 +101,19 @@ const getScheduleStats = catchAsync(async (req, res) => {
   });
 });
 
+const generateNextBooking = catchAsync(async (req, res) => {
+  const result = await recurringBookingService.generateNextBooking(
+    req.params["id"] as string,
+    req.user,
+  );
+  sendResponse(res, {
+    httpStatusCode: status.CREATED,
+    success: true,
+    message: "Booking generated successfully",
+    data: result,
+  });
+});
+
 export const recurringBookingController = {
   createSchedule,
   getAllSchedules,
@@ -109,4 +122,5 @@ export const recurringBookingController = {
   updateScheduleStatus,
   deleteSchedule,
   getScheduleStats,
+  generateNextBooking,
 };

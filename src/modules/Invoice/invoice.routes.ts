@@ -55,4 +55,11 @@ router.delete(
   invoiceController.deleteInvoice,
 );
 
+router.post(
+  "/:id/record-payment",
+  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+  zodValidate(invoiceValidation.recordPayment, ValidationProperty.BODY),
+  invoiceController.recordPayment,
+);
+
 export const invoiceRoutes = router;
