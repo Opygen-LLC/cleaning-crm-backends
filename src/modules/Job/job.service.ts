@@ -332,6 +332,53 @@ const updateJobStatus = async (
         }
 
         return job;
+    }).then(async (completedJob) => {
+        // ── Send review-request email after the transaction commits ──────────
+        // Runs outside the transaction so a mail failure never rolls back the DB.
+        if (newStatus === JobStatus.COMPLETED && completedJob) {
+            try {
+                const reviewToken = await prisma.reviewToken.findUnique({
+                    where: { jobId: id },
+                    select: { token: true },
+                });
+
+                if (reviewToken) {
+                    const clientRecord = await prisma.client.findUnique({
+                        where: { id: completedJob.clientId },
+                        select: { name: true, email: true },
+                    });
+
+                    if (clientRecord) {
+                        const staffNames = completedJob.staffAssignments.map(
+                            (a: any) => a.staff.user.name,
+                        );
+
+                        await sendEmailSafely({
+                            to:           clientRecord.email,
+                            subject:      `How did we do? — ${completedJob.jobRef}`,
+                            templateName: "review-request",
+                            templateData: {
+                                clientName:    clientRecord.name,
+                                jobRef:        completedJob.jobRef,
+                                serviceType:   completedJob.serviceType.replace(/_/g, " "),
+                                completedDate: new Date(completedJob.scheduledDate).toLocaleDateString("en-GB", {
+                                    weekday: "long",
+                                    day:     "numeric",
+                                    month:   "long",
+                                    year:    "numeric",
+                                }),
+                                staffNames,
+                                reviewUrl: `${FRONTEND_URL}/review/${reviewToken.token}`,
+                            },
+                        });
+                    }
+                }
+            } catch (err) {
+                // Non-fatal — log and continue
+                console.error("[REVIEW EMAIL] Failed to send review request:", err);
+            }
+        }
+        return completedJob;
     });
 };
 

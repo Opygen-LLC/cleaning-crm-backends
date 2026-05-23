@@ -143,10 +143,75 @@ const deleteClient = async (id: string, user: IRequestUser) => {
   });
 };
 
+
+const getClientPortal = async (clientId: string) => {
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      addressLine1: true,
+      addressLine2: true,
+      city: true,
+      zipcode: true,
+      country: true,
+      totalSpend: true,
+      totalBookings: true,
+      lastBookingDate: true,
+      bookings: {
+        orderBy: { scheduledDate: "desc" },
+        take: 20,
+        select: {
+          id: true,
+          bookingRef: true,
+          status: true,
+          serviceType: true,
+          address: true,
+          scheduledDate: true,
+          durationMins: true,
+          total: true,
+          job: {
+            select: {
+              id: true,
+              jobRef: true,
+              status: true,
+              staffAssignments: {
+                include: {
+                  staff: {
+                    include: {
+                      user: { select: { name: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          invoice: {
+            select: {
+              id: true,
+              invoiceRef: true,
+              status: true,
+              total: true,
+              dueDate: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!client) throw new AppError(status.NOT_FOUND, "Client not found.");
+
+  return client;
+};
+
 export const clientService = {
   createClient,
   getClients,
   getClientById,
   updateClient,
   deleteClient,
+  getClientPortal,
 };
