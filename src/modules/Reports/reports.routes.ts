@@ -20,4 +20,9 @@ router.get("/client-retention", reportsController.getClientRetentionReport);
 // GET /api/v1/reports/job-completion?period=7d|30d|90d|12m
 router.get("/job-completion", reportsController.getJobCompletionReport);
 
+// GET /api/v1/reports/:type/export?period=7d|30d|90d|12m
+// type: revenue | staff-performance | client-retention | job-completion
+// Returns: CSV file download
+router.get("/:type/export", reportsController.exportReport);
+
 export const reportsRoutes = router;

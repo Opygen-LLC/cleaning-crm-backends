@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma/prisma";
 import { JobStatus } from "../../generated/prisma/enums";
+import redis from "../../config/redis";
 
 // ── Shared helper: resolve adminId from userId ────────────────────────────────
 
@@ -25,25 +26,14 @@ function resolvePeriod(period: Period): { from: Date; to: Date } {
     else if (period === "30d") from.setTime(to.getTime() - 30 * msDay);
     else if (period === "90d") from.setTime(to.getTime() - 90 * msDay);
     else {
-        // 12m — one calendar year back
         from.setFullYear(to.getFullYear() - 1);
     }
     return { from, to };
 }
 
 const MONTH_NAMES = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
 function dateBucket(period: Period, d: Date): string {
@@ -53,6 +43,52 @@ function dateBucket(period: Period, d: Date): string {
     return MONTH_NAMES[d.getMonth()]; // 90d & 12m
 }
 
+// ── Redis cache helpers ───────────────────────────────────────────────────────
+
+const CACHE_TTL = 5 * 60; // 5 minutes
+
+async function getCached<T>(key: string): Promise<T | null> {
+    try {
+        const raw = await redis.get(key);
+        if (!raw) return null;
+        return JSON.parse(raw) as T;
+    } catch {
+        return null;
+    }
+}
+
+async function setCache(key: string, value: unknown): Promise<void> {
+    try {
+        await redis.set(key, JSON.stringify(value), "EX", CACHE_TTL);
+    } catch {
+        // Non-fatal — cache miss is fine
+    }
+}
+
+function cacheKey(reportType: string, adminId: string, period: string) {
+    return `reports:${reportType}:${adminId}:${period}`;
+}
+
+// ── CSV helpers ───────────────────────────────────────────────────────────────
+
+function escapeCsv(value: unknown): string {
+    const str = value === null || value === undefined ? "" : String(value);
+    if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+        return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+}
+
+function toCsv(rows: Record<string, unknown>[]): string {
+    if (!rows.length) return "";
+    const headers = Object.keys(rows[0]);
+    const lines = [
+        headers.join(","),
+        ...rows.map((row) => headers.map((h) => escapeCsv(row[h])).join(",")),
+    ];
+    return lines.join("\n");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Revenue Report
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,6 +96,11 @@ function dateBucket(period: Period, d: Date): string {
 export const getRevenueReport = async (userId: string, period: Period) => {
     const admin = await requireAdminProfile(userId);
     const adminId = admin.id;
+
+    const key = cacheKey("revenue", adminId, period);
+    const cached = await getCached(key);
+    if (cached) return cached;
+
     const { from, to } = resolvePeriod(period);
 
     const msDay = 86_400_000;
@@ -78,19 +119,11 @@ export const getRevenueReport = async (userId: string, period: Period) => {
         byServiceRaw,
     ] = await Promise.all([
         prisma.invoice.aggregate({
-            where: {
-                adminId,
-                status: "PAID",
-                paidDate: { gte: from, lte: to },
-            },
+            where: { adminId, status: "PAID", paidDate: { gte: from, lte: to } },
             _sum: { total: true },
         }),
         prisma.invoice.aggregate({
-            where: {
-                adminId,
-                status: "PAID",
-                paidDate: { gte: prevFrom, lte: prevTo },
-            },
+            where: { adminId, status: "PAID", paidDate: { gte: prevFrom, lte: prevTo } },
             _sum: { total: true },
         }),
         prisma.expense.aggregate({
@@ -105,27 +138,16 @@ export const getRevenueReport = async (userId: string, period: Period) => {
             where: { adminId, status: { not: "PAID" } },
             _sum: { total: true },
         }),
-        // For chart buckets
         prisma.invoice.findMany({
-            where: {
-                adminId,
-                status: "PAID",
-                paidDate: { gte: from, lte: to },
-            },
+            where: { adminId, status: "PAID", paidDate: { gte: from, lte: to } },
             select: { total: true, paidDate: true },
-            // include: {}
         }),
         prisma.expense.findMany({
             where: { adminId, date: { gte: from, lte: to } },
             select: { amount: true, date: true },
         }),
-        // Recent transactions (last 10 paid invoices)
         prisma.invoice.findMany({
-            where: {
-                adminId,
-                status: "PAID",
-                paidDate: { gte: from, lte: to },
-            },
+            where: { adminId, status: "PAID", paidDate: { gte: from, lte: to } },
             orderBy: { paidDate: "desc" },
             take: 10,
             select: {
@@ -142,21 +164,12 @@ export const getRevenueReport = async (userId: string, period: Period) => {
                 },
             },
         }),
-        // Revenue by service type
         prisma.invoice.findMany({
-            where: {
-                adminId,
-                status: "PAID",
-                paidDate: { gte: from, lte: to },
-            },
-            select: {
-                total: true,
-                booking: { select: { serviceType: true } },
-            },
+            where: { adminId, status: "PAID", paidDate: { gte: from, lte: to } },
+            select: { total: true, booking: { select: { serviceType: true } } },
         }),
     ]);
 
-    // ── KPI stats ───────────────────────────────────────────────────────────────
     const totalRevenue = Number(paidCurrent._sum.total ?? 0);
     const prevRevenue = Number(paidPrev._sum.total ?? 0);
     const totalExpenses = Number(expensesCurrent._sum.amount ?? 0);
@@ -165,19 +178,12 @@ export const getRevenueReport = async (userId: string, period: Period) => {
     const prevProfit = prevRevenue - prevExpenses;
 
     const pct = (cur: number, prev: number) =>
-        prev === 0
-            ? cur > 0
-                ? 100
-                : 0
-            : Math.round(((cur - prev) / prev) * 100);
+        prev === 0 ? (cur > 0 ? 100 : 0) : Math.round(((cur - prev) / prev) * 100);
 
-    // Count jobs for avg job value
     const jobCount = allPaidInvoices.length;
     const avgJobValue = jobCount > 0 ? Math.round(totalRevenue / jobCount) : 0;
 
-    // ── Chart buckets ───────────────────────────────────────────────────────────
     const chartMap: Record<string, { revenue: number; expenses: number }> = {};
-
     const ensureBucket = (key: string) => {
         if (!chartMap[key]) chartMap[key] = { revenue: 0, expenses: 0 };
     };
@@ -201,7 +207,6 @@ export const getRevenueReport = async (userId: string, period: Period) => {
         profit: Math.round(d.revenue - d.expenses),
     }));
 
-    // ── By service type ─────────────────────────────────────────────────────────
     const svcMap: Record<string, { revenue: number; jobs: number }> = {};
     for (const inv of byServiceRaw) {
         const svcType = inv.booking?.serviceType ?? "Unknown";
@@ -218,7 +223,6 @@ export const getRevenueReport = async (userId: string, period: Period) => {
         }))
         .sort((a, b) => b.revenue - a.revenue);
 
-    // ── Recent transactions ─────────────────────────────────────────────────────
     const transactions = recentTransactions.map((inv) => ({
         id: inv.id,
         invoiceRef: inv.invoiceRef,
@@ -228,41 +232,36 @@ export const getRevenueReport = async (userId: string, period: Period) => {
         paidDate: inv.paidDate,
     }));
 
-    return {
+    const result = {
         stats: {
-            totalRevenue: {
-                value: totalRevenue,
-                changePercent: pct(totalRevenue, prevRevenue),
-            },
-            totalProfit: {
-                value: totalProfit,
-                changePercent: pct(totalProfit, prevProfit),
-            },
+            totalRevenue: { value: totalRevenue, changePercent: pct(totalRevenue, prevRevenue) },
+            totalProfit: { value: totalProfit, changePercent: pct(totalProfit, prevProfit) },
             avgJobValue: { value: avgJobValue, changePercent: 0 },
-            outstandingInvoices: {
-                value: Number(outstanding._sum.total ?? 0),
-                changePercent: 0,
-            },
+            outstandingInvoices: { value: Number(outstanding._sum.total ?? 0), changePercent: 0 },
         },
         chart,
         byService,
         recentTransactions: transactions,
     };
+
+    await setCache(key, result);
+    return result;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. Staff Performance Report
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const getStaffPerformanceReport = async (
-    userId: string,
-    period: Period,
-) => {
+export const getStaffPerformanceReport = async (userId: string, period: Period) => {
     const admin = await requireAdminProfile(userId);
     const adminId = admin.id;
+
+    const key = cacheKey("staff-performance", adminId, period);
+    const cached = await getCached(key);
+    if (cached) return cached;
+
     const { from, to } = resolvePeriod(period);
 
-    // Load all jobs in period with staff assignments + reviews
     const jobs = await prisma.job.findMany({
         where: { adminId, scheduledDate: { gte: from, lte: to } },
         select: {
@@ -274,9 +273,7 @@ export const getStaffPerformanceReport = async (
                     staffId: true,
                     staff: {
                         select: {
-                            user: {
-                                select: { id: true, name: true, image: true },
-                            },
+                            user: { select: { id: true, name: true, image: true } },
                         },
                     },
                 },
@@ -292,7 +289,6 @@ export const getStaffPerformanceReport = async (
         },
     });
 
-    // Build per-staff map
     type StaffEntry = {
         staffId: string;
         name: string;
@@ -331,7 +327,6 @@ export const getStaffPerformanceReport = async (
             }
             if (job.status === JobStatus.CANCELLED) e.cancelled++;
 
-            // Attach ratings for this staff from the job's review token
             if (job.reviewToken) {
                 for (const rev of job.reviewToken.reviews) {
                     if (rev.staffId === sid) {
@@ -352,13 +347,9 @@ export const getStaffPerformanceReport = async (
             completed: e.completed,
             cancelled: e.cancelled,
             completionRate:
-                e.totalJobs > 0
-                    ? Math.round((e.completed / e.totalJobs) * 100)
-                    : 0,
+                e.totalJobs > 0 ? Math.round((e.completed / e.totalJobs) * 100) : 0,
             avgHoursPerJob:
-                e.completed > 0
-                    ? Math.round((e.totalMins / e.completed / 60) * 10) / 10
-                    : 0,
+                e.completed > 0 ? Math.round((e.totalMins / e.completed / 60) * 10) / 10 : 0,
             avgRating:
                 e.ratingCount > 0
                     ? Math.round((e.ratingSum / e.ratingCount) * 10) / 10
@@ -368,50 +359,42 @@ export const getStaffPerformanceReport = async (
         .sort((a, b) => b.completed - a.completed);
 
     const totalJobs = jobs.length;
-    const completedJobs = jobs.filter(
-        (j) => j.status === JobStatus.COMPLETED,
-    ).length;
-    const overallRate =
-        totalJobs > 0 ? Math.round((completedJobs / totalJobs) * 100) : 0;
+    const completedJobs = jobs.filter((j) => j.status === JobStatus.COMPLETED).length;
+    const overallRate = totalJobs > 0 ? Math.round((completedJobs / totalJobs) * 100) : 0;
 
     const staffWithRatings = staff.filter((s) => s.avgRating !== null);
     const overallRating =
         staffWithRatings.length > 0
             ? Math.round(
-                  (staffWithRatings.reduce(
-                      (s, r) => s + (r.avgRating ?? 0),
-                      0,
-                  ) /
+                  (staffWithRatings.reduce((s, r) => s + (r.avgRating ?? 0), 0) /
                       staffWithRatings.length) *
                       10,
               ) / 10
             : 0;
 
-    return {
-        stats: {
-            totalStaff: staff.length,
-            totalJobs,
-            completedJobs,
-            overallRate,
-            overallRating,
-        },
+    const result = {
+        stats: { totalStaff: staff.length, totalJobs, completedJobs, overallRate, overallRating },
         staff,
     };
+
+    await setCache(key, result);
+    return result;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. Client Retention Report
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const getClientRetentionReport = async (
-    userId: string,
-    period: Period,
-) => {
+export const getClientRetentionReport = async (userId: string, period: Period) => {
     const admin = await requireAdminProfile(userId);
     const adminId = admin.id;
+
+    const key = cacheKey("client-retention", adminId, period);
+    const cached = await getCached(key);
+    if (cached) return cached;
+
     const { from, to } = resolvePeriod(period);
 
-    // All clients for this admin with booking stats
     const clients = await prisma.client.findMany({
         where: { adminId },
         select: {
@@ -427,35 +410,22 @@ export const getClientRetentionReport = async (
         orderBy: { totalBookings: "desc" },
     });
 
-    // New clients acquired in period
-    const newClients = clients.filter(
-        (c) => c.createdAt >= from && c.createdAt <= to,
-    );
-
+    const newClients = clients.filter((c) => c.createdAt >= from && c.createdAt <= to);
     const repeat = clients.filter((c) => c.totalBookings > 1);
     const oneTime = clients.filter((c) => c.totalBookings <= 1);
     const churn = clients.filter((c) => c.status === "INACTIVE");
 
     const retentionRate =
-        clients.length > 0
-            ? Math.round((repeat.length / clients.length) * 100)
-            : 0;
+        clients.length > 0 ? Math.round((repeat.length / clients.length) * 100) : 0;
     const churnRate =
-        clients.length > 0
-            ? Math.round((churn.length / clients.length) * 100)
-            : 0;
-
-    // Average booking frequency for repeat clients
+        clients.length > 0 ? Math.round((churn.length / clients.length) * 100) : 0;
     const avgBookingFreq =
         repeat.length > 0
             ? Math.round(
-                  (repeat.reduce((s, c) => s + c.totalBookings, 0) /
-                      repeat.length) *
-                      10,
+                  (repeat.reduce((s, c) => s + c.totalBookings, 0) / repeat.length) * 10,
               ) / 10
             : 0;
 
-    // Top clients by spend
     const topClients = [...clients]
         .sort((a, b) => Number(b.totalSpend) - Number(a.totalSpend))
         .slice(0, 10)
@@ -470,20 +440,17 @@ export const getClientRetentionReport = async (
             status: c.status,
         }));
 
-    // Acquisition over time — bucket new clients by period
     const acquisitionMap: Record<string, number> = {};
     for (const c of newClients) {
-        const key = dateBucket(period, c.createdAt);
-        acquisitionMap[key] = (acquisitionMap[key] ?? 0) + 1;
+        const k = dateBucket(period, c.createdAt);
+        acquisitionMap[k] = (acquisitionMap[k] ?? 0) + 1;
     }
-    const acquisitionChart = Object.entries(acquisitionMap).map(
-        ([label, count]) => ({
-            label,
-            count,
-        }),
-    );
+    const acquisitionChart = Object.entries(acquisitionMap).map(([label, count]) => ({
+        label,
+        count,
+    }));
 
-    return {
+    const result = {
         stats: {
             totalClients: clients.length,
             repeatClients: repeat.length,
@@ -495,7 +462,6 @@ export const getClientRetentionReport = async (
         },
         topClients,
         acquisitionChart,
-        // Full client list (capped at 100 for the table)
         clients: clients.slice(0, 100).map((c) => ({
             id: c.id,
             name: c.name,
@@ -508,18 +474,23 @@ export const getClientRetentionReport = async (
             status: c.status,
         })),
     };
+
+    await setCache(key, result);
+    return result;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. Job Completion Report
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const getJobCompletionReport = async (
-    userId: string,
-    period: Period,
-) => {
+export const getJobCompletionReport = async (userId: string, period: Period) => {
     const admin = await requireAdminProfile(userId);
     const adminId = admin.id;
+
+    const key = cacheKey("job-completion", adminId, period);
+    const cached = await getCached(key);
+    if (cached) return cached;
+
     const { from, to } = resolvePeriod(period);
 
     const jobs = await prisma.job.findMany({
@@ -534,9 +505,7 @@ export const getJobCompletionReport = async (
                 select: {
                     staffId: true,
                     staff: {
-                        select: {
-                            user: { select: { id: true, name: true } },
-                        },
+                        select: { user: { select: { id: true, name: true } } },
                     },
                 },
             },
@@ -553,16 +522,11 @@ export const getJobCompletionReport = async (
     const avgDurationMins =
         completedJobs.length > 0
             ? Math.round(
-                  completedJobs.reduce((s, j) => s + j.durationMins, 0) /
-                      completedJobs.length,
+                  completedJobs.reduce((s, j) => s + j.durationMins, 0) / completedJobs.length,
               )
             : 0;
 
-    // ── Per-staff breakdown ─────────────────────────────────────────────────────
-    const staffMap = new Map<
-        string,
-        { name: string; completed: number; total: number }
-    >();
+    const staffMap = new Map<string, { name: string; completed: number; total: number }>();
     for (const job of jobs) {
         for (const assign of job.staffAssignments) {
             const sid = assign.staffId;
@@ -582,7 +546,6 @@ export const getJobCompletionReport = async (
         }))
         .sort((a, b) => b.completed - a.completed);
 
-    // ── Per-service breakdown ───────────────────────────────────────────────────
     const serviceMap: Record<string, { completed: number; total: number }> = {};
     for (const job of jobs) {
         const svc = job.serviceType ?? "Unknown";
@@ -599,17 +562,13 @@ export const getJobCompletionReport = async (
         }))
         .sort((a, b) => b.total - a.total);
 
-    // ── Chart — completion rate bucketed over time ───────────────────────────────
-    const chartMap: Record<
-        string,
-        { completed: number; total: number }
-    > = {};
+    const chartMap: Record<string, { completed: number; total: number }> = {};
     for (const job of jobs) {
         if (!job.scheduledDate) continue;
-        const key = dateBucket(period, job.scheduledDate);
-        if (!chartMap[key]) chartMap[key] = { completed: 0, total: 0 };
-        chartMap[key].total++;
-        if (job.status === JobStatus.COMPLETED) chartMap[key].completed++;
+        const k = dateBucket(period, job.scheduledDate);
+        if (!chartMap[k]) chartMap[k] = { completed: 0, total: 0 };
+        chartMap[k].total++;
+        if (job.status === JobStatus.COMPLETED) chartMap[k].completed++;
     }
     const chart = Object.entries(chartMap).map(([label, v]) => ({
         label,
@@ -618,19 +577,120 @@ export const getJobCompletionReport = async (
         rate: v.total > 0 ? Math.round((v.completed / v.total) * 100) : 0,
     }));
 
-    return {
-        stats: {
-            total,
-            completed,
-            cancelled,
-            inProgress,
-            completionRate,
-            avgDurationMins,
-        },
+    const result = {
+        stats: { total, completed, cancelled, inProgress, completionRate, avgDurationMins },
         chart,
         byStaff,
         byService,
     };
+
+    await setCache(key, result);
+    return result;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. Export helpers  (CSV streams)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const exportRevenueReportCsv = async (userId: string, period: Period): Promise<string> => {
+    const data = await getRevenueReport(userId, period) as Awaited<ReturnType<typeof getRevenueReport>>;
+
+    const sections: string[] = [];
+
+    // Summary stats
+    const statsRows = [
+        { metric: "Total Revenue", value: data.stats.totalRevenue.value, change_pct: data.stats.totalRevenue.changePercent },
+        { metric: "Total Profit", value: data.stats.totalProfit.value, change_pct: data.stats.totalProfit.changePercent },
+        { metric: "Avg Job Value", value: data.stats.avgJobValue.value, change_pct: data.stats.avgJobValue.changePercent },
+        { metric: "Outstanding Invoices", value: data.stats.outstandingInvoices.value, change_pct: data.stats.outstandingInvoices.changePercent },
+    ];
+    sections.push("# Summary\n" + toCsv(statsRows));
+
+    // Chart data
+    sections.push("\n# Revenue Trend\n" + toCsv(data.chart));
+
+    // By service
+    sections.push("\n# Revenue By Service\n" + toCsv(data.byService));
+
+    // Transactions
+    const txRows = (data.recentTransactions as Array<{ invoiceRef: string; clientName: string; serviceType: string; amount: number; paidDate: string | null }>).map((tx) => ({
+        invoice_ref: tx.invoiceRef,
+        client: tx.clientName,
+        service_type: tx.serviceType,
+        amount: tx.amount,
+        paid_date: tx.paidDate ?? "",
+    }));
+    sections.push("\n# Recent Transactions\n" + toCsv(txRows));
+
+    return sections.join("\n");
+};
+
+export const exportStaffPerformanceCsv = async (userId: string, period: Period): Promise<string> => {
+    const data = await getStaffPerformanceReport(userId, period) as Awaited<ReturnType<typeof getStaffPerformanceReport>>;
+
+    const rows = (data.staff as Array<{ name: string; totalJobs: number; completed: number; cancelled: number; completionRate: number; avgHoursPerJob: number; avgRating: number | null; reviewCount: number }>).map((s) => ({
+        staff_name: s.name,
+        total_jobs: s.totalJobs,
+        completed: s.completed,
+        cancelled: s.cancelled,
+        completion_rate_pct: s.completionRate,
+        avg_hours_per_job: s.avgHoursPerJob,
+        avg_rating: s.avgRating ?? "",
+        review_count: s.reviewCount,
+    }));
+
+    return toCsv(rows);
+};
+
+export const exportClientRetentionCsv = async (userId: string, period: Period): Promise<string> => {
+    const data = await getClientRetentionReport(userId, period) as Awaited<ReturnType<typeof getClientRetentionReport>>;
+
+    const sections: string[] = [];
+
+    const statsRows = [
+        { metric: "Total Clients",       value: data.stats.totalClients },
+        { metric: "Repeat Clients",      value: data.stats.repeatClients },
+        { metric: "One-Time Clients",    value: data.stats.oneTimeClients },
+        { metric: "New Clients (period)", value: data.stats.newClients },
+        { metric: "Retention Rate %",    value: data.stats.retentionRate },
+        { metric: "Churn Rate %",        value: data.stats.churnRate },
+        { metric: "Avg Bookings/Repeat", value: data.stats.avgBookingFreq },
+    ];
+    sections.push("# Summary\n" + toCsv(statsRows));
+
+    const clientRows = (data.clients as Array<{ name: string; email: string; totalBookings: number; totalSpend: number; lastBookingDate: Date | null; joinedDate: Date; isRepeat: boolean; status: string }>).map((c) => ({
+        name: c.name,
+        email: c.email,
+        total_bookings: c.totalBookings,
+        total_spend: c.totalSpend,
+        last_booking: c.lastBookingDate ?? "",
+        joined: c.joinedDate,
+        type: c.isRepeat ? "Repeat" : "One-time",
+        status: c.status,
+    }));
+    sections.push("\n# Client List\n" + toCsv(clientRows));
+
+    return sections.join("\n");
+};
+
+export const exportJobCompletionCsv = async (userId: string, period: Period): Promise<string> => {
+    const data = await getJobCompletionReport(userId, period) as Awaited<ReturnType<typeof getJobCompletionReport>>;
+
+    const sections: string[] = [];
+
+    const statsRows = [
+        { metric: "Total Jobs",         value: data.stats.total },
+        { metric: "Completed",          value: data.stats.completed },
+        { metric: "Cancelled",          value: data.stats.cancelled },
+        { metric: "In Progress",        value: data.stats.inProgress },
+        { metric: "Completion Rate %",  value: data.stats.completionRate },
+        { metric: "Avg Duration (mins)", value: data.stats.avgDurationMins },
+    ];
+    sections.push("# Summary\n" + toCsv(statsRows));
+    sections.push("\n# By Staff\n" + toCsv(data.byStaff as Record<string, unknown>[]));
+    sections.push("\n# By Service\n" + toCsv(data.byService as Record<string, unknown>[]));
+
+    return sections.join("\n");
 };
 
 export const reportsService = {
@@ -638,4 +698,8 @@ export const reportsService = {
     getStaffPerformanceReport,
     getClientRetentionReport,
     getJobCompletionReport,
+    exportRevenueReportCsv,
+    exportStaffPerformanceCsv,
+    exportClientRetentionCsv,
+    exportJobCompletionCsv,
 };

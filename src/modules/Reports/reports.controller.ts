@@ -13,7 +13,8 @@ function parsePeriod(raw: unknown): Period {
     return "30d";
 }
 
-// GET /api/v1/reports/revenue?period=7d|30d|90d|12m
+// ── Report getters ─────────────────────────────────────────────────────────────
+
 const getRevenueReport = catchAsync(async (req, res) => {
     const period = parsePeriod(req.query.period);
     const result = await reportsService.getRevenueReport(req.user.id, period);
@@ -25,13 +26,9 @@ const getRevenueReport = catchAsync(async (req, res) => {
     });
 });
 
-// GET /api/v1/reports/staff-performance?period=7d|30d|90d|12m
 const getStaffPerformanceReport = catchAsync(async (req, res) => {
     const period = parsePeriod(req.query.period);
-    const result = await reportsService.getStaffPerformanceReport(
-        req.user.id,
-        period,
-    );
+    const result = await reportsService.getStaffPerformanceReport(req.user.id, period);
     sendResponse(res, {
         httpStatusCode: httpStatus.OK,
         success: true,
@@ -40,13 +37,9 @@ const getStaffPerformanceReport = catchAsync(async (req, res) => {
     });
 });
 
-// GET /api/v1/reports/client-retention?period=7d|30d|90d|12m
 const getClientRetentionReport = catchAsync(async (req, res) => {
     const period = parsePeriod(req.query.period);
-    const result = await reportsService.getClientRetentionReport(
-        req.user.id,
-        period,
-    );
+    const result = await reportsService.getClientRetentionReport(req.user.id, period);
     sendResponse(res, {
         httpStatusCode: httpStatus.OK,
         success: true,
@@ -55,13 +48,9 @@ const getClientRetentionReport = catchAsync(async (req, res) => {
     });
 });
 
-// GET /api/v1/reports/job-completion?period=7d|30d|90d|12m
 const getJobCompletionReport = catchAsync(async (req, res) => {
     const period = parsePeriod(req.query.period);
-    const result = await reportsService.getJobCompletionReport(
-        req.user.id,
-        period,
-    );
+    const result = await reportsService.getJobCompletionReport(req.user.id, period);
     sendResponse(res, {
         httpStatusCode: httpStatus.OK,
         success: true,
@@ -70,9 +59,48 @@ const getJobCompletionReport = catchAsync(async (req, res) => {
     });
 });
 
+// ── Export endpoints ───────────────────────────────────────────────────────────
+
+type ExportType = "revenue" | "staff-performance" | "client-retention" | "job-completion";
+
+const EXPORT_MAP: Record<
+    ExportType,
+    (userId: string, period: Period) => Promise<string>
+> = {
+    revenue: reportsService.exportRevenueReportCsv,
+    "staff-performance": reportsService.exportStaffPerformanceCsv,
+    "client-retention": reportsService.exportClientRetentionCsv,
+    "job-completion": reportsService.exportJobCompletionCsv,
+};
+
+const VALID_TYPES = Object.keys(EXPORT_MAP) as ExportType[];
+
+// GET /api/v1/reports/:type/export?period=7d|30d|90d|12m
+const exportReport = catchAsync(async (req, res) => {
+    const type = req.params.type as ExportType;
+
+    if (!VALID_TYPES.includes(type)) {
+        res.status(httpStatus.BAD_REQUEST).json({
+            success: false,
+            message: `Invalid report type. Valid types: ${VALID_TYPES.join(", ")}`,
+        });
+        return;
+    }
+
+    const period = parsePeriod(req.query.period);
+    const csv = await EXPORT_MAP[type](req.user.id, period);
+
+    const filename = `${type}-report-${period}-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.status(httpStatus.OK).send(csv);
+});
+
 export const reportsController = {
     getRevenueReport,
     getStaffPerformanceReport,
     getClientRetentionReport,
     getJobCompletionReport,
+    exportReport,
 };
