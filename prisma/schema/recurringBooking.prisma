@@ -1,0 +1,69 @@
+// ─── Recurring Booking Schedule ───────────────────────────────────────────────
+// Stores the schedule definition. The cron job reads Active schedules and
+// creates real Booking rows when nextRunAt is in the past.
+
+model RecurringSchedule {
+  id          String                  @id @default(uuid())
+  scheduleRef String                  @unique
+
+  // Who owns this
+  adminId     String
+  clientId    String
+
+  // What to book
+  serviceType ServiceType
+  address     String
+  durationMins Int
+  total        Decimal                @db.Decimal(10, 2)
+  notes        String?
+
+  // Recurrence rule
+  frequency    RecurringFrequency
+  dayOfWeek    WeekDay                // which day of week to run
+  timeHour     Int                    // 0-23 in UTC
+  timeMinute   Int                    // 0-59 in UTC
+
+  // State
+  status       RecurringStatus        @default(ACTIVE)
+  startDate    DateTime               // first occurrence (inclusive)
+  nextRunAt    DateTime               // date/time of the next booking to create
+  lastRunAt    DateTime?              // when we last created a booking
+
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  // Staff assigned to every generated booking
+  staffAssignments RecurringStaffAssignment[]
+
+  // All bookings generated from this schedule (back-relation — FK is on Booking.recurringScheduleId)
+  generatedBookings Booking[]            @relation("RecurringScheduleBookings")
+
+  admin        AdminProfile           @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  client       Client                 @relation(fields: [clientId], references: [id])
+
+  @@index([adminId, status])
+  @@index([nextRunAt, status])
+  @@map("recurring_schedule")
+}
+
+model RecurringStaffAssignment {
+  scheduleId String
+  staffId    String
+  schedule   RecurringSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  staff      StaffProfile      @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@id([scheduleId, staffId])
+  @@map("recurring_staff_assignment")
+}
+
+enum RecurringFrequency {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+enum RecurringStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+}

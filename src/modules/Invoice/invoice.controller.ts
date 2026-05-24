@@ -82,6 +82,47 @@ const deleteInvoice = catchAsync(async (req, res) => {
   });
 });
 
+const getPaymentHistory = catchAsync(async (req, res) => {
+  const filters = {
+    page: req.query.page ? Number(req.query.page) : 1,
+    limit: req.query.limit ? Number(req.query.limit) : 10,
+    searchTerm: req.query.search as string | undefined,
+    method: req.query.method as string | undefined,
+    adminId: req.query.adminId as string | undefined,
+  };
+
+  const result = await invoiceService.getPaymentHistory(filters, req.user);
+
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Payment history retrieved successfully",
+    data: result,
+  });
+});
+
+const recordPayment = catchAsync(async (req, res) => {
+  const { id } = req.params;
+  const result = await invoiceService.recordPayment(id as string, req.body, req.user);
+
+  sendResponse(res, {
+    httpStatusCode: status.CREATED,
+    success: true,
+    message: "Payment recorded successfully",
+    data: result,
+  });
+});
+
+const sendInvoice = catchAsync(async (req, res) => {
+  const result = await invoiceService.sendInvoice(req.params["id"] as string, req.user);
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Invoice sent to client successfully",
+    data: result,
+  });
+});
+
 export const invoiceController = {
   createInvoice,
   getAllInvoices,
@@ -89,4 +130,7 @@ export const invoiceController = {
   updateInvoice,
   updateInvoiceStatus,
   deleteInvoice,
+  getPaymentHistory,
+  recordPayment,
+  sendInvoice,
 };

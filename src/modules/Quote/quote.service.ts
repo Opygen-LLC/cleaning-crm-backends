@@ -456,11 +456,78 @@ const publicQuoteAction = async (
     const newStatus =
         action === "accept" ? QuoteStatus.ACCEPTED : QuoteStatus.DECLINED;
 
+    // ── If the client is accepting, auto-create a draft booking ───────────────
+    // This removes the need for the admin to manually click "Convert to booking"
+    // after a client accepts. The booking is created in SCHEDULED status with
+    // the quote's total; the admin sets the date and assigns staff later.
+    if (action === "accept") {
+        const existingBooking = await prisma.booking.findFirst({
+            where: { quoteId: quote.id },
+        });
+
+        if (!existingBooking) {
+            // Generate booking ref
+            const lastBooking = await prisma.booking.findFirst({
+                orderBy: { createdAt: "desc" },
+                select: { bookingRef: true },
+            });
+            let nextBk = 1;
+            if (lastBooking?.bookingRef) {
+                const parts = lastBooking.bookingRef.split("-");
+                const num = parseInt(parts[parts.length - 1]);
+                if (!isNaN(num)) nextBk = num + 1;
+            }
+            const bookingRef = `#OP-BK-${nextBk.toString().padStart(4, "0")}`;
+
+            await prisma.$transaction(async (tx) => {
+                // Update quote status first
+                await tx.quote.update({
+                    where: { quoteRef },
+                    data: { status: QuoteStatus.ACCEPTED },
+                });
+
+                // Create the booking linked to this quote
+                await tx.booking.create({
+                    data: {
+                        bookingRef,
+                        adminId:      quote.adminId,
+                        clientId:     quote.clientId,
+                        serviceType:  "RESIDENTIAL_CLEAN" as any, // Admin can update later
+                        address:      quote.address,
+                        // scheduledDate defaults to 7 days from now as a placeholder
+                        // Admin will update this when they confirm with the client
+                        scheduledDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                        durationMins:  120,
+                        total:         quote.total,
+                        notes:         quote.notes,
+                        quoteId:       quote.id,
+                    },
+                });
+
+                // Update client booking aggregate
+                await tx.client.update({
+                    where: { id: quote.clientId },
+                    data: { totalBookings: { increment: 1 } },
+                });
+            });
+
+            // Return the updated quote with the new booking included
+            const withBooking = await prisma.quote.findUnique({
+                where: { quoteRef },
+                include: { lineItems: true, bookings: { select: { id: true, bookingRef: true, status: true, scheduledDate: true } } },
+            });
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { internalNotes: _n, adminId: _a, ...safeWithBooking } = withBooking!;
+            return safeWithBooking;
+        }
+    }
+
     const updated = await prisma.quote.update({
         where: { quoteRef },
         data: { status: newStatus },
         include: {
             lineItems: true,
+            bookings: { select: { id: true, bookingRef: true, status: true, scheduledDate: true } },
         },
     });
 

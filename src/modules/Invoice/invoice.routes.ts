@@ -10,6 +10,12 @@ import { invoiceValidation } from "./invoice.validation";
 
 const router = Router();
 
+router.get(
+  "/payment-history",
+  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+  invoiceController.getPaymentHistory,
+);
+
 router.post(
   "/",
   checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
@@ -47,6 +53,19 @@ router.delete(
   "/:id",
   checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
   invoiceController.deleteInvoice,
+);
+
+router.post(
+  "/:id/record-payment",
+  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+  zodValidate(invoiceValidation.recordPayment, ValidationProperty.BODY),
+  invoiceController.recordPayment,
+);
+
+router.post(
+  "/:id/send",
+  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+  invoiceController.sendInvoice,
 );
 
 export const invoiceRoutes = router;

@@ -17,7 +17,8 @@ model AdminProfile {
   website           String?
   user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   couponUsage       CouponUsage[]
-  review            Review?
+  reviews           Review[]
+  reviewTokens      ReviewToken[]
   staff             StaffProfile[]
   subscription      Subscription[]
   workLocations     WorkLocation[]
@@ -34,8 +35,13 @@ model AdminProfile {
   payment           Payment[]
   paymentGateway    PaymentGatewayConfig?
   quotes            Quote[]
-
+  checklistTemplates ChecklistTemplate[]
+  jobChecklists      JobChecklist[]
+  recurringSchedules RecurringSchedule[]
+  pricingRules       PricingRules?
   serviceCatalogs ServiceCatalog[]
+
+  activityLogs      ActivityLog[]
 
   @@index([createdAt])
 }
@@ -102,4 +108,16 @@ model NotificationPreference {
   admin                 AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
   @@map("notification_preference")
+}
+
+model PricingRules {
+  id        String       @id @default(uuid())
+  adminId   String       @unique
+  rules     Json         @default("[]")
+  addons    Json         @default("[]")
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  admin     AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@map("pricing_rules")
 }

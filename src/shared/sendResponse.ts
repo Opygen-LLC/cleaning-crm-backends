@@ -11,18 +11,20 @@ interface IResponseData<T> {
         total: number;
         totalPages: number;
     };
+    stats?: Record<string, unknown>;
 }
 
 export const sendResponse = <T>(
     res: Response,
     responseData: IResponseData<T>,
 ) => {
-    const { httpStatusCode, success, message, data, meta } = responseData;
+    const { httpStatusCode, success, message, data, meta, stats } = responseData;
 
     res.status(httpStatusCode).json({
         success,
         message,
         data,
         meta,
+        ...(stats !== undefined ? { stats } : {}),
     });
 };

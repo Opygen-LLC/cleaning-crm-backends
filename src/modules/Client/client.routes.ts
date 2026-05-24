@@ -44,4 +44,11 @@ router.delete(
     clientController.deleteClient,
 );
 
+
+// Public client portal — auth by clientId (no admin session required)
+router.get(
+    "/portal/:clientId",
+    clientController.getClientPortal,
+);
+
 export const clientRoutes = router;

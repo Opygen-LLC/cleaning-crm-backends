@@ -86,3 +86,8 @@ export interface IQueryResult<T> {
         totalPages: number;
     };
 }
+
+export interface IPaginationOptions {
+    page?: number;
+    limit?: number;
+}

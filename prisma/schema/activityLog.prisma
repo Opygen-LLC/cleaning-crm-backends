@@ -1,0 +1,21 @@
+/// Activity log — records super-admin-visible audit trail of admin actions.
+/// Add this model to prisma/schema/activityLog.prisma
+/// Then run: npx prisma migrate dev --name add_activity_log
+
+model ActivityLog {
+  id          String   @id @default(uuid())
+  action      String   // e.g. "CREATE_BOOKING", "UPDATE_STAFF", "DELETE_CLIENT"
+  entityType  String   // e.g. "Booking", "Staff", "Invoice"
+  entityId    String?  // the primary key of the affected record
+  description String   // human-readable summary
+  metadata    Json?    // optional extra data (before/after, IP, etc.)
+  createdAt   DateTime @default(now())
+
+  adminId String
+  admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+}

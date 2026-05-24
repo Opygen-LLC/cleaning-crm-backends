@@ -11,13 +11,16 @@ model Booking {
   adminId          String
   clientId         String
   quoteId          String?
+  recurringScheduleId String?
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
   admin            AdminProfile             @relation(fields: [adminId], references: [id], onDelete: Cascade)
   client           Client                   @relation(fields: [clientId], references: [id])
   quote            Quote?                   @relation(fields: [quoteId], references: [id])
+  recurringSchedule RecurringSchedule?      @relation("RecurringScheduleBookings", fields: [recurringScheduleId], references: [id], onDelete: SetNull)
   staffAssignments BookingStaffAssignment[]
   job              Job?
+  invoice          Invoice?
 
   @@index([adminId, status])
   @@index([clientId])

@@ -1,6 +1,5 @@
 import express, { Request, Response } from "express";
 import routes from "./routes/index";
-// TODO: for development parpuse
 import compression from "compression";
 import cors from "cors";
 import { globalErrorHandler } from "./middlewares/globalErrorHandler";
@@ -11,6 +10,8 @@ import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 
 //? Cron jobs
 import "../src/cron/staffStatus.cron";
+import "../src/cron/recurringBooking.cron";
+import "../src/cron/invoiceOverdue.cron";
 import logRequestResponse from "./middlewares/logger.middleware";
 
 const app = express();
@@ -18,10 +19,10 @@ const app = express();
 app.set("view engine", "ejs");
 app.set("views", path.resolve(process.cwd(), `src/lib/templates`));
 
+// FIX: express.json() was registered twice — removed the duplicate
 app.use(express.json());
 app.use(express.static("./public"));
 app.use(cookieParser());
-app.use(express.json());
 
 // parse urlencoded request body
 app.use(express.urlencoded({ extended: true }));
@@ -46,23 +47,23 @@ app.use(
       "Accept",
       "Origin",
     ],
-    // allowedHeaders: ["*"], //? 🔥 allow all headers
   }),
 );
 
-// compression the all data
+// Compress all responses
 app.use(compression());
 
-// Use the logging middleware for all routes
+// Request/response logging
 app.use(logRequestResponse);
-// Use the centralized routes
+
 app.get("/", (req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     message: "Cleaning CRM API is running....",
   });
 });
-app.use("/api/v1", routes); // This mounts all the routes under the /api prefix (e.g., /api/user)fgh
+
+app.use("/api/v1", routes);
 
 app.use(globalErrorHandler);
 app.use(notFound);

@@ -1,0 +1,69 @@
+// ── Checklist Template ────────────────────────────────────────────────────────
+// Reusable checklist templates that can be attached to jobs by service type
+// or manually by staff.
+
+model ChecklistTemplate {
+  id          String    @id @default(uuid())
+  name        String
+  serviceType ServiceType?          // null = generic / all services
+  adminId     String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  admin       AdminProfile          @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  tasks       ChecklistTask[]
+  jobChecklists JobChecklist[]
+
+  @@index([adminId])
+  @@map("checklist_template")
+}
+
+model ChecklistTask {
+  id         String             @id @default(uuid())
+  title      String
+  required   Boolean            @default(false)
+  sortOrder  Int                @default(0)
+  templateId String
+
+  template   ChecklistTemplate  @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+  @@map("checklist_task")
+}
+
+// ── Job Checklist ──────────────────────────────────────────────────────────────
+// An instance of a checklist attached to a specific Job.
+// Items track completion by staff.
+
+model JobChecklist {
+  id         String    @id @default(uuid())
+  jobId      String
+  templateId String
+  adminId    String
+  createdAt  DateTime  @default(now())
+
+  job        Job                   @relation(fields: [jobId],      references: [id], onDelete: Cascade)
+  template   ChecklistTemplate     @relation(fields: [templateId], references: [id])
+  admin      AdminProfile          @relation(fields: [adminId],    references: [id], onDelete: Cascade)
+  items      JobChecklistItem[]
+
+  @@unique([jobId, templateId])
+  @@index([adminId])
+  @@map("job_checklist")
+}
+
+model JobChecklistItem {
+  id          String       @id @default(uuid())
+  checklistId String
+  title       String       // snapshot from template task
+  required    Boolean      @default(false)
+  sortOrder   Int          @default(0)
+  completed   Boolean      @default(false)
+  completedAt DateTime?
+  completedBy String?      // staffId who ticked it off
+
+  checklist   JobChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+
+  @@index([checklistId])
+  @@map("job_checklist_item")
+}

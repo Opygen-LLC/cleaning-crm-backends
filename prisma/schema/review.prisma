@@ -1,9 +1,50 @@
+// ── Review token ──────────────────────────────────────────────────────────────
+// Generated when a job transitions to COMPLETED. The token is emailed to the
+// client so they can submit ratings for the job and each assigned staff member.
+
+model ReviewToken {
+  id          String    @id @default(uuid())
+  token       String    @unique @default(uuid())
+  jobId       String    @unique           // one token per job
+  adminId     String
+  used        Boolean   @default(false)
+  expiresAt   DateTime                    // e.g. now + 7 days
+  createdAt   DateTime  @default(now())
+
+  job         Job           @relation(fields: [jobId],   references: [id], onDelete: Cascade)
+  admin       AdminProfile  @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  reviews     Review[]
+
+  @@index([adminId])
+  @@map("review_token")
+}
+
+// ── Review ────────────────────────────────────────────────────────────────────
+// One Review row per staff member per job. An overall "service review" has
+// staffId = null.
+
 model Review {
-  id        String       @id @default(uuid())
-  rating    Int
-  comment   String
-  adminId   String       @unique
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-  Admin     AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  id              String    @id @default(uuid())
+  reviewTokenId   String
+  jobId           String
+  adminId         String
+  staffId         String?                 // null = overall service review
+  clientName      String                  // snapshot at submission time
+  rating          Int                     // 1-5
+  comment         String    @default("")
+  sentiment       String    @default("neutral")  // positive | neutral | negative
+  status          String    @default("pending")  // pending | published | unpublished | flagged
+  isPublished     Boolean   @default(false)
+  tags            String[]  @default([])
+  adminReply      String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  reviewToken     ReviewToken   @relation(fields: [reviewTokenId], references: [id], onDelete: Cascade)
+  admin           AdminProfile  @relation(fields: [adminId],       references: [id], onDelete: Cascade)
+
+  @@index([adminId, status])
+  @@index([staffId])
+  @@index([jobId])
+  @@map("review")
 }

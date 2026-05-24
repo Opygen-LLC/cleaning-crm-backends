@@ -4,7 +4,7 @@ model Client {
   email             String
   phone             String
   status            ClientStatus @default(ACTIVE)
-  servicePreference String
+  servicePreference String  @default("")
 
   addressLine1      String
   addressLine2      String?
@@ -24,6 +24,7 @@ model Client {
   estimates         Estimate[]
   jobs              Job[]
   quotes            Quote[]
+  recurringSchedules RecurringSchedule[]
 
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt

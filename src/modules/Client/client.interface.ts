@@ -2,7 +2,7 @@ export interface createClientPayload {
   name: string;
   email: string;
   phone: string;
-  servicePreference: string;
+  servicePreference?: string;
 
   addressLine1: string;
   addressLine2?: string;

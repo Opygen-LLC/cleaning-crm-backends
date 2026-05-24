@@ -66,10 +66,24 @@ const deleteClient = catchAsync(async (req, res) => {
     });
 });
 
+
+const getClientPortal = catchAsync(async (req, res) => {
+    const { clientId } = req.params;
+    const result = await clientService.getClientPortal(clientId as string);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Client portal data retrieved successfully",
+        data: result,
+    });
+});
+
 export const clientController = {
     createClient,
     getClients,
     getClientById,
     updateClient,
     deleteClient,
+    getClientPortal,
 };

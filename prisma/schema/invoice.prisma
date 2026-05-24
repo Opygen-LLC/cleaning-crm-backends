@@ -30,6 +30,7 @@ model Invoice {
   total     Decimal @db.Decimal(10, 2)
 
   // Relations
+<<<<<<< HEAD
   adminId String
 
   createdAt DateTime @default(now())
@@ -37,6 +38,17 @@ model Invoice {
 
   admin    AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
   payments Payment[]
+=======
+  adminId          String
+  bookingId        String?           @unique
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  admin            AdminProfile      @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  booking          Booking?          @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  payments         Payment[]
+>>>>>>> 1b0a17fe2991b022e19bcb0b7ae1631b40cc1fb6
 
   @@index([adminId, status])
   @@index([dueDate])
