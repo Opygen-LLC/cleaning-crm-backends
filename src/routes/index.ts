@@ -18,9 +18,6 @@ import { jobRoutes } from "../modules/Job/job.routes";
 import { quoteRoutes } from "../modules/Quote/quote.routes";
 import { estimateRoutes } from "../modules/Estimate/estimate.routes";
 import { estimateFormRoutes } from "../modules/EstimateForm/estimateForm.routes";
-<<<<<<< HEAD
-import { dashboardRoutes } from "../modules/Dashboard/dashboard.routes";
-=======
 import { reviewRoutes } from "../modules/Review/review.routes";
 import { reportsRoutes } from "../modules/Reports/reports.routes";
 import { bookingFormRoutes } from "../modules/BookingForm/bookingForm.routes";
@@ -31,128 +28,41 @@ import { recurringBookingRoutes } from "../modules/RecurringBooking/recurringBoo
 // Phase 8: super-admin module
 import { superAdminRoutes } from "../modules/SuperAdmin/superAdmin.routes";
 import { pricingRulesRoutes } from "../modules/PricingRules/pricingRules.routes";
->>>>>>> 1b0a17fe2991b022e19bcb0b7ae1631b40cc1fb6
 
 const router = Router();
 
 const routes: { path: string; route: Router }[] = [
-<<<<<<< HEAD
-    {
-        path: "/auth",
-        route: authRoutes,
-    },
-    {
-        path: "/user",
-        route: userRoutes,
-    },
-    {
-        path: "/session",
-        route: sessionRoutes,
-    },
-    {
-        path: "/admin",
-        route: adminRoutes,
-    },
-    {
-        path: "/staff",
-        route: staffRoutes,
-    },
-    {
-        path: "/client",
-        route: clientRoutes,
-    },
-    {
-        path: "/subscription",
-        route: subscriptionRoutes,
-    },
-    {
-        path: "/subscription-plan",
-        route: subscriptionPlanRoutes,
-    },
-    {
-        path: "/service-catalog",
-        route: serviceCatalogRoutes,
-    },
-    {
-        path: "/invoice",
-        route: invoiceRoutes,
-    },
-    {
-        path: "/expense",
-        route: expenseRoutes,
-    },
-    {
-        path: "/booking",
-        route: bookingRoutes,
-    },
-    {
-        path: "/lead",
-        route: leadRoutes,
-    },
-    {
-        path: "/dashboard",
-        route: dashboardRoutes,
-    },
-    {
-        path: "/notification",
-        route: notificationRoutes,
-    },
-    {
-        path: "/payment-gateway",
-        route: paymentGatewayRoutes,
-    },
-    {
-        path: "/job",
-        route: jobRoutes,
-    },
-    {
-        path: "/quote",
-        route: quoteRoutes,
-    },
-    {
-        path: "/estimate",
-        route: estimateRoutes,
-    },
-    {
-        path: "/estimate-form",
-        route: estimateFormRoutes,
-    },
-=======
-  { path: "/auth",              route: authRoutes },
-  { path: "/user",              route: userRoutes },
-  { path: "/session",           route: sessionRoutes },
-  { path: "/admin",             route: adminRoutes },
-  { path: "/staff",             route: staffRoutes },
-  { path: "/client",            route: clientRoutes },
-  { path: "/subscription",      route: subscriptionRoutes },
-  { path: "/subscription-plan", route: subscriptionPlanRoutes },
-  { path: "/service-catalog",   route: serviceCatalogRoutes },
-  { path: "/invoice",           route: invoiceRoutes },
-  { path: "/expense",           route: expenseRoutes },
-  { path: "/booking",           route: bookingRoutes },
-  { path: "/lead",              route: leadRoutes },
-  { path: "/dashboard",         route: dashboardRoutes },
-  { path: "/notification",      route: notificationRoutes },
-  { path: "/payment-gateway",   route: paymentGatewayRoutes },
-  { path: "/job",               route: jobRoutes },
-  { path: "/quote",             route: quoteRoutes },
-  { path: "/estimate",          route: estimateRoutes },
-  { path: "/estimate-form",     route: estimateFormRoutes },
-  { path: "/review",            route: reviewRoutes },
-  { path: "/reports",           route: reportsRoutes },
-  { path: "/booking-form",      route: bookingFormRoutes },
-  { path: "/checklist",         route: checklistRoutes },
-  // Phase 1 — recurring booking engine
-  { path: "/recurring-booking", route: recurringBookingRoutes },
-  // Phase 8 — super admin
-  { path: "/super-admin",       route: superAdminRoutes },
-  // Phase 2 — pricing rules
-  { path: "/pricing-rules",     route: pricingRulesRoutes },
->>>>>>> 1b0a17fe2991b022e19bcb0b7ae1631b40cc1fb6
+    { path: "/auth", route: authRoutes },
+    { path: "/user", route: userRoutes },
+    { path: "/session", route: sessionRoutes },
+    { path: "/admin", route: adminRoutes },
+    { path: "/staff", route: staffRoutes },
+    { path: "/client", route: clientRoutes },
+    { path: "/subscription", route: subscriptionRoutes },
+    { path: "/subscription-plan", route: subscriptionPlanRoutes },
+    { path: "/service-catalog", route: serviceCatalogRoutes },
+    { path: "/invoice", route: invoiceRoutes },
+    { path: "/expense", route: expenseRoutes },
+    { path: "/booking", route: bookingRoutes },
+    { path: "/lead", route: leadRoutes },
+    { path: "/dashboard", route: dashboardRoutes },
+    { path: "/notification", route: notificationRoutes },
+    { path: "/payment-gateway", route: paymentGatewayRoutes },
+    { path: "/job", route: jobRoutes },
+    { path: "/quote", route: quoteRoutes },
+    { path: "/estimate", route: estimateRoutes },
+    { path: "/estimate-form", route: estimateFormRoutes },
+    { path: "/review", route: reviewRoutes },
+    { path: "/reports", route: reportsRoutes },
+    { path: "/booking-form", route: bookingFormRoutes },
+    { path: "/checklist", route: checklistRoutes },
+    { path: "/recurring-booking", route: recurringBookingRoutes },
+    { path: "/super-admin", route: superAdminRoutes },
+    { path: "/pricing-rules", route: pricingRulesRoutes },
 ];
 
 routes.forEach((route) => {
-  router.use(route.path, route.route);
+    router.use(route.path, route.route);
 });
 
 export default router;

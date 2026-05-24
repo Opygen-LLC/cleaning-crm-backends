@@ -18,7 +18,7 @@ import { IRequestUser } from "../../types/requestUser.interface";
 /**
  * Generates a unique quote reference: #OP-QT-0001
  */
-const generateQuoteRef = async (): Promise<string> => {
+export const generateQuoteRef = async (): Promise<string> => {
     const last = await prisma.quote.findFirst({
         orderBy: { createdAt: "desc" },
         select: { quoteRef: true },
@@ -65,7 +65,7 @@ const computeTotals = (
 
 // ─── Standard includes shared across queries ──────────────────────────────────
 
-const quoteInclude = {
+export const quoteInclude = {
     client: {
         select: { id: true, name: true, email: true, phone: true },
     },

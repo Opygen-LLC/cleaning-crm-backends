@@ -15,6 +15,7 @@ import {
     estimateFilterableFields,
 } from "./estimate.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
+import { generateQuoteRef, quoteInclude } from "../Quote/quote.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

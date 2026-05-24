@@ -17,8 +17,6 @@ router.get("/staff-performance", reportsController.getStaffPerformanceReport);
 // GET /api/v1/reports/client-retention?period=7d|30d|90d|12m
 router.get("/client-retention", reportsController.getClientRetentionReport);
 
-<<<<<<< HEAD
-=======
 // GET /api/v1/reports/job-completion?period=7d|30d|90d|12m
 router.get("/job-completion", reportsController.getJobCompletionReport);
 
@@ -27,5 +25,4 @@ router.get("/job-completion", reportsController.getJobCompletionReport);
 // Returns: CSV file download
 router.get("/:type/export", reportsController.exportReport);
 
->>>>>>> 1b0a17fe2991b022e19bcb0b7ae1631b40cc1fb6
 export const reportsRoutes = router;
