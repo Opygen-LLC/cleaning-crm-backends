@@ -65,14 +65,14 @@ const resolveAdminId = async (userId: string): Promise<string> => {
  *   total          = afterItemDisc − globalDisc + taxTotal
  */
 interface ComputedTotals {
-    subtotal:      number;
-    labourCost:    number; // re-used for subtotal pre-tax pre-disc
-    materialCost:  number; // set to 0 (not collected at this layer)
-    overheadCost:  number; // set to 0
+    subtotal: number;
+    labourCost: number; // re-used for subtotal pre-tax pre-disc
+    materialCost: number; // set to 0 (not collected at this layer)
+    overheadCost: number; // set to 0
     marginPercent: number; // set to 0
-    taxRate:       number; // blended effective rate (info only)
-    tax:           number;
-    total:         number;
+    taxRate: number; // blended effective rate (info only)
+    tax: number;
+    total: number;
 }
 
 const computeTotals = (
@@ -82,48 +82,52 @@ const computeTotals = (
 ): ComputedTotals => {
     const round2 = (n: number) => Math.round(n * 100) / 100;
 
-    let subtotal     = 0;
+    let subtotal = 0;
     let discountedSum = 0;
-    let taxSum       = 0;
+    let taxSum = 0;
 
     for (const item of lineItems) {
-        const lineSub        = round2(item.quantity * item.unitPrice);
-        const lineDiscounted = round2(lineSub * (1 - (item.discountPercent ?? 0) / 100));
-        const lineTax        = round2(lineDiscounted * ((item.taxPercent ?? 20) / 100));
+        const lineSub = round2(item.quantity * item.unitPrice);
+        const lineDiscounted = round2(
+            lineSub * (1 - (item.discountPercent ?? 0) / 100),
+        );
+        const lineTax = round2(
+            lineDiscounted * ((item.taxPercent ?? 20) / 100),
+        );
 
-        subtotal     += lineSub;
+        subtotal += lineSub;
         discountedSum += lineDiscounted;
-        taxSum        += lineTax;
+        taxSum += lineTax;
     }
 
-    subtotal      = round2(subtotal);
+    subtotal = round2(subtotal);
     discountedSum = round2(discountedSum);
-    taxSum        = round2(taxSum);
+    taxSum = round2(taxSum);
 
     // Global discount applied on top of item discounts
     let globalDiscount = 0;
     if (discountValue > 0) {
-        globalDiscount = discountType === "percent"
-            ? round2(discountedSum * (discountValue / 100))
-            : Math.min(round2(discountValue), discountedSum);
+        globalDiscount =
+            discountType === "percent"
+                ? round2(discountedSum * (discountValue / 100))
+                : Math.min(round2(discountValue), discountedSum);
     }
 
     const afterAllDiscounts = round2(discountedSum - globalDiscount);
-    const total             = round2(afterAllDiscounts + taxSum);
+    const total = round2(afterAllDiscounts + taxSum);
 
     // Blended tax rate for informational storage
-    const blendedTaxRate = afterAllDiscounts > 0
-        ? round2((taxSum / afterAllDiscounts) * 100)
-        : 0;
+    const blendedTaxRate =
+        afterAllDiscounts > 0 ? round2((taxSum / afterAllDiscounts) * 100) : 0;
 
     return {
         subtotal,
-        labourCost:    subtotal,  // maps to Prisma labourCost field
-        materialCost:  0,
-        overheadCost:  0,
+        labourCost: subtotal, // maps to Prisma labourCost field
+        materialCost: 0,
+        overheadCost: 0,
         marginPercent: 0,
-        taxRate:       blendedTaxRate,
-        tax:           taxSum,
+        taxRate: blendedTaxRate,
+        tax: taxSum,
         total,
     };
 };
@@ -131,10 +135,10 @@ const computeTotals = (
 // ─── Status transition guard ──────────────────────────────────────────────────
 
 const ALLOWED_TRANSITIONS: Record<EstimateStatus, EstimateStatus[]> = {
-    [EstimateStatus.DRAFT]:     [EstimateStatus.SENT, EstimateStatus.REJECTED],
-    [EstimateStatus.SENT]:      [EstimateStatus.APPROVED, EstimateStatus.REJECTED],
-    [EstimateStatus.APPROVED]:  [EstimateStatus.CONVERTED], // convert via dedicated endpoint
-    [EstimateStatus.REJECTED]:  [], // terminal
+    [EstimateStatus.DRAFT]: [EstimateStatus.SENT, EstimateStatus.REJECTED],
+    [EstimateStatus.SENT]: [EstimateStatus.APPROVED, EstimateStatus.REJECTED],
+    [EstimateStatus.APPROVED]: [EstimateStatus.CONVERTED], // convert via dedicated endpoint
+    [EstimateStatus.REJECTED]: [], // terminal
     [EstimateStatus.CONVERTED]: [], // terminal
 };
 
@@ -152,10 +156,7 @@ const estimateInclude = {
 
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
-const createEstimate = async (
-    payload: IEstimateCreate,
-    user: IRequestUser,
-) => {
+const createEstimate = async (payload: IEstimateCreate, user: IRequestUser) => {
     const adminId = await resolveAdminId(user.id);
 
     // Verify client belongs to this admin
@@ -175,31 +176,34 @@ const createEstimate = async (
         data: {
             estimateRef,
             adminId,
-            clientId:          payload.clientId,
-            serviceType:       payload.serviceType,
-            address:           payload.address,
-            labourCost:        totals.labourCost,
-            materialCost:      totals.materialCost,
-            overheadCost:      totals.overheadCost,
-            marginPercent:     totals.marginPercent,
-            subtotal:          totals.subtotal,
-            taxRate:           totals.taxRate,
-            tax:               totals.tax,
-            total:             totals.total,
-            validUntil:        new Date(payload.validUntil),
-            notes:             payload.notes,
-            internalNotes:     payload.internalNotes,
+            clientId: payload.clientId,
+            serviceType: payload.serviceType,
+            address: payload.address,
+            labourCost: totals.labourCost,
+            materialCost: totals.materialCost,
+            overheadCost: totals.overheadCost,
+            marginPercent: totals.marginPercent,
+            subtotal: totals.subtotal,
+            taxRate: totals.taxRate,
+            tax: totals.tax,
+            total: totals.total,
+            validUntil: new Date(payload.validUntil),
+            notes: payload.notes,
+            internalNotes: payload.internalNotes,
             lineItems: {
                 createMany: {
                     data: payload.lineItems.map((item) => ({
                         description: item.description,
-                        quantity:    item.quantity,
-                        unitPrice:   item.unitPrice,
-                        total: Math.round(
-                            item.quantity * item.unitPrice *
-                            (1 - (item.discountPercent ?? 0) / 100) *
-                            (1 + (item.taxPercent ?? 20) / 100) * 100
-                        ) / 100,
+                        quantity: item.quantity,
+                        unitPrice: item.unitPrice,
+                        total:
+                            Math.round(
+                                item.quantity *
+                                    item.unitPrice *
+                                    (1 - (item.discountPercent ?? 0) / 100) *
+                                    (1 + (item.taxPercent ?? 20) / 100) *
+                                    100,
+                            ) / 100,
                     })),
                 },
             },
@@ -247,7 +251,9 @@ const updateEstimate = async (
 ) => {
     const adminId = await resolveAdminId(user.id);
 
-    const existing = await prisma.estimate.findFirst({ where: { id, adminId } });
+    const existing = await prisma.estimate.findFirst({
+        where: { id, adminId },
+    });
     if (!existing) throw new AppError(status.NOT_FOUND, "Estimate not found");
 
     if (existing.status !== EstimateStatus.DRAFT) {
@@ -274,15 +280,18 @@ const updateEstimate = async (
             await tx.estimateLineItem.deleteMany({ where: { estimateId: id } });
             await tx.estimateLineItem.createMany({
                 data: lineItemsToUse.map((item) => ({
-                    estimateId:  id,
+                    estimateId: id,
                     description: item.description,
-                    quantity:    item.quantity,
-                    unitPrice:   item.unitPrice,
-                    total: Math.round(
-                        item.quantity * item.unitPrice *
-                        (1 - (item.discountPercent ?? 0) / 100) *
-                        (1 + (item.taxPercent ?? 20) / 100) * 100
-                    ) / 100,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                    total:
+                        Math.round(
+                            item.quantity *
+                                item.unitPrice *
+                                (1 - (item.discountPercent ?? 0) / 100) *
+                                (1 + (item.taxPercent ?? 20) / 100) *
+                                100,
+                        ) / 100,
                 })),
             });
         }
@@ -290,17 +299,23 @@ const updateEstimate = async (
         return tx.estimate.update({
             where: { id },
             data: {
-                ...(payload.serviceType       && { serviceType: payload.serviceType }),
-                ...(payload.address           && { address: payload.address }),
-                ...(payload.validUntil        && { validUntil: new Date(payload.validUntil) }),
-                ...(payload.notes             !== undefined && { notes: payload.notes }),
-                ...(payload.internalNotes     !== undefined && { internalNotes: payload.internalNotes }),
+                ...(payload.serviceType && {
+                    serviceType: payload.serviceType,
+                }),
+                ...(payload.address && { address: payload.address }),
+                ...(payload.validUntil && {
+                    validUntil: new Date(payload.validUntil),
+                }),
+                ...(payload.notes !== undefined && { notes: payload.notes }),
+                ...(payload.internalNotes !== undefined && {
+                    internalNotes: payload.internalNotes,
+                }),
                 ...(totalsUpdate && {
-                    subtotal:      totalsUpdate.subtotal,
-                    labourCost:    totalsUpdate.labourCost,
-                    taxRate:       totalsUpdate.taxRate,
-                    tax:           totalsUpdate.tax,
-                    total:         totalsUpdate.total,
+                    subtotal: totalsUpdate.subtotal,
+                    labourCost: totalsUpdate.labourCost,
+                    taxRate: totalsUpdate.taxRate,
+                    tax: totalsUpdate.tax,
+                    total: totalsUpdate.total,
                 }),
             },
             include: estimateInclude,
@@ -315,7 +330,9 @@ const updateEstimateStatus = async (
 ) => {
     const adminId = await resolveAdminId(user.id);
 
-    const existing = await prisma.estimate.findFirst({ where: { id, adminId } });
+    const existing = await prisma.estimate.findFirst({
+        where: { id, adminId },
+    });
     if (!existing) throw new AppError(status.NOT_FOUND, "Estimate not found");
 
     if (!ALLOWED_TRANSITIONS[existing.status].includes(newStatus)) {
@@ -342,7 +359,9 @@ const updateEstimateStatus = async (
 const deleteEstimate = async (id: string, user: IRequestUser) => {
     const adminId = await resolveAdminId(user.id);
 
-    const existing = await prisma.estimate.findFirst({ where: { id, adminId } });
+    const existing = await prisma.estimate.findFirst({
+        where: { id, adminId },
+    });
     if (!existing) throw new AppError(status.NOT_FOUND, "Estimate not found");
 
     if (existing.status === EstimateStatus.CONVERTED) {
@@ -383,7 +402,10 @@ const convertEstimateToBooking = async (
             where: { id: { in: payload.staffIds }, adminId },
         });
         if (staffCount !== payload.staffIds.length) {
-            throw new AppError(status.BAD_REQUEST, "One or more staff members not found");
+            throw new AppError(
+                status.BAD_REQUEST,
+                "One or more staff members not found",
+            );
         }
     }
 
@@ -405,17 +427,19 @@ const convertEstimateToBooking = async (
             data: {
                 bookingRef,
                 adminId,
-                clientId:     estimate.clientId,
-                serviceType:  "RESIDENTIAL_CLEAN" as any,
-                address:      estimate.address,
+                clientId: estimate.clientId,
+                serviceType: "RESIDENTIAL_CLEAN" as any,
+                address: estimate.address,
                 scheduledDate: new Date(payload.scheduledDate),
                 durationMins: payload.durationMins,
-                total:        estimate.total,
-                notes:        payload.notes ?? estimate.notes,
+                total: estimate.total,
+                notes: payload.notes ?? estimate.notes,
                 ...(payload.staffIds?.length && {
                     staffAssignments: {
                         createMany: {
-                            data: payload.staffIds.map((staffId) => ({ staffId })),
+                            data: payload.staffIds.map((staffId) => ({
+                                staffId,
+                            })),
                         },
                     },
                 }),
@@ -428,7 +452,13 @@ const convertEstimateToBooking = async (
                     include: {
                         staff: {
                             include: {
-                                user: { select: { id: true, name: true, email: true } },
+                                user: {
+                                    select: {
+                                        id: true,
+                                        name: true,
+                                        email: true,
+                                    },
+                                },
                             },
                         },
                     },
@@ -440,7 +470,7 @@ const convertEstimateToBooking = async (
         await tx.estimate.update({
             where: { id },
             data: {
-                status:                EstimateStatus.CONVERTED,
+                status: EstimateStatus.CONVERTED,
                 convertedToBookingRef: bookingRef,
             },
         });
@@ -449,13 +479,89 @@ const convertEstimateToBooking = async (
         await tx.client.update({
             where: { id: estimate.clientId },
             data: {
-                totalBookings:   { increment: 1 },
+                totalBookings: { increment: 1 },
                 lastBookingDate: new Date(payload.scheduledDate),
             },
         });
 
         return booking;
     });
+};
+
+// ─── Convert APPROVED estimate → Quote ──────────────────────────────────────
+
+/**
+ * Creates a pre-filled Quote from an APPROVED Estimate.
+ * The estimate stays in APPROVED status — it is only marked CONVERTED
+ * when subsequently converted to a Booking.
+ */
+const convertEstimateToQuote = async (
+    id: string,
+    payload: { validUntil: string; notes?: string; internalNotes?: string },
+    user: IRequestUser,
+) => {
+    const adminId = await resolveAdminId(user.id);
+
+    const estimate = await prisma.estimate.findFirst({
+        where: { id, adminId },
+        include: { lineItems: true },
+    });
+    if (!estimate) throw new AppError(status.NOT_FOUND, "Estimate not found");
+
+    if (estimate.status !== EstimateStatus.APPROVED) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Only APPROVED estimates can be converted to quotes. Current status: ${estimate.status}`,
+        );
+    }
+
+    const quoteRef = await generateQuoteRef();
+
+    // Re-use estimate totals: tax = estimate.tax, taxRate = estimate.taxRate
+    const subtotal = Number(estimate.subtotal);
+    const tax = Number(estimate.tax);
+    const taxRate = Number(estimate.taxRate);
+    const total = Number(estimate.total);
+
+    const quote = await prisma.$transaction(async (tx) => {
+        const newQuote = await tx.quote.create({
+            data: {
+                quoteRef,
+                adminId,
+                clientId: estimate.clientId,
+                serviceType: estimate.serviceType,
+                address: estimate.address,
+                subtotal,
+                taxRate,
+                tax,
+                total,
+                validUntil: new Date(payload.validUntil),
+                notes: payload.notes ?? estimate.notes,
+                internalNotes: payload.internalNotes ?? estimate.internalNotes,
+                lineItems: {
+                    createMany: {
+                        data: estimate.lineItems.map((li) => ({
+                            description: li.description,
+                            quantity: li.quantity,
+                            unitPrice: Number(li.unitPrice),
+                            total: Number(li.total),
+                        })),
+                    },
+                },
+            },
+            include: quoteInclude,
+        });
+
+        // Stamp estimate so the UI can show "Converted to quote QREF-xxx"
+        await tx.estimate.update({
+            where: { id },
+            data: { convertedToQuoteRef: quoteRef },
+        });
+
+        return newQuote;
+    });
+
+    return quote;
 };
 
 // ─── Export ───────────────────────────────────────────────────────────────────
@@ -468,4 +574,5 @@ export const estimateService = {
     updateEstimateStatus,
     deleteEstimate,
     convertEstimateToBooking,
+    convertEstimateToQuote,
 };

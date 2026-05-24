@@ -102,6 +102,23 @@ const convertEstimateToBooking = catchAsync(async (req, res) => {
     });
 });
 
+// ── Convert to Quote ──────────────────────────────────────────────────────────
+
+const convertEstimateToQuote = catchAsync(async (req, res) => {
+    const result = await estimateService.convertEstimateToQuote(
+        req.params.id as string,
+        req.body,
+        req.user,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.CREATED,
+        success: true,
+        message: "Estimate successfully converted to quote",
+        data: result,
+    });
+});
+
 // ── Export ────────────────────────────────────────────────────────────────────
 
 export const estimateController = {
@@ -112,4 +129,5 @@ export const estimateController = {
     updateEstimateStatus,
     deleteEstimate,
     convertEstimateToBooking,
+    convertEstimateToQuote,
 };

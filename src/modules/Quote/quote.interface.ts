@@ -17,6 +17,7 @@ export interface IQuoteCreate {
     validUntil: string; // ISO date string
     notes?: string;
     internalNotes?: string;
+    templateId?: string; // optional — increments usageCount if supplied
 }
 
 // ── Update ─────────────────────────────────────────────────────────────────────

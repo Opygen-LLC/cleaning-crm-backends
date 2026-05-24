@@ -106,9 +106,7 @@ const convertQuoteToBooking = catchAsync(async (req, res) => {
 // ── Public (unauthenticated) ──────────────────────────────────────────────────
 
 const getPublicQuote = catchAsync(async (req, res) => {
-    const result = await quoteService.getPublicQuote(
-        req.params.ref as string,
-    );
+    const result = await quoteService.getPublicQuote(req.params.ref as string);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -132,6 +130,72 @@ const publicQuoteAction = catchAsync(async (req, res) => {
     });
 });
 
+// ── Send quote email ──────────────────────────────────────────────────────────
+
+const sendQuoteEmail = catchAsync(async (req, res) => {
+    const result = await quoteService.sendQuoteEmail(
+        req.params.id as string,
+        req.user,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Quote email sent successfully",
+        data: result,
+    });
+});
+
+// ── Quote Templates ───────────────────────────────────────────────────────────
+
+const getAllQuoteTemplates = catchAsync(async (req, res) => {
+    const result = await quoteService.getAllQuoteTemplates(req.user);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Quote templates retrieved successfully",
+        data: result,
+    });
+});
+
+const createQuoteTemplate = catchAsync(async (req, res) => {
+    const result = await quoteService.createQuoteTemplate(req.body, req.user);
+
+    sendResponse(res, {
+        httpStatusCode: status.CREATED,
+        success: true,
+        message: "Quote template created successfully",
+        data: result,
+    });
+});
+
+const updateQuoteTemplate = catchAsync(async (req, res) => {
+    const result = await quoteService.updateQuoteTemplate(
+        req.params.id as string,
+        req.body,
+        req.user,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Quote template updated successfully",
+        data: result,
+    });
+});
+
+const deleteQuoteTemplate = catchAsync(async (req, res) => {
+    await quoteService.deleteQuoteTemplate(req.params.id as string, req.user);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Quote template deleted successfully",
+        data: null,
+    });
+});
+
 // ── Export ────────────────────────────────────────────────────────────────────
 
 export const quoteController = {
@@ -144,4 +208,9 @@ export const quoteController = {
     convertQuoteToBooking,
     getPublicQuote,
     publicQuoteAction,
+    sendQuoteEmail,
+    getAllQuoteTemplates,
+    createQuoteTemplate,
+    updateQuoteTemplate,
+    deleteQuoteTemplate,
 };
