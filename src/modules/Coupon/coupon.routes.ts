@@ -11,10 +11,13 @@ import { couponValidation } from "./coupon.validation";
 const router = Router();
 
 const isSuperAdmin = checkAuth(UserRole.SUPER_ADMIN);
+// ADMIN can read and validate coupons but cannot create/delete — only SUPER_ADMIN can
+const isSuperAdminOrAdmin = checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN);
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 // GET /api/v1/coupon/stats
-router.get("/stats", isSuperAdmin, couponController.getCouponStats);
+// ADMIN can see stats for their own coupon usage; SUPER_ADMIN sees platform-wide
+router.get("/stats", isSuperAdminOrAdmin, couponController.getCouponStats);
 
 // ── Validate (used by checkout — admin auth) ──────────────────────────────────
 // POST /api/v1/coupon/validate
@@ -26,7 +29,7 @@ router.post(
 );
 
 // ── CRUD ──────────────────────────────────────────────────────────────────────
-// POST /api/v1/coupon
+// POST /api/v1/coupon  — SUPER_ADMIN only (creation remains platform-level)
 router.post(
     "/",
     isSuperAdmin,
@@ -34,13 +37,13 @@ router.post(
     couponController.createCoupon,
 );
 
-// GET /api/v1/coupon
-router.get("/", isSuperAdmin, couponController.getAllCoupons);
+// GET /api/v1/coupon — ADMIN can list coupons to apply at checkout
+router.get("/", isSuperAdminOrAdmin, couponController.getAllCoupons);
 
-// GET /api/v1/coupon/:id
-router.get("/:id", isSuperAdmin, couponController.getCouponById);
+// GET /api/v1/coupon/:id — ADMIN can view coupon details
+router.get("/:id", isSuperAdminOrAdmin, couponController.getCouponById);
 
-// PATCH /api/v1/coupon/:id
+// PATCH /api/v1/coupon/:id — SUPER_ADMIN only (editing remains platform-level)
 router.patch(
     "/:id",
     isSuperAdmin,
@@ -48,10 +51,10 @@ router.patch(
     couponController.updateCoupon,
 );
 
-// PATCH /api/v1/coupon/:id/toggle
+// PATCH /api/v1/coupon/:id/toggle — SUPER_ADMIN only
 router.patch("/:id/toggle", isSuperAdmin, couponController.toggleCoupon);
 
-// DELETE /api/v1/coupon/:id
+// DELETE /api/v1/coupon/:id — SUPER_ADMIN only
 router.delete("/:id", isSuperAdmin, couponController.deleteCoupon);
 
 export const couponRoutes = router;

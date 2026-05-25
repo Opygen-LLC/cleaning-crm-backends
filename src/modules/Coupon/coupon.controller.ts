@@ -15,11 +15,14 @@ const createCoupon = catchAsync(async (req, res) => {
 
 const getAllCoupons = catchAsync(async (req, res) => {
     const filters = {
-        searchTerm:   req.query.searchTerm as string | undefined,
+        searchTerm: req.query.searchTerm as string | undefined,
         discountType: req.query.discountType as any,
-        isActive:     req.query.isActive !== undefined ? req.query.isActive === "true" : undefined,
-        page:         Number(req.query.page) || 1,
-        limit:        Number(req.query.limit) || 10,
+        isActive:
+            req.query.isActive !== undefined
+                ? req.query.isActive === "true"
+                : undefined,
+        page: Number(req.query.page) || 1,
+        limit: Number(req.query.limit) || 10,
     };
     const result = await couponService.getAllCoupons(filters);
     sendResponse(res, {
@@ -41,7 +44,7 @@ const getCouponStats = catchAsync(async (req, res) => {
 });
 
 const getCouponById = catchAsync(async (req, res) => {
-    const result = await couponService.getCouponById(req.params.id);
+    const result = await couponService.getCouponById(req.params.id as string);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -51,7 +54,10 @@ const getCouponById = catchAsync(async (req, res) => {
 });
 
 const updateCoupon = catchAsync(async (req, res) => {
-    const result = await couponService.updateCoupon(req.params.id, req.body);
+    const result = await couponService.updateCoupon(
+        req.params.id as string,
+        req.body,
+    );
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -61,7 +67,7 @@ const updateCoupon = catchAsync(async (req, res) => {
 });
 
 const toggleCoupon = catchAsync(async (req, res) => {
-    const result = await couponService.toggleCoupon(req.params.id);
+    const result = await couponService.toggleCoupon(req.params.id as string);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -71,7 +77,7 @@ const toggleCoupon = catchAsync(async (req, res) => {
 });
 
 const deleteCoupon = catchAsync(async (req, res) => {
-    await couponService.deleteCoupon(req.params.id);
+    await couponService.deleteCoupon(req.params.id as string);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
