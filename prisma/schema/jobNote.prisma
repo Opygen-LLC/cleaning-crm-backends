@@ -1,0 +1,40 @@
+model JobNote {
+    id         String   @id @default(uuid())
+    jobId      String
+    adminId    String
+    type       NoteType @default(GENERAL)
+    body       String
+    pinned     Boolean  @default(false)
+    /// Display name of the author (denormalised for speed — avoids a join on every list)
+    authorName String
+
+    job   Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+    admin AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([jobId])
+    @@index([adminId])
+    @@map("job_note")
+}
+
+model JobAttachment {
+    id            String @id @default(uuid())
+    jobId         String
+    adminId       String
+    fileName      String // original filename shown in the UI
+    fileUrl       String // Cloudinary secure_url
+    cloudinaryId  String // Cloudinary public_id — required to delete the asset
+    mimeType      String
+    fileSizeBytes Int
+
+    job   Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+    admin AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+    createdAt DateTime @default(now())
+
+    @@index([jobId])
+    @@index([adminId])
+    @@map("job_attachment")
+}

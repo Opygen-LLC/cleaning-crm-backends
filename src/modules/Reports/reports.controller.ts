@@ -28,7 +28,10 @@ const getRevenueReport = catchAsync(async (req, res) => {
 
 const getStaffPerformanceReport = catchAsync(async (req, res) => {
     const period = parsePeriod(req.query.period);
-    const result = await reportsService.getStaffPerformanceReport(req.user.id, period);
+    const result = await reportsService.getStaffPerformanceReport(
+        req.user.id,
+        period,
+    );
     sendResponse(res, {
         httpStatusCode: httpStatus.OK,
         success: true,
@@ -39,7 +42,10 @@ const getStaffPerformanceReport = catchAsync(async (req, res) => {
 
 const getClientRetentionReport = catchAsync(async (req, res) => {
     const period = parsePeriod(req.query.period);
-    const result = await reportsService.getClientRetentionReport(req.user.id, period);
+    const result = await reportsService.getClientRetentionReport(
+        req.user.id,
+        period,
+    );
     sendResponse(res, {
         httpStatusCode: httpStatus.OK,
         success: true,
@@ -50,7 +56,10 @@ const getClientRetentionReport = catchAsync(async (req, res) => {
 
 const getJobCompletionReport = catchAsync(async (req, res) => {
     const period = parsePeriod(req.query.period);
-    const result = await reportsService.getJobCompletionReport(req.user.id, period);
+    const result = await reportsService.getJobCompletionReport(
+        req.user.id,
+        period,
+    );
     sendResponse(res, {
         httpStatusCode: httpStatus.OK,
         success: true,
@@ -61,7 +70,11 @@ const getJobCompletionReport = catchAsync(async (req, res) => {
 
 // ── Export endpoints ───────────────────────────────────────────────────────────
 
-type ExportType = "revenue" | "staff-performance" | "client-retention" | "job-completion";
+type ExportType =
+    | "revenue"
+    | "staff-performance"
+    | "client-retention"
+    | "job-completion";
 
 const EXPORT_MAP: Record<
     ExportType,

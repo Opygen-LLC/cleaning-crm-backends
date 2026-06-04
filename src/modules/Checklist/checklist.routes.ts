@@ -5,40 +5,65 @@ import { UserRole } from "../../generated/prisma/enums";
 
 const router = Router();
 
-// All checklist endpoints require admin auth
-router.use(checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN));
+// ── Checklist Templates  (ADMIN / SUPER_ADMIN only) ───────────────────────────
 
-// ── Checklist Templates ────────────────────────────────────────────────────────
+router.get(
+    "/templates",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checklistController.getAllTemplates,
+);
 
-// GET    /api/v1/checklist/templates          — list all templates
-router.get("/templates", checklistController.getAllTemplates);
+router.post(
+    "/templates",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checklistController.createTemplate,
+);
 
-// POST   /api/v1/checklist/templates          — create a template
-router.post("/templates", checklistController.createTemplate);
+router.get(
+    "/templates/:id",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checklistController.getTemplateById,
+);
 
-// GET    /api/v1/checklist/templates/:id      — get single template
-router.get("/templates/:id", checklistController.getTemplateById);
+router.patch(
+    "/templates/:id",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checklistController.updateTemplate,
+);
 
-// PATCH  /api/v1/checklist/templates/:id      — update template + tasks
-router.patch("/templates/:id", checklistController.updateTemplate);
+router.delete(
+    "/templates/:id",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checklistController.deleteTemplate,
+);
 
-// DELETE /api/v1/checklist/templates/:id      — delete template
-router.delete("/templates/:id", checklistController.deleteTemplate);
+// ── Job Checklists ─────────────────────────────────────────────────────────────
 
-// ── Job Checklists ────────────────────────────────────────────────────────────
+// Admin attaches / reads checklists on a job
+router.get(
+    "/job/:jobId",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.STAFF),
+    checklistController.getJobChecklists,
+);
 
-// GET    /api/v1/checklist/job/:jobId          — get all checklists on a job
-router.get("/job/:jobId", checklistController.getJobChecklists);
+router.post(
+    "/job/:jobId",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checklistController.attachToJob,
+);
 
-// POST   /api/v1/checklist/job/:jobId          — attach a template to a job
-//        body: { templateId: string }
-router.post("/job/:jobId", checklistController.attachToJob);
+router.delete(
+    "/:checklistId",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checklistController.detachFromJob,
+);
 
-// DELETE /api/v1/checklist/:checklistId        — detach checklist from job
-router.delete("/:checklistId", checklistController.detachFromJob);
-
-// PATCH  /api/v1/checklist/:checklistId/items/:itemId — tick / untick an item
-//        body: { completed: boolean }
-router.patch("/:checklistId/items/:itemId", checklistController.updateItemCompletion);
+// PATCH  /api/v1/checklist/:checklistId/items/:itemId
+// STAFF can tick/untick items; ADMIN can too (e.g. in job detail view)
+router.patch(
+    "/:checklistId/items/:itemId",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.STAFF),
+    checklistController.updateItemCompletion,
+);
 
 export const checklistRoutes = router;

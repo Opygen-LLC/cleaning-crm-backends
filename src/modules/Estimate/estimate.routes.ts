@@ -19,11 +19,7 @@ router.post(
     estimateController.createEstimate,
 );
 
-router.get(
-    "/",
-    checkAuth(UserRole.ADMIN),
-    estimateController.getAllEstimates,
-);
+router.get("/", checkAuth(UserRole.ADMIN), estimateController.getAllEstimates);
 
 router.get(
     "/:id",
@@ -58,6 +54,15 @@ router.post(
     checkAuth(UserRole.ADMIN),
     zodValidate(estimateValidation.convertToBooking, ValidationProperty.BODY),
     estimateController.convertEstimateToBooking,
+);
+
+// ── Convert to Quote ──────────────────────────────────────────────────────────
+
+router.post(
+    "/:id/convert-to-quote",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(estimateValidation.convertToQuote, ValidationProperty.BODY),
+    estimateController.convertEstimateToQuote,
 );
 
 export const estimateRoutes = router;

@@ -69,23 +69,39 @@ export const uploadFileToCloudinary = async (
     });
 };
 
-export const deleteFileFromCloudinary = async (url: string) => {
+export const deleteFileFromCloudinary = async (url: string): Promise<void> => {
     try {
         const regex = /\/v\d+\/(.+?)(?:\.[a-zA-Z0-9]+)+$/;
-
         const match = url.match(regex);
 
-        if (match && match[1]) {
-            const publicId = match[1];
-
-            await cloudinary.uploader.destroy(publicId, {
-                resource_type: "image",
-            });
-
-            console.log(`File ${publicId} deleted from cloudinary`);
+        if (!match?.[1]) {
+            console.warn("[Cloudinary] Could not extract public_id from URL:", url);
+            return;
         }
+
+        const publicId = match[1];
+
+        // Determine resource type from the URL path
+        // Cloudinary stores PDFs under resource_type "raw", images under "image"
+        const isPdf = url.toLowerCase().includes("/pdfs/") || url.toLowerCase().endsWith(".pdf");
+        const primaryType   = isPdf ? "raw" : "image";
+        const fallbackType  = isPdf ? "image" : "raw";
+
+        const result = await cloudinary.uploader.destroy(publicId, {
+            resource_type: primaryType as "raw" | "image",
+        });
+
+        // If the primary attempt returns "not found", try the fallback type.
+        // This handles assets uploaded before the resource_type was correctly set.
+        if (result?.result === "not found") {
+            await cloudinary.uploader.destroy(publicId, {
+                resource_type: fallbackType as "raw" | "image",
+            });
+        }
+
+        console.log(`[Cloudinary] Deleted asset: ${publicId} (${primaryType})`);
     } catch (error) {
-        console.error("Error deleting file from Cloudinary:", error);
+        console.error("[Cloudinary] Error deleting file:", error);
         throw new AppError(
             status.INTERNAL_SERVER_ERROR,
             "Failed to delete file from Cloudinary",

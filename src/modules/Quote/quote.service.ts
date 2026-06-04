@@ -1,9 +1,7 @@
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
-import {
-    QuoteStatus,
-} from "../../generated/prisma/enums";
+import { QuoteStatus } from "../../generated/prisma/enums";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
 import { IQueryParams } from "../../interface/query.interface";
 import {
@@ -20,7 +18,7 @@ import { IRequestUser } from "../../types/requestUser.interface";
 /**
  * Generates a unique quote reference: #OP-QT-0001
  */
-const generateQuoteRef = async (): Promise<string> => {
+export const generateQuoteRef = async (): Promise<string> => {
     const last = await prisma.quote.findFirst({
         orderBy: { createdAt: "desc" },
         select: { quoteRef: true },
@@ -67,13 +65,18 @@ const computeTotals = (
 
 // ─── Standard includes shared across queries ──────────────────────────────────
 
-const quoteInclude = {
+export const quoteInclude = {
     client: {
         select: { id: true, name: true, email: true, phone: true },
     },
     lineItems: true,
     bookings: {
-        select: { id: true, bookingRef: true, status: true, scheduledDate: true },
+        select: {
+            id: true,
+            bookingRef: true,
+            status: true,
+            scheduledDate: true,
+        },
     },
     jobs: {
         select: { id: true, jobRef: true, status: true },
@@ -83,11 +86,15 @@ const quoteInclude = {
 // ─── Status transition guard map ──────────────────────────────────────────────
 
 const ALLOWED_TRANSITIONS: Record<QuoteStatus, QuoteStatus[]> = {
-    [QuoteStatus.DRAFT]:    [QuoteStatus.SENT, QuoteStatus.EXPIRED],
-    [QuoteStatus.SENT]:     [QuoteStatus.ACCEPTED, QuoteStatus.DECLINED, QuoteStatus.EXPIRED],
+    [QuoteStatus.DRAFT]: [QuoteStatus.SENT, QuoteStatus.EXPIRED],
+    [QuoteStatus.SENT]: [
+        QuoteStatus.ACCEPTED,
+        QuoteStatus.DECLINED,
+        QuoteStatus.EXPIRED,
+    ],
     [QuoteStatus.ACCEPTED]: [], // terminal — can only convert to booking
     [QuoteStatus.DECLINED]: [], // terminal
-    [QuoteStatus.EXPIRED]:  [], // terminal
+    [QuoteStatus.EXPIRED]: [], // terminal
 };
 
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
@@ -107,7 +114,7 @@ const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
         payload.taxRate,
     );
 
-    return prisma.quote.create({
+    const quote = await prisma.quote.create({
         data: {
             quoteRef,
             adminId,
@@ -128,13 +135,21 @@ const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
                         quantity: item.quantity,
                         unitPrice: item.unitPrice,
                         total:
-                            Math.round(item.quantity * item.unitPrice * 100) / 100,
+                            Math.round(item.quantity * item.unitPrice * 100) /
+                            100,
                     })),
                 },
             },
         },
         include: quoteInclude,
     });
+
+    // If created from a template, bump its usage counter (non-fatal)
+    if (payload.templateId) {
+        await recordTemplateUsage(payload.templateId);
+    }
+
+    return quote;
 };
 
 const getAllQuotes = async (queryParams: IQueryParams, user: IRequestUser) => {
@@ -189,7 +204,7 @@ const updateQuote = async (
         null;
 
     const lineItemsToUse = payload.lineItems;
-    const taxRateToUse   = payload.taxRate ?? Number(existing.taxRate);
+    const taxRateToUse = payload.taxRate ?? Number(existing.taxRate);
 
     if (lineItemsToUse) {
         totalsUpdate = computeTotals(lineItemsToUse, taxRateToUse);
@@ -225,11 +240,17 @@ const updateQuote = async (
         return tx.quote.update({
             where: { id },
             data: {
-                ...(payload.serviceType  && { serviceType: payload.serviceType }),
-                ...(payload.address      && { address: payload.address }),
-                ...(payload.taxRate      !== undefined && { taxRate: payload.taxRate }),
-                ...(payload.validUntil   && { validUntil: new Date(payload.validUntil) }),
-                ...(payload.notes        !== undefined && { notes: payload.notes }),
+                ...(payload.serviceType && {
+                    serviceType: payload.serviceType,
+                }),
+                ...(payload.address && { address: payload.address }),
+                ...(payload.taxRate !== undefined && {
+                    taxRate: payload.taxRate,
+                }),
+                ...(payload.validUntil && {
+                    validUntil: new Date(payload.validUntil),
+                }),
+                ...(payload.notes !== undefined && { notes: payload.notes }),
                 ...(payload.internalNotes !== undefined && {
                     internalNotes: payload.internalNotes,
                 }),
@@ -375,7 +396,11 @@ const convertQuoteToBooking = async (
                         staff: {
                             include: {
                                 user: {
-                                    select: { id: true, name: true, email: true },
+                                    select: {
+                                        id: true,
+                                        name: true,
+                                        email: true,
+                                    },
                                 },
                             },
                         },
@@ -490,17 +515,19 @@ const publicQuoteAction = async (
                 await tx.booking.create({
                     data: {
                         bookingRef,
-                        adminId:      quote.adminId,
-                        clientId:     quote.clientId,
-                        serviceType:  "RESIDENTIAL_CLEAN" as any, // Admin can update later
-                        address:      quote.address,
+                        adminId: quote.adminId,
+                        clientId: quote.clientId,
+                        serviceType: "RESIDENTIAL_CLEAN" as any, // Admin can update later
+                        address: quote.address,
                         // scheduledDate defaults to 7 days from now as a placeholder
                         // Admin will update this when they confirm with the client
-                        scheduledDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-                        durationMins:  120,
-                        total:         quote.total,
-                        notes:         quote.notes,
-                        quoteId:       quote.id,
+                        scheduledDate: new Date(
+                            Date.now() + 7 * 24 * 60 * 60 * 1000,
+                        ),
+                        durationMins: 120,
+                        total: quote.total,
+                        notes: quote.notes,
+                        quoteId: quote.id,
                     },
                 });
 
@@ -514,10 +541,24 @@ const publicQuoteAction = async (
             // Return the updated quote with the new booking included
             const withBooking = await prisma.quote.findUnique({
                 where: { quoteRef },
-                include: { lineItems: true, bookings: { select: { id: true, bookingRef: true, status: true, scheduledDate: true } } },
+                include: {
+                    lineItems: true,
+                    bookings: {
+                        select: {
+                            id: true,
+                            bookingRef: true,
+                            status: true,
+                            scheduledDate: true,
+                        },
+                    },
+                },
             });
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const { internalNotes: _n, adminId: _a, ...safeWithBooking } = withBooking!;
+            const {
+                internalNotes: _n,
+                adminId: _a,
+                ...safeWithBooking
+            } = withBooking!;
             return safeWithBooking;
         }
     }
@@ -527,13 +568,247 @@ const publicQuoteAction = async (
         data: { status: newStatus },
         include: {
             lineItems: true,
-            bookings: { select: { id: true, bookingRef: true, status: true, scheduledDate: true } },
+            bookings: {
+                select: {
+                    id: true,
+                    bookingRef: true,
+                    status: true,
+                    scheduledDate: true,
+                },
+            },
         },
     });
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { internalNotes, adminId, ...safeQuote } = updated;
     return safeQuote;
+};
+
+// ─── Send quote email ─────────────────────────────────────────────────────────
+
+import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
+import { FRONTEND_URL } from "../../config/ENV";
+
+const sendQuoteEmail = async (id: string, user: IRequestUser) => {
+    const adminId = await resolveAdminId(user.id);
+
+    const quote = await prisma.quote.findFirst({
+        where: { id, adminId },
+        include: {
+            client: {
+                select: { id: true, name: true, email: true, phone: true },
+            },
+            lineItems: true,
+        },
+    });
+    if (!quote) throw new AppError(status.NOT_FOUND, "Quote not found");
+
+    if (!quote.client.email) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "Client has no email address on file",
+        );
+    }
+
+    if (
+        quote.status === QuoteStatus.ACCEPTED ||
+        quote.status === QuoteStatus.DECLINED
+    ) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Cannot send a quote that is already ${quote.status.toLowerCase()}`,
+        );
+    }
+
+    const fmt = (d: Date) =>
+        d.toLocaleDateString("en-GB", {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+        });
+    const fmt2dp = (n: unknown) => Number(n).toFixed(2);
+
+    const quoteViewUrl = FRONTEND_URL
+        ? `${FRONTEND_URL}/quote/${encodeURIComponent(quote.quoteRef)}`
+        : null;
+
+    await sendEmailSafely({
+        to: quote.client.email,
+        subject: `Quote ${quote.quoteRef} from Opygen — valid until ${fmt(quote.validUntil)}`,
+        templateName: "quote-send",
+        templateData: {
+            quoteRef: quote.quoteRef,
+            clientName: quote.client.name,
+            serviceType: quote.serviceType,
+            address: quote.address,
+            lineItems: quote.lineItems.map((li) => ({
+                description: li.description,
+                quantity: li.quantity,
+                total: fmt2dp(li.total),
+            })),
+            subtotal: fmt2dp(quote.subtotal),
+            taxRate: Number(quote.taxRate),
+            tax: fmt2dp(quote.tax),
+            total: fmt2dp(quote.total),
+            validUntil: fmt(quote.validUntil),
+            notes: quote.notes ?? null,
+            quoteViewUrl,
+        },
+    });
+
+    // Stamp sentAt and advance DRAFT → SENT
+    const updated = await prisma.quote.update({
+        where: { id },
+        data: {
+            sentAt: new Date(),
+            status:
+                quote.status === QuoteStatus.DRAFT
+                    ? QuoteStatus.SENT
+                    : quote.status,
+        },
+        include: quoteInclude,
+    });
+
+    return updated;
+};
+
+// ─── Quote Templates ──────────────────────────────────────────────────────────
+
+export interface IQuoteTemplateLineItemInput {
+    description: string;
+    quantity: number;
+    unitPrice: number;
+}
+
+export interface IQuoteTemplateCreate {
+    name: string;
+    serviceType: string;
+    taxRate?: number;
+    notes?: string;
+    lineItems: IQuoteTemplateLineItemInput[];
+}
+
+export interface IQuoteTemplateUpdate {
+    name?: string;
+    serviceType?: string;
+    taxRate?: number;
+    notes?: string;
+    lineItems?: IQuoteTemplateLineItemInput[];
+}
+
+const templateInclude = {
+    lineItems: true,
+} as const;
+
+const getAllQuoteTemplates = async (user: IRequestUser) => {
+    const adminId = await resolveAdminId(user.id);
+    return prisma.quoteTemplate.findMany({
+        where: { adminId },
+        include: templateInclude,
+        orderBy: { usageCount: "desc" },
+    });
+};
+
+const createQuoteTemplate = async (
+    payload: IQuoteTemplateCreate,
+    user: IRequestUser,
+) => {
+    const adminId = await resolveAdminId(user.id);
+
+    return prisma.quoteTemplate.create({
+        data: {
+            adminId,
+            name: payload.name,
+            serviceType: payload.serviceType,
+            taxRate: payload.taxRate ?? 20,
+            notes: payload.notes,
+            lineItems: {
+                createMany: {
+                    data: payload.lineItems.map((li) => ({
+                        description: li.description,
+                        quantity: li.quantity,
+                        unitPrice: li.unitPrice,
+                    })),
+                },
+            },
+        },
+        include: templateInclude,
+    });
+};
+
+const updateQuoteTemplate = async (
+    id: string,
+    payload: IQuoteTemplateUpdate,
+    user: IRequestUser,
+) => {
+    const adminId = await resolveAdminId(user.id);
+
+    const existing = await prisma.quoteTemplate.findFirst({
+        where: { id, adminId },
+    });
+    if (!existing)
+        throw new AppError(status.NOT_FOUND, "Quote template not found");
+
+    return prisma.$transaction(async (tx) => {
+        if (payload.lineItems) {
+            await tx.quoteTemplateLineItem.deleteMany({
+                where: { templateId: id },
+            });
+            await tx.quoteTemplateLineItem.createMany({
+                data: payload.lineItems.map((li) => ({
+                    templateId: id,
+                    description: li.description,
+                    quantity: li.quantity,
+                    unitPrice: li.unitPrice,
+                })),
+            });
+        }
+
+        return tx.quoteTemplate.update({
+            where: { id },
+            data: {
+                ...(payload.name && { name: payload.name }),
+                ...(payload.serviceType && {
+                    serviceType: payload.serviceType,
+                }),
+                ...(payload.taxRate !== undefined && {
+                    taxRate: payload.taxRate,
+                }),
+                ...(payload.notes !== undefined && { notes: payload.notes }),
+            },
+            include: templateInclude,
+        });
+    });
+};
+
+const deleteQuoteTemplate = async (id: string, user: IRequestUser) => {
+    const adminId = await resolveAdminId(user.id);
+
+    const existing = await prisma.quoteTemplate.findFirst({
+        where: { id, adminId },
+    });
+    if (!existing)
+        throw new AppError(status.NOT_FOUND, "Quote template not found");
+
+    await prisma.quoteTemplate.delete({ where: { id } });
+};
+
+/**
+ * Increment usageCount and stamp lastUsedAt when a template is used to
+ * pre-fill a new quote. Called from createQuote when templateId is supplied.
+ */
+const recordTemplateUsage = async (templateId: string) => {
+    await prisma.quoteTemplate
+        .update({
+            where: { id: templateId },
+            data: {
+                usageCount: { increment: 1 },
+                lastUsedAt: new Date(),
+            },
+        })
+        .catch(() => {
+            /* non-fatal */
+        });
 };
 
 // ─── Export ───────────────────────────────────────────────────────────────────
@@ -548,4 +823,10 @@ export const quoteService = {
     convertQuoteToBooking,
     getPublicQuote,
     publicQuoteAction,
+    sendQuoteEmail,
+    getAllQuoteTemplates,
+    createQuoteTemplate,
+    updateQuoteTemplate,
+    deleteQuoteTemplate,
+    recordTemplateUsage,
 };

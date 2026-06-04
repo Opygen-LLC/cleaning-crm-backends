@@ -1,34 +1,34 @@
 model Invoice {
-  id               String            @id @default(uuid())
-  invoiceRef       String            @unique
-  status           InvoiceStatus     @default(DRAFT)
-  
+  id         String        @id @default(uuid())
+  invoiceRef String        @unique
+  status     InvoiceStatus @default(DRAFT)
+
   // Client Details (Standalone - no relation)
   clientName       String
   clientEmail      String
   serviceAddress   String
-  linkedBookingRef String?           
-  
+  linkedBookingRef String?
+
   // Service Relation
-  serviceCatalogId String?           
-  serviceCatalog   ServiceCatalog?   @relation(fields: [serviceCatalogId], references: [id])
-  
-  lineItems        Json?             @default("[]") // description, quantity, unitPrice, total
-  
-  notes            String?           @db.Text
-  
+  serviceCatalogId String?
+  serviceCatalog   ServiceCatalog? @relation(fields: [serviceCatalogId], references: [id])
+
+  lineItems Json? @default("[]") // description, quantity, unitPrice, total
+
+  notes String? @db.Text
+
   // Dates
-  issuedDate       DateTime
-  dueDate          DateTime
-  paidDate         DateTime?
-  sentAt           DateTime?
-  
+  issuedDate DateTime
+  dueDate    DateTime
+  paidDate   DateTime?
+  sentAt     DateTime?
+
   // Summary
-  subtotal         Decimal           @db.Decimal(10, 2)
-  taxRate          Decimal           @db.Decimal(5, 2)
-  taxAmount        Decimal           @db.Decimal(10, 2)
-  total            Decimal           @db.Decimal(10, 2)
-  
+  subtotal  Decimal @db.Decimal(10, 2)
+  taxRate   Decimal @db.Decimal(5, 2)
+  taxAmount Decimal @db.Decimal(10, 2)
+  total     Decimal @db.Decimal(10, 2)
+
   // Relations
   adminId          String
   bookingId        String?           @unique

@@ -1,20 +1,20 @@
 /**
- * job.service.ts  (updated — Phase 1: Socket.IO real-time push added)
+ * job.service.ts  (updated — Phase 1 complete, production-ready)
  *
- * CHANGES vs original file:
- *  • import emitToAdmin from socketio config
- *  • updateJobStatus  → emits  "job:statusUpdated"  to the admin room after commit
- *  • assignStaff      → emits  "job:staffAssigned"  to the admin room after commit
- *
- * All other logic is untouched — only the two Socket.IO emit blocks are new.
+ * CHANGES vs previous version:
+ *  • getStaffAvailability — now also checks:
+ *      a) approved StaffLeave records that overlap the window
+ *      b) StaffAvailability (weekly schedule): if a staff member has no active
+ *         entry for the requested day-of-week, they're marked unavailable
+ *  • All other logic is untouched
  */
 
-import { prisma } from "../../lib/prisma/prisma";
-import AppError from "../../errorHelper/AppError";
-import status from "http-status";
-import { JobStatus, BookingStatus } from "../../generated/prisma/enums";
-import { QueryBuilder } from "../../lib/utils/QueryBuilder";
-import { IQueryParams } from "../../interface/query.interface";
+import { prisma }             from "../../lib/prisma/prisma";
+import AppError               from "../../errorHelper/AppError";
+import status                 from "http-status";
+import { JobStatus, BookingStatus, LeaveStatus, WeekDay } from "../../generated/prisma/enums";
+import { QueryBuilder }       from "../../lib/utils/QueryBuilder";
+import { IQueryParams }       from "../../interface/query.interface";
 import {
     IJobCreate,
     IJobUpdate,
@@ -22,23 +22,22 @@ import {
     IStaffAvailabilityQuery,
 } from "./job.interface";
 import { jobSearchableFields, jobFilterableFields } from "./job.constant";
-import { IRequestUser } from "../../types/requestUser.interface";
-import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
-import { FRONTEND_URL } from "../../config/ENV";
-// ── [NEW] Socket.IO helper ────────────────────────────────────────────────────
-import { emitToAdmin } from "../../config/socketio";
+import { IRequestUser }       from "../../types/requestUser.interface";
+import { sendEmailSafely }    from "../../lib/utils/sendEmailSafely";
+import { FRONTEND_URL }       from "../../config/ENV";
+import { emitToAdmin }        from "../../config/socketio";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const generateJobRef = async (): Promise<string> => {
     const last = await prisma.job.findFirst({
         orderBy: { createdAt: "desc" },
-        select: { jobRef: true },
+        select:  { jobRef: true },
     });
     let next = 1;
     if (last?.jobRef) {
         const parts = last.jobRef.split("-");
-        const num = parseInt(parts[parts.length - 1]);
+        const num   = parseInt(parts[parts.length - 1]);
         if (!isNaN(num)) next = num + 1;
     }
     return `#OP-JB-${next.toString().padStart(4, "0")}`;
@@ -66,6 +65,17 @@ const jobInclude = {
     booking: { select: { id: true, bookingRef: true, status: true } },
 } as const;
 
+// Map JS getDay() → Prisma WeekDay enum
+const JS_DAY_TO_WEEKDAY: Record<number, WeekDay> = {
+    0: WeekDay.SUNDAY,
+    1: WeekDay.MONDAY,
+    2: WeekDay.TUESDAY,
+    3: WeekDay.WEDNESDAY,
+    4: WeekDay.THURSDAY,
+    5: WeekDay.FRIDAY,
+    6: WeekDay.SATURDAY,
+};
+
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 const createJob = async (payload: IJobCreate, user: IRequestUser) => {
@@ -92,7 +102,7 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
 
     if (payload.bookingId) {
         const booking = await prisma.booking.findFirst({
-            where: { id: payload.bookingId, adminId },
+            where:   { id: payload.bookingId, adminId },
             include: { job: { select: { id: true } } },
         });
         if (!booking) throw new AppError(status.NOT_FOUND, "Booking not found");
@@ -161,7 +171,7 @@ const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
 const getJobById = async (id: string, user: IRequestUser) => {
     const adminId = await resolveAdminId(user.id);
     const job = await prisma.job.findFirst({
-        where: { id, adminId },
+        where:   { id, adminId },
         include: jobInclude,
     });
     if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
@@ -169,7 +179,7 @@ const getJobById = async (id: string, user: IRequestUser) => {
 };
 
 const updateJob = async (id: string, payload: IJobUpdate, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId  = await resolveAdminId(user.id);
     const existing = await prisma.job.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Job not found");
 
@@ -190,11 +200,11 @@ const updateJob = async (id: string, payload: IJobUpdate, user: IRequestUser) =>
 };
 
 const updateJobStatus = async (
-    id: string,
+    id:        string,
     newStatus: JobStatus,
-    user: IRequestUser,
+    user:      IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId  = await resolveAdminId(user.id);
     const existing = await prisma.job.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Job not found");
 
@@ -255,14 +265,14 @@ const updateJobStatus = async (
                     let nextNum = 1;
                     if (lastInvoice?.invoiceRef) {
                         const parts = lastInvoice.invoiceRef.split("-");
-                        const n = parseInt(parts[parts.length - 1]);
+                        const n     = parseInt(parts[parts.length - 1]);
                         if (!isNaN(n)) nextNum = n + 1;
                     }
-                    const invoiceRef  = `#OP-INV-${nextNum.toString().padStart(4, "0")}`;
-                    const issuedDate  = new Date();
-                    const dueDate     = new Date();
+                    const invoiceRef = `#OP-INV-${nextNum.toString().padStart(4, "0")}`;
+                    const issuedDate = new Date();
+                    const dueDate    = new Date();
                     dueDate.setDate(dueDate.getDate() + 14);
-                    const lineTotal   = Number(booking.total);
+                    const lineTotal  = Number(booking.total);
 
                     await tx.invoice.create({
                         data: {
@@ -303,8 +313,7 @@ const updateJobStatus = async (
 
         return job;
     }).then(async (completedJob) => {
-        // ── [NEW] Real-time push — emit to admin room ──────────────────────────
-        // Fires after the transaction commits so the DB is already consistent.
+        // Real-time push — emit to admin room
         emitToAdmin(completedJob.adminId, "job:statusUpdated", {
             jobId:     completedJob.id,
             jobRef:    completedJob.jobRef,
@@ -312,7 +321,7 @@ const updateJobStatus = async (
             updatedAt: new Date().toISOString(),
         });
 
-        // ── Send review-request email when job is COMPLETED ────────────────────
+        // Send review-request email when job is COMPLETED
         if (newStatus === JobStatus.COMPLETED && completedJob) {
             try {
                 const reviewToken = await prisma.reviewToken.findUnique({
@@ -360,7 +369,7 @@ const updateJobStatus = async (
 };
 
 const deleteJob = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId  = await resolveAdminId(user.id);
     const existing = await prisma.job.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Job not found");
 
@@ -416,12 +425,12 @@ const convertBookingToJob = async (bookingId: string, user: IRequestUser) => {
 };
 
 const assignStaff = async (
-    jobId: string,
+    jobId:   string,
     payload: IAssignJobStaff,
-    user: IRequestUser,
+    user:    IRequestUser,
 ) => {
     const adminId = await resolveAdminId(user.id);
-    const job = await prisma.job.findFirst({ where: { id: jobId, adminId } });
+    const job     = await prisma.job.findFirst({ where: { id: jobId, adminId } });
     if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
 
     if (job.status === JobStatus.COMPLETED) {
@@ -446,7 +455,7 @@ const assignStaff = async (
         }
         return tx.job.findUnique({ where: { id: jobId }, include: jobInclude });
     }).then(async (updatedJob) => {
-        // ── [NEW] Real-time push — emit staff assignment to admin room ─────────
+        // Real-time push — emit staff assignment to admin room
         if (updatedJob) {
             emitToAdmin(updatedJob.adminId, "job:staffAssigned", {
                 jobId:     updatedJob.id,
@@ -456,7 +465,7 @@ const assignStaff = async (
             });
         }
 
-        // ── Dispatch notification email to each newly assigned staff member ────
+        // Dispatch notification email to each newly assigned staff member
         if (payload.staffIds.length && updatedJob) {
             const staffList = await prisma.staffProfile.findMany({
                 where:   { id: { in: payload.staffIds } },
@@ -513,29 +522,50 @@ const getJobStats = async (user: IRequestUser) => {
     return { total, scheduled, inProgress, completed, cancelled };
 };
 
+/**
+ * getStaffAvailability  (Phase 1 — upgraded)
+ *
+ * Checks three independent conflict sources:
+ *   1. Active jobs that overlap the requested time window  (original logic)
+ *   2. Approved leave periods that cover the requested date  [NEW]
+ *   3. Weekly schedule: if the staff member has no active StaffAvailability
+ *      entry for the requested day-of-week, they are not scheduled  [NEW]
+ *
+ * The response includes a `reason` field on unavailable staff so the UI
+ * can display a meaningful tooltip ("On leave", "Not scheduled", "Job conflict").
+ */
 const getStaffAvailability = async (
     query: IStaffAvailabilityQuery,
-    user: IRequestUser,
+    user:  IRequestUser,
 ) => {
     const adminId     = await resolveAdminId(user.id);
     const windowStart = new Date(query.date);
     const windowEnd   = new Date(windowStart.getTime() + query.durationMins * 60_000);
+    const requestDay  = JS_DAY_TO_WEEKDAY[windowStart.getDay()];
 
+    // ── Load all staff with their weekly availability and leave records ────────
     const allStaff = await prisma.staffProfile.findMany({
         where:   { adminId },
-        include: { user: { select: { id: true, name: true, email: true } } },
+        include: {
+            user:              { select: { id: true, name: true, email: true } },
+            staffAvailability: { where: { isActive: true } },
+            staffLeave: {
+                where: {
+                    status:    LeaveStatus.APPROVED,
+                    startDate: { lte: windowEnd  },
+                    endDate:   { gte: windowStart },
+                },
+            },
+        },
     });
 
+    // ── Load active jobs that could conflict ──────────────────────────────────
     const overlappingJobs = await prisma.job.findMany({
         where: {
             adminId,
             status:        { in: [JobStatus.SCHEDULED, JobStatus.IN_PROGRESS] },
             scheduledDate: { lt: windowEnd },
-            AND: [{
-                scheduledDate: {
-                    gte: new Date(windowStart.getTime() - 24 * 60 * 60_000),
-                },
-            }],
+            AND: [{ scheduledDate: { gte: new Date(windowStart.getTime() - 24 * 60 * 60_000) } }],
         },
         include: {
             staffAssignments: { select: { staffId: true } },
@@ -557,13 +587,31 @@ const getStaffAvailability = async (
         }
     }
 
+    // ── Build response ────────────────────────────────────────────────────────
     const availability = allStaff.map((staff) => {
-        const conflicts = conflictMap.get(staff.id) ?? [];
+        const conflicts     = conflictMap.get(staff.id) ?? [];
+        const onLeave       = staff.staffLeave.length > 0;
+        const daySchedule   = staff.staffAvailability.find((a) => a.day === requestDay);
+        const notScheduled  = !daySchedule; // has no active entry for this day
+
+        const available = conflicts.length === 0 && !onLeave && !notScheduled;
+
+        // Human-readable reason for unavailability (first match wins)
+        let unavailableReason: string | undefined;
+        if (onLeave)       unavailableReason = "On approved leave";
+        else if (notScheduled) unavailableReason = "Not scheduled on this day";
+        else if (conflicts.length > 0) unavailableReason = "Job conflict";
+
         return {
             staffId:   staff.id,
             name:      staff.user.name,
             email:     staff.user.email,
-            available: conflicts.length === 0,
+            available,
+            unavailableReason: available ? undefined : unavailableReason,
+            // Working hours for the day (for the UI to display)
+            scheduledHours: daySchedule
+                ? { startTime: daySchedule.startTime, endTime: daySchedule.endTime }
+                : null,
             conflictingJobs: conflicts.map((j) => ({
                 jobId:         j.id,
                 jobRef:        j.jobRef,
@@ -571,10 +619,23 @@ const getStaffAvailability = async (
                 scheduledDate: j.scheduledDate,
                 durationMins:  j.durationMins,
             })),
+            leaveDetails: onLeave
+                ? staff.staffLeave.map((l) => ({
+                    startDate: l.startDate,
+                    endDate:   l.endDate,
+                    reason:    l.reason,
+                }))
+                : [],
         };
     });
 
-    return { windowStart, windowEnd, durationMins: query.durationMins, staff: availability };
+    return {
+        windowStart,
+        windowEnd,
+        durationMins: query.durationMins,
+        requestedDay: requestDay,
+        staff: availability,
+    };
 };
 
 export const jobService = {

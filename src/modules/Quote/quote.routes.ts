@@ -13,15 +13,40 @@ const router = Router();
 // ── Public routes (no auth) ───────────────────────────────────────────────────
 // Must be declared before the /:id routes to avoid collision
 
-router.get(
-    "/public/:ref",
-    quoteController.getPublicQuote,
-);
+router.get("/public/:ref", quoteController.getPublicQuote);
 
 router.post(
     "/public/:ref/action",
     zodValidate(quoteValidation.publicQuoteAction, ValidationProperty.BODY),
     quoteController.publicQuoteAction,
+);
+
+// ── Quote Templates ───────────────────────────────────────────────────────────
+
+router.get(
+    "/templates",
+    checkAuth(UserRole.ADMIN),
+    quoteController.getAllQuoteTemplates,
+);
+
+router.post(
+    "/templates",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(quoteValidation.createTemplate, ValidationProperty.BODY),
+    quoteController.createQuoteTemplate,
+);
+
+router.patch(
+    "/templates/:id",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(quoteValidation.updateTemplate, ValidationProperty.BODY),
+    quoteController.updateQuoteTemplate,
+);
+
+router.delete(
+    "/templates/:id",
+    checkAuth(UserRole.ADMIN),
+    quoteController.deleteQuoteTemplate,
 );
 
 // ── CRUD ──────────────────────────────────────────────────────────────────────
@@ -33,17 +58,9 @@ router.post(
     quoteController.createQuote,
 );
 
-router.get(
-    "/",
-    checkAuth(UserRole.ADMIN),
-    quoteController.getAllQuotes,
-);
+router.get("/", checkAuth(UserRole.ADMIN), quoteController.getAllQuotes);
 
-router.get(
-    "/:id",
-    checkAuth(UserRole.ADMIN),
-    quoteController.getQuoteById,
-);
+router.get("/:id", checkAuth(UserRole.ADMIN), quoteController.getQuoteById);
 
 router.patch(
     "/:id",
@@ -59,10 +76,14 @@ router.patch(
     quoteController.updateQuoteStatus,
 );
 
-router.delete(
-    "/:id",
+router.delete("/:id", checkAuth(UserRole.ADMIN), quoteController.deleteQuote);
+
+// ── Send email ────────────────────────────────────────────────────────────────
+
+router.post(
+    "/:id/send-email",
     checkAuth(UserRole.ADMIN),
-    quoteController.deleteQuote,
+    quoteController.sendQuoteEmail,
 );
 
 // ── Convert to Booking ────────────────────────────────────────────────────────

@@ -4,72 +4,116 @@ import { sendResponse } from "../../shared/sendResponse";
 import { paymentGatewayService } from "./paymentGateway.service";
 
 const getConfig = catchAsync(async (req, res) => {
-  const result = await paymentGatewayService.getPaymentGatewayConfig(
-    req.user.id,
-  );
+    const result = await paymentGatewayService.getPaymentGatewayConfig(
+        req.user.id,
+    );
 
-  sendResponse(res, {
-    httpStatusCode: status.OK,
-    success: true,
-    message: "Payment gateway config fetched successfully",
-    data: result,
-  });
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Payment gateway config fetched successfully",
+        data: result,
+    });
 });
 
 const updateConfig = catchAsync(async (req, res) => {
-  const result = await paymentGatewayService.updatePaymentGatewayConfig(
-    req.user.id,
-    req.body,
-  );
+    const result = await paymentGatewayService.updatePaymentGatewayConfig(
+        req.user.id,
+        req.body,
+    );
 
-  sendResponse(res, {
-    httpStatusCode: status.OK,
-    success: true,
-    message: "Payment gateway config updated successfully",
-    data: result,
-  });
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Payment gateway config updated successfully",
+        data: result,
+    });
 });
 
 // FIX: Added controller for POST /payment-gateway/oauth
 const oauthConnect = catchAsync(async (req, res) => {
-  const { gateway, code } = req.body as { gateway: "stripe" | "paypal"; code: string };
-  const result = await paymentGatewayService.oauthConnect(req.user.id, gateway, code);
+    const { gateway, code } = req.body as {
+        gateway: "stripe" | "paypal";
+        code: string;
+    };
+    const result = await paymentGatewayService.oauthConnect(
+        req.user.id,
+        gateway,
+        code,
+    );
 
-  sendResponse(res, {
-    httpStatusCode: status.OK,
-    success: true,
-    message: `${gateway} connected successfully`,
-    data: result,
-  });
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: `${gateway} connected successfully`,
+        data: result,
+    });
 });
 
 // FIX: Added controller for POST /payment-gateway/disconnect
 const disconnectGateway = catchAsync(async (req, res) => {
-  const { gateway } = req.body as { gateway: "stripe" | "paypal" };
-  const result = await paymentGatewayService.disconnectGateway(req.user.id, gateway);
+    const { gateway } = req.body as { gateway: "stripe" | "paypal" };
+    const result = await paymentGatewayService.disconnectGateway(
+        req.user.id,
+        gateway,
+    );
 
-  sendResponse(res, {
-    httpStatusCode: status.OK,
-    success: true,
-    message: `${gateway} disconnected successfully`,
-    data: result,
-  });
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: `${gateway} disconnected successfully`,
+        data: result,
+    });
 });
 
 // PayPal sends webhook events to POST /payment-gateway/paypal-webhook
 // This endpoint must be public (no auth) — PayPal calls it server-to-server
 const paypalWebhook = catchAsync(async (req, res) => {
-  const result = await paymentGatewayService.handlePayPalWebhook(
-    req.body,
-    req.headers as Record<string, string>,
-  );
+    const result = await paymentGatewayService.handlePayPalWebhook(
+        req.body,
+        req.headers as Record<string, string>,
+    );
 
-  sendResponse(res, {
-    httpStatusCode: status.OK,
-    success: true,
-    message: "Webhook received",
-    data: result,
-  });
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Webhook received",
+        data: result,
+    });
 });
 
-export const paymentGatewayController = { getConfig, updateConfig, oauthConnect, disconnectGateway, paypalWebhook };
+// Stripe sends webhook events to POST /payment-gateway/stripe-webhook
+// This endpoint must be public (no auth) and must receive the RAW body
+// (not JSON-parsed) so Stripe's HMAC signature can be verified.
+const stripeWebhook = catchAsync(async (req, res) => {
+    const signature = req.headers["stripe-signature"] as string;
+    if (!signature) {
+        res.status(400).json({
+            success: false,
+            message: "Missing stripe-signature header",
+        });
+        return;
+    }
+
+    // req.body is a raw Buffer when the route uses express.raw() middleware
+    const result = await paymentGatewayService.handleStripeWebhook(
+        req.body as Buffer,
+        signature,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Webhook received",
+        data: result,
+    });
+});
+
+export const paymentGatewayController = {
+    getConfig,
+    updateConfig,
+    oauthConnect,
+    disconnectGateway,
+    paypalWebhook,
+    stripeWebhook,
+};

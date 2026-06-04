@@ -59,6 +59,7 @@ model Estimate {
   internalNotes         String?
   sentAt                DateTime?
   convertedToBookingRef String?
+  convertedToQuoteRef   String?
   adminId               String
   clientId              String
   createdAt             DateTime           @default(now())
@@ -84,4 +85,34 @@ model EstimateLineItem {
 
   @@index([estimateId])
   @@map("estimate_line_item")
+}
+
+model QuoteTemplate {
+  id          String                  @id @default(uuid())
+  name        String
+  serviceType String
+  notes       String?
+  taxRate     Decimal                 @default(20) @db.Decimal(5, 2)
+  usageCount  Int                     @default(0)
+  lastUsedAt  DateTime?
+  adminId     String
+  admin       AdminProfile            @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  lineItems   QuoteTemplateLineItem[]
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  @@index([adminId])
+  @@map("quote_template")
+}
+
+model QuoteTemplateLineItem {
+  id          String        @id @default(uuid())
+  description String
+  quantity    Int           @default(1)
+  unitPrice   Decimal       @db.Decimal(10, 2)
+  templateId  String
+  template    QuoteTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+  @@map("quote_template_line_item")
 }
