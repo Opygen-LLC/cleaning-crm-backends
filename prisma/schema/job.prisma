@@ -22,6 +22,9 @@ model Job {
   staffAssignments JobStaffAssignment[]
   reviewToken      ReviewToken?
   checklists       JobChecklist[]
+  // ── [NEW] Phase 1 ──────────────────────────────────────────────────────────
+  jobNotes         JobNote[]
+  jobAttachments   JobAttachment[]
 
   @@index([adminId, status])
   @@index([clientId])

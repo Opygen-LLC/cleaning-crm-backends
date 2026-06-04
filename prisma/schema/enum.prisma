@@ -403,3 +403,10 @@ enum LeadStage {
   WON
   LOST
 }
+
+enum NoteType {
+  GENERAL
+  CLIENT
+  STAFF
+  ISSUE
+}

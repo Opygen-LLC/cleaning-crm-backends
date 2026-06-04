@@ -1,26 +1,35 @@
 /**
- * job.routes.ts  (updated — Phase 1 complete)
+ * job.routes.ts  (updated — Phase 1 complete, production-ready)
  *
- * Changes vs original:
- *  1. Added  GET  /job/:id/dispatch  — ranked recommendations (dry-run)
- *  2. Added  POST /job/:id/dispatch  — commit auto-assign for one job
- *  3. Added  POST /job/dispatch/bulk — commit auto-assign all unassigned jobs
+ * Changes vs previous version:
+ *  1. [NEW] GET    /job/:id/notes                — list notes (pinned first)
+ *  2. [NEW] POST   /job/:id/notes                — create a note
+ *  3. [NEW] PATCH  /job/:id/notes/:noteId        — update / pin a note
+ *  4. [NEW] DELETE /job/:id/notes/:noteId        — delete a note
+ *  5. [NEW] GET    /job/:id/attachments          — list file attachments
+ *  6. [NEW] POST   /job/:id/attachments          — upload a file (multipart)
+ *  7. [NEW] DELETE /job/:id/attachments/:attachId — delete a file
+ *
+ * Calendar drag-reschedule was already handled by PATCH /:id (updateJob)
+ * — the scheduledDate field is accepted there — no additional route needed.
  *
  * Socket.IO integration is handled inside job.service.ts (updateJobStatus)
  * and job.dispatch.service.ts (dispatchJob / bulkDispatch) via emitToAdmin().
- * No route change is needed for real-time — it piggybacks existing PATCH /:id/status.
  */
 
-import { Router } from "express";
-import { jobController } from "./job.controller";
+import { Router }              from "express";
+import { jobController }       from "./job.controller";
 import { jobDispatchController } from "./job.dispatch.controller";
-import { checkAuth } from "../../middlewares/checkAuth";
-import { UserRole } from "../../generated/prisma/enums";
+import { jobNotesController }  from "./job.notes.controller";
+import { checkAuth }           from "../../middlewares/checkAuth";
+import { UserRole }            from "../../generated/prisma/enums";
 import {
     ValidationProperty,
     zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
-import { jobValidation } from "./job.validation";
+import { jobValidation }       from "./job.validation";
+import { jobNotesValidation }  from "./job.notes.validation";
+import { multerMemory }        from "../../config/multerMemory";
 
 const router = Router();
 
@@ -107,7 +116,7 @@ router.put(
     jobController.assignStaff,
 );
 
-// ── [NEW] Auto-dispatch (single job) ─────────────────────────────────────────
+// ── Auto-dispatch (single job) ────────────────────────────────────────────────
 
 router.get(
     "/:id/dispatch",
@@ -119,6 +128,56 @@ router.post(
     "/:id/dispatch",
     checkAuth(UserRole.ADMIN),
     jobDispatchController.dispatchJob,
+);
+
+// ── [NEW] Job Notes ───────────────────────────────────────────────────────────
+
+router.get(
+    "/:id/notes",
+    checkAuth(UserRole.ADMIN),
+    jobNotesController.getNotes,
+);
+
+router.post(
+    "/:id/notes",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(jobNotesValidation.createNote, ValidationProperty.BODY),
+    jobNotesController.createNote,
+);
+
+router.patch(
+    "/:id/notes/:noteId",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(jobNotesValidation.updateNote, ValidationProperty.BODY),
+    jobNotesController.updateNote,
+);
+
+router.delete(
+    "/:id/notes/:noteId",
+    checkAuth(UserRole.ADMIN),
+    jobNotesController.deleteNote,
+);
+
+// ── [NEW] Job Attachments ─────────────────────────────────────────────────────
+
+router.get(
+    "/:id/attachments",
+    checkAuth(UserRole.ADMIN),
+    jobNotesController.getAttachments,
+);
+
+router.post(
+    "/:id/attachments",
+    checkAuth(UserRole.ADMIN),
+    // memoryStorage so we can pass the buffer to Cloudinary's upload_stream
+    multerMemory.single("file"),
+    jobNotesController.uploadAttachment,
+);
+
+router.delete(
+    "/:id/attachments/:attachId",
+    checkAuth(UserRole.ADMIN),
+    jobNotesController.deleteAttachment,
 );
 
 export const jobRoutes = router;

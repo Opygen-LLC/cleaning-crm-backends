@@ -30,6 +30,8 @@ model AdminProfile {
   expenses           Expense[]
   invoices           Invoice[]
   jobs               Job[]
+  jobNotes           JobNote[] // [NEW] Phase 1
+  jobAttachments     JobAttachment[] // [NEW] Phase 1
   leads              Lead[]
   notificationPrefs  NotificationPreference?
   payment            Payment[]
@@ -41,8 +43,7 @@ model AdminProfile {
   recurringSchedules RecurringSchedule[]
   pricingRules       PricingRules?
   serviceCatalogs    ServiceCatalog[]
-
-  activityLogs ActivityLog[]
+  activityLogs       ActivityLog[]
 
   @@index([createdAt])
 }
