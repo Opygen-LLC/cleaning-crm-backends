@@ -12,6 +12,7 @@ import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 import "../src/cron/staffStatus.cron";
 import "../src/cron/recurringBooking.cron";
 import "../src/cron/invoiceOverdue.cron";
+import "../src/cron/subscriptionExpiry.cron"; // item 10: daily subscription + trial expiry
 import logRequestResponse from "./middlewares/logger.middleware";
 
 const app = express();
@@ -29,25 +30,25 @@ app.use(express.urlencoded({ extended: true }));
 
 // Enable CORS for all routes
 app.use(
-  cors({
-    origin: [
-      FRONTEND_URL,
-      BETTER_AUTH_URL,
-      "http://localhost:3000",
-      "http://localhost:5000",
-      "https://cleaning-crm-clients.vercel.app",
-    ],
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "Cookie",
-      "X-Requested-With",
-      "Accept",
-      "Origin",
-    ],
-  }),
+    cors({
+        origin: [
+            FRONTEND_URL,
+            BETTER_AUTH_URL,
+            "http://localhost:3000",
+            "http://localhost:5000",
+            "https://cleaning-crm-clients.vercel.app",
+        ],
+        credentials: true,
+        methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+        allowedHeaders: [
+            "Content-Type",
+            "Authorization",
+            "Cookie",
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+        ],
+    }),
 );
 
 // Compress all responses
@@ -57,10 +58,10 @@ app.use(compression());
 app.use(logRequestResponse);
 
 app.get("/", (req: Request, res: Response) => {
-  res.status(200).json({
-    success: true,
-    message: "Cleaning CRM API is running....",
-  });
+    res.status(200).json({
+        success: true,
+        message: "Cleaning CRM API is running....",
+    });
 });
 
 app.use("/api/v1", routes);

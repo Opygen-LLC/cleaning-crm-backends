@@ -1,0 +1,7 @@
+model SuperAdminConfig {
+  key       String   @id           // e.g. "platformConfig", "emailTemplates"
+  value     String   @db.Text      // JSON string
+  updatedAt DateTime @updatedAt
+
+  @@map("super_admin_config")
+}

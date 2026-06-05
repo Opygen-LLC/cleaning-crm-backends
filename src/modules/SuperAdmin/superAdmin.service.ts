@@ -12,6 +12,9 @@ import {
     IActivityLogFilters,
     IAdminAccountFilters,
 } from "./superAdmin.interface";
+import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
+import { auth } from "../../lib/auth";
+import { adminService } from "../Admin/admin.service";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -466,6 +469,99 @@ const activateAdminAccount = async (adminId: string) => {
         data: { status: AccountStatus.ACTIVE },
         select: { id: true, name: true, email: true, status: true },
     });
+};
+
+// ─── Create admin account (super-admin dedicated endpoint) ────────────────────
+// Bypasses email verification: account is set ACTIVE immediately.
+
+const createAdminAccount = async (payload: {
+    name: string;
+    email: string;
+    password: string;
+    businessName: string;
+}) => {
+    const { name, email, password, businessName } = payload;
+
+    if (!name || !email || !password || !businessName) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "name, email, password, and businessName are required.",
+        );
+    }
+
+    // Check for existing user
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+        throw new AppError(
+            status.CONFLICT,
+            `An account with email ${email} already exists.`,
+        );
+    }
+
+    const data = await auth.api
+        .signUpEmail({
+            body: {
+                name,
+                email,
+                password,
+            },
+        })
+        .catch((err) => {
+            if (err?.body?.code === "USER_ALREADY_EXISTS") {
+                throw new AppError(status.BAD_REQUEST, "User already exists.");
+            }
+
+            throw err;
+        });
+
+    if (!data.user?.id) {
+        throw new AppError(status.BAD_REQUEST, "Failed to register user.");
+    }
+
+    try {
+        const user = await prisma.user.update({
+            where: {
+                id: data.user.id,
+            },
+            data: {
+                role: UserRole.ADMIN,
+                status: AccountStatus.ACTIVE,
+                emailVerified: true,
+            },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+                status: true,
+                createdAt: true,
+            }
+        });
+
+        const admin = await adminService.createAdmin({
+            userId: data.user.id,
+            businessName,
+        });
+
+        return {
+            ...user,
+            admin,
+        };
+    } catch (error) {
+        // Rollback
+        await prisma.user
+            .delete({
+                where: {
+                    id: data.user.id,
+                },
+            })
+            .catch(() => {});
+
+        throw new AppError(
+            status.INTERNAL_SERVER_ERROR,
+            "Registration failed. Please try again.",
+        );
+    }
 };
 
 // ─── Platform Stats (for super admin overview dashboard) ──────────────────────
@@ -939,6 +1035,167 @@ const extendTrial = async (subscriptionId: string, days: number) => {
     });
 };
 
+// ─── Platform Config (item 15) ───────────────────────────────────────────────
+// Persisted as a single JSON blob in the SuperAdminConfig table.
+// Falls back to safe defaults when no row exists yet.
+
+const DEFAULT_PLATFORM_CONFIG = {
+    platformName: "CleanCRM",
+    supportEmail: "support@cleancrm.io",
+    maxAdminsPerTenant: 5,
+    maintenanceMode: false,
+    registrationOpen: true,
+    defaultTrialDays: 14,
+    defaultCurrency: "GBP",
+    defaultTimezone: "Europe/London",
+};
+
+const PLATFORM_CONFIG_KEY = "platformConfig";
+
+const getPlatformConfig = async () => {
+    const row = await prisma.superAdminConfig
+        .findUnique({
+            where: { key: PLATFORM_CONFIG_KEY },
+        })
+        .catch(() => null); // table may not exist yet; return defaults
+
+    if (!row) return DEFAULT_PLATFORM_CONFIG;
+    try {
+        return { ...DEFAULT_PLATFORM_CONFIG, ...JSON.parse(String(row.value)) };
+    } catch {
+        return DEFAULT_PLATFORM_CONFIG;
+    }
+};
+
+const updatePlatformConfig = async (patch: Record<string, unknown>) => {
+    const current = await getPlatformConfig();
+    const updated = { ...current, ...patch };
+
+    await prisma.superAdminConfig.upsert({
+        where: { key: PLATFORM_CONFIG_KEY },
+        create: { key: PLATFORM_CONFIG_KEY, value: JSON.stringify(updated) },
+        update: { value: JSON.stringify(updated) },
+    });
+
+    return updated;
+};
+
+// ─── Trial Nudge Email (item 16) ─────────────────────────────────────────────
+// Sends a plain-text trial-expiry reminder to the admin email.
+// Uses sendEmailSafely so a failed SMTP call never crashes the request.
+
+const sendTrialNudge = async (subscriptionId: string) => {
+    const sub = await prisma.subscription.findUnique({
+        where: { id: subscriptionId },
+        include: {
+            admin: {
+                include: { user: { select: { name: true, email: true } } },
+                select: { businessName: true, user: true },
+            },
+            subscriptionPlan: { select: { name: true } },
+        },
+    });
+
+    if (!sub) throw new AppError(status.NOT_FOUND, "Subscription not found.");
+    if (!sub.isTrial)
+        throw new AppError(status.BAD_REQUEST, "Subscription is not a trial.");
+
+    const adminEmail = sub.admin?.user?.email;
+    const adminName = sub.admin?.user?.name ?? "there";
+    const planName = sub.subscriptionPlan?.name ?? "your plan";
+
+    const trialEnd = sub.trialEndsAt ?? sub.currentPeriodEnd;
+    const daysLeft = trialEnd
+        ? Math.max(
+              0,
+              Math.ceil(
+                  (new Date(trialEnd).getTime() - Date.now()) / 86_400_000,
+              ),
+          )
+        : 0;
+
+    if (!adminEmail)
+        throw new AppError(status.BAD_REQUEST, "Admin has no email address.");
+
+    // Fire-and-forget — the await is just to surface SMTP errors in logs
+    await sendEmailSafely({
+        to: adminEmail,
+        subject: `Your ${planName} trial ends in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}`,
+        templateName: "trial-nudge",
+        templateData: {
+            adminName,
+            planName,
+            daysLeft,
+            trialEnd: trialEnd
+                ? new Date(trialEnd).toLocaleDateString("en-GB")
+                : "soon",
+        },
+    });
+
+    return { sent: true, to: adminEmail, daysLeft };
+};
+
+const refundBillingRecord = async (id: string) => {
+    const record = await prisma.billingHistory.findUnique({ where: { id } });
+    if (!record) {
+        throw new AppError(status.NOT_FOUND, "Billing record not found.");
+    }
+    if (record.status === "REFUNDED") {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "This record has already been refunded.",
+        );
+    }
+
+    return prisma.billingHistory.update({
+        where: { id },
+        data: { status: "REFUNDED" },
+        include: {
+            subscription: {
+                include: {
+                    subscriptionPlan: { select: { name: true } },
+                    admin: {
+                        select: {
+                            businessName: true,
+                            user: { select: { name: true, email: true } },
+                        },
+                    },
+                },
+            },
+        },
+    });
+};
+
+// ─── Billing History — Invoice URL (item 14) ──────────────────────────────────
+// Returns the Cloudinary invoiceUrl stored on the record, or a structured
+// placeholder so the frontend always gets a usable response.
+
+const getBillingInvoice = async (id: string) => {
+    const record = await prisma.billingHistory.findUnique({
+        where: { id },
+        select: {
+            id: true,
+            invoiceUrl: true,
+            amount: true,
+            currency: true,
+            paidAt: true,
+            createdAt: true,
+        },
+    });
+    if (!record) {
+        throw new AppError(status.NOT_FOUND, "Billing record not found.");
+    }
+
+    return {
+        id: record.id,
+        invoiceUrl: record.invoiceUrl ?? null,
+        amount: Number(record.amount),
+        currency: record.currency,
+        paidAt: record.paidAt,
+        createdAt: record.createdAt,
+    };
+};
+
 export const superAdminService = {
     // Activity logs
     getActivityLogs,
@@ -952,6 +1209,7 @@ export const superAdminService = {
     getAdminAccountById,
     suspendAdminAccount,
     activateAdminAccount,
+    createAdminAccount,
     // Subscription plan CRUD
     createSubscriptionPlan,
     updateSubscriptionPlan,
@@ -965,4 +1223,12 @@ export const superAdminService = {
     reactivateSubscription,
     suspendSubscription,
     grantManualPayment,
+    // Billing history actions
+    refundBillingRecord,
+    getBillingInvoice,
+    // Platform config
+    getPlatformConfig,
+    updatePlatformConfig,
+    // Trial nudge
+    sendTrialNudge,
 };

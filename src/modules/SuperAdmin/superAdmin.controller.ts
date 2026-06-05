@@ -141,6 +141,16 @@ const activateAdminAccount = catchAsync(async (req, res) => {
     });
 });
 
+const createAdminAccount = catchAsync(async (req, res) => {
+    const result = await superAdminService.createAdminAccount(req.body);
+    sendResponse(res, {
+        httpStatusCode: status.CREATED,
+        success: true,
+        message: "Admin account created successfully",
+        data: result,
+    });
+});
+
 // ─── Subscription Plan CRUD ───────────────────────────────────────────────────
 
 const createSubscriptionPlan = catchAsync(async (req, res) => {
@@ -258,6 +268,62 @@ const getBillingHistory = catchAsync(async (req, res) => {
     });
 });
 
+const refundBillingRecord = catchAsync(async (req, res) => {
+    const result = await superAdminService.refundBillingRecord(
+        req.params.id as string,
+    );
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Billing record marked as refunded.",
+        data: result,
+    });
+});
+
+const getBillingInvoice = catchAsync(async (req, res) => {
+    const result = await superAdminService.getBillingInvoice(
+        req.params.id as string,
+    );
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Invoice URL retrieved.",
+        data: result,
+    });
+});
+
+const sendTrialNudge = catchAsync(async (req, res) => {
+    const result = await superAdminService.sendTrialNudge(
+        req.params.subscriptionId as string,
+    );
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Trial nudge email sent.",
+        data: result,
+    });
+});
+
+const getPlatformConfig = catchAsync(async (_req, res) => {
+    const result = await superAdminService.getPlatformConfig();
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Platform config retrieved.",
+        data: result,
+    });
+});
+
+const updatePlatformConfig = catchAsync(async (req, res) => {
+    const result = await superAdminService.updatePlatformConfig(req.body);
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Platform config saved.",
+        data: result,
+    });
+});
+
 const grantManualPayment = catchAsync(async (req, res) => {
     const { subscriptionId } = req.params;
     const { amount, method, note, transactionId, periodMonths } = req.body as {
@@ -338,6 +404,7 @@ export const superAdminController = {
     getAdminAccountById,
     suspendAdminAccount,
     activateAdminAccount,
+    createAdminAccount,
     createSubscriptionPlan,
     updateSubscriptionPlan,
     updatePricingTier,
@@ -349,4 +416,9 @@ export const superAdminController = {
     suspendSubscription,
     reactivateSubscription,
     extendTrial,
+    refundBillingRecord,
+    getBillingInvoice,
+    sendTrialNudge,
+    getPlatformConfig,
+    updatePlatformConfig,
 };
