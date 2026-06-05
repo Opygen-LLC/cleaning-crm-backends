@@ -58,8 +58,42 @@ router.patch("/pricing-tiers/:tierId", isSuperAdmin, superAdminController.update
 // Query: status, planId, isTrial, page, limit
 router.get("/subscriptions", isSuperAdmin, superAdminController.getAllSubscriptions);
 
-// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/cancel
-router.patch("/subscriptions/:subscriptionId/cancel", isSuperAdmin, superAdminController.cancelSubscription);
+// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/cancel  (existing)
+router.patch(
+  "/subscriptions/:subscriptionId/cancel",
+  isSuperAdmin,
+  superAdminController.cancelSubscription,
+);
+
+// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/grant-payment  ← NEW (item 2)
+// Body: { amount: number, method: "CASH"|"BANK_TRANSFER"|"CHEQUE"|"MANUAL", note?, transactionId?, periodMonths? }
+router.patch(
+  "/subscriptions/:subscriptionId/grant-payment",
+  isSuperAdmin,
+  superAdminController.grantManualPayment,
+);
+
+// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/suspend  ← NEW (item 3)
+router.patch(
+  "/subscriptions/:subscriptionId/suspend",
+  isSuperAdmin,
+  superAdminController.suspendSubscription,
+);
+
+// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/reactivate  ← NEW (item 4)
+router.patch(
+  "/subscriptions/:subscriptionId/reactivate",
+  isSuperAdmin,
+  superAdminController.reactivateSubscription,
+);
+
+// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/extend-trial  ← NEW (item 5)
+// Body: { days: number }
+router.patch(
+  "/subscriptions/:subscriptionId/extend-trial",
+  isSuperAdmin,
+  superAdminController.extendTrial,
+);
 
 // ─── Billing History ──────────────────────────────────────────────────────────
 // GET /api/v1/super-admin/billing-history

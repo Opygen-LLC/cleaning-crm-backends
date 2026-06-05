@@ -57,10 +57,28 @@ const getMyBillingHistory = catchAsync(async (req, res) => {
   });
 });
 
+const submitPaymentProof = catchAsync(async (req, res) => {
+  const result = await subscriptionService.submitPaymentProof(req.user!, {
+    paymentProofUrl: req.body.paymentProofUrl,
+    amount:          req.body.amount,
+    method:          req.body.method,
+    note:            req.body.note,
+    transactionId:   req.body.transactionId,
+  });
+
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Payment proof submitted. Your subscription will be activated after review.",
+    data: result,
+  });
+});
+
 export const subscriptionController = {
   getMySubscription,
   changePlan,
   cancelAtPeriodEnd,
   resumeSubscription,
   getMyBillingHistory,
+  submitPaymentProof
 };

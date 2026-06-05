@@ -260,6 +260,79 @@ const getMyBillingHistory = async (
   };
 };
 
+const submitPaymentProof = async (
+  user: IRequestUser,
+  payload: {
+    paymentProofUrl: string;
+    amount: number;
+    method: "CASH" | "BANK_TRANSFER" | "CHEQUE" | "MANUAL";
+    note?: string;
+    transactionId?: string;
+  },
+) => {
+  const { paymentProofUrl, amount, method, note, transactionId } = payload;
+
+  if (!paymentProofUrl) {
+    throw new AppError(status.BAD_REQUEST, "paymentProofUrl is required.");
+  }
+  if (!amount || amount <= 0) {
+    throw new AppError(status.BAD_REQUEST, "A valid amount is required.");
+  }
+
+  // Find admin profile from user id
+  const admin = await prisma.adminProfile.findFirst({
+    where: { userId: user.id },
+    select: { id: true },
+  });
+  if (!admin) {
+    throw new AppError(status.NOT_FOUND, "Admin profile not found.");
+  }
+
+  const sub = await prisma.subscription.findFirst({
+    where: { adminId: admin.id },
+  });
+  if (!sub) {
+    throw new AppError(status.NOT_FOUND, "No subscription found.");
+  }
+
+  // Prevent spamming — block if there is already a PENDING proof in the last 24h
+  const recentPending = await prisma.billingHistory.findFirst({
+    where: {
+      subscriptionId: sub.id,
+      status: "PENDING",
+      paymentProofUrl: { not: null },
+      createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    },
+  });
+  if (recentPending) {
+    throw new AppError(
+      status.TOO_MANY_REQUESTS,
+      "A payment proof was already submitted in the last 24 hours. Please wait for the super admin to review it.",
+    );
+  }
+
+  const [billingRecord] = await prisma.$transaction([
+    prisma.billingHistory.create({
+      data: {
+        subscriptionId: sub.id,
+        amount,
+        currency: "USD",
+        method,
+        status: "PENDING",
+        paymentProofUrl,
+        note: note ?? null,
+        transactionId: transactionId ?? null,
+      },
+    }),
+    prisma.subscription.update({
+      where: { id: sub.id },
+      data: { status: "PENDING_PAYMENT" },
+    }),
+  ]);
+
+  return billingRecord;
+};
+
 export const subscriptionService = {
   getMySubscription,
   createTrialSubscription,
@@ -267,4 +340,5 @@ export const subscriptionService = {
   cancelAtPeriodEnd,
   resumeSubscription,
   getMyBillingHistory,
+  submitPaymentProof
 };

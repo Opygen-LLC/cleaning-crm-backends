@@ -31,12 +31,6 @@ enum SubscriptionPlanInterval {
   YEARLY
 }
 
-enum SubscriptionStatus {
-  ACTIVE
-  CANCELLED
-  EXPIRED
-}
-
 enum DiscountType {
   PERCENTAGE
   FIXED
@@ -409,4 +403,12 @@ enum NoteType {
   CLIENT
   STAFF
   ISSUE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  SUSPENDED
+  PENDING_PAYMENT
 }
