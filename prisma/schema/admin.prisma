@@ -44,6 +44,7 @@ model AdminProfile {
   pricingRules       PricingRules?
   serviceCatalogs    ServiceCatalog[]
   activityLogs       ActivityLog[]
+  notifications      Notification[]
 
   @@index([createdAt])
 }
@@ -122,4 +123,20 @@ model PricingRules {
   admin     AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
   @@map("pricing_rules")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  adminId   String
+  type      NotificationType
+  title     String
+  message   String
+  relatedId String?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  admin     AdminProfile     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId, isRead])
+  @@index([adminId, createdAt])
+  @@map("notification")
 }

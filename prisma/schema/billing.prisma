@@ -7,8 +7,10 @@ model BillingHistory {
   note           String?
   transactionId  String?
   invoiceUrl     String?
+  paymentProofUrl String?      // ← NEW — Cloudinary URL of tenant-uploaded proof image
   paidAt         DateTime?
   createdAt      DateTime      @default(now())
   subscriptionId String
   subscription   Subscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 }
+

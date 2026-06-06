@@ -29,13 +29,52 @@ const updateNotificationPrefs = async (
     if (!admin) throw new Error("Admin profile not found");
 
     return prisma.notificationPreference.upsert({
-        where:  { adminId: admin.id },
+        where: { adminId: admin.id },
         update: payload,
         create: { adminId: admin.id, ...payload },
+    });
+};
+
+// ─── Item 18: In-app notification inbox service methods ───────────────────────
+
+const getAdminId = async (userId: string): Promise<string> => {
+    const admin = await prisma.adminProfile.findUnique({
+        where: { userId },
+        select: { id: true },
+    });
+    if (!admin) throw new Error("Admin profile not found");
+    return admin.id;
+};
+
+const getInbox = async (userId: string) => {
+    const adminId = await getAdminId(userId);
+    return prisma.notification.findMany({
+        where: { adminId },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+    });
+};
+
+const markRead = async (userId: string, notificationId: string) => {
+    const adminId = await getAdminId(userId);
+    await prisma.notification.updateMany({
+        where: { id: notificationId, adminId },
+        data: { isRead: true },
+    });
+};
+
+const markAllRead = async (userId: string) => {
+    const adminId = await getAdminId(userId);
+    await prisma.notification.updateMany({
+        where: { adminId, isRead: false },
+        data: { isRead: true },
     });
 };
 
 export const notificationService = {
     getNotificationPrefs,
     updateNotificationPrefs,
+    getInbox,
+    markRead,
+    markAllRead,
 };
