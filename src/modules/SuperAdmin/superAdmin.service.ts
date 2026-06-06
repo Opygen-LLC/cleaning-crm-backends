@@ -535,7 +535,7 @@ const createAdminAccount = async (payload: {
                 role: true,
                 status: true,
                 createdAt: true,
-            }
+            },
         });
 
         const admin = await adminService.createAdmin({
@@ -1196,6 +1196,198 @@ const getBillingInvoice = async (id: string) => {
     };
 };
 
+// ─── Payment Proof Review (manual payment loop) ───────────────────────────────
+
+/**
+ * GET /super-admin/billing-history/pending-proofs
+ * Returns every BillingHistory row that:
+ *   - has a paymentProofUrl (tenant uploaded evidence)
+ *   - has status PENDING  (not yet approved / rejected)
+ * Ordered oldest-first so the super admin clears the queue in FIFO order.
+ */
+const getPendingProofs = async (options: IPaginationOptions) => {
+    const { page, limit, skip } = buildPagination(options);
+
+    const where: Prisma.BillingHistoryWhereInput = {
+        status: "PENDING",
+        paymentProofUrl: { not: null },
+    };
+
+    const [total, data] = await Promise.all([
+        prisma.billingHistory.count({ where }),
+        prisma.billingHistory.findMany({
+            where,
+            orderBy: { createdAt: "asc" },
+            skip,
+            take: limit,
+            include: {
+                subscription: {
+                    include: {
+                        subscriptionPlan: { select: { name: true } },
+                        admin: {
+                            select: {
+                                businessName: true,
+                                user: { select: { name: true, email: true } },
+                            },
+                        },
+                    },
+                },
+            },
+        }),
+    ]);
+
+    return {
+        meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+        data,
+    };
+};
+
+/**
+ * PATCH /super-admin/billing-history/:id/approve-proof
+ * Super admin has reviewed the proof and confirms payment.
+ *
+ * Actions:
+ *   1. BillingHistory status → PAID, paidAt → now()
+ *   2. Subscription status  → ACTIVE, period advanced by periodMonths (default 1)
+ *   3. Subscription.isTrial → false
+ */
+const approvePaymentProof = async (
+    billingId: string,
+    payload: { periodMonths?: number; note?: string },
+) => {
+    const { periodMonths = 1, note } = payload;
+
+    const record = await prisma.billingHistory.findUnique({
+        where: { id: billingId },
+        include: { subscription: true },
+    });
+    if (!record) {
+        throw new AppError(status.NOT_FOUND, "Billing record not found.");
+    }
+    if (record.status !== "PENDING") {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Cannot approve a proof with status "${record.status}". Only PENDING proofs can be approved.`,
+        );
+    }
+    if (!record.paymentProofUrl) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "This billing record has no attached payment proof.",
+        );
+    }
+
+    const sub = record.subscription;
+
+    // Extend from today if the current period has already lapsed
+    const baseDate =
+        sub.currentPeriodEnd && sub.currentPeriodEnd > new Date()
+            ? new Date(sub.currentPeriodEnd)
+            : new Date();
+
+    const nextPeriodEnd = new Date(baseDate);
+    nextPeriodEnd.setMonth(nextPeriodEnd.getMonth() + periodMonths);
+
+    const [updatedBilling, updatedSub] = await prisma.$transaction([
+        prisma.billingHistory.update({
+            where: { id: billingId },
+            data: {
+                status: "PAID",
+                paidAt: new Date(),
+                note: note ?? record.note,
+            },
+        }),
+        prisma.subscription.update({
+            where: { id: sub.id },
+            data: {
+                status: SubscriptionStatus.ACTIVE,
+                isTrial: false,
+                currentPeriodStart: new Date(),
+                currentPeriodEnd: nextPeriodEnd,
+                cancelAtPeriodEnd: false,
+                canceledAt: null,
+            },
+            include: { plan: true, subscriptionPlan: true },
+        }),
+    ]);
+
+    return { billingRecord: updatedBilling, subscription: updatedSub };
+};
+
+/**
+ * PATCH /super-admin/billing-history/:id/reject-proof
+ * Super admin has reviewed the proof and found it invalid.
+ *
+ * Actions:
+ *   1. BillingHistory status → FAILED
+ *   2. Subscription status stays as-is (remains PENDING_PAYMENT so the
+ *      tenant can re-submit or the admin can handle it manually).
+ *   Optional body: { reason: string } — stored in the billing record note.
+ */
+const rejectPaymentProof = async (
+    billingId: string,
+    payload: { reason?: string },
+) => {
+    const { reason } = payload;
+
+    const record = await prisma.billingHistory.findUnique({
+        where: { id: billingId },
+        include: {
+            subscription: {
+                include: {
+                    subscriptionPlan: { select: { name: true } },
+                    admin: {
+                        select: {
+                            businessName: true,
+                            user: { select: { name: true, email: true } },
+                        },
+                    },
+                },
+            },
+        },
+    });
+    if (!record) {
+        throw new AppError(status.NOT_FOUND, "Billing record not found.");
+    }
+    if (record.status !== "PENDING") {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Cannot reject a proof with status "${record.status}". Only PENDING proofs can be rejected.`,
+        );
+    }
+    if (!record.paymentProofUrl) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "This billing record has no attached payment proof.",
+        );
+    }
+
+    const updatedBilling = await prisma.billingHistory.update({
+        where: { id: billingId },
+        data: {
+            status: "FAILED",
+            note: reason
+                ? `Rejected: ${reason}`
+                : (record.note ?? "Rejected by super admin"),
+        },
+        include: {
+            subscription: {
+                include: {
+                    subscriptionPlan: { select: { name: true } },
+                    admin: {
+                        select: {
+                            businessName: true,
+                            user: { select: { name: true, email: true } },
+                        },
+                    },
+                },
+            },
+        },
+    });
+
+    return updatedBilling;
+};
+
 export const superAdminService = {
     // Activity logs
     getActivityLogs,
@@ -1226,6 +1418,10 @@ export const superAdminService = {
     // Billing history actions
     refundBillingRecord,
     getBillingInvoice,
+    // Payment proof review (manual payment loop)
+    getPendingProofs,
+    approvePaymentProof,
+    rejectPaymentProof,
     // Platform config
     getPlatformConfig,
     updatePlatformConfig,

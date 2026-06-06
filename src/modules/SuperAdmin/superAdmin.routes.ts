@@ -169,7 +169,18 @@ router.get(
     superAdminController.getBillingHistory,
 );
 
-// PATCH /api/v1/super-admin/billing-history/:id/refund  ← NEW (item 13)
+// GET /api/v1/super-admin/billing-history/pending-proofs  ← NEW
+// Returns BillingHistory rows that have a paymentProofUrl and status=PENDING,
+// i.e. every proof waiting for super admin review.
+// IMPORTANT: this static segment must be declared BEFORE /:id routes so Express
+// doesn't swallow "pending-proofs" as a dynamic :id param.
+router.get(
+    "/billing-history/pending-proofs",
+    isSuperAdmin,
+    superAdminController.getPendingProofs,
+);
+
+// PATCH /api/v1/super-admin/billing-history/:id/refund  ← existing (item 13)
 // Marks a BillingHistory record as REFUNDED.
 router.patch(
     "/billing-history/:id/refund",
@@ -177,12 +188,30 @@ router.patch(
     superAdminController.refundBillingRecord,
 );
 
-// GET /api/v1/super-admin/billing-history/:id/invoice  ← NEW (item 14)
+// GET /api/v1/super-admin/billing-history/:id/invoice  ← existing (item 14)
 // Returns the invoiceUrl for the billing record (or generates a placeholder).
 router.get(
     "/billing-history/:id/invoice",
     isSuperAdmin,
     superAdminController.getBillingInvoice,
+);
+
+// PATCH /api/v1/super-admin/billing-history/:id/approve-proof  ← NEW
+// Body (optional): { periodMonths?: number, note?: string }
+// Marks the proof PAID and transitions the subscription to ACTIVE.
+router.patch(
+    "/billing-history/:id/approve-proof",
+    isSuperAdmin,
+    superAdminController.approvePaymentProof,
+);
+
+// PATCH /api/v1/super-admin/billing-history/:id/reject-proof  ← NEW
+// Body (optional): { reason?: string }
+// Marks the proof FAILED; subscription remains PENDING_PAYMENT for re-submission.
+router.patch(
+    "/billing-history/:id/reject-proof",
+    isSuperAdmin,
+    superAdminController.rejectPaymentProof,
 );
 
 // ─── Platform Config (item 15) ────────────────────────────────────────────────

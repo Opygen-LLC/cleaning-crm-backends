@@ -341,13 +341,16 @@ const grantManualPayment = catchAsync(async (req, res) => {
         );
     }
 
-    const result = await superAdminService.grantManualPayment(subscriptionId as string, {
-        amount,
-        method,
-        note,
-        transactionId,
-        periodMonths,
-    });
+    const result = await superAdminService.grantManualPayment(
+        subscriptionId as string,
+        {
+            amount,
+            method,
+            note,
+            transactionId,
+            periodMonths,
+        },
+    );
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -395,6 +398,60 @@ const extendTrial = catchAsync(async (req, res) => {
     });
 });
 
+// ─── Payment Proof Review ─────────────────────────────────────────────────────
+
+const getPendingProofs = catchAsync(async (req, res) => {
+    const paginationOptions = {
+        page: req.query.page ? parseInt(req.query.page as string) : undefined,
+        limit: req.query.limit
+            ? parseInt(req.query.limit as string)
+            : undefined,
+    };
+
+    const result = await superAdminService.getPendingProofs(paginationOptions);
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Pending payment proofs retrieved successfully.",
+        meta: result.meta,
+        data: result.data,
+    });
+});
+
+const approvePaymentProof = catchAsync(async (req, res) => {
+    const { id } = req.params;
+    const { periodMonths, note } = req.body as {
+        periodMonths?: number;
+        note?: string;
+    };
+
+    const result = await superAdminService.approvePaymentProof(id as string, {
+        periodMonths,
+        note,
+    });
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Payment proof approved. Subscription is now ACTIVE.",
+        data: result,
+    });
+});
+
+const rejectPaymentProof = catchAsync(async (req, res) => {
+    const { id } = req.params;
+    const { reason } = req.body as { reason?: string };
+
+    const result = await superAdminService.rejectPaymentProof(id as string, { reason });
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Payment proof rejected.",
+        data: result,
+    });
+});
+
 export const superAdminController = {
     getPlatformStats,
     getPlatformRevenueDashboard,
@@ -421,4 +478,8 @@ export const superAdminController = {
     sendTrialNudge,
     getPlatformConfig,
     updatePlatformConfig,
+    // Payment proof review (manual payment loop)
+    getPendingProofs,
+    approvePaymentProof,
+    rejectPaymentProof,
 };
