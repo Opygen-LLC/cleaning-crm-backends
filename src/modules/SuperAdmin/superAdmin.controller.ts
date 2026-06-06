@@ -201,6 +201,20 @@ const deleteSubscriptionPlan = catchAsync(async (req, res) => {
     });
 });
 
+const toggleSubscriptionPlanStatus = catchAsync(async (req, res) => {
+    const { isActive } = req.body as { isActive: boolean };
+    const result = await superAdminService.toggleSubscriptionPlanStatus(
+        req.params.planId as string,
+        Boolean(isActive),
+    );
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: `Subscription plan ${isActive ? "activated" : "deactivated"} successfully`,
+        data: result,
+    });
+});
+
 // ─── Subscription Management ──────────────────────────────────────────────────
 
 const getAllSubscriptions = catchAsync(async (req, res) => {
@@ -442,7 +456,9 @@ const rejectPaymentProof = catchAsync(async (req, res) => {
     const { id } = req.params;
     const { reason } = req.body as { reason?: string };
 
-    const result = await superAdminService.rejectPaymentProof(id as string, { reason });
+    const result = await superAdminService.rejectPaymentProof(id as string, {
+        reason,
+    });
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -466,6 +482,7 @@ export const superAdminController = {
     updateSubscriptionPlan,
     updatePricingTier,
     deleteSubscriptionPlan,
+    toggleSubscriptionPlanStatus,
     getAllSubscriptions,
     cancelSubscription,
     getBillingHistory,

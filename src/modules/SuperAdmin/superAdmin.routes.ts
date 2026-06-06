@@ -99,6 +99,14 @@ router.delete(
     superAdminController.deleteSubscriptionPlan,
 );
 
+// PATCH  /api/v1/super-admin/subscription-plans/:planId/toggle-status
+// Body: { isActive: boolean }
+router.patch(
+    "/subscription-plans/:planId/toggle-status",
+    isSuperAdmin,
+    superAdminController.toggleSubscriptionPlanStatus,
+);
+
 // PATCH  /api/v1/super-admin/pricing-tiers/:tierId  (update a specific Plan price row)
 router.patch(
     "/pricing-tiers/:tierId",
