@@ -4,28 +4,69 @@ import { sendResponse } from "../../shared/sendResponse";
 import { notificationService } from "./notification.service";
 
 const getPrefs = catchAsync(async (req, res) => {
-  const result = await notificationService.getNotificationPrefs(req.user.id);
+    const result = await notificationService.getNotificationPrefs(req.user.id as string);
 
-  sendResponse(res, {
-    httpStatusCode: status.OK,
-    success: true,
-    message: "Notification preferences fetched successfully",
-    data: result,
-  });
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Notification preferences fetched successfully",
+        data: result,
+    });
 });
 
 const updatePrefs = catchAsync(async (req, res) => {
-  const result = await notificationService.updateNotificationPrefs(
-    req.user.id,
-    req.body,
-  );
+    const result = await notificationService.updateNotificationPrefs(
+        req.user.id as string,
+        req.body,
+    );
 
-  sendResponse(res, {
-    httpStatusCode: status.OK,
-    success: true,
-    message: "Notification preferences updated successfully",
-    data: result,
-  });
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Notification preferences updated successfully",
+        data: result,
+    });
 });
 
-export const notificationController = { getPrefs, updatePrefs };
+// ─── Item 18: In-app notification REST endpoints ──────────────────────────────
+
+const getInbox = catchAsync(async (req, res) => {
+    const result = await notificationService.getInbox(req.user.id as string);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Notifications fetched successfully",
+        data: result,
+    });
+});
+
+const markRead = catchAsync(async (req, res) => {
+    await notificationService.markRead(req.user.id, req.params.id as string);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Notification marked as read",
+        data: null,
+    });
+});
+
+const markAllRead = catchAsync(async (req, res) => {
+    await notificationService.markAllRead(req.user.id as string);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "All notifications marked as read",
+        data: null,
+    });
+});
+
+export const notificationController = {
+    getPrefs,
+    updatePrefs,
+    getInbox,
+    markRead,
+    markAllRead,
+};

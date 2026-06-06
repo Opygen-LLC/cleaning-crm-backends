@@ -412,3 +412,13 @@ enum SubscriptionStatus {
   SUSPENDED
   PENDING_PAYMENT
 }
+
+enum NotificationType {
+  BOOKING
+  QUOTE
+  PAYMENT
+  REVIEW
+  JOB
+  SUBSCRIPTION
+  GENERAL
+}
