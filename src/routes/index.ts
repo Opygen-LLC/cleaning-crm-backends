@@ -27,6 +27,7 @@ import { dashboardRoutes } from "../modules/Dashboard/dashboard.routes";
 import { paymentGatewayRoutes } from "../modules/Settings/paymentGateway.routes";
 import { checklistRoutes } from "../modules/Checklist/checklist.routes";
 import { staffLeaveRoutes } from "../modules/StaffLeave/staffLeave.routes";
+import { couponRoutes } from "../modules/Coupon/coupon.routes";
 // ─── Item 8: subscription enforcement middleware ──────────────────────────────
 import { checkSubscription } from "../middlewares/checkSubscription";
 
@@ -71,6 +72,8 @@ const gatedRoutes: { path: string; route: Router }[] = [
   { path: "/recurring-booking", route: recurringBookingRoutes },
   { path: "/pricing-rules",    route: pricingRulesRoutes },
   { path: "/staff-leave",      route: staffLeaveRoutes },
+  // Coupon module has its own per-route checkAuth guards (SUPER_ADMIN / SUPER_ADMIN_OR_ADMIN)
+  { path: "/coupon",           route: couponRoutes },
 ];
 
 // Register open routes first
