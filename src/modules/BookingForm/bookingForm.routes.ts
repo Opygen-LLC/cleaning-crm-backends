@@ -3,8 +3,8 @@ import { bookingFormController } from "./bookingForm.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { UserRole } from "../../generated/prisma/enums";
 import {
-  zodValidate,
-  ValidationProperty,
+    zodValidate,
+    ValidationProperty,
 } from "../../middlewares/validations/zodValidation.middleware";
 import { bookingFormValidation } from "./bookingForm.validation";
 
@@ -15,8 +15,12 @@ const router = Router();
 // GET  /api/v1/booking-form/public/:slug   — render public form
 router.get("/public/:slug", bookingFormController.getPublicBookingForm);
 
-// POST /api/v1/booking-form/public/:slug   — submit a booking request
-router.post("/public/:slug", bookingFormController.submitPublicBookingForm);
+// POST /api/v1/booking-form/public/:slug/submit   — submit a booking request
+// NOTE: frontend calls .../public/${slug}/submit; was missing the /submit segment → 404
+router.post(
+    "/public/:slug/submit",
+    bookingFormController.submitPublicBookingForm,
+);
 
 // ── Protected routes (ADMIN only) ─────────────────────────────────────────────
 
@@ -27,12 +31,12 @@ router.get("/", bookingFormController.getAllBookingForms);
 
 // POST   /api/v1/booking-form                — create a new form
 router.post(
-  "/",
-  zodValidate(
-    bookingFormValidation.createBookingFormSchema,
-    ValidationProperty.BODY,
-  ),
-  bookingFormController.createBookingForm,
+    "/",
+    zodValidate(
+        bookingFormValidation.createBookingFormSchema,
+        ValidationProperty.BODY,
+    ),
+    bookingFormController.createBookingForm,
 );
 
 // GET    /api/v1/booking-form/submissions    — all submissions (optionally ?formId=)
@@ -41,12 +45,12 @@ router.get("/submissions", bookingFormController.getSubmissions);
 // PATCH  /api/v1/booking-form/submissions/:submissionId/status — update submission status
 // NOTE: must be registered BEFORE /:id to prevent Express matching "submissions" as :id
 router.patch(
-  "/submissions/:submissionId/status",
-  zodValidate(
-    bookingFormValidation.updateSubmissionStatusSchema,
-    ValidationProperty.BODY,
-  ),
-  bookingFormController.updateSubmissionStatus,
+    "/submissions/:submissionId/status",
+    zodValidate(
+        bookingFormValidation.updateSubmissionStatusSchema,
+        ValidationProperty.BODY,
+    ),
+    bookingFormController.updateSubmissionStatus,
 );
 
 // GET    /api/v1/booking-form/:id            — get single form
@@ -54,12 +58,12 @@ router.get("/:id", bookingFormController.getBookingFormById);
 
 // PATCH  /api/v1/booking-form/:id            — update form config / fields / services
 router.patch(
-  "/:id",
-  zodValidate(
-    bookingFormValidation.updateBookingFormSchema,
-    ValidationProperty.BODY,
-  ),
-  bookingFormController.updateBookingForm,
+    "/:id",
+    zodValidate(
+        bookingFormValidation.updateBookingFormSchema,
+        ValidationProperty.BODY,
+    ),
+    bookingFormController.updateBookingForm,
 );
 
 // DELETE /api/v1/booking-form/:id            — delete form
