@@ -60,17 +60,18 @@ const createBookingForm = async (
 
     return prisma.bookingForm.create({
         data: {
-            slug:               finalSlug,
+            slug:                finalSlug,
             adminId,
-            headline:           payload.headline,
-            subheading:         payload.subheading,
-            accentColor:        payload.accentColor ?? "#000000",
-            showReviews:        payload.showReviews ?? true,
-            ctaLabel:           payload.ctaLabel ?? "Request booking",
+            headline:            payload.headline,
+            subheading:          payload.subheading,
+            accentColor:         payload.accentColor ?? "#000000",
+            showReviews:         payload.showReviews ?? true,
+            ctaLabel:            payload.ctaLabel ?? "Request booking",
             confirmationMessage: payload.confirmationMessage,
-            availableDays:      payload.availableDays ?? [],
-            blockedDates:       payload.blockedDates ?? [],
-            timeSlots:          payload.timeSlots ?? [],
+            availableDays:       payload.availableDays ?? [],
+            blockedDates:        payload.blockedDates ?? [],
+            timeSlots:           payload.timeSlots ?? [],
+            maxBookingsPerSlot:  payload.maxBookingsPerSlot ?? 1,
             services: payload.services?.length
                 ? {
                     createMany: {
@@ -209,16 +210,17 @@ const updateBookingForm = async (
         return tx.bookingForm.update({
             where: { id },
             data: {
-                ...(payload.headline            !== undefined && { headline: payload.headline }),
-                ...(payload.subheading          !== undefined && { subheading: payload.subheading }),
-                ...(payload.accentColor         !== undefined && { accentColor: payload.accentColor }),
-                ...(payload.showReviews         !== undefined && { showReviews: payload.showReviews }),
-                ...(payload.ctaLabel            !== undefined && { ctaLabel: payload.ctaLabel }),
-                ...(payload.confirmationMessage !== undefined && { confirmationMessage: payload.confirmationMessage }),
-                ...(payload.availableDays       !== undefined && { availableDays: payload.availableDays }),
-                ...(payload.blockedDates        !== undefined && { blockedDates: payload.blockedDates }),
-                ...(payload.timeSlots           !== undefined && { timeSlots: payload.timeSlots }),
-                ...(payload.published           !== undefined && { published: payload.published }),
+                ...(payload.headline              !== undefined && { headline: payload.headline }),
+                ...(payload.subheading            !== undefined && { subheading: payload.subheading }),
+                ...(payload.accentColor           !== undefined && { accentColor: payload.accentColor }),
+                ...(payload.showReviews           !== undefined && { showReviews: payload.showReviews }),
+                ...(payload.ctaLabel              !== undefined && { ctaLabel: payload.ctaLabel }),
+                ...(payload.confirmationMessage   !== undefined && { confirmationMessage: payload.confirmationMessage }),
+                ...(payload.availableDays         !== undefined && { availableDays: payload.availableDays }),
+                ...(payload.blockedDates          !== undefined && { blockedDates: payload.blockedDates }),
+                ...(payload.timeSlots             !== undefined && { timeSlots: payload.timeSlots }),
+                ...(payload.maxBookingsPerSlot    !== undefined && { maxBookingsPerSlot: payload.maxBookingsPerSlot }),
+                ...(payload.published             !== undefined && { published: payload.published }),
             },
             include: formInclude,
         });
@@ -318,6 +320,87 @@ const getPublicBookingForm = async (slug: string) => {
     return safeForm;
 };
 
+/**
+ * Returns slot availability for a specific date.
+ * For each configured time slot on that date, returns how many bookings already
+ * exist and whether the slot is still open (count < maxBookingsPerSlot).
+ *
+ * Response shape:
+ * {
+ *   maxBookingsPerSlot: number,
+ *   slots: { time: string; booked: number; available: boolean }[]
+ * }
+ */
+const getPublicSlotAvailability = async (slug: string, date: string) => {
+    const form = await prisma.bookingForm.findUnique({
+        where:  { slug },
+        select: {
+            id:                 true,
+            published:          true,
+            timeSlots:          true,
+            availableDays:      true,
+            blockedDates:       true,
+            maxBookingsPerSlot: true,
+        },
+    });
+
+    if (!form || !form.published) {
+        throw new AppError(status.NOT_FOUND, "Booking form not found or not published");
+    }
+
+    // Validate date not blocked
+    const isBlocked = form.blockedDates.some((d) => d.startsWith(date));
+    if (isBlocked) {
+        return { maxBookingsPerSlot: form.maxBookingsPerSlot, slots: [] };
+    }
+
+    // Extract unique start times from window strings
+    const allStartTimes = new Set<string>();
+    for (const ts of form.timeSlots) {
+        const [, range] = ts.split("|");
+        if (!range) continue;
+        const [start] = range.split("-");
+        if (start) allStartTimes.add(start);
+    }
+
+    const startTimes = Array.from(allStartTimes).sort();
+
+    if (startTimes.length === 0) {
+        return { maxBookingsPerSlot: form.maxBookingsPerSlot, slots: [] };
+    }
+
+    // Count existing submissions for this form+date grouped by timeSlot
+    const dateStart = new Date(`${date}T00:00:00.000Z`);
+    const dateEnd   = new Date(`${date}T23:59:59.999Z`);
+
+    const counts = await prisma.bookingFormSubmission.groupBy({
+        by:    ["timeSlot"],
+        where: {
+            formId:  form.id,
+            date:    { gte: dateStart, lte: dateEnd },
+            // Only count non-declined submissions — a declined booking frees up the slot
+            status:  { not: FormSubmissionStatus.DECLINED },
+        },
+        _count: { id: true },
+    });
+
+    const countMap: Record<string, number> = {};
+    for (const row of counts) {
+        countMap[row.timeSlot] = row._count.id;
+    }
+
+    const slots = startTimes.map((time) => {
+        const booked = countMap[time] ?? 0;
+        return {
+            time,
+            booked,
+            available: booked < form.maxBookingsPerSlot,
+        };
+    });
+
+    return { maxBookingsPerSlot: form.maxBookingsPerSlot, slots };
+};
+
 const submitPublicBookingForm = async (
     slug: string,
     payload: {
@@ -333,7 +416,14 @@ const submitPublicBookingForm = async (
 ) => {
     const form = await prisma.bookingForm.findUnique({
         where:  { slug },
-        select: { id: true, published: true, blockedDates: true, timeSlots: true, availableDays: true },
+        select: {
+            id:                 true,
+            published:          true,
+            blockedDates:       true,
+            timeSlots:          true,
+            availableDays:      true,
+            maxBookingsPerSlot: true,
+        },
     });
 
     if (!form || !form.published) {
@@ -341,14 +431,12 @@ const submitPublicBookingForm = async (
     }
 
     // blockedDates are stored as "YYYY-MM-DD|Reason" strings.
-    // Compare only the date prefix so "2026-05-04|Bank Holiday" blocks "2026-05-04".
     const isBlocked = form.blockedDates.some((d) => d.startsWith(payload.date));
     if (isBlocked) {
         throw new AppError(status.UNPROCESSABLE_ENTITY, "The selected date is not available");
     }
 
-    // timeSlots are stored as "DayName|HH:MM-HH:MM" window strings.
-    // A submitted timeSlot of "09:00" is valid when any window contains that start-time.
+    // Validate time slot exists in configured windows
     if (form.timeSlots.length > 0) {
         const isValid = form.timeSlots.some((ts) => {
             const [, range] = ts.split("|");
@@ -359,6 +447,27 @@ const submitPublicBookingForm = async (
             throw new AppError(status.UNPROCESSABLE_ENTITY, "The selected time slot is not available");
         }
     }
+
+    // ── Slot capacity enforcement ──────────────────────────────────────────────
+    const dateStart = new Date(`${payload.date}T00:00:00.000Z`);
+    const dateEnd   = new Date(`${payload.date}T23:59:59.999Z`);
+
+    const existingCount = await prisma.bookingFormSubmission.count({
+        where: {
+            formId:   form.id,
+            date:     { gte: dateStart, lte: dateEnd },
+            timeSlot: payload.timeSlot,
+            status:   { not: FormSubmissionStatus.DECLINED },
+        },
+    });
+
+    if (existingCount >= form.maxBookingsPerSlot) {
+        throw new AppError(
+            status.CONFLICT,
+            `This time slot is fully booked (${form.maxBookingsPerSlot} booking${form.maxBookingsPerSlot > 1 ? "s" : ""} max). Please choose another time.`,
+        );
+    }
+    // ── End capacity enforcement ───────────────────────────────────────────────
 
     const ref = await generateSubmissionRef();
 
@@ -390,5 +499,6 @@ export const bookingFormService = {
     getSubmissions,
     updateSubmissionStatus,
     getPublicBookingForm,
+    getPublicSlotAvailability,
     submitPublicBookingForm,
 };

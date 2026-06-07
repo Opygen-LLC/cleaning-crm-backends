@@ -32,6 +32,7 @@ export const createBookingFormSchema = z.object({
     availableDays:       z.array(z.string()).optional(),
     blockedDates:        z.array(z.string()).optional(),
     timeSlots:           z.array(z.string()).optional(),
+    maxBookingsPerSlot:  z.number().int().min(1).max(50).optional(),
     services:            z.array(serviceSchema).optional(),
     fields:              z.array(fieldSchema).optional(),
 }).strict();

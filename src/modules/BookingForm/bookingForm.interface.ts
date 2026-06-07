@@ -1,15 +1,16 @@
 import { FormFieldType, ServiceType } from "../../generated/prisma/enums";
 
 export interface IBookingFormCreate {
-    headline:            string;
-    subheading?:         string;
-    accentColor?:        string;
-    showReviews?:        boolean;
-    ctaLabel?:           string;
-    confirmationMessage?: string;
-    availableDays?:      string[];
-    blockedDates?:       string[];
-    timeSlots?:          string[];
+    headline:              string;
+    subheading?:           string;
+    accentColor?:          string;
+    showReviews?:          boolean;
+    ctaLabel?:             string;
+    confirmationMessage?:  string;
+    availableDays?:        string[];
+    blockedDates?:         string[];
+    timeSlots?:            string[];
+    maxBookingsPerSlot?:   number;
     services?: {
         serviceType: ServiceType;
         enabled?:    boolean;

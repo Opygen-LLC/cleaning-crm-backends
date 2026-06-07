@@ -15,6 +15,9 @@ const router = Router();
 // GET  /api/v1/booking-form/public/:slug   — render public form
 router.get("/public/:slug", bookingFormController.getPublicBookingForm);
 
+// GET  /api/v1/booking-form/public/:slug/slots?date=YYYY-MM-DD — slot availability
+router.get("/public/:slug/slots", bookingFormController.getPublicSlotAvailability);
+
 // POST /api/v1/booking-form/public/:slug/submit   — submit a booking request
 // NOTE: frontend calls .../public/${slug}/submit; was missing the /submit segment → 404
 router.post(
