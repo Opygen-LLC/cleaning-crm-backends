@@ -340,14 +340,24 @@ const submitPublicBookingForm = async (
         throw new AppError(status.NOT_FOUND, "Booking form not found or not published");
     }
 
-    // Check if date is blocked
-    if (form.blockedDates.includes(payload.date)) {
+    // blockedDates are stored as "YYYY-MM-DD|Reason" strings.
+    // Compare only the date prefix so "2026-05-04|Bank Holiday" blocks "2026-05-04".
+    const isBlocked = form.blockedDates.some((d) => d.startsWith(payload.date));
+    if (isBlocked) {
         throw new AppError(status.UNPROCESSABLE_ENTITY, "The selected date is not available");
     }
 
-    // Check time slot validity (only if form has slots configured)
-    if (form.timeSlots.length > 0 && !form.timeSlots.includes(payload.timeSlot)) {
-        throw new AppError(status.UNPROCESSABLE_ENTITY, "The selected time slot is not available");
+    // timeSlots are stored as "DayName|HH:MM-HH:MM" window strings.
+    // A submitted timeSlot of "09:00" is valid when any window contains that start-time.
+    if (form.timeSlots.length > 0) {
+        const isValid = form.timeSlots.some((ts) => {
+            const [, range] = ts.split("|");
+            const [start]   = (range ?? "").split("-");
+            return start === payload.timeSlot;
+        });
+        if (!isValid) {
+            throw new AppError(status.UNPROCESSABLE_ENTITY, "The selected time slot is not available");
+        }
     }
 
     const ref = await generateSubmissionRef();
