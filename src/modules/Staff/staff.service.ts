@@ -9,16 +9,14 @@ import { auth } from "../../lib/auth";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
 import { generateRandomPassword } from "../../lib/utils/generateRandomPassword";
-import { changePassword } from "better-auth/api";
 import { waitUntil } from "@vercel/functions";
-import { sendEmail } from "../../lib/email";
-import chalk from "chalk";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { IQueryParams } from "../../interface/query.interface";
 import { Prisma, StaffProfile } from "../../generated/prisma/client";
 import { staffFilterableFields, staffSearchableFields } from "./staff.constant";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
 import { IRequestUser } from "../../types/requestUser.interface";
+import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 
 const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
     const {
@@ -45,13 +43,16 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
         throw new AppError(status.NOT_FOUND, "Admin profile not found");
     }
 
-    // 2. Generate password early (no DB cost dependency)
+    // 2. Check plan limits before creating
+    await assertWithinLimit(adminProfile.id, "staff");
+
+    // 3. Generate password early (no DB cost dependency)
     const password = generateRandomPassword() ?? "Staff@123";
 
     let userId: string;
 
     try {
-        // 3. Create user in auth system (external call = expensive)
+        // 4. Create user in auth system (external call = expensive)
         const signUpResult = await auth.api.signUpEmail({
             body: {
                 name,
@@ -77,7 +78,7 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
         throw err;
     }
 
-    // 4. Prepare availability (safe + lightweight)
+    // 5. Prepare availability (safe + lightweight)
     const availabilityData =
         staffAvailability?.length > 0
             ? staffAvailability.map((item) => ({
@@ -90,7 +91,7 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
 
     const StaffRole = staffRole.toUpperCase();
 
-    // 5. DB operations in transaction (atomic + faster consistency)
+    // 6. DB operations in transaction (atomic + faster consistency)
     const staffProfile = await prisma.$transaction(async (tx) => {
         // Update user metadata
         await tx.user.update({
@@ -175,7 +176,6 @@ const getMyStaff = async (query: IQueryParams, userReq: any) => {
             user: true,
             staffAvailability: true,
         })
-        // .dynamicInclude(doctorIncludeConfig)
         .paginate()
         .sort()
         .fields()
@@ -208,23 +208,44 @@ const getStaffById = async (id: string, userReq: IRequestUser) => {
     return staff;
 };
 
-const updateStaff = async (id: string, payload: UpdateStaffPayload) => {
-    const staff = await prisma.staffProfile.findUnique({ where: { id } });
-    if (!staff) throw new Error("Staff profile not found");
-
-    return await prisma.staffProfile.update({
-        where: { id },
-        data: payload,
+// FIX: Accept adminUser and scope lookups + updates to that tenant's adminId
+const updateStaff = async (
+    id: string,
+    payload: UpdateStaffPayload,
+    adminUser: IRequestUser,
+) => {
+    const adminProfile = await prisma.adminProfile.findFirst({
+        where: { userId: adminUser.id },
     });
+
+    if (!adminProfile) {
+        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    }
+
+    // Scope the lookup to the tenant — prevents cross-tenant mutation
+    await prisma.staffProfile.findUniqueOrThrow({
+        where: { id, adminId: adminProfile.id },
+    });
+
+    return prisma.staffProfile.update({ where: { id }, data: payload });
 };
 
-const deleteStaff = async (id: string) => {
-    const staff = await prisma.staffProfile.findUnique({ where: { id } });
-    if (!staff) throw new Error("Staff profile not found");
-
-    return await prisma.staffProfile.delete({
-        where: { id },
+// FIX: Accept adminUser and scope the delete to that tenant's adminId
+const deleteStaff = async (id: string, adminUser: IRequestUser) => {
+    const adminProfile = await prisma.adminProfile.findFirst({
+        where: { userId: adminUser.id },
     });
+
+    if (!adminProfile) {
+        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    }
+
+    // Scope the lookup to the tenant — prevents cross-tenant deletion
+    await prisma.staffProfile.findUniqueOrThrow({
+        where: { id, adminId: adminProfile.id },
+    });
+
+    return prisma.staffProfile.delete({ where: { id } });
 };
 
 export const staffService = {

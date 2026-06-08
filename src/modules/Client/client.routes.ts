@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { clientValidation } from "./client.validation";
-import { ValidationProperty, zodValidate } from "../../middlewares/validations/zodValidation.middleware";
+import {
+    ValidationProperty,
+    zodValidate,
+} from "../../middlewares/validations/zodValidation.middleware";
 import { clientController } from "./client.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { UserRole } from "../../generated/prisma/enums";
@@ -16,11 +19,7 @@ router.post(
 );
 
 // Get all clients for an admin
-router.get(
-    "/:adminId",
-    checkAuth(UserRole.ADMIN),
-    clientController.getClients,
-);
+router.get("/:adminId", checkAuth(UserRole.ADMIN), clientController.getClients);
 
 // Get client by id
 router.get(
@@ -38,17 +37,11 @@ router.patch(
 );
 
 // Delete client
-router.delete(
-    "/:id",
-    checkAuth(UserRole.ADMIN),
-    clientController.deleteClient,
-);
+router.delete("/:id", checkAuth(UserRole.ADMIN), clientController.deleteClient);
 
-
-// Public client portal — auth by clientId (no admin session required)
-router.get(
-    "/portal/:clientId",
-    clientController.getClientPortal,
-);
+// Public client portal — no auth session required.
+// Access is gated by the opaque portalAccessToken (a random UUID), NOT the
+// plain client id.  The token is what makes the URL unguessable.
+router.get("/portal/:portalToken", clientController.getClientPortal);
 
 export const clientRoutes = router;

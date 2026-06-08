@@ -4,30 +4,36 @@ model Client {
   email             String
   phone             String
   status            ClientStatus @default(ACTIVE)
-  servicePreference String  @default("")
+  servicePreference String       @default("")
 
-  addressLine1      String
-  addressLine2      String?
-  city              String
-  zipcode          String
-  country           String
+  addressLine1 String
+  addressLine2 String?
+  city         String
+  zipcode      String
+  country      String
 
-  totalSpend        Decimal      @default(0) @db.Decimal(10, 2)
-  totalBookings     Int          @default(0)
-  lastBookingDate   DateTime?
+  /// Token used to access the client self-service portal.
+  /// A random UUID — separate from `id` — so portal URLs cannot be guessed
+  /// by iterating over sequential IDs.  No auth session required; the token
+  /// itself acts as the access credential.
+  portalAccessToken String @unique @default(uuid())
 
-  adminId           String
-  admin             AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  totalSpend      Decimal   @default(0) @db.Decimal(10, 2)
+  totalBookings   Int       @default(0)
+  lastBookingDate DateTime?
 
-  bookings          Booking[]
-  notes             ClientNote[]
-  estimates         Estimate[]
-  jobs              Job[]
-  quotes            Quote[]
+  adminId String
+  admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  bookings           Booking[]
+  notes              ClientNote[]
+  estimates          Estimate[]
+  jobs               Job[]
+  quotes             Quote[]
   recurringSchedules RecurringSchedule[]
 
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([email, adminId])
   @@index([adminId])
@@ -36,11 +42,11 @@ model Client {
 }
 
 model ClientNote {
-  id        String   @id @default(uuid())
-  text      String
+  id   String @id @default(uuid())
+  text String
 
-  clientId  String
-  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 

@@ -3,6 +3,7 @@ import AppError from "../../errorHelper/AppError";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { createClientPayload, updateClientPayload } from "./client.interface";
 import { prisma } from "../../lib/prisma/prisma";
+import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 import { IQueryParams } from "../../interface/query.interface";
 import { Client, Prisma } from "../../generated/prisma/client";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
@@ -29,6 +30,10 @@ const createClient = async (
     user: IRequestUser,
 ) => {
     const adminId = await resolveAdminId(user.id);
+
+    // Enforce plan limits before inserting
+    await assertWithinLimit(adminId, "client");
+
     const { notes, servicePreference, email, ...rest } = payload;
 
     return await prisma.client.upsert({
@@ -145,9 +150,13 @@ const deleteClient = async (id: string, user: IRequestUser) => {
     });
 };
 
-const getClientPortal = async (clientId: string) => {
+const getClientPortal = async (portalAccessToken: string) => {
+    // FIX: look up by portalAccessToken, not by id.
+    // The token is a random UUID that never appears in guessable URLs (unlike
+    // sequential or predictable client IDs), so knowledge of the token is the
+    // only access credential — no session required.
     const client = await prisma.client.findUnique({
-        where: { id: clientId },
+        where: { portalAccessToken },
         select: {
             id: true,
             name: true,
