@@ -20,14 +20,19 @@ model JobNote {
 }
 
 model JobAttachment {
-    id            String @id @default(uuid())
-    jobId         String
-    adminId       String
-    fileName      String // original filename shown in the UI
-    fileUrl       String // Cloudinary secure_url
-    cloudinaryId  String // Cloudinary public_id — required to delete the asset
-    mimeType      String
-    fileSizeBytes Int
+    id             String  @id @default(uuid())
+    jobId          String
+    adminId        String
+    fileName       String // original filename shown in the UI
+    fileUrl        String // Cloudinary secure_url
+    cloudinaryId   String // Cloudinary public_id — required to delete the asset
+    mimeType       String
+    fileSizeBytes  Int
+    // ── [NEW] Phase 2 — photo classification & uploader role ──────────────
+    /// Who uploaded this file: 'ADMIN' | 'STAFF'
+    uploadedByRole String  @default("ADMIN")
+    /// Optional photo classification: 'BEFORE' | 'AFTER' | 'ISSUE'
+    photoType      String?
 
     job   Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
     admin AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)

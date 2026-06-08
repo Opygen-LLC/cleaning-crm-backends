@@ -17,7 +17,7 @@ import { NoteType }         from "../../generated/prisma/enums";
  * Returns all notes for a job, pinned first then newest first.
  */
 const getNotes = catchAsync(async (req, res) => {
-    const result = await jobNotesService.getNotes(req.params.id, req.user);
+    const result = await jobNotesService.getNotes(req.params.id as string, req.user);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -33,7 +33,7 @@ const getNotes = catchAsync(async (req, res) => {
  */
 const createNote = catchAsync(async (req, res) => {
     const result = await jobNotesService.createNote(
-        req.params.id,
+        req.params.id as string,
         {
             body:       req.body.body,
             type:       req.body.type       as NoteType | undefined,
@@ -58,8 +58,8 @@ const createNote = catchAsync(async (req, res) => {
  */
 const updateNote = catchAsync(async (req, res) => {
     const result = await jobNotesService.updateNote(
-        req.params.id,
-        req.params.noteId,
+        req.params.id as string,
+        req.params.noteId as string,
         {
             body:   req.body.body,
             type:   req.body.type   as NoteType | undefined,
@@ -81,8 +81,8 @@ const updateNote = catchAsync(async (req, res) => {
  */
 const deleteNote = catchAsync(async (req, res) => {
     const result = await jobNotesService.deleteNote(
-        req.params.id,
-        req.params.noteId,
+        req.params.id as string,
+        req.params.noteId as string,
         req.user,
     );
 
@@ -100,7 +100,7 @@ const deleteNote = catchAsync(async (req, res) => {
  * GET /job/:id/attachments
  */
 const getAttachments = catchAsync(async (req, res) => {
-    const result = await jobNotesService.getAttachments(req.params.id, req.user);
+    const result = await jobNotesService.getAttachments(req.params.id as string, req.user);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -113,6 +113,7 @@ const getAttachments = catchAsync(async (req, res) => {
 /**
  * POST /job/:id/attachments
  * Expects multipart/form-data with field name "file"
+ * Optional body field: photoType = 'BEFORE' | 'AFTER' | 'ISSUE'
  */
 const uploadAttachment = catchAsync(async (req, res) => {
     const file = req.file;
@@ -124,10 +125,13 @@ const uploadAttachment = catchAsync(async (req, res) => {
         return;
     }
 
+    const photoType = req.body?.photoType as "BEFORE" | "AFTER" | "ISSUE" | undefined;
+
     const result = await jobNotesService.uploadAttachment(
-        req.params.id,
+        req.params.id as string,
         file,
         req.user,
+        photoType,
     );
 
     sendResponse(res, {
@@ -143,8 +147,8 @@ const uploadAttachment = catchAsync(async (req, res) => {
  */
 const deleteAttachment = catchAsync(async (req, res) => {
     const result = await jobNotesService.deleteAttachment(
-        req.params.id,
-        req.params.attachId,
+        req.params.id as string,
+        req.params.attachId as string,
         req.user,
     );
 

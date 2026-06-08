@@ -17,29 +17,25 @@
  * and job.dispatch.service.ts (dispatchJob / bulkDispatch) via emitToAdmin().
  */
 
-import { Router }              from "express";
-import { jobController }       from "./job.controller";
+import { Router } from "express";
+import { jobController } from "./job.controller";
 import { jobDispatchController } from "./job.dispatch.controller";
-import { jobNotesController }  from "./job.notes.controller";
-import { checkAuth }           from "../../middlewares/checkAuth";
-import { UserRole }            from "../../generated/prisma/enums";
+import { jobNotesController } from "./job.notes.controller";
+import { checkAuth } from "../../middlewares/checkAuth";
+import { UserRole } from "../../generated/prisma/enums";
 import {
     ValidationProperty,
     zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
-import { jobValidation }       from "./job.validation";
-import { jobNotesValidation }  from "./job.notes.validation";
-import { multerMemory }        from "../../config/multerMemory";
+import { jobValidation } from "./job.validation";
+import { jobNotesValidation } from "./job.notes.validation";
+import { multerMemory } from "../../config/multerMemory";
 
 const router = Router();
 
 // ── Stats (before /:id so Express doesn't treat "stats" as an id param) ───────
 
-router.get(
-    "/stats",
-    checkAuth(UserRole.ADMIN),
-    jobController.getJobStats,
-);
+router.get("/stats", checkAuth(UserRole.ADMIN), jobController.getJobStats);
 
 // ── Staff availability ────────────────────────────────────────────────────────
 
@@ -93,11 +89,7 @@ router.patch(
     jobController.updateJobStatus,
 );
 
-router.delete(
-    "/:id",
-    checkAuth(UserRole.ADMIN),
-    jobController.deleteJob,
-);
+router.delete("/:id", checkAuth(UserRole.ADMIN), jobController.deleteJob);
 
 // ── Booking → Job conversion ──────────────────────────────────────────────────
 
@@ -158,17 +150,31 @@ router.delete(
     jobNotesController.deleteNote,
 );
 
-// ── [NEW] Job Attachments ─────────────────────────────────────────────────────
+// ── [NEW] Phase 2 — Staff check-in / check-out ───────────────────────────────
+
+router.post(
+    "/:id/checkin",
+    checkAuth(UserRole.STAFF, UserRole.ADMIN),
+    jobController.checkIn,
+);
+
+router.post(
+    "/:id/checkout",
+    checkAuth(UserRole.STAFF, UserRole.ADMIN),
+    jobController.checkOut,
+);
+
+// ── [NEW] Phase 2 — Job Attachments (STAFF can now upload) ───────────────────
 
 router.get(
     "/:id/attachments",
-    checkAuth(UserRole.ADMIN),
+    checkAuth(UserRole.ADMIN, UserRole.STAFF),
     jobNotesController.getAttachments,
 );
 
 router.post(
     "/:id/attachments",
-    checkAuth(UserRole.ADMIN),
+    checkAuth(UserRole.ADMIN, UserRole.STAFF),
     // memoryStorage so we can pass the buffer to Cloudinary's upload_stream
     multerMemory.single("file"),
     jobNotesController.uploadAttachment,

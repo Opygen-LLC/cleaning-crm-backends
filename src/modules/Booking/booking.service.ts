@@ -15,6 +15,7 @@ import {
     bookingFilterableFields,
 } from "./booking.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
+import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,9 @@ const bookingInclude = {
 
 const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
     const adminId = await resolveAdminId(user.id);
+
+    // Enforce plan limits before inserting
+    await assertWithinLimit(adminId, "booking");
 
     // Verify client belongs to this admin
     const client = await prisma.client.findFirst({

@@ -7,7 +7,10 @@ import { IRequestUser } from "../../types/requestUser.interface";
 
 const createClient = catchAsync(async (req, res) => {
     const user = req.user;
-    const result = await clientService.createClient(req.body, user as IRequestUser);
+    const result = await clientService.createClient(
+        req.body,
+        user as IRequestUser,
+    );
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,
@@ -44,7 +47,11 @@ const getClientById = catchAsync(async (req, res) => {
 
 const updateClient = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const result = await clientService.updateClient(id as string, req.body, req.user);
+    const result = await clientService.updateClient(
+        id as string,
+        req.body,
+        req.user,
+    );
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -66,10 +73,11 @@ const deleteClient = catchAsync(async (req, res) => {
     });
 });
 
-
 const getClientPortal = catchAsync(async (req, res) => {
-    const { clientId } = req.params;
-    const result = await clientService.getClientPortal(clientId as string);
+    // FIX: route param is now :portalToken to make clear it is the opaque
+    // access token, not the plain client UUID.
+    const { portalToken } = req.params;
+    const result = await clientService.getClientPortal(portalToken as string);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
