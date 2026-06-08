@@ -33,11 +33,15 @@ model Job {
 }
 
 model JobStaffAssignment {
-  jobId      String
-  staffId    String
-  assignedAt DateTime     @default(now())
-  job        Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  staff      StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  jobId       String
+  staffId     String
+  assignedAt  DateTime     @default(now())
+  // ── [NEW] Phase 2 — check-in / check-out ─────────────────────────────────
+  checkInAt   DateTime?
+  checkOutAt  DateTime?
+  hoursWorked Decimal?     @db.Decimal(6, 2)
+  job         Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  staff       StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
   @@id([jobId, staffId])
   @@map("job_staff_assignment")
