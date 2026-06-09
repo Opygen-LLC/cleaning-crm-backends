@@ -11,6 +11,8 @@ export interface IBookingFormCreate {
     blockedDates?:         string[];
     timeSlots?:            string[];
     maxBookingsPerSlot?:   number;
+    slotDurationMinutes?:  number;
+    bufferTimeMinutes?:    number;
     services?: {
         serviceType: ServiceType;
         enabled?:    boolean;

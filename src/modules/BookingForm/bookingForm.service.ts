@@ -5,7 +5,72 @@ import { FormSubmissionStatus } from "../../generated/prisma/enums";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { IBookingFormCreate } from "./bookingForm.interface";
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Slot-generation helpers (mirrors frontend logic exactly) ─────────────────
+
+const DAY_NAMES = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+] as const;
+
+function timeToMinutes(t: string): number {
+    const [h, m] = t.split(":").map(Number);
+    return (h ?? 0) * 60 + (m ?? 0);
+}
+
+function minutesToTime(mins: number): string {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+/**
+ * Given window strings ("Monday|09:00-17:00"), a slot duration, and buffer gap,
+ * generate all valid slot start-times that fit fully inside each window.
+ *
+ * e.g. window 09:00-17:00 + 2-hour slots = ["09:00","11:00","13:00","15:00"]
+ */
+function generateSlotsFromWindows(
+    timeSlotWindows: string[],
+    slotDurationMinutes: number,
+    bufferTimeMinutes: number,
+): string[] {
+    const step = slotDurationMinutes + bufferTimeMinutes;
+    const slotSet = new Set<string>();
+
+    for (const ts of timeSlotWindows) {
+        const [, range] = ts.split("|");
+        if (!range) continue;
+        const [startStr, endStr] = range.split("-");
+        if (!startStr || !endStr) continue;
+
+        const windowStart = timeToMinutes(startStr);
+        const windowEnd   = timeToMinutes(endStr);
+
+        let cursor = windowStart;
+        while (cursor + slotDurationMinutes <= windowEnd) {
+            slotSet.add(minutesToTime(cursor));
+            cursor += step;
+        }
+    }
+
+    return Array.from(slotSet).sort();
+}
+
+/**
+ * Get the day name ("Monday", "Tuesday", …) for a YYYY-MM-DD date string.
+ * Uses noon UTC to avoid any timezone edge-cases around midnight.
+ */
+function getDayName(dateStr: string): string {
+    const d = new Date(`${dateStr}T12:00:00.000Z`);
+    return DAY_NAMES[d.getUTCDay()] ?? "Monday";
+}
+
+// ─── Other helpers ────────────────────────────────────────────────────────────
 
 const resolveAdminId = async (userId: string): Promise<string> => {
     const admin = await prisma.adminProfile.findUnique({ where: { userId } });
@@ -72,6 +137,8 @@ const createBookingForm = async (
             blockedDates:        payload.blockedDates ?? [],
             timeSlots:           payload.timeSlots ?? [],
             maxBookingsPerSlot:  payload.maxBookingsPerSlot ?? 1,
+            slotDurationMinutes: payload.slotDurationMinutes ?? 120,
+            bufferTimeMinutes:   payload.bufferTimeMinutes ?? 0,
             services: payload.services?.length
                 ? {
                     createMany: {
@@ -220,6 +287,8 @@ const updateBookingForm = async (
                 ...(payload.blockedDates          !== undefined && { blockedDates: payload.blockedDates }),
                 ...(payload.timeSlots             !== undefined && { timeSlots: payload.timeSlots }),
                 ...(payload.maxBookingsPerSlot    !== undefined && { maxBookingsPerSlot: payload.maxBookingsPerSlot }),
+                ...(payload.slotDurationMinutes   !== undefined && { slotDurationMinutes: payload.slotDurationMinutes }),
+                ...(payload.bufferTimeMinutes     !== undefined && { bufferTimeMinutes: payload.bufferTimeMinutes }),
                 ...(payload.published             !== undefined && { published: payload.published }),
             },
             include: formInclude,
@@ -322,12 +391,15 @@ const getPublicBookingForm = async (slug: string) => {
 
 /**
  * Returns slot availability for a specific date.
- * For each configured time slot on that date, returns how many bookings already
- * exist and whether the slot is still open (count < maxBookingsPerSlot).
+ *
+ * Uses the admin-configured slot duration and buffer time to generate the exact
+ * same time slots the frontend previews. Only returns slots for the matching
+ * weekday (e.g. a Monday date only looks at Monday time windows).
  *
  * Response shape:
  * {
- *   maxBookingsPerSlot: number,
+ *   slotDurationMinutes: number,
+ *   maxBookingsPerSlot:  number,
  *   slots: { time: string; booked: number; available: boolean }[]
  * }
  */
@@ -335,12 +407,14 @@ const getPublicSlotAvailability = async (slug: string, date: string) => {
     const form = await prisma.bookingForm.findUnique({
         where:  { slug },
         select: {
-            id:                 true,
-            published:          true,
-            timeSlots:          true,
-            availableDays:      true,
-            blockedDates:       true,
-            maxBookingsPerSlot: true,
+            id:                   true,
+            published:            true,
+            timeSlots:            true,
+            availableDays:        true,
+            blockedDates:         true,
+            maxBookingsPerSlot:   true,
+            slotDurationMinutes:  true,
+            bufferTimeMinutes:    true,
         },
     });
 
@@ -348,28 +422,38 @@ const getPublicSlotAvailability = async (slug: string, date: string) => {
         throw new AppError(status.NOT_FOUND, "Booking form not found or not published");
     }
 
-    // Validate date not blocked
+    // Return empty if this date is blocked
     const isBlocked = form.blockedDates.some((d) => d.startsWith(date));
     if (isBlocked) {
-        return { maxBookingsPerSlot: form.maxBookingsPerSlot, slots: [] };
+        return {
+            slotDurationMinutes: form.slotDurationMinutes,
+            maxBookingsPerSlot:  form.maxBookingsPerSlot,
+            slots: [],
+        };
     }
 
-    // Extract unique start times from window strings
-    const allStartTimes = new Set<string>();
-    for (const ts of form.timeSlots) {
-        const [, range] = ts.split("|");
-        if (!range) continue;
-        const [start] = range.split("-");
-        if (start) allStartTimes.add(start);
+    // Determine the weekday name for this date (e.g. "Monday", "Tuesday", …)
+    const dayName = getDayName(date);
+
+    // Filter the stored windows to only those for this weekday
+    const dayWindows = form.timeSlots.filter((ts) => ts.startsWith(`${dayName}|`));
+
+    // Generate actual slot start-times using the admin's slot duration + buffer
+    const slotTimes = generateSlotsFromWindows(
+        dayWindows,
+        form.slotDurationMinutes,
+        form.bufferTimeMinutes,
+    );
+
+    if (slotTimes.length === 0) {
+        return {
+            slotDurationMinutes: form.slotDurationMinutes,
+            maxBookingsPerSlot:  form.maxBookingsPerSlot,
+            slots: [],
+        };
     }
 
-    const startTimes = Array.from(allStartTimes).sort();
-
-    if (startTimes.length === 0) {
-        return { maxBookingsPerSlot: form.maxBookingsPerSlot, slots: [] };
-    }
-
-    // Count existing submissions for this form+date grouped by timeSlot
+    // Count existing (non-declined) bookings for each slot on this date
     const dateStart = new Date(`${date}T00:00:00.000Z`);
     const dateEnd   = new Date(`${date}T23:59:59.999Z`);
 
@@ -378,7 +462,6 @@ const getPublicSlotAvailability = async (slug: string, date: string) => {
         where: {
             formId:  form.id,
             date:    { gte: dateStart, lte: dateEnd },
-            // Only count non-declined submissions — a declined booking frees up the slot
             status:  { not: FormSubmissionStatus.DECLINED },
         },
         _count: { id: true },
@@ -389,7 +472,7 @@ const getPublicSlotAvailability = async (slug: string, date: string) => {
         countMap[row.timeSlot] = row._count.id;
     }
 
-    const slots = startTimes.map((time) => {
+    const slots = slotTimes.map((time) => {
         const booked = countMap[time] ?? 0;
         return {
             time,
@@ -398,7 +481,11 @@ const getPublicSlotAvailability = async (slug: string, date: string) => {
         };
     });
 
-    return { maxBookingsPerSlot: form.maxBookingsPerSlot, slots };
+    return {
+        slotDurationMinutes: form.slotDurationMinutes,
+        maxBookingsPerSlot:  form.maxBookingsPerSlot,
+        slots,
+    };
 };
 
 const submitPublicBookingForm = async (
@@ -417,12 +504,14 @@ const submitPublicBookingForm = async (
     const form = await prisma.bookingForm.findUnique({
         where:  { slug },
         select: {
-            id:                 true,
-            published:          true,
-            blockedDates:       true,
-            timeSlots:          true,
-            availableDays:      true,
-            maxBookingsPerSlot: true,
+            id:                   true,
+            published:            true,
+            blockedDates:         true,
+            timeSlots:            true,
+            availableDays:        true,
+            maxBookingsPerSlot:   true,
+            slotDurationMinutes:  true,
+            bufferTimeMinutes:    true,
         },
     });
 
@@ -436,15 +525,21 @@ const submitPublicBookingForm = async (
         throw new AppError(status.UNPROCESSABLE_ENTITY, "The selected date is not available");
     }
 
-    // Validate time slot exists in configured windows
+    // Validate the time slot exists for this weekday using the slot generation logic
     if (form.timeSlots.length > 0) {
-        const isValid = form.timeSlots.some((ts) => {
-            const [, range] = ts.split("|");
-            const [start]   = (range ?? "").split("-");
-            return start === payload.timeSlot;
-        });
-        if (!isValid) {
-            throw new AppError(status.UNPROCESSABLE_ENTITY, "The selected time slot is not available");
+        const dayName    = getDayName(payload.date);
+        const dayWindows = form.timeSlots.filter((ts) => ts.startsWith(`${dayName}|`));
+        const validSlots = generateSlotsFromWindows(
+            dayWindows,
+            form.slotDurationMinutes,
+            form.bufferTimeMinutes,
+        );
+
+        if (validSlots.length > 0 && !validSlots.includes(payload.timeSlot)) {
+            throw new AppError(
+                status.UNPROCESSABLE_ENTITY,
+                "The selected time slot is not available for this date",
+            );
         }
     }
 

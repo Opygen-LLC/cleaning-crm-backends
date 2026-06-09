@@ -12,6 +12,8 @@ model BookingForm {
   blockedDates        String[]
   timeSlots           String[]
   maxBookingsPerSlot  Int                     @default(1)
+  slotDurationMinutes Int                     @default(120)
+  bufferTimeMinutes   Int                     @default(0)
   adminId             String
   createdAt           DateTime                @default(now())
   updatedAt           DateTime                @updatedAt
