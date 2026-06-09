@@ -15,6 +15,7 @@ import {
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { FRONTEND_URL } from "../../config/ENV";
 import { createStripePaymentLink } from "../../lib/Payments/stripe.healper";
+import { uploadFileToCloudinary } from "../../config/cloudinary";
 
 /**
  * Generates a unique invoice reference in the format #OP-INV-0001
@@ -600,6 +601,186 @@ const createInvoicePaymentLink = async (invoiceId: string, user: any) => {
     };
 };
 
+// ── Submit payment proof (bank-transfer screenshot) ──────────────────────────
+//
+// Called by admin (or on behalf of client).
+// Uploads the proof image to Cloudinary, creates or updates a Payment record
+// with status PENDING_APPROVAL, and keeps the invoice in its current state
+// until an admin approves.
+
+const submitPaymentProof = async (
+    invoiceId: string,
+    paymentId: string,
+    file: Express.Multer.File,
+    user: any,
+) => {
+    const admin = await prisma.adminProfile.findUnique({
+        where: { userId: user.id },
+    });
+    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+
+    const invoice = await prisma.invoice.findFirst({
+        where: { id: invoiceId, adminId: admin.id },
+    });
+    if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
+
+    if (invoice.status === InvoiceStatus.PAID) {
+        throw new AppError(status.BAD_REQUEST, "Invoice is already paid");
+    }
+    if (invoice.status === InvoiceStatus.CANCELLED) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "Cannot submit proof for a cancelled invoice",
+        );
+    }
+
+    // Upload the screenshot to Cloudinary
+    const uploadResult = await uploadFileToCloudinary(
+        file.buffer,
+        file.originalname || "payment-proof.jpg",
+    );
+
+    let payment: any;
+
+    if (paymentId === "new") {
+        // Generate ref for a brand-new payment
+        const lastPayment = await prisma.payment.findFirst({
+            orderBy: { createdAt: "desc" },
+            select: { paymentRef: true },
+        });
+        let nextNum = 1;
+        if (lastPayment?.paymentRef) {
+            const parts = lastPayment.paymentRef.split("-");
+            const num = parseInt(parts[parts.length - 1]);
+            if (!isNaN(num)) nextNum = num + 1;
+        }
+        const paymentRef = `#OP-PAY-${nextNum.toString().padStart(4, "0")}`;
+
+        payment = await prisma.payment.create({
+            data: {
+                paymentRef,
+                amount: invoice.total,
+                method: PaymentMethod.BANK_TRANSFER,
+                status: PaymentStatus.PENDING_APPROVAL,
+                paymentProofUrl: uploadResult.secure_url,
+                adminId: admin.id,
+                invoiceId: invoice.id,
+            },
+        });
+    } else {
+        // Update an existing payment record
+        const existing = await prisma.payment.findFirst({
+            where: { id: paymentId, adminId: admin.id },
+        });
+        if (!existing) throw new AppError(status.NOT_FOUND, "Payment not found");
+
+        payment = await prisma.payment.update({
+            where: { id: paymentId },
+            data: {
+                status: PaymentStatus.PENDING_APPROVAL,
+                paymentProofUrl: uploadResult.secure_url,
+            },
+        });
+    }
+
+    return { payment, proofUrl: uploadResult.secure_url };
+};
+
+// ── Approve or reject a PENDING_APPROVAL payment ─────────────────────────────
+//
+// action: "approve" → marks Payment PAID, Invoice PAID, sends receipt email.
+// action: "reject"  → marks Payment FAILED, optionally stores rejectionReason.
+
+const approvePayment = async (
+    invoiceId: string,
+    paymentId: string,
+    payload: { action: "approve" | "reject"; rejectionReason?: string },
+    user: any,
+) => {
+    const admin = await prisma.adminProfile.findUnique({
+        where: { userId: user.id },
+    });
+    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+
+    const invoice = await prisma.invoice.findFirst({
+        where: { id: invoiceId, adminId: admin.id },
+    });
+    if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
+
+    const payment = await prisma.payment.findFirst({
+        where: { id: paymentId, adminId: admin.id, invoiceId },
+    });
+    if (!payment) throw new AppError(status.NOT_FOUND, "Payment not found");
+
+    if (payment.status !== PaymentStatus.PENDING_APPROVAL) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Payment is not pending approval (current status: ${payment.status})`,
+        );
+    }
+
+    const now = new Date();
+
+    if (payload.action === "approve") {
+        const result = await prisma.$transaction(async (tx) => {
+            const updatedPayment = await tx.payment.update({
+                where: { id: paymentId },
+                data: {
+                    status: PaymentStatus.PAID,
+                    approvedAt: now,
+                    approvedByUserId: user.id,
+                    paidAt: now,
+                },
+            });
+
+            const updatedInvoice = await tx.invoice.update({
+                where: { id: invoiceId },
+                data: { status: InvoiceStatus.PAID, paidDate: now },
+            });
+
+            return { payment: updatedPayment, invoice: updatedInvoice };
+        });
+
+        // Send payment receipt email
+        const fmt = (d: Date) =>
+            d.toLocaleDateString("en-GB", {
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+            });
+
+        if (invoice.clientEmail) {
+            await sendEmailSafely({
+                to: invoice.clientEmail,
+                subject: `Payment receipt — ${invoice.invoiceRef}`,
+                templateName: "payment-receipt",
+                templateData: {
+                    clientName: invoice.clientName,
+                    invoiceRef: invoice.invoiceRef,
+                    paymentRef: payment.paymentRef,
+                    paidDate: fmt(now),
+                    amount: Number(invoice.total).toFixed(2),
+                    paymentMethod: "Bank Transfer",
+                    serviceAddress: invoice.serviceAddress ?? invoice.clientName,
+                },
+            });
+        }
+
+        return result;
+    } else {
+        // reject
+        const updatedPayment = await prisma.payment.update({
+            where: { id: paymentId },
+            data: {
+                status: PaymentStatus.FAILED,
+                rejectionReason: payload.rejectionReason ?? null,
+            },
+        });
+
+        return { payment: updatedPayment, invoice };
+    }
+};
+
 export const invoiceService = {
     createInvoice,
     getAllInvoices,
@@ -611,4 +792,6 @@ export const invoiceService = {
     getPaymentHistory,
     recordPayment,
     createInvoicePaymentLink,
+    submitPaymentProof,
+    approvePayment,
 };

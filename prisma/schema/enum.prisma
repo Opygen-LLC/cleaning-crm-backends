@@ -53,6 +53,7 @@ enum PaymentGateway {
 
 enum PaymentStatus {
   PENDING
+  PENDING_APPROVAL
   PAID
   FAILED
   REFUNDED

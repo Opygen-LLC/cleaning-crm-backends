@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Payment Receipt <%= paymentRef %></title>
+  </head>
+  <body style="margin:0;padding:0;background:#f0f2f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="padding:48px 16px;">
+      <tr>
+        <td align="center">
+          <table width="480" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.07);">
+
+            <!-- Accent bar -->
+            <tr><td style="background:#16A34A;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
+
+            <!-- Logo -->
+            <tr>
+              <td align="center" style="padding:36px 40px 0;">
+                <table cellpadding="0" cellspacing="0" role="presentation">
+                  <tr>
+                    <td align="center" style="padding-bottom:24px;">
+                      <table cellpadding="0" cellspacing="0" role="presentation">
+                        <tr>
+                          <td style="border-radius:14px;padding:10px 12px;vertical-align:middle;">
+                            <svg viewBox="0 0 64 64" width="38" height="38" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M32 6 A26 26 0 1 1 53.5 45.5" stroke="#3ECFB2" stroke-width="5" stroke-linecap="round" fill="none"></path>
+                              <path d="M32 58 A26 26 0 1 1 10.5 18.5" stroke="#000000" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.75"></path>
+                              <circle cx="32" cy="32" r="4" fill="#3ECFB2"></circle>
+                              <circle cx="53.5" cy="45.5" r="2.5" fill="#3ECFB2"></circle>
+                              <circle cx="10.5" cy="18.5" r="2.5" fill="#ffffff" opacity="0.3"></circle>
+                            </svg>
+                          </td>
+                          <td style="padding-left:10px;vertical-align:middle;">
+                            <span style="font-size:20px;font-weight:700;color:#0a0a0a;letter-spacing:-0.5px;">Opygen</span>
+                            <span style="display:block;font-size:10px;font-weight:600;color:#1a7a5e;letter-spacing:0.12em;text-transform:uppercase;margin-top:2px;">Cleaning CRM</span>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+                <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                  <tr><td style="border-top:1px solid #f0f0f0;font-size:0;">&nbsp;</td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- Body -->
+            <tr>
+              <td style="padding:32px 40px 0;">
+
+                <!-- Badge -->
+                <table cellpadding="0" cellspacing="0" role="presentation" style="margin-bottom:20px;">
+                  <tr>
+                    <td style="background:#EDFDF4;border-radius:100px;padding:6px 14px;">
+                      <span style="font-size:11px;font-weight:700;color:#16A34A;letter-spacing:0.1em;text-transform:uppercase;">✅ Payment Confirmed</span>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Greeting -->
+                <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#0a0a0a;letter-spacing:-0.4px;">Hi <%= clientName %>,</p>
+                <p style="margin:0 0 28px;font-size:15px;color:#6b6b6b;line-height:1.6;">
+                  We've received your payment for invoice <strong style="color:#0a0a0a;"><%= invoiceRef %></strong>. Thank you — your account is now up to date.
+                </p>
+
+                <!-- Receipt card -->
+                <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#f6f6f6;border:1.5px solid #e8e8e8;border-radius:14px;margin-bottom:24px;overflow:hidden;">
+
+                  <!-- Header row -->
+                  <tr>
+                    <td style="padding:18px 24px 14px;background:#0a0a0a;">
+                      <p style="margin:0 0 3px;font-size:10px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:0.12em;">Receipt</p>
+                      <p style="margin:0;font-size:18px;font-weight:800;color:#ffffff;letter-spacing:1px;font-family:'Courier New',monospace;"><%= paymentRef %></p>
+                    </td>
+                  </tr>
+
+                  <!-- Invoice ref + paid date -->
+                  <tr>
+                    <td style="padding:14px 24px;">
+                      <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                        <tr>
+                          <td style="width:50%;vertical-align:top;padding-right:12px;">
+                            <p style="margin:0 0 3px;font-size:10px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:0.12em;">Invoice</p>
+                            <p style="margin:0;font-size:14px;font-weight:600;color:#0a0a0a;font-family:'Courier New',monospace;"><%= invoiceRef %></p>
+                          </td>
+                          <td style="width:50%;vertical-align:top;">
+                            <p style="margin:0 0 3px;font-size:10px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:0.12em;">Paid on</p>
+                            <p style="margin:0;font-size:14px;font-weight:600;color:#16A34A;"><%= paidDate %></p>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <tr><td style="border-top:1px solid #e8e8e8;font-size:0;line-height:0;">&nbsp;</td></tr>
+
+                  <!-- Service + method -->
+                  <tr>
+                    <td style="padding:14px 24px;">
+                      <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                        <tr>
+                          <td style="width:50%;vertical-align:top;padding-right:12px;">
+                            <p style="margin:0 0 3px;font-size:10px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:0.12em;">Service address</p>
+                            <p style="margin:0;font-size:13px;font-weight:500;color:#444;"><%= serviceAddress %></p>
+                          </td>
+                          <td style="width:50%;vertical-align:top;">
+                            <p style="margin:0 0 3px;font-size:10px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:0.12em;">Payment method</p>
+                            <p style="margin:0;font-size:13px;font-weight:600;color:#0a0a0a;"><%= paymentMethod %></p>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                  <tr><td style="border-top:1px solid #e8e8e8;font-size:0;line-height:0;">&nbsp;</td></tr>
+
+                  <!-- Amount paid -->
+                  <tr>
+                    <td style="padding:18px 24px;">
+                      <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                        <tr>
+                          <td style="font-size:15px;font-weight:700;color:#0a0a0a;">Amount paid</td>
+                          <td align="right" style="font-size:22px;font-weight:800;color:#16A34A;">£<%= amount %></td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+
+                <p style="margin:0 0 28px;font-size:13px;color:#888;line-height:1.6;text-align:center;">
+                  Keep this email as your payment confirmation. If you have any questions, please reply to this email.
+                </p>
+              </td>
+            </tr>
+
+            <!-- Footer -->
+            <tr>
+              <td style="padding:0 40px 36px;">
+                <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                  <tr>
+                    <td style="border-top:1px solid #f0f0f0;padding-top:24px;">
+                      <p style="margin:0 0 6px;font-size:11px;color:#aaa;line-height:1.7;">
+                        Issued by <strong style="color:#6b6b6b;">Opygen CleanCRM</strong> on behalf of your cleaning service provider.
+                      </p>
+                      <p style="margin:0;font-size:11px;color:#ccc;">© <%= new Date().getFullYear() %> Opygen · Cleaning CRM</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

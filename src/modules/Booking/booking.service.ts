@@ -16,6 +16,7 @@ import {
 } from "./booking.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
+import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,48 @@ const bookingInclude = {
     job: { select: { id: true, jobRef: true, status: true } },
 } as const;
 
+// ── Booking confirmation email helper ─────────────────────────────────────────
+
+const sendBookingConfirmationEmail = async (
+    booking: any,
+    isCompleted = false,
+) => {
+    const clientEmail = booking.client?.email;
+    if (!clientEmail) return;
+
+    const fmt = (d: Date) =>
+        d.toLocaleDateString("en-GB", {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+        });
+
+    const staffNames: string[] = (booking.staffAssignments ?? []).map(
+        (a: any) => a.staff?.user?.name ?? "Staff",
+    );
+
+    await sendEmailSafely({
+        to: clientEmail,
+        subject: isCompleted
+            ? `Your cleaning is complete — ${booking.bookingRef}`
+            : `Booking confirmed — ${booking.bookingRef}`,
+        templateName: "booking-confirmation",
+        templateData: {
+            clientName: booking.client?.name ?? "Valued Customer",
+            bookingRef: booking.bookingRef,
+            serviceType: booking.serviceType.replace(/_/g, " "),
+            scheduledDate: fmt(new Date(booking.scheduledDate)),
+            durationMins: booking.durationMins,
+            address: booking.address,
+            total: Number(booking.total).toFixed(2),
+            notes: booking.notes ?? null,
+            staffNames,
+            isCompleted,
+        },
+    });
+};
+
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
@@ -103,8 +146,8 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
 
     const bookingRef = await generateBookingRef();
 
-    return prisma.$transaction(async (tx) => {
-        const booking = await tx.booking.create({
+    const booking = await prisma.$transaction(async (tx) => {
+        const newBooking = await tx.booking.create({
             data: {
                 bookingRef,
                 adminId,
@@ -139,9 +182,15 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
             },
         });
 
-        return booking;
+        return newBooking;
     });
+
+    // Fire confirmation email (non-blocking)
+    sendBookingConfirmationEmail(booking, false).catch(() => {});
+
+    return booking;
 };
+
 
 const getAllBookings = async (queryParams: IQueryParams, user: any) => {
     const adminId = await resolveAdminId(user.id);
@@ -235,11 +284,18 @@ const updateBookingStatus = async (
         );
     }
 
-    return prisma.booking.update({
+    const updated = await prisma.booking.update({
         where: { id },
         data: { status: newStatus },
         include: bookingInclude,
     });
+
+    // Fire completion email when booking is marked COMPLETED
+    if (newStatus === BookingStatus.COMPLETED) {
+        sendBookingConfirmationEmail(updated, true).catch(() => {});
+    }
+
+    return updated;
 };
 
 const deleteBooking = async (id: string, user: any) => {

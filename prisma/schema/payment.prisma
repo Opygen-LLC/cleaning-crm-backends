@@ -14,6 +14,12 @@ model Payment {
   adminId           String
   invoiceId         String?
   paidAt            DateTime?
+  // ── Manual proof-of-payment approval ─────────────────────────────────
+  paymentProofUrl   String?       // client submits bank-transfer screenshot
+  approvedAt        DateTime?
+  approvedByUserId  String?
+  rejectionReason   String?
+  // ─────────────────────────────────────────────────────────────────────
   createdAt         DateTime      @default(now())
   updatedAt         DateTime?     @updatedAt
   admin             AdminProfile  @relation(fields: [adminId], references: [id], onDelete: Cascade)

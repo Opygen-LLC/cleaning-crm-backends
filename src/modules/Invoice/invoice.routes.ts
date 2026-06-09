@@ -7,6 +7,7 @@ import {
     zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
 import { invoiceValidation } from "./invoice.validation";
+import { multerMemory } from "../../config/multerMemory";
 
 const router = Router();
 
@@ -72,6 +73,21 @@ router.post(
     "/:id/create-payment-link",
     checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
     invoiceController.createPaymentLink,
+);
+
+// ── Manual bank-transfer proof upload (client or admin on behalf) ─────────────
+router.post(
+    "/:id/payments/:paymentId/proof",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    multerMemory.single("proof"),
+    invoiceController.submitPaymentProof,
+);
+
+// ── Admin approves or rejects a PENDING_APPROVAL payment ─────────────────────
+router.patch(
+    "/:id/payments/:paymentId/approve",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    invoiceController.approvePayment,
 );
 
 export const invoiceRoutes = router;
