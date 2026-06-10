@@ -8,3 +8,5 @@ dist
 # Local env files
 .env.local
 task.md
+.Deployments.md
+.agent.md

@@ -1,0 +1,83 @@
+# ─────────────────────────────────────────────────────────────
+# docker-compose.yml — Opygen Cleaning CRM Backend
+# Server IP   : 43.205.126.45
+# Public Host : https://43.205.126.45.sslip.io  (free TLS via sslip.io)
+# Frontend    : https://opygen.com
+# ─────────────────────────────────────────────────────────────
+
+services:
+  # ── Node.js / Express + Socket.IO application ──────────────
+  app:
+    build:
+      context: .
+      target: production
+    container_name: cleaning_crm_app
+    restart: always
+    expose:
+      - "3000"              # internal only — Caddy reverse-proxies external traffic
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - BACKEND_IP=0.0.0.0
+      - PORT=3000
+      # Redis points to the sibling container, not localhost
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - REDIS_DB=0
+      # Frontend URL for CORS whitelist
+      - FRONTEND_URL=https://opygen.com
+      - APP_URL=https://opygen.com
+      # BetterAuth base URL = public backend URL served by Caddy
+      - BETTER_AUTH_URL=https://43.205.126.45.sslip.io
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - crm_network
+
+  # ── Redis — session cache, Socket.IO adapter ────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: cleaning_crm_redis
+    restart: always
+    command: redis-server --appendonly yes --save 60 1
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crm_network
+
+  # ── Caddy — TLS termination + reverse proxy ─────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: cleaning_crm_caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"      # HTTP/3 (QUIC) support
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    depends_on:
+      - app
+    networks:
+      - crm_network
+
+volumes:
+  redis_data:
+  caddy_data:
+  caddy_config:
+  caddy_logs:
+
+networks:
+  crm_network:
+    driver: bridge

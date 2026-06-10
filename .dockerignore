@@ -1,0 +1,12 @@
+node_modules
+dist
+logs
+.env
+.env.local
+.env.*.local
+*.log
+.git
+.gitignore
+*.md
+app_overview.excalidraw
+*.postman_collection.json

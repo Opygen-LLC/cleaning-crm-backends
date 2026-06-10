@@ -1,0 +1,52 @@
+# ─────────────────────────────────────────────────────────────
+# Caddyfile — Opygen Cleaning CRM Backend
+# Server IP  : 43.205.126.45
+# Public Host: https://43.205.126.45.sslip.io  (free TLS via sslip.io)
+# Frontend   : https://opygen.com
+#
+# How sslip.io works:
+#   43.205.126.45.sslip.io is a free wildcard DNS service.
+#   It resolves to 43.205.126.45 automatically.
+#   Caddy obtains a Let's Encrypt TLS certificate for that hostname,
+#   giving you HTTPS without a paid domain — fixing mixed-content
+#   errors when https://opygen.com (Vercel) calls this backend.
+#
+# CORS is handled entirely in Node.js (server.ts) — do NOT add
+# CORS headers here or they will be duplicated and break preflight.
+# ─────────────────────────────────────────────────────────────
+
+43.205.126.45.sslip.io {
+    # ── Reverse proxy → Node.js app (port 3000) ───────────────
+    # Caddy transparently handles WebSocket upgrade for Socket.IO
+    # (both websocket and long-poll transports work out of the box).
+    reverse_proxy app:3000 {
+        # Forward real client IP to Node.js
+        header_up X-Real-IP         {remote_host}
+        header_up X-Forwarded-For   {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+
+        # Keep WebSocket / long-poll connections alive
+        transport http {
+            keepalive           30s
+            keepalive_idle_conns 10
+        }
+    }
+
+    # ── Compression ───────────────────────────────────────────
+    encode gzip zstd
+
+    # ── Structured access log ─────────────────────────────────
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size     50mb
+            roll_keep     5
+            roll_keep_for 720h
+        }
+        format json
+    }
+}
+
+# ── Redirect bare HTTP → HTTPS ────────────────────────────────
+:80 {
+    redir https://43.205.126.45.sslip.io{uri} permanent
+}
