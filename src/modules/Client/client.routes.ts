@@ -44,4 +44,12 @@ router.delete("/:id", checkAuth(UserRole.ADMIN), clientController.deleteClient);
 // plain client id.  The token is what makes the URL unguessable.
 router.get("/portal/:portalToken", clientController.getClientPortal);
 
+// Admin: rotate the portal access token — invalidates previously shared links.
+// Must be authenticated as ADMIN and must own the client record.
+router.post(
+    "/:id/regenerate-portal-token",
+    checkAuth(UserRole.ADMIN),
+    clientController.regeneratePortalToken,
+);
+
 export const clientRoutes = router;

@@ -5,7 +5,8 @@ import { leadService } from "./lead.service";
 import { IQueryParams } from "../../interface/query.interface";
 import { LeadStage } from "../../generated/prisma/enums";
 
-const getParam = (value: string | string[]) => Array.isArray(value) ? value[0] : value;
+const getParam = (value: string | string[]) =>
+    Array.isArray(value) ? value[0] : value;
 
 const createLead = catchAsync(async (req, res) => {
     const result = await leadService.createLead(req.body, req.user);
@@ -80,6 +81,23 @@ const deleteLead = catchAsync(async (req, res) => {
     });
 });
 
+// POST /lead/:id/convert-to-client
+const convertLeadToClient = catchAsync(async (req, res) => {
+    const id = getParam(req.params.id);
+    const result = await leadService.convertLeadToClient(id, req.user);
+
+    sendResponse(res, {
+        httpStatusCode: status.CREATED,
+        success: true,
+        message: result.message,
+        data: {
+            clientId: result.clientId,
+            clientName: result.clientName,
+            portalAccessToken: result.portalAccessToken,
+        },
+    });
+});
+
 export const leadController = {
     createLead,
     getLeads,
@@ -87,4 +105,5 @@ export const leadController = {
     updateLead,
     updateLeadStage,
     deleteLead,
+    convertLeadToClient,
 };
