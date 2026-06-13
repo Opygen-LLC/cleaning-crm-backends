@@ -1,5 +1,9 @@
 import { prisma } from "../../lib/prisma/prisma";
-import { CreateStaffPayload, UpdateStaffPayload } from "./staff.interface";
+import {
+    CreateStaffPayload,
+    UpdateAvailabilityPayload,
+    UpdateStaffPayload,
+} from "./staff.interface";
 import {
     AccountStatus,
     StaffStatus,
@@ -248,10 +252,61 @@ const deleteStaff = async (id: string, adminUser: IRequestUser) => {
     return prisma.staffProfile.delete({ where: { id } });
 };
 
+/**
+ * Replace all 7 availability rows for a staff member in a single transaction.
+ * Uses upsert so the endpoint is idempotent — safe to call repeatedly.
+ */
+const updateAvailability = async (
+    id: string,
+    payload: UpdateAvailabilityPayload,
+    adminUser: IRequestUser,
+) => {
+    const adminProfile = await prisma.adminProfile.findFirst({
+        where: { userId: adminUser.id },
+    });
+
+    if (!adminProfile) {
+        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    }
+
+    // Tenant isolation: ensure the staff member belongs to this admin
+    await prisma.staffProfile.findUniqueOrThrow({
+        where: { id, adminId: adminProfile.id },
+    });
+
+    // Upsert each day — @@unique([staffId, day]) makes this safe
+    const upserts = payload.availability.map((item) =>
+        prisma.staffAvailability.upsert({
+            where: { staffId_day: { staffId: id, day: item.day } },
+            update: {
+                startTime: item.isActive ? (item.startTime ?? null) : null,
+                endTime: item.isActive ? (item.endTime ?? null) : null,
+                isActive: item.isActive ?? true,
+            },
+            create: {
+                staffId: id,
+                day: item.day,
+                startTime: item.isActive ? (item.startTime ?? null) : null,
+                endTime: item.isActive ? (item.endTime ?? null) : null,
+                isActive: item.isActive ?? true,
+            },
+        }),
+    );
+
+    await prisma.$transaction(upserts);
+
+    // Return updated staff profile with fresh availability
+    return prisma.staffProfile.findUniqueOrThrow({
+        where: { id },
+        include: { user: true, staffAvailability: true },
+    });
+};
+
 export const staffService = {
     createStaff,
     getMyStaff,
     getStaffById,
     updateStaff,
     deleteStaff,
+    updateAvailability,
 };

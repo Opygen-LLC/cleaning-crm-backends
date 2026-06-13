@@ -41,7 +41,14 @@ const updateStaffSchema = z
         message: "At least one field must be provided to update",
     });
 
+const updateAvailabilitySchema = z.object({
+    availability: z
+        .array(staffAvailabilitySchema)
+        .length(7, "Must provide all 7 days"),
+});
+
 export const staffValidation = {
     createStaff: createStaffSchema,
     updateStaff: updateStaffSchema,
+    updateAvailability: updateAvailabilitySchema,
 };
