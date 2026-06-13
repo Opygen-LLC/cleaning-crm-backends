@@ -30,62 +30,78 @@ import { staffLeaveRoutes } from "../modules/StaffLeave/staffLeave.routes";
 import { couponRoutes } from "../modules/Coupon/coupon.routes";
 // ─── Item 8: subscription enforcement middleware ──────────────────────────────
 import { checkSubscription } from "../middlewares/checkSubscription";
+import { paymentGatewayController } from "../modules/Settings/paymentGateway.controller";
+import express from "express";
 
 const router = Router();
+
+// ─── Public webhook endpoints — must be open, no auth, no subscription gate ───
+// Stripe / PayPal call these directly from their servers.
+// express.raw() on the Stripe route preserves the body bytes for HMAC
+// verification; must be applied before the global JSON body-parser.
+router.post(
+    "/payment-gateway/stripe-webhook",
+    express.raw({ type: "*/*" }),
+    paymentGatewayController.stripeWebhook,
+);
+router.post(
+    "/payment-gateway/paypal-webhook",
+    paymentGatewayController.paypalWebhook,
+);
 
 // ─── Public / auth routes (no subscription gate) ─────────────────────────────
 // These routes must remain open: auth, session, subscription self-service,
 // subscription plans listing, booking-form / estimate-form (public widgets),
 // and the super-admin portal.
 const openRoutes: { path: string; route: Router }[] = [
-  { path: "/auth",             route: authRoutes },
-  { path: "/user",             route: userRoutes },
-  { path: "/session",          route: sessionRoutes },
-  { path: "/subscription",     route: subscriptionRoutes },     // /me, /submit-proof, /change-plan etc.
-  { path: "/subscription-plan", route: subscriptionPlanRoutes }, // public plan listing
-  { path: "/booking-form",     route: bookingFormRoutes },       // public booking widget
-  { path: "/estimate-form",    route: estimateFormRoutes },      // public estimate widget
-  { path: "/super-admin",      route: superAdminRoutes },        // SA has its own auth guard
+    { path: "/auth", route: authRoutes },
+    { path: "/user", route: userRoutes },
+    { path: "/session", route: sessionRoutes },
+    { path: "/subscription", route: subscriptionRoutes }, // /me, /submit-proof, /change-plan etc.
+    { path: "/subscription-plan", route: subscriptionPlanRoutes }, // public plan listing
+    { path: "/booking-form", route: bookingFormRoutes }, // public booking widget
+    { path: "/estimate-form", route: estimateFormRoutes }, // public estimate widget
+    { path: "/super-admin", route: superAdminRoutes }, // SA has its own auth guard
 ];
 
 // ─── Gated routes (subscription required) ────────────────────────────────────
 // checkSubscription reads req.user (set by checkAuth inside each sub-router)
 // and returns 402 if the tenant's subscription is blocked.
 const gatedRoutes: { path: string; route: Router }[] = [
-  { path: "/admin",            route: adminRoutes },
-  { path: "/staff",            route: staffRoutes },
-  { path: "/client",           route: clientRoutes },
-  { path: "/service-catalog",  route: serviceCatalogRoutes },
-  { path: "/invoice",          route: invoiceRoutes },
-  { path: "/expense",          route: expenseRoutes },
-  { path: "/booking",          route: bookingRoutes },
-  { path: "/lead",             route: leadRoutes },
-  { path: "/dashboard",        route: dashboardRoutes },
-  { path: "/notification",     route: notificationRoutes },
-  { path: "/payment-gateway",  route: paymentGatewayRoutes },
-  { path: "/job",              route: jobRoutes },
-  { path: "/quote",            route: quoteRoutes },
-  { path: "/estimate",         route: estimateRoutes },
-  { path: "/review",           route: reviewRoutes },
-  { path: "/reports",          route: reportsRoutes },
-  { path: "/checklist",        route: checklistRoutes },
-  { path: "/recurring-booking", route: recurringBookingRoutes },
-  { path: "/pricing-rules",    route: pricingRulesRoutes },
-  { path: "/staff-leave",      route: staffLeaveRoutes },
-  // Coupon module has its own per-route checkAuth guards (SUPER_ADMIN / SUPER_ADMIN_OR_ADMIN)
-  { path: "/coupon",           route: couponRoutes },
+    { path: "/admin", route: adminRoutes },
+    { path: "/staff", route: staffRoutes },
+    { path: "/client", route: clientRoutes },
+    { path: "/service-catalog", route: serviceCatalogRoutes },
+    { path: "/invoice", route: invoiceRoutes },
+    { path: "/expense", route: expenseRoutes },
+    { path: "/booking", route: bookingRoutes },
+    { path: "/lead", route: leadRoutes },
+    { path: "/dashboard", route: dashboardRoutes },
+    { path: "/notification", route: notificationRoutes },
+    { path: "/payment-gateway", route: paymentGatewayRoutes },
+    { path: "/job", route: jobRoutes },
+    { path: "/quote", route: quoteRoutes },
+    { path: "/estimate", route: estimateRoutes },
+    { path: "/review", route: reviewRoutes },
+    { path: "/reports", route: reportsRoutes },
+    { path: "/checklist", route: checklistRoutes },
+    { path: "/recurring-booking", route: recurringBookingRoutes },
+    { path: "/pricing-rules", route: pricingRulesRoutes },
+    { path: "/staff-leave", route: staffLeaveRoutes },
+    // Coupon module has its own per-route checkAuth guards (SUPER_ADMIN / SUPER_ADMIN_OR_ADMIN)
+    { path: "/coupon", route: couponRoutes },
 ];
 
 // Register open routes first
 openRoutes.forEach(({ path, route }) => {
-  router.use(path, route);
+    router.use(path, route);
 });
 
 // Register gated routes — checkSubscription fires before each sub-router's
 // own checkAuth, but since checkSubscription short-circuits on non-ADMIN
 // users (returning next() immediately), it is safe for staff/superadmin too.
 gatedRoutes.forEach(({ path, route }) => {
-  router.use(path, checkSubscription, route);
+    router.use(path, checkSubscription, route);
 });
 
 export default router;

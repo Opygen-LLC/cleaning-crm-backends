@@ -7,6 +7,46 @@ import status from "http-status";
 const mask = (key?: string | null): string | null =>
     key ? `••••••••${key.slice(-4)}` : null;
 
+/**
+ * Transforms the flat DB PaymentGatewayConfig row into the nested shape
+ * the frontend expects:
+ * {
+ *   activeGateway, invoicePaymentLink, quotePaymentLink, autoSendReceipt,
+ *   defaultCurrency,
+ *   stripe: { enabled, publishableKey, secretKey, webhookSecret, testMode, connectedAccountId },
+ *   paypal: { enabled, clientId, clientSecret, testMode, connectedMerchantId },
+ * }
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const toClientShape = (cfg: Record<string, any>) => ({
+    activeGateway: (cfg.activeGateway as string)?.toLowerCase() ?? "none",
+    invoicePaymentLink: cfg.invoicePaymentLink ?? true,
+    quotePaymentLink: cfg.quotePaymentLink ?? false,
+    autoSendReceipt: cfg.autoSendReceipt ?? true,
+    defaultCurrency: cfg.defaultCurrency ?? "GBP",
+    stripe: {
+        enabled: cfg.stripeEnabled ?? false,
+        publishableKey: cfg.stripePublishableKey ?? "",
+        secretKey: cfg.stripeSecretKeyMasked ?? "",
+        webhookSecret: cfg.stripeWebhookSecretMasked ?? "",
+        testMode: cfg.stripeTestMode ?? true,
+        connectedAccountId: cfg.stripeConnectedAccountId ?? null,
+    },
+    paypal: {
+        enabled: cfg.paypalEnabled ?? false,
+        clientId: cfg.paypalClientId ?? "",
+        clientSecret: cfg.paypalClientSecretMasked ?? "",
+        testMode: cfg.paypalTestMode ?? true,
+        connectedMerchantId: cfg.paypalConnectedMerchantId ?? null,
+    },
+    square: {
+        enabled: false,
+        applicationId: "",
+        accessToken: "",
+        testMode: true,
+    },
+});
+
 const getPaymentGatewayConfig = async (userId: string) => {
     const admin = await prisma.adminProfile.findUnique({
         where: { userId },
@@ -16,72 +56,158 @@ const getPaymentGatewayConfig = async (userId: string) => {
     if (!admin) throw new Error("Admin profile not found");
 
     if (!admin.paymentGateway) {
-        return prisma.paymentGatewayConfig.create({
+        const created = await prisma.paymentGatewayConfig.create({
             data: { adminId: admin.id },
         });
+        return toClientShape(created);
     }
 
-    return admin.paymentGateway;
+    return toClientShape(admin.paymentGateway);
 };
 
+/**
+ * Accepts either the nested frontend shape or the legacy flat shape and
+ * normalises everything to the flat DB column names before upserting.
+ *
+ * Nested frontend payload example:
+ *   {
+ *     activeGateway: "stripe",
+ *     stripe: { publishableKey, secretKey, webhookSecret, testMode, enabled },
+ *     paypal: { clientId, clientSecret, testMode, enabled },
+ *     invoicePaymentLink, quotePaymentLink, autoSendReceipt, defaultCurrency
+ *   }
+ */
 const updatePaymentGatewayConfig = async (
     userId: string,
-    payload: Record<string, unknown>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    payload: Record<string, any>,
 ) => {
     const admin = await prisma.adminProfile.findUnique({ where: { userId } });
     if (!admin) throw new Error("Admin profile not found");
 
-    const {
-        stripeSecretKey,
-        stripeWebhookSecret,
-        paypalClientSecret,
-        ...rest
-    } = payload as {
+    const data: Record<string, unknown> = {};
+
+    // ── Flatten nested stripe block ──────────────────────────────────────────
+    if (payload.stripe && typeof payload.stripe === "object") {
+        const s = payload.stripe as Record<string, unknown>;
+        if ("enabled" in s) data.stripeEnabled = Boolean(s.enabled);
+        if ("publishableKey" in s) data.stripePublishableKey = s.publishableKey;
+        if ("testMode" in s) data.stripeTestMode = Boolean(s.testMode);
+        if (
+            "secretKey" in s &&
+            s.secretKey &&
+            !(s.secretKey as string).includes("•")
+        )
+            data.stripeSecretKeyMasked = mask(s.secretKey as string);
+        if (
+            "webhookSecret" in s &&
+            s.webhookSecret &&
+            !(s.webhookSecret as string).includes("•")
+        )
+            data.stripeWebhookSecretMasked = mask(s.webhookSecret as string);
+    }
+
+    // ── Flatten nested paypal block ──────────────────────────────────────────
+    if (payload.paypal && typeof payload.paypal === "object") {
+        const p = payload.paypal as Record<string, unknown>;
+        if ("enabled" in p) data.paypalEnabled = Boolean(p.enabled);
+        if ("clientId" in p) data.paypalClientId = p.clientId;
+        if ("testMode" in p) data.paypalTestMode = Boolean(p.testMode);
+        if (
+            "clientSecret" in p &&
+            p.clientSecret &&
+            !(p.clientSecret as string).includes("•")
+        )
+            data.paypalClientSecretMasked = mask(p.clientSecret as string);
+    }
+
+    // ── Legacy flat fields (kept for backwards compat) ────────────────────────
+    const flat = payload as {
+        stripeEnabled?: boolean;
+        stripePublishableKey?: string;
         stripeSecretKey?: string;
         stripeWebhookSecret?: string;
+        stripeTestMode?: boolean;
+        paypalEnabled?: boolean;
+        paypalClientId?: string;
         paypalClientSecret?: string;
-        [key: string]: unknown;
+        paypalTestMode?: boolean;
     };
+    if ("stripeEnabled" in flat) data.stripeEnabled = flat.stripeEnabled;
+    if ("stripePublishableKey" in flat)
+        data.stripePublishableKey = flat.stripePublishableKey;
+    if ("stripeTestMode" in flat) data.stripeTestMode = flat.stripeTestMode;
+    if (flat.stripeSecretKey)
+        data.stripeSecretKeyMasked = mask(flat.stripeSecretKey);
+    if (flat.stripeWebhookSecret)
+        data.stripeWebhookSecretMasked = mask(flat.stripeWebhookSecret);
+    if ("paypalEnabled" in flat) data.paypalEnabled = flat.paypalEnabled;
+    if ("paypalClientId" in flat) data.paypalClientId = flat.paypalClientId;
+    if ("paypalTestMode" in flat) data.paypalTestMode = flat.paypalTestMode;
+    if (flat.paypalClientSecret)
+        data.paypalClientSecretMasked = mask(flat.paypalClientSecret);
 
-    const data: Record<string, unknown> = { ...rest };
-    if (stripeSecretKey) data.stripeSecretKeyMasked = mask(stripeSecretKey);
-    if (stripeWebhookSecret)
-        data.stripeWebhookSecretMasked = mask(stripeWebhookSecret);
-    if (paypalClientSecret)
-        data.paypalClientSecretMasked = mask(paypalClientSecret);
+    // ── Scalar top-level fields ───────────────────────────────────────────────
+    if ("invoicePaymentLink" in payload)
+        data.invoicePaymentLink = payload.invoicePaymentLink;
+    if ("quotePaymentLink" in payload)
+        data.quotePaymentLink = payload.quotePaymentLink;
+    if ("autoSendReceipt" in payload)
+        data.autoSendReceipt = payload.autoSendReceipt;
+    if ("defaultCurrency" in payload)
+        data.defaultCurrency = payload.defaultCurrency;
 
-    // FIX: Use explicit "in" checks instead of nullish coalescing so that
-    // setting stripeEnabled: false correctly results in PAYPAL or NONE,
-    // rather than staying STRIPE because `false ?? current.stripeEnabled`
-    // falls through to the still-true DB value.
-    const current = await prisma.paymentGatewayConfig.findUnique({
-        where: { adminId: admin.id },
-    });
+    // ── Resolve active gateway ────────────────────────────────────────────────
+    // Honour an explicit activeGateway if provided, otherwise derive it.
+    if ("activeGateway" in payload && payload.activeGateway) {
+        const gw = (payload.activeGateway as string).toUpperCase();
+        data.activeGateway =
+            gw === "STRIPE"
+                ? PaymentGateway.STRIPE
+                : gw === "PAYPAL"
+                  ? PaymentGateway.PAYPAL
+                  : PaymentGateway.NONE;
+    } else {
+        const current = await prisma.paymentGatewayConfig.findUnique({
+            where: { adminId: admin.id },
+        });
+        const stripeOn =
+            "stripeEnabled" in data
+                ? Boolean(data.stripeEnabled)
+                : Boolean(current?.stripeEnabled);
+        const paypalOn =
+            "paypalEnabled" in data
+                ? Boolean(data.paypalEnabled)
+                : Boolean(current?.paypalEnabled);
 
-    const stripeOn =
-        "stripeEnabled" in data
-            ? Boolean(data.stripeEnabled)
-            : Boolean(current?.stripeEnabled);
-    const paypalOn =
-        "paypalEnabled" in data
-            ? Boolean(data.paypalEnabled)
-            : Boolean(current?.paypalEnabled);
+        if (stripeOn) data.activeGateway = PaymentGateway.STRIPE;
+        else if (paypalOn) data.activeGateway = PaymentGateway.PAYPAL;
+        else data.activeGateway = PaymentGateway.NONE;
+    }
 
-    if (stripeOn) data.activeGateway = PaymentGateway.STRIPE;
-    else if (paypalOn) data.activeGateway = PaymentGateway.PAYPAL;
-    else data.activeGateway = PaymentGateway.NONE;
-
-    return prisma.paymentGatewayConfig.upsert({
+    const updated = await prisma.paymentGatewayConfig.upsert({
         where: { adminId: admin.id },
         update: data,
         create: { adminId: admin.id, ...data },
     });
+
+    return toClientShape(updated);
 };
 
 // FIX: Added oauthConnect — stores the connectedAccountId/merchantId returned
 // after a backend server-to-server OAuth code exchange with Stripe/PayPal.
-// The actual token exchange with the provider's API should happen here using
-// your Stripe SDK or PayPal SDK. The stub below stores the connection ID.
+//
+// PRODUCTION TODO: Replace the stub below with a real SDK exchange:
+//   Stripe:
+//     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+//     const response = await stripe.oauth.token({ grant_type: "authorization_code", code });
+//     const connectedAccountId = response.stripe_user_id!;
+//
+//   PayPal (sandbox / live):
+//     POST https://api-m{testMode?'.sandbox':''}.paypal.com/v1/identity/openidconnect/tokenservice
+//     body: grant_type=authorization_code&code=<code>
+//     headers: Authorization: Basic base64(clientId:secret)
+//     response.access_token → store as connectedMerchantId or use /v1/identity/oauth2/userinfo
 const oauthConnect = async (
     userId: string,
     gateway: "stripe" | "paypal",
@@ -90,14 +216,15 @@ const oauthConnect = async (
     const admin = await prisma.adminProfile.findUnique({ where: { userId } });
     if (!admin) throw new Error("Admin profile not found");
 
-    // TODO: exchange `code` with Stripe/PayPal using their SDK:
-    //   Stripe:  const response = await stripe.oauth.token({ grant_type: "authorization_code", code });
-    //   PayPal:  POST https://api.paypal.com/v1/identity/openidconnect/tokenservice
-    // For now, store the code as the connected account ID (replace with real exchange).
-    const connectedAccountId = `connected_${gateway}_${code.slice(0, 8)}`;
+    // Derive a stable connected-account ID.
+    // In production: exchange `code` with Stripe/PayPal as described above.
+    const connectedAccountId = code.startsWith("connected_")
+        ? code // already a connection ID (re-connect)
+        : `connected_${gateway}_${code.slice(0, 8)}_${Date.now()}`;
 
+    let updatedCfg;
     if (gateway === "stripe") {
-        await prisma.paymentGatewayConfig.upsert({
+        updatedCfg = await prisma.paymentGatewayConfig.upsert({
             where: { adminId: admin.id },
             update: {
                 stripeEnabled: true,
@@ -112,7 +239,7 @@ const oauthConnect = async (
             },
         });
     } else {
-        await prisma.paymentGatewayConfig.upsert({
+        updatedCfg = await prisma.paymentGatewayConfig.upsert({
             where: { adminId: admin.id },
             update: {
                 paypalEnabled: true,
@@ -128,7 +255,11 @@ const oauthConnect = async (
         });
     }
 
-    return { success: true, connectedAccountId };
+    return {
+        success: true,
+        connectedAccountId,
+        config: toClientShape(updatedCfg),
+    };
 };
 
 // FIX: Added disconnectGateway — clears the stored connection credentials.
@@ -145,13 +276,14 @@ const disconnectGateway = async (
 
     let newActiveGateway = current?.activeGateway ?? PaymentGateway.NONE;
 
+    let updatedCfg;
     if (gateway === "stripe") {
         if (newActiveGateway === PaymentGateway.STRIPE)
             newActiveGateway = current?.paypalEnabled
                 ? PaymentGateway.PAYPAL
                 : PaymentGateway.NONE;
 
-        await prisma.paymentGatewayConfig.upsert({
+        updatedCfg = await prisma.paymentGatewayConfig.upsert({
             where: { adminId: admin.id },
             update: {
                 stripeEnabled: false,
@@ -166,7 +298,7 @@ const disconnectGateway = async (
                 ? PaymentGateway.STRIPE
                 : PaymentGateway.NONE;
 
-        await prisma.paymentGatewayConfig.upsert({
+        updatedCfg = await prisma.paymentGatewayConfig.upsert({
             where: { adminId: admin.id },
             update: {
                 paypalEnabled: false,
@@ -177,7 +309,7 @@ const disconnectGateway = async (
         });
     }
 
-    return { success: true };
+    return { success: true, config: toClientShape(updatedCfg) };
 };
 
 // ─── PayPal Webhook Verification ──────────────────────────────────────────────

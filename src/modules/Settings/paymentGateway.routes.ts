@@ -1,5 +1,4 @@
 import { Router } from "express";
-import express from "express";
 import {
     ValidationProperty,
     zodValidate,
@@ -17,6 +16,10 @@ const router = Router();
 //   PATCH /api/v1/payment-gateway
 //   POST  /api/v1/payment-gateway/oauth
 //   POST  /api/v1/payment-gateway/disconnect
+//
+// Webhook routes are registered directly in routes/index.ts so they bypass
+// the subscription gate — Stripe/PayPal call them server-to-server with no
+// session cookie.
 
 router.get("/", checkAuth(UserRole.ADMIN), paymentGatewayController.getConfig);
 
@@ -27,30 +30,21 @@ router.patch(
     paymentGatewayController.updateConfig,
 );
 
-// FIX: Added missing OAuth connect and disconnect endpoints
+// OAuth connect — exchanges the authorization code returned by Stripe/PayPal
+// and stores the connected account / merchant ID.
 router.post(
     "/oauth",
     checkAuth(UserRole.ADMIN),
+    zodValidate(paymentGatewayValidation.oauth, ValidationProperty.BODY),
     paymentGatewayController.oauthConnect,
 );
 
+// Disconnect — revokes the OAuth connection and clears stored credentials.
 router.post(
     "/disconnect",
     checkAuth(UserRole.ADMIN),
+    zodValidate(paymentGatewayValidation.disconnect, ValidationProperty.BODY),
     paymentGatewayController.disconnectGateway,
-);
-
-// Public endpoint — PayPal calls this directly (no admin auth)
-router.post("/paypal-webhook", paymentGatewayController.paypalWebhook);
-
-// Public endpoint — Stripe calls this directly (no admin auth).
-// express.raw() is required here so that the raw Buffer body is preserved for
-// Stripe's HMAC signature verification. Using express.json() on this route
-// would parse the body and make signature verification impossible.
-router.post(
-    "/stripe-webhook",
-    express.raw({ type: "*/*" }),
-    paymentGatewayController.stripeWebhook,
 );
 
 export const paymentGatewayRoutes = router;
