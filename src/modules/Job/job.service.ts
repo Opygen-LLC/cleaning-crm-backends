@@ -522,7 +522,7 @@ const assignStaff = async (
                     where: { id: updatedJob.clientId },
                     select: { name: true },
                 });
-                const jobDetailUrl = `${FRONTEND_URL}/admin/jobs/${jobId}`;
+                const jobDetailUrl = `${FRONTEND_URL}/staff/dashboard/jobs/${jobId}`;
 
                 await Promise.all(
                     staffList.map((staff) =>
