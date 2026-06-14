@@ -538,6 +538,16 @@ const publicQuoteAction = async (
                 });
             });
 
+            // Persist notification for ACCEPTED quote
+            createNotification({
+                adminId: quote.adminId,
+                type: NotificationType.QUOTE,
+                title: `Quote ${quote.quoteRef} accepted`,
+                message:
+                    "Client accepted the quote — a draft booking has been created",
+                relatedId: quote.id,
+            }).catch(() => {});
+
             // Return the updated quote with the new booking included
             const withBooking = await prisma.quote.findUnique({
                 where: { quoteRef },
@@ -581,6 +591,18 @@ const publicQuoteAction = async (
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { internalNotes, adminId, ...safeQuote } = updated;
+
+    // Notify admin when client declines
+    if (newStatus === QuoteStatus.DECLINED) {
+        createNotification({
+            adminId: quote.adminId,
+            type: NotificationType.QUOTE,
+            title: `Quote ${quote.quoteRef} declined`,
+            message: "Client declined the quote",
+            relatedId: quote.id,
+        }).catch(() => {});
+    }
+
     return safeQuote;
 };
 
@@ -588,6 +610,8 @@ const publicQuoteAction = async (
 
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { FRONTEND_URL } from "../../config/ENV";
+import { createNotification } from "../../lib/utils/createNotification";
+import { NotificationType } from "../../generated/prisma/enums";
 
 const sendQuoteEmail = async (id: string, user: IRequestUser) => {
     const adminId = await resolveAdminId(user.id);

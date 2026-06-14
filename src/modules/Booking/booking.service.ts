@@ -17,6 +17,8 @@ import {
 import { IRequestUser } from "../../types/requestUser.interface";
 import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
+import { createNotification } from "../../lib/utils/createNotification";
+import { NotificationType } from "../../generated/prisma/enums";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -188,9 +190,17 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
     // Fire confirmation email (non-blocking)
     sendBookingConfirmationEmail(booking, false).catch(() => {});
 
+    // Persist notification + push to bell
+    createNotification({
+        adminId: adminId,
+        type: NotificationType.BOOKING,
+        title: `New booking — ${booking.bookingRef}`,
+        message: `${booking.client.name} booked ${booking.serviceType.replace(/_/g, " ")}`,
+        relatedId: booking.id,
+    }).catch(() => {});
+
     return booking;
 };
-
 
 const getAllBookings = async (queryParams: IQueryParams, user: any) => {
     const adminId = await resolveAdminId(user.id);

@@ -16,6 +16,8 @@ import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { FRONTEND_URL } from "../../config/ENV";
 import { createStripePaymentLink } from "../../lib/Payments/stripe.healper";
 import { uploadFileToCloudinary } from "../../config/cloudinary";
+import { createNotification } from "../../lib/utils/createNotification";
+import { NotificationType } from '../../generated/prisma/enums';
 
 /**
  * Generates a unique invoice reference in the format #OP-INV-0001
@@ -211,10 +213,23 @@ const updateInvoiceStatus = async (
         data.sentAt = new Date();
     }
 
-    return await prisma.invoice.update({
+    const updated = await prisma.invoice.update({
         where: { id },
         data,
     });
+
+    // Notify admin when an invoice is manually marked PAID
+    if (invoiceStatus === InvoiceStatus.PAID) {
+        createNotification({
+            adminId: updated.adminId,
+            type: NotificationType.PAYMENT,
+            title: `Invoice ${updated.invoiceRef} paid`,
+            message: `Payment received from ${updated.clientName}`,
+            relatedId: updated.id,
+        }).catch(() => {});
+    }
+
+    return updated;
 };
 
 const deleteInvoice = async (id: string) => {
@@ -515,7 +530,7 @@ const recordPayment = async (
 
     const paidAt = payload.paidAt ? new Date(payload.paidAt) : new Date();
 
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
         // Create Payment record
         const payment = await tx.payment.create({
             data: {
@@ -539,6 +554,17 @@ const recordPayment = async (
 
         return { payment, invoice: updatedInvoice };
     });
+
+    // Notify admin of the manual payment record
+    createNotification({
+        adminId: admin.id,
+        type: NotificationType.PAYMENT,
+        title: `Invoice ${invoice.invoiceRef} paid`,
+        message: `${payload.method} payment of $${Number(payload.amount).toFixed(2)} recorded`,
+        relatedId: invoice.id,
+    }).catch(() => {});
+
+    return result;
 };
 
 // ─── Create Stripe Checkout Session for an invoice ───────────────────────────
@@ -672,7 +698,8 @@ const submitPaymentProof = async (
         const existing = await prisma.payment.findFirst({
             where: { id: paymentId, adminId: admin.id },
         });
-        if (!existing) throw new AppError(status.NOT_FOUND, "Payment not found");
+        if (!existing)
+            throw new AppError(status.NOT_FOUND, "Payment not found");
 
         payment = await prisma.payment.update({
             where: { id: paymentId },
@@ -741,6 +768,15 @@ const approvePayment = async (
             return { payment: updatedPayment, invoice: updatedInvoice };
         });
 
+        // Notify admin of approval
+        createNotification({
+            adminId: admin.id,
+            type: NotificationType.PAYMENT,
+            title: `Invoice ${invoice.invoiceRef} paid`,
+            message: "Manual payment proof approved — invoice marked as paid",
+            relatedId: invoice.id,
+        }).catch(() => {});
+
         // Send payment receipt email
         const fmt = (d: Date) =>
             d.toLocaleDateString("en-GB", {
@@ -761,7 +797,8 @@ const approvePayment = async (
                     paidDate: fmt(now),
                     amount: Number(invoice.total).toFixed(2),
                     paymentMethod: "Bank Transfer",
-                    serviceAddress: invoice.serviceAddress ?? invoice.clientName,
+                    serviceAddress:
+                        invoice.serviceAddress ?? invoice.clientName,
                 },
             });
         }
