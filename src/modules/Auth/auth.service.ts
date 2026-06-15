@@ -69,13 +69,15 @@ const register = async ({
 };
 
 const login = async ({ email, password }: ILoginUserPayload) => {
-    // ✅ Minimal select — no admin join, staff join only fetches status
+    // ✅ Minimal select — also fetch needPasswordChange so the client can
+    //    redirect staff to the forced password-change screen on first login.
     const user = await prisma.user.findUnique({
         where: { email },
         select: {
             id: true,
             role: true,
-            staff: { select: { status: true } }, // lightweight vs include
+            needPasswordChange: true,          // ← added
+            staff: { select: { status: true } },
         },
     });
 
@@ -132,6 +134,9 @@ const login = async ({ email, password }: ILoginUserPayload) => {
 
     return {
         ...signIn,
+        // ✅ Expose needPasswordChange so LoginForm can redirect to /set-password
+        //    before granting access to any dashboard route.
+        needPasswordChange: user.needPasswordChange,
         accessToken: tokenUtils.getAccessToken(tokenPayload),
         refreshToken: tokenUtils.getRefreshToken(tokenPayload),
     };
@@ -399,6 +404,14 @@ const changePassword = async (
         headers: new Headers({
             Authorization: `Bearer ${sessionToken}`,
         }),
+    });
+
+    // ✅ Clear the forced-password-change flag now that the staff member has
+    //    chosen their own password.  We do this after the password change
+    //    succeeds so the flag is only cleared on a real credential update.
+    await prisma.user.update({
+        where: { id: session.user.id },
+        data: { needPasswordChange: false },
     });
 
     const tokenPayload = {
