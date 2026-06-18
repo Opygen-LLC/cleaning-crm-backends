@@ -45,6 +45,7 @@ model AdminProfile {
   serviceCatalogs    ServiceCatalog[]
   activityLogs       ActivityLog[]
   notifications      Notification[]
+  oauthConnectLogs   OAuthConnectLog[]
 
   @@index([createdAt])
 }
@@ -75,6 +76,16 @@ model PaymentGatewayConfig {
   paypalClientSecretMasked  String?
   paypalTestMode            Boolean        @default(true)
   paypalConnectedMerchantId String?
+  // OAuth encrypted token storage
+  stripeAccessToken         String? // AES-256 encrypted
+  stripeRefreshToken        String? // for token rotation
+  stripeTokenExpiresAt      DateTime?
+  stripeScope               String? // e.g. read_write
+  paypalAccessToken         String? // AES-256 encrypted
+  paypalRefreshToken        String?
+  paypalTokenExpiresAt      DateTime?
+  oauthState                String? // CSRF nonce
+  connectedAt               DateTime?
   invoicePaymentLink        Boolean        @default(true)
   quotePaymentLink          Boolean        @default(false)
   autoSendReceipt           Boolean        @default(true)
@@ -139,4 +150,17 @@ model Notification {
   @@index([adminId, isRead])
   @@index([adminId, createdAt])
   @@map("notification")
+}
+
+model OAuthConnectLog {
+  id        String         @id @default(uuid())
+  adminId   String
+  gateway   PaymentGateway
+  event     String // connected | disconnected | token_refreshed
+  ip        String?
+  createdAt DateTime       @default(now())
+  admin     AdminProfile   @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@map("oauth_connect_log")
 }

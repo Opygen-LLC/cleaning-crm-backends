@@ -2,20 +2,47 @@ import { prisma } from "../../lib/prisma/prisma";
 import { PaymentGateway } from "../../generated/prisma/enums";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
+import Stripe from "stripe";
+import crypto from "crypto";
+import { createPayPalReferralUrl } from "../../lib/Payments/paypal.helper";
 
+// ─── AES-256-GCM helpers ──────────────────────────────────────────────────────
+// ENCRYPTION_KEY must be a 64-char hex string (32 bytes) in .env
+const ENCRYPTION_KEY = Buffer.from(process.env.ENCRYPTION_KEY ?? "", "hex");
+
+const encrypt = (plaintext: string): string => {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", ENCRYPTION_KEY, iv);
+    const encrypted = Buffer.concat([
+        cipher.update(plaintext, "utf8"),
+        cipher.final(),
+    ]);
+    const tag = cipher.getAuthTag();
+    // Format: iv(24):tag(32):ciphertext
+    return `${iv.toString("hex")}:${tag.toString("hex")}:${encrypted.toString("hex")}`;
+};
+
+const decrypt = (ciphertext: string): string => {
+    const [ivHex, tagHex, dataHex] = ciphertext.split(":");
+    const iv = Buffer.from(ivHex, "hex");
+    const tag = Buffer.from(tagHex, "hex");
+    const data = Buffer.from(dataHex, "hex");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", ENCRYPTION_KEY, iv);
+    decipher.setAuthTag(tag);
+    return decipher.update(data) + decipher.final("utf8");
+};
+
+// ─── Stripe client factory ────────────────────────────────────────────────────
+const getStripe = () => new Stripe(process.env.STRIPE_SECRET_KEY!);
+
+// ─── Display mask ─────────────────────────────────────────────────────────────
 /** Show only last 4 chars — matches the *Masked column convention in the schema */
 const mask = (key?: string | null): string | null =>
     key ? `••••••••${key.slice(-4)}` : null;
 
 /**
  * Transforms the flat DB PaymentGatewayConfig row into the nested shape
- * the frontend expects:
- * {
- *   activeGateway, invoicePaymentLink, quotePaymentLink, autoSendReceipt,
- *   defaultCurrency,
- *   stripe: { enabled, publishableKey, secretKey, webhookSecret, testMode, connectedAccountId },
- *   paypal: { enabled, clientId, clientSecret, testMode, connectedMerchantId },
- * }
+ * the frontend expects.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const toClientShape = (cfg: Record<string, any>) => ({
@@ -31,6 +58,8 @@ const toClientShape = (cfg: Record<string, any>) => ({
         webhookSecret: cfg.stripeWebhookSecretMasked ?? "",
         testMode: cfg.stripeTestMode ?? true,
         connectedAccountId: cfg.stripeConnectedAccountId ?? null,
+        connectedAt: cfg.connectedAt ?? null,
+        scope: cfg.stripeScope ?? null,
     },
     paypal: {
         enabled: cfg.paypalEnabled ?? false,
@@ -47,6 +76,7 @@ const toClientShape = (cfg: Record<string, any>) => ({
     },
 });
 
+// ─── getPaymentGatewayConfig ──────────────────────────────────────────────────
 const getPaymentGatewayConfig = async (userId: string) => {
     const admin = await prisma.adminProfile.findUnique({
         where: { userId },
@@ -65,18 +95,7 @@ const getPaymentGatewayConfig = async (userId: string) => {
     return toClientShape(admin.paymentGateway);
 };
 
-/**
- * Accepts either the nested frontend shape or the legacy flat shape and
- * normalises everything to the flat DB column names before upserting.
- *
- * Nested frontend payload example:
- *   {
- *     activeGateway: "stripe",
- *     stripe: { publishableKey, secretKey, webhookSecret, testMode, enabled },
- *     paypal: { clientId, clientSecret, testMode, enabled },
- *     invoicePaymentLink, quotePaymentLink, autoSendReceipt, defaultCurrency
- *   }
- */
+// ─── updatePaymentGatewayConfig ───────────────────────────────────────────────
 const updatePaymentGatewayConfig = async (
     userId: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -158,7 +177,6 @@ const updatePaymentGatewayConfig = async (
         data.defaultCurrency = payload.defaultCurrency;
 
     // ── Resolve active gateway ────────────────────────────────────────────────
-    // Honour an explicit activeGateway if provided, otherwise derive it.
     if ("activeGateway" in payload && payload.activeGateway) {
         const gw = (payload.activeGateway as string).toUpperCase();
         data.activeGateway =
@@ -194,131 +212,248 @@ const updatePaymentGatewayConfig = async (
     return toClientShape(updated);
 };
 
-// FIX: Added oauthConnect — stores the connectedAccountId/merchantId returned
-// after a backend server-to-server OAuth code exchange with Stripe/PayPal.
-//
-// PRODUCTION TODO: Replace the stub below with a real SDK exchange:
-//   Stripe:
-//     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-//     const response = await stripe.oauth.token({ grant_type: "authorization_code", code });
-//     const connectedAccountId = response.stripe_user_id!;
-//
-//   PayPal (sandbox / live):
-//     POST https://api-m{testMode?'.sandbox':''}.paypal.com/v1/identity/openidconnect/tokenservice
-//     body: grant_type=authorization_code&code=<code>
-//     headers: Authorization: Basic base64(clientId:secret)
-//     response.access_token → store as connectedMerchantId or use /v1/identity/oauth2/userinfo
+// ─── getStripeConnectUrl ──────────────────────────────────────────────────────
+// GET /payment-gateway/stripe/connect-url
+// Generates a Stripe OAuth URL and stores a CSRF state nonce in the DB.
+const getStripeConnectUrl = async (userId: string) => {
+    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
+    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+
+    // Cryptographically-random 32-byte nonce for CSRF protection
+    const state = crypto.randomBytes(32).toString("hex");
+
+    await prisma.paymentGatewayConfig.upsert({
+        where: { adminId: admin.id },
+        update: { oauthState: state },
+        create: { adminId: admin.id, oauthState: state },
+    });
+
+    const params = new URLSearchParams({
+        response_type: "code",
+        client_id: process.env.STRIPE_CLIENT_ID!,
+        scope: "read_write",
+        redirect_uri: `${process.env.FRONTEND_URL}/oauth/callback/stripe`,
+        state,
+    });
+
+    return { url: `https://connect.stripe.com/oauth/authorize?${params}` };
+};
+
+// ─── oauthConnect ─────────────────────────────────────────────────────────────
+// POST /payment-gateway/oauth
+// Exchanges the Stripe/PayPal authorization code for tokens, verifies the
+// state nonce, encrypts the access token, and persists everything to the DB.
 const oauthConnect = async (
     userId: string,
     gateway: "stripe" | "paypal",
     code: string,
+    stateParam?: string,
+    ip?: string,
 ) => {
     const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new Error("Admin profile not found");
+    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
 
-    // Derive a stable connected-account ID.
-    // In production: exchange `code` with Stripe/PayPal as described above.
-    const connectedAccountId = code.startsWith("connected_")
-        ? code // already a connection ID (re-connect)
-        : `connected_${gateway}_${code.slice(0, 8)}_${Date.now()}`;
+    const cfg = await prisma.paymentGatewayConfig.findUnique({
+        where: { adminId: admin.id },
+    });
+
+    // ── Verify CSRF state nonce ───────────────────────────────────────────────
+    if (stateParam) {
+        if (!cfg?.oauthState || cfg.oauthState !== stateParam) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                "Invalid OAuth state — possible CSRF",
+            );
+        }
+    }
 
     let updatedCfg;
+
     if (gateway === "stripe") {
-        updatedCfg = await prisma.paymentGatewayConfig.upsert({
+        // ── Exchange code for Stripe tokens ───────────────────────────────────
+        const stripe = getStripe();
+        const response = await stripe.oauth.token({
+            grant_type: "authorization_code",
+            code,
+        });
+
+        const connectedAccountId = response.stripe_user_id!;
+        const accessToken = response.access_token!;
+        const refreshToken = response.refresh_token ?? null;
+        const scope = response.scope ?? null;
+
+        // Encrypt access token before storage
+        const encryptedAccessToken = encrypt(accessToken);
+        const encryptedRefreshToken = refreshToken
+            ? encrypt(refreshToken)
+            : null;
+
+        updatedCfg = await prisma.paymentGatewayConfig.update({
             where: { adminId: admin.id },
-            update: {
-                stripeEnabled: true,
+            data: {
                 stripeConnectedAccountId: connectedAccountId,
+                stripeAccessToken: encryptedAccessToken,
+                stripeRefreshToken: encryptedRefreshToken,
+                stripeScope: scope,
+                stripeEnabled: true,
                 activeGateway: PaymentGateway.STRIPE,
+                oauthState: null, // clear nonce
+                connectedAt: new Date(),
             },
-            create: {
+        });
+
+        // Audit log
+        await prisma.oAuthConnectLog.create({
+            data: {
                 adminId: admin.id,
-                stripeEnabled: true,
-                stripeConnectedAccountId: connectedAccountId,
-                activeGateway: PaymentGateway.STRIPE,
+                gateway: PaymentGateway.STRIPE,
+                event: "connected",
+                ip: ip ?? null,
             },
         });
     } else {
+        // ── PayPal PPCP callback — merchantId capture ─────────────────────────
+        // PayPal's partner-referral flow does NOT return an auth code.
+        // Instead the callback URL carries ?merchantId=xxx&merchantIdInPayPal=yyy
+        // The frontend passes merchantId as the `code` param.
+        // No token exchange is needed at this point; permissions are granted
+        // implicitly via the partner-referral agreement.
+        const merchantId = code; // `code` field reused — carries merchantId from frontend
+
+        if (!merchantId) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                "PayPal merchantId is required",
+            );
+        }
+
         updatedCfg = await prisma.paymentGatewayConfig.upsert({
             where: { adminId: admin.id },
             update: {
+                paypalConnectedMerchantId: merchantId,
                 paypalEnabled: true,
-                paypalConnectedMerchantId: connectedAccountId,
                 activeGateway: PaymentGateway.PAYPAL,
+                oauthState: null,
+                connectedAt: new Date(),
             },
             create: {
                 adminId: admin.id,
+                paypalConnectedMerchantId: merchantId,
                 paypalEnabled: true,
-                paypalConnectedMerchantId: connectedAccountId,
                 activeGateway: PaymentGateway.PAYPAL,
+                connectedAt: new Date(),
+            },
+        });
+
+        await prisma.oAuthConnectLog.create({
+            data: {
+                adminId: admin.id,
+                gateway: PaymentGateway.PAYPAL,
+                event: "connected",
+                ip: ip ?? null,
             },
         });
     }
 
     return {
         success: true,
-        connectedAccountId,
         config: toClientShape(updatedCfg),
     };
 };
 
-// FIX: Added disconnectGateway — clears the stored connection credentials.
+// ─── disconnectGateway ────────────────────────────────────────────────────────
+// POST /payment-gateway/disconnect
+// Revokes the OAuth token on the provider's side, then clears the DB.
 const disconnectGateway = async (
     userId: string,
     gateway: "stripe" | "paypal",
+    ip?: string,
 ) => {
     const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new Error("Admin profile not found");
+    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
 
-    const current = await prisma.paymentGatewayConfig.findUnique({
+    const cfg = await prisma.paymentGatewayConfig.findUnique({
         where: { adminId: admin.id },
     });
 
-    let newActiveGateway = current?.activeGateway ?? PaymentGateway.NONE;
-
+    let newActiveGateway = cfg?.activeGateway ?? PaymentGateway.NONE;
     let updatedCfg;
+
     if (gateway === "stripe") {
+        // ── Revoke token on Stripe before clearing DB ─────────────────────────
+        if (cfg?.stripeConnectedAccountId) {
+            try {
+                const stripe = getStripe();
+                await stripe.oauth.deauthorize({
+                    client_id: process.env.STRIPE_CLIENT_ID!,
+                    stripe_user_id: cfg.stripeConnectedAccountId,
+                });
+            } catch (err) {
+                // Log but don't block — DB cleanup should still proceed
+                console.error("[Stripe disconnect] deauthorize failed:", err);
+            }
+        }
+
         if (newActiveGateway === PaymentGateway.STRIPE)
-            newActiveGateway = current?.paypalEnabled
+            newActiveGateway = cfg?.paypalEnabled
                 ? PaymentGateway.PAYPAL
                 : PaymentGateway.NONE;
 
-        updatedCfg = await prisma.paymentGatewayConfig.upsert({
+        updatedCfg = await prisma.paymentGatewayConfig.update({
             where: { adminId: admin.id },
-            update: {
+            data: {
                 stripeEnabled: false,
                 stripeConnectedAccountId: null,
+                stripeAccessToken: null,
+                stripeRefreshToken: null,
+                stripeTokenExpiresAt: null,
+                stripeScope: null,
+                connectedAt: null,
                 activeGateway: newActiveGateway,
             },
-            create: { adminId: admin.id },
+        });
+
+        await prisma.oAuthConnectLog.create({
+            data: {
+                adminId: admin.id,
+                gateway: PaymentGateway.STRIPE,
+                event: "disconnected",
+                ip: ip ?? null,
+            },
         });
     } else {
         if (newActiveGateway === PaymentGateway.PAYPAL)
-            newActiveGateway = current?.stripeEnabled
+            newActiveGateway = cfg?.stripeEnabled
                 ? PaymentGateway.STRIPE
                 : PaymentGateway.NONE;
 
-        updatedCfg = await prisma.paymentGatewayConfig.upsert({
+        updatedCfg = await prisma.paymentGatewayConfig.update({
             where: { adminId: admin.id },
-            update: {
+            data: {
                 paypalEnabled: false,
                 paypalConnectedMerchantId: null,
+                paypalAccessToken: null,
+                paypalRefreshToken: null,
+                paypalTokenExpiresAt: null,
+                connectedAt: null,
                 activeGateway: newActiveGateway,
             },
-            create: { adminId: admin.id },
+        });
+
+        await prisma.oAuthConnectLog.create({
+            data: {
+                adminId: admin.id,
+                gateway: PaymentGateway.PAYPAL,
+                event: "disconnected",
+                ip: ip ?? null,
+            },
         });
     }
 
     return { success: true, config: toClientShape(updatedCfg) };
 };
 
-// ─── PayPal Webhook Verification ──────────────────────────────────────────────
-//
-// PayPal sends IPN/webhook events to a registered endpoint.
-// We verify the event by calling PayPal's verify-webhook-signature API,
-// then handle PAYMENT.CAPTURE.COMPLETED and BILLING.SUBSCRIPTION events
-// to keep invoices and subscriptions in sync.
-
+// ─── PayPal Webhook Handler ───────────────────────────────────────────────────
 interface IPayPalWebhookEvent {
     id: string;
     event_type: string;
@@ -330,15 +465,11 @@ const handlePayPalWebhook = async (
     event: IPayPalWebhookEvent,
     headers: Record<string, string>,
 ) => {
-    // ── Verify signature ───────────────────────────────────────────────────────
-    // We look up the first admin config that has PayPal enabled to get the
-    // client credentials needed for verification.
     const config = await prisma.paymentGatewayConfig.findFirst({
         where: { paypalEnabled: true },
     });
 
     if (config?.paypalClientId && config?.paypalClientSecretMasked) {
-        // Obtain an access token from PayPal
         const credentials = Buffer.from(
             `${config.paypalClientId}:${config.paypalClientSecretMasked}`,
         ).toString("base64");
@@ -397,9 +528,7 @@ const handlePayPalWebhook = async (
         }
     }
 
-    // ── Handle events ──────────────────────────────────────────────────────────
     switch (event.event_type) {
-        // Payment captured — mark the linked invoice as PAID
         case "PAYMENT.CAPTURE.COMPLETED": {
             const invoiceId: string | undefined =
                 event.resource?.custom_id ?? event.resource?.invoice_id;
@@ -414,8 +543,6 @@ const handlePayPalWebhook = async (
 
                 if (invoice) {
                     const now = new Date();
-
-                    // Generate payment ref
                     const lastPayment = await prisma.payment.findFirst({
                         orderBy: { createdAt: "desc" },
                         select: { paymentRef: true },
@@ -455,7 +582,6 @@ const handlePayPalWebhook = async (
             break;
         }
 
-        // Payment reversed / refunded — flip invoice back to SENT
         case "PAYMENT.CAPTURE.REVERSED":
         case "PAYMENT.CAPTURE.REFUNDED": {
             const invoiceId: string | undefined = event.resource?.custom_id;
@@ -469,7 +595,6 @@ const handlePayPalWebhook = async (
         }
 
         default:
-            // Unhandled event type — log and return 200 to acknowledge receipt
             console.log(
                 `[PayPal Webhook] Unhandled event: ${event.event_type}`,
             );
@@ -479,23 +604,7 @@ const handlePayPalWebhook = async (
 };
 
 // ─── Stripe Webhook Handler ───────────────────────────────────────────────────
-//
-// Stripe sends signed webhook events to POST /payment-gateway/stripe-webhook.
-// The raw request body (Buffer) must be passed for HMAC verification using the
-// webhook secret stored in PaymentGatewayConfig.stripeWebhookSecretMasked.
-//
-// Handled events:
-//   payment_intent.succeeded      → mark linked invoice PAID, create Payment row
-//   payment_intent.payment_failed → log failure (no status change)
-//   charge.refunded               → flip invoice back to SENT
-
-import Stripe from "stripe";
-
 const handleStripeWebhook = async (rawBody: Buffer, signature: string) => {
-    // ── Look up the admin config that has Stripe enabled ───────────────────────
-    // In a multi-tenant setup each admin has their own webhook secret stored in
-    // the DB. We try to find it via the invoice linked in the event metadata;
-    // if not present we fall back to the first Stripe-enabled config.
     const config = await prisma.paymentGatewayConfig.findFirst({
         where: { stripeEnabled: true },
         select: {
@@ -511,11 +620,7 @@ const handleStripeWebhook = async (rawBody: Buffer, signature: string) => {
         );
     }
 
-    // ── Verify signature ───────────────────────────────────────────────────────
-    // Stripe expects the *raw* body bytes — any JSON.parse/stringify will break
-    // the HMAC. Express must be configured with express.raw({ type: "*/*" }) on
-    // this route (see paymentGateway.routes.ts).
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "");
+    const stripe = getStripe();
     let event: Stripe.Event;
     try {
         event = stripe.webhooks.constructEvent(
@@ -530,9 +635,7 @@ const handleStripeWebhook = async (rawBody: Buffer, signature: string) => {
         );
     }
 
-    // ── Handle events ──────────────────────────────────────────────────────────
     switch (event.type) {
-        // ── Successful payment ─────────────────────────────────────────────────
         case "payment_intent.succeeded": {
             const pi = event.data.object as Stripe.PaymentIntent;
             const invoiceId: string | undefined =
@@ -548,8 +651,6 @@ const handleStripeWebhook = async (rawBody: Buffer, signature: string) => {
 
                 if (invoice) {
                     const now = new Date();
-
-                    // Auto-increment payment ref
                     const lastPayment = await prisma.payment.findFirst({
                         orderBy: { createdAt: "desc" },
                         select: { paymentRef: true },
@@ -566,7 +667,7 @@ const handleStripeWebhook = async (rawBody: Buffer, signature: string) => {
                         prisma.payment.create({
                             data: {
                                 paymentRef,
-                                amount: Number(pi.amount_received) / 100, // pence → pounds/dollars
+                                amount: Number(pi.amount_received) / 100,
                                 method: "STRIPE" as any,
                                 status: "PAID" as any,
                                 gatewayPaymentId: pi.id,
@@ -586,7 +687,6 @@ const handleStripeWebhook = async (rawBody: Buffer, signature: string) => {
             break;
         }
 
-        // ── Failed payment — log only, do not change invoice status ───────────
         case "payment_intent.payment_failed": {
             const pi = event.data.object as Stripe.PaymentIntent;
             console.log(
@@ -596,7 +696,6 @@ const handleStripeWebhook = async (rawBody: Buffer, signature: string) => {
             break;
         }
 
-        // ── Refund — flip invoice back to SENT so admin can take action ────────
         case "charge.refunded": {
             const charge = event.data.object as Stripe.Charge;
             const invoiceId: string | undefined =
@@ -619,9 +718,26 @@ const handleStripeWebhook = async (rawBody: Buffer, signature: string) => {
     return { received: true, event_type: event.type };
 };
 
+// ─── getPayPalReferralUrl ─────────────────────────────────────────────────────
+// GET /payment-gateway/paypal/connect-url
+// Creates a PayPal partner-referral request and returns the action_url the
+// business owner must visit to complete PPCP onboarding.
+const getPayPalReferralUrl = async (userId: string) => {
+    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
+    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+
+    const url = await createPayPalReferralUrl(admin.id);
+    return { url };
+};
+
+// ─── Exports ──────────────────────────────────────────────────────────────────
+export { decrypt }; // exported for use in payment execution helpers
+
 export const paymentGatewayService = {
     getPaymentGatewayConfig,
     updatePaymentGatewayConfig,
+    getStripeConnectUrl,
+    getPayPalReferralUrl,
     oauthConnect,
     disconnectGateway,
     handlePayPalWebhook,

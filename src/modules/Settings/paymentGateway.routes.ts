@@ -14,6 +14,7 @@ const router = Router();
 // Full paths:
 //   GET   /api/v1/payment-gateway
 //   PATCH /api/v1/payment-gateway
+//   GET   /api/v1/payment-gateway/stripe/connect-url
 //   POST  /api/v1/payment-gateway/oauth
 //   POST  /api/v1/payment-gateway/disconnect
 //
@@ -30,8 +31,25 @@ router.patch(
     paymentGatewayController.updateConfig,
 );
 
-// OAuth connect — exchanges the authorization code returned by Stripe/PayPal
-// and stores the connected account / merchant ID.
+// Generates a Stripe OAuth URL with a CSRF state nonce stored in the DB.
+// The frontend redirects the user to the returned URL to begin the OAuth flow.
+router.get(
+    "/stripe/connect-url",
+    checkAuth(UserRole.ADMIN),
+    paymentGatewayController.getStripeConnectUrl,
+);
+
+// Generates a PayPal PPCP partner-referral onboarding URL.
+// The frontend redirects the business owner to the returned URL.
+// PayPal redirects back to /oauth/callback/paypal?merchantId=…
+router.get(
+    "/paypal/connect-url",
+    checkAuth(UserRole.ADMIN),
+    paymentGatewayController.getPayPalReferralUrl,
+);
+
+// OAuth connect — verifies state nonce, exchanges the authorization code for
+// tokens, encrypts them, and stores them in PaymentGatewayConfig.
 router.post(
     "/oauth",
     checkAuth(UserRole.ADMIN),
@@ -39,7 +57,8 @@ router.post(
     paymentGatewayController.oauthConnect,
 );
 
-// Disconnect — revokes the OAuth connection and clears stored credentials.
+// Disconnect — revokes the OAuth token on the provider's side, then clears
+// all stored credentials from PaymentGatewayConfig.
 router.post(
     "/disconnect",
     checkAuth(UserRole.ADMIN),

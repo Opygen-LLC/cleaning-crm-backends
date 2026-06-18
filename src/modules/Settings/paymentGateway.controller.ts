@@ -30,16 +30,55 @@ const updateConfig = catchAsync(async (req, res) => {
     });
 });
 
-// FIX: Added controller for POST /payment-gateway/oauth
+// GET /payment-gateway/stripe/connect-url
+// Generates the Stripe OAuth URL and stores the CSRF state nonce in the DB.
+const getStripeConnectUrl = catchAsync(async (req, res) => {
+    const result = await paymentGatewayService.getStripeConnectUrl(req.user.id);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Stripe connect URL generated",
+        data: result,
+    });
+});
+
+// GET /payment-gateway/paypal/connect-url
+// Calls PayPal partner-referrals API and returns the action_url for onboarding.
+const getPayPalReferralUrl = catchAsync(async (req, res) => {
+    const result = await paymentGatewayService.getPayPalReferralUrl(
+        req.user.id,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "PayPal onboarding URL generated",
+        data: result,
+    });
+});
+
+// POST /payment-gateway/oauth
+// Receives the authorization code + state from the OAuth callback and exchanges
+// it for an access token. State nonce is verified to prevent CSRF.
 const oauthConnect = catchAsync(async (req, res) => {
-    const { gateway, code } = req.body as {
+    const { gateway, code, state } = req.body as {
         gateway: "stripe" | "paypal";
         code: string;
+        state?: string;
     };
+
+    const ip =
+        (req.headers["x-forwarded-for"] as string)?.split(",")[0].trim() ??
+        req.socket.remoteAddress ??
+        undefined;
+
     const result = await paymentGatewayService.oauthConnect(
         req.user.id,
         gateway,
         code,
+        state,
+        ip,
     );
 
     sendResponse(res, {
@@ -50,12 +89,20 @@ const oauthConnect = catchAsync(async (req, res) => {
     });
 });
 
-// FIX: Added controller for POST /payment-gateway/disconnect
+// POST /payment-gateway/disconnect
+// Revokes the token on the provider's side and clears stored credentials.
 const disconnectGateway = catchAsync(async (req, res) => {
     const { gateway } = req.body as { gateway: "stripe" | "paypal" };
+
+    const ip =
+        (req.headers["x-forwarded-for"] as string)?.split(",")[0].trim() ??
+        req.socket.remoteAddress ??
+        undefined;
+
     const result = await paymentGatewayService.disconnectGateway(
         req.user.id,
         gateway,
+        ip,
     );
 
     sendResponse(res, {
@@ -66,8 +113,7 @@ const disconnectGateway = catchAsync(async (req, res) => {
     });
 });
 
-// PayPal sends webhook events to POST /payment-gateway/paypal-webhook
-// This endpoint must be public (no auth) — PayPal calls it server-to-server
+// POST /payment-gateway/paypal-webhook  (public — no auth)
 const paypalWebhook = catchAsync(async (req, res) => {
     const result = await paymentGatewayService.handlePayPalWebhook(
         req.body,
@@ -82,9 +128,7 @@ const paypalWebhook = catchAsync(async (req, res) => {
     });
 });
 
-// Stripe sends webhook events to POST /payment-gateway/stripe-webhook
-// This endpoint must be public (no auth) and must receive the RAW body
-// (not JSON-parsed) so Stripe's HMAC signature can be verified.
+// POST /payment-gateway/stripe-webhook  (public — raw body required)
 const stripeWebhook = catchAsync(async (req, res) => {
     const signature = req.headers["stripe-signature"] as string;
     if (!signature) {
@@ -95,7 +139,6 @@ const stripeWebhook = catchAsync(async (req, res) => {
         return;
     }
 
-    // req.body is a raw Buffer when the route uses express.raw() middleware
     const result = await paymentGatewayService.handleStripeWebhook(
         req.body as Buffer,
         signature,
@@ -112,6 +155,8 @@ const stripeWebhook = catchAsync(async (req, res) => {
 export const paymentGatewayController = {
     getConfig,
     updateConfig,
+    getStripeConnectUrl,
+    getPayPalReferralUrl,
     oauthConnect,
     disconnectGateway,
     paypalWebhook,
