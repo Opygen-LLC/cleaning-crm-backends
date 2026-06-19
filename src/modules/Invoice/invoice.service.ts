@@ -13,8 +13,6 @@ import {
     PaymentStatus,
 } from "../../generated/prisma/enums";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
-import { FRONTEND_URL } from "../../config/ENV";
-import { createStripePaymentLink } from "../../lib/Payments/stripe.healper";
 import { uploadFileToCloudinary } from "../../config/cloudinary";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from '../../generated/prisma/enums';
@@ -567,66 +565,6 @@ const recordPayment = async (
     return result;
 };
 
-// ─── Create Stripe Checkout Session for an invoice ───────────────────────────
-//
-// Returns a one-time Stripe Checkout URL the admin can share with the client.
-// The Stripe session metadata includes the invoiceId so the webhook handler
-// can auto-mark the invoice PAID when payment_intent.succeeded fires.
-const createInvoicePaymentLink = async (invoiceId: string, user: any) => {
-    const admin = await prisma.adminProfile.findUnique({
-        where: { userId: user.id },
-        include: { paymentGateway: true },
-    });
-
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-
-    const gatewayConfig = admin.paymentGateway;
-    if (!gatewayConfig?.stripeEnabled) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "Stripe is not enabled. Enable it in Settings → Payment Gateway.",
-        );
-    }
-
-    const invoice = await prisma.invoice.findFirst({
-        where: { id: invoiceId, adminId: admin.id },
-    });
-
-    if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
-    if (invoice.status === InvoiceStatus.PAID) {
-        throw new AppError(status.BAD_REQUEST, "Invoice is already paid");
-    }
-    if (invoice.status === InvoiceStatus.CANCELLED) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "Cannot create a payment link for a cancelled invoice",
-        );
-    }
-
-    // Amount is stored in major currency units (e.g. pounds/dollars).
-    // Stripe expects the smallest unit (pence/cents) so we multiply by 100.
-    const amountInCents = Math.round(Number(invoice.total) * 100);
-
-    const paymentUrl = await createStripePaymentLink({
-        amount: amountInCents,
-        name: `Invoice ${invoice.invoiceRef}`,
-        author_id: admin.id,
-        booking_id: invoice.id, // reuse booking_id field to pass invoice id
-    });
-
-    // Persist the link on the invoice for re-use (until it expires)
-    await prisma.invoice.update({
-        where: { id: invoice.id },
-        data: { notes: invoice.notes }, // no-op update to keep TS happy; link lives in response
-    });
-
-    return {
-        paymentUrl,
-        invoiceId: invoice.id,
-        invoiceRef: invoice.invoiceRef,
-    };
-};
-
 // ── Submit payment proof (bank-transfer screenshot) ──────────────────────────
 //
 // Called by admin (or on behalf of client).
@@ -828,7 +766,6 @@ export const invoiceService = {
     deleteInvoice,
     getPaymentHistory,
     recordPayment,
-    createInvoicePaymentLink,
     submitPaymentProof,
     approvePayment,
 };

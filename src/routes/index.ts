@@ -24,30 +24,14 @@ import { recurringBookingRoutes } from "../modules/RecurringBooking/recurringBoo
 import { superAdminRoutes } from "../modules/SuperAdmin/superAdmin.routes";
 import { pricingRulesRoutes } from "../modules/PricingRules/pricingRules.routes";
 import { dashboardRoutes } from "../modules/Dashboard/dashboard.routes";
-import { paymentGatewayRoutes } from "../modules/Settings/paymentGateway.routes";
 import { checklistRoutes } from "../modules/Checklist/checklist.routes";
 import { staffLeaveRoutes } from "../modules/StaffLeave/staffLeave.routes";
 import { couponRoutes } from "../modules/Coupon/coupon.routes";
-// ─── Item 8: subscription enforcement middleware ──────────────────────────────
 import { checkSubscription } from "../middlewares/checkSubscription";
-import { paymentGatewayController } from "../modules/Settings/paymentGateway.controller";
 import express from "express";
 
 const router = Router();
 
-// ─── Public webhook endpoints — must be open, no auth, no subscription gate ───
-// Stripe / PayPal call these directly from their servers.
-// express.raw() on the Stripe route preserves the body bytes for HMAC
-// verification; must be applied before the global JSON body-parser.
-router.post(
-    "/payment-gateway/stripe-webhook",
-    express.raw({ type: "*/*" }),
-    paymentGatewayController.stripeWebhook,
-);
-router.post(
-    "/payment-gateway/paypal-webhook",
-    paymentGatewayController.paypalWebhook,
-);
 
 // ─── Public / auth routes (no subscription gate) ─────────────────────────────
 // These routes must remain open: auth, session, subscription self-service,
@@ -78,7 +62,6 @@ const gatedRoutes: { path: string; route: Router }[] = [
     { path: "/lead", route: leadRoutes },
     { path: "/dashboard", route: dashboardRoutes },
     { path: "/notification", route: notificationRoutes },
-    { path: "/payment-gateway", route: paymentGatewayRoutes },
     { path: "/job", route: jobRoutes },
     { path: "/quote", route: quoteRoutes },
     { path: "/estimate", route: estimateRoutes },

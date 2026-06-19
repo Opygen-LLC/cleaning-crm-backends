@@ -134,17 +134,6 @@ const sendInvoice = catchAsync(async (req, res) => {
     });
 });
 
-const createPaymentLink = catchAsync(async (req, res) => {
-    const { id } = req.params;
-    const result = await invoiceService.createInvoicePaymentLink(id as string, req.user);
-    sendResponse(res, {
-        httpStatusCode: status.OK,
-        success: true,
-        message: "Stripe payment link created",
-        data: result,
-    });
-});
-
 const submitPaymentProof = catchAsync(async (req, res) => {
     const { id, paymentId } = req.params;
 
@@ -200,7 +189,6 @@ export const invoiceController = {
     getPaymentHistory,
     recordPayment,
     sendInvoice,
-    createPaymentLink,
     submitPaymentProof,
     approvePayment,
 };

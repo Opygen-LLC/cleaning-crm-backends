@@ -35,7 +35,6 @@ model AdminProfile {
   leads              Lead[]
   notificationPrefs  NotificationPreference?
   payment            Payment[]
-  paymentGateway     PaymentGatewayConfig?
   quotes             Quote[]
   quoteTemplates     QuoteTemplate[]
   checklistTemplates ChecklistTemplate[]
@@ -45,7 +44,6 @@ model AdminProfile {
   serviceCatalogs    ServiceCatalog[]
   activityLogs       ActivityLog[]
   notifications      Notification[]
-  oauthConnectLogs   OAuthConnectLog[]
 
   @@index([createdAt])
 }
@@ -60,40 +58,6 @@ model WorkLocation {
   admin     AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
   @@index([adminId])
-}
-
-model PaymentGatewayConfig {
-  id                        String         @id @default(uuid())
-  activeGateway             PaymentGateway @default(NONE)
-  stripeEnabled             Boolean        @default(false)
-  stripePublishableKey      String?
-  stripeSecretKeyMasked     String?
-  stripeWebhookSecretMasked String?
-  stripeTestMode            Boolean        @default(true)
-  stripeConnectedAccountId  String?
-  paypalEnabled             Boolean        @default(false)
-  paypalClientId            String?
-  paypalClientSecretMasked  String?
-  paypalTestMode            Boolean        @default(true)
-  paypalConnectedMerchantId String?
-  // OAuth encrypted token storage
-  stripeAccessToken         String? // AES-256 encrypted
-  stripeRefreshToken        String? // for token rotation
-  stripeTokenExpiresAt      DateTime?
-  stripeScope               String? // e.g. read_write
-  paypalAccessToken         String? // AES-256 encrypted
-  paypalRefreshToken        String?
-  paypalTokenExpiresAt      DateTime?
-  oauthState                String? // CSRF nonce
-  connectedAt               DateTime?
-  invoicePaymentLink        Boolean        @default(true)
-  quotePaymentLink          Boolean        @default(false)
-  autoSendReceipt           Boolean        @default(true)
-  adminId                   String         @unique
-  updatedAt                 DateTime       @updatedAt
-  admin                     AdminProfile   @relation(fields: [adminId], references: [id], onDelete: Cascade)
-
-  @@map("payment_gateway_config")
 }
 
 model NotificationPreference {
@@ -152,15 +116,3 @@ model Notification {
   @@map("notification")
 }
 
-model OAuthConnectLog {
-  id        String         @id @default(uuid())
-  adminId   String
-  gateway   PaymentGateway
-  event     String // connected | disconnected | token_refreshed
-  ip        String?
-  createdAt DateTime       @default(now())
-  admin     AdminProfile   @relation(fields: [adminId], references: [id], onDelete: Cascade)
-
-  @@index([adminId])
-  @@map("oauth_connect_log")
-}
