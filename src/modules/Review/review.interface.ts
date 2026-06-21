@@ -6,6 +6,8 @@ export interface IReviewFilters {
   rating?: number;
   staffId?: string;
   jobId?: string;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 export interface ISubmitPublicReview {
