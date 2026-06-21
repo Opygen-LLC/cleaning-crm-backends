@@ -69,11 +69,6 @@ router.post(
     invoiceController.sendInvoice,
 );
 
-router.post(
-    "/:id/create-payment-link",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
-    invoiceController.createPaymentLink,
-);
 
 // ── Manual bank-transfer proof upload (client or admin on behalf) ─────────────
 router.post(

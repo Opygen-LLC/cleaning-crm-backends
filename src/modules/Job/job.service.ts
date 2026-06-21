@@ -30,7 +30,9 @@ import { jobSearchableFields, jobFilterableFields } from "./job.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { FRONTEND_URL } from "../../config/ENV";
-import { emitToAdmin } from "../../config/socketio";
+import { emitToAdmin, emitToStaff } from "../../config/socketio";
+import { createNotification } from "../../lib/utils/createNotification";
+import { NotificationType } from "../../generated/prisma/enums";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -328,12 +330,27 @@ const updateJobStatus = async (
             return job;
         })
         .then(async (completedJob) => {
-            // Real-time push — emit to admin room
+            // Real-time push — emit to admin room (used by FE for RTK cache invalidation)
             emitToAdmin(completedJob.adminId, "job:statusUpdated", {
                 jobId: completedJob.id,
                 jobRef: completedJob.jobRef,
                 newStatus,
                 updatedAt: new Date().toISOString(),
+            });
+
+            // Persist notification to DB + push "notification:new" to bell
+            const statusLabel: Record<string, string> = {
+                SCHEDULED: "Scheduled",
+                IN_PROGRESS: "In Progress",
+                COMPLETED: "Completed",
+                CANCELLED: "Cancelled",
+            };
+            await createNotification({
+                adminId: completedJob.adminId,
+                type: NotificationType.JOB,
+                title: `Job ${completedJob.jobRef} — ${statusLabel[newStatus] ?? newStatus}`,
+                message: `Status changed to ${statusLabel[newStatus] ?? newStatus}`,
+                relatedId: completedJob.id,
             });
 
             // Send review-request email when job is COMPLETED
@@ -510,9 +527,20 @@ const assignStaff = async (
                     staffIds: payload.staffIds,
                     updatedAt: new Date().toISOString(),
                 });
+
+                // Persist notification to DB + push to bell
+                await createNotification({
+                    adminId: updatedJob.adminId,
+                    type: NotificationType.JOB,
+                    title: `Staff assigned to ${updatedJob.jobRef}`,
+                    message: `${payload.staffIds.length} staff member${payload.staffIds.length !== 1 ? "s" : ""} assigned`,
+                    relatedId: updatedJob.id,
+                });
             }
 
-            // Dispatch notification email to each newly assigned staff member
+            // Notify each assigned staff member directly — real-time push +
+            // dispatch email — so they find out the moment a job lands on
+            // their plate, not only when an admin happens to be watching.
             if (payload.staffIds.length && updatedJob) {
                 const staffList = await prisma.staffProfile.findMany({
                     where: { id: { in: payload.staffIds } },
@@ -522,8 +550,44 @@ const assignStaff = async (
                     where: { id: updatedJob.clientId },
                     select: { name: true },
                 });
-                const jobDetailUrl = `${FRONTEND_URL}/admin/jobs/${jobId}`;
+                const jobDetailUrl = `${FRONTEND_URL}/staff/dashboard/jobs/${jobId}`;
+                const clientName = client?.name ?? "Client";
+                const friendlyServiceType = updatedJob.serviceType.replace(
+                    /_/g,
+                    " ",
+                );
+                const scheduledDate = new Date(
+                    updatedJob.scheduledDate,
+                ).toLocaleDateString("en-GB", {
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric",
+                });
+                const scheduledTime = new Date(
+                    updatedJob.scheduledDate,
+                ).toLocaleTimeString("en-GB", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                });
 
+                // Real-time Socket.IO push — one event per assigned staff
+                // member's private room (see joinStaffRoom in socketio.ts).
+                for (const staff of staffList) {
+                    emitToStaff(staff.id, "job:assigned", {
+                        jobId: updatedJob.id,
+                        jobRef: updatedJob.jobRef,
+                        clientName,
+                        serviceType: friendlyServiceType,
+                        address: updatedJob.address,
+                        scheduledDate,
+                        scheduledTime,
+                        durationMins: updatedJob.durationMins,
+                        updatedAt: new Date().toISOString(),
+                    });
+                }
+
+                // Dispatch notification email to each newly assigned staff member
                 await Promise.all(
                     staffList.map((staff) =>
                         sendEmailSafely({
@@ -533,26 +597,11 @@ const assignStaff = async (
                             templateData: {
                                 staffName: staff.user.name,
                                 jobRef: updatedJob.jobRef,
-                                clientName: client?.name ?? "Client",
-                                serviceType: updatedJob.serviceType.replace(
-                                    /_/g,
-                                    " ",
-                                ),
+                                clientName,
+                                serviceType: friendlyServiceType,
                                 address: updatedJob.address,
-                                scheduledDate: new Date(
-                                    updatedJob.scheduledDate,
-                                ).toLocaleDateString("en-GB", {
-                                    weekday: "long",
-                                    day: "numeric",
-                                    month: "long",
-                                    year: "numeric",
-                                }),
-                                scheduledTime: new Date(
-                                    updatedJob.scheduledDate,
-                                ).toLocaleTimeString("en-GB", {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                }),
+                                scheduledDate,
+                                scheduledTime,
                                 durationMins: updatedJob.durationMins,
                                 jobDetailUrl,
                             },
@@ -812,6 +861,15 @@ const checkIn = async (jobId: string, user: IRequestUser) => {
             jobRef: job.jobRef,
             newStatus: JobStatus.IN_PROGRESS,
             updatedAt: new Date().toISOString(),
+        });
+
+        // Persist notification
+        await createNotification({
+            adminId: job.adminId,
+            type: NotificationType.JOB,
+            title: `Job ${job.jobRef} — In Progress`,
+            message: "Staff checked in — job is now in progress",
+            relatedId: jobId,
         });
 
         return updated;

@@ -32,12 +32,20 @@ router.get(
     staffController.getStaffById
 );
 
-// Manage Staff
+// Update staff profile fields (staffRole, mobileNumber)
 router.patch(
     "/:id",
     checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
     zodValidate(staffValidation.updateStaff, ValidationProperty.BODY),
     staffController.updateStaff,
+);
+
+// Replace all 7 availability slots for a staff member (Admin only)
+router.put(
+    "/:id/availability",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(staffValidation.updateAvailability, ValidationProperty.BODY),
+    staffController.updateAvailability,
 );
 
 router.delete(

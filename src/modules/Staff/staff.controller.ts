@@ -42,11 +42,14 @@ const getStaffById = catchAsync(async (req, res) => {
     });
 });
 
-// FIX: Pass req.user so the service can enforce tenant isolation
 const updateStaff = catchAsync(async (req, res) => {
     const { id } = req.params;
     const payload = req.body;
-    const result = await staffService.updateStaff(id as string, payload, req.user);
+    const result = await staffService.updateStaff(
+        id as string,
+        payload,
+        req.user,
+    );
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -56,7 +59,6 @@ const updateStaff = catchAsync(async (req, res) => {
     });
 });
 
-// FIX: Pass req.user so the service can enforce tenant isolation
 const deleteStaff = catchAsync(async (req, res) => {
     const { id } = req.params;
     const result = await staffService.deleteStaff(id as string, req.user);
@@ -69,10 +71,27 @@ const deleteStaff = catchAsync(async (req, res) => {
     });
 });
 
+const updateAvailability = catchAsync(async (req, res) => {
+    const { id } = req.params;
+    const result = await staffService.updateAvailability(
+        id as string,
+        req.body,
+        req.user,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Availability updated successfully",
+        data: result,
+    });
+});
+
 export const staffController = {
     createStaff,
     getMyStaff,
     getStaffById,
     updateStaff,
     deleteStaff,
+    updateAvailability,
 };

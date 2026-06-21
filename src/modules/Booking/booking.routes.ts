@@ -10,6 +10,17 @@ import { bookingValidation } from "./booking.validation";
 
 const router = Router();
 
+// ── Calendar (must be registered BEFORE /:id to prevent shadowing) ───────────
+// Express matches routes in registration order. GET /calendar/view would be
+// caught by GET /:id (with id="calendar") if registered after it.
+
+router.get(
+    "/calendar/view",
+    checkAuth(UserRole.ADMIN, UserRole.STAFF),
+    zodValidate(bookingValidation.calendarQuery, ValidationProperty.QUERY),
+    bookingController.getCalendarView,
+);
+
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
 router.post(
@@ -58,15 +69,6 @@ router.put(
     checkAuth(UserRole.ADMIN),
     zodValidate(bookingValidation.assignStaff, ValidationProperty.BODY),
     bookingController.assignStaff,
-);
-
-// ── Calendar ──────────────────────────────────────────────────────────────────
-
-router.get(
-    "/calendar/view",
-    checkAuth(UserRole.ADMIN, UserRole.STAFF),
-    zodValidate(bookingValidation.calendarQuery, ValidationProperty.QUERY),
-    bookingController.getCalendarView,
 );
 
 export const bookingRoutes = router;

@@ -12,8 +12,7 @@
         "generate": "prisma generate",
         "studio": "prisma studio",
         "push": "prisma db push",
-        "pull": "prisma db pull",
-        "stripe:webhook": "stripe listen --forward-to localhost:5000/webhook"
+        "pull": "prisma db pull"
     },
     "keywords": [],
     "author": "opygen",
@@ -47,7 +46,6 @@
         "node-cron": "^4.2.1",
         "nodemailer": "^7.0.10",
         "socket.io": "^4.8.3",
-        "stripe": "^20.1.2",
         "tsup": "^8.5.1",
         "tsx": "^4.21.0",
         "validator": "^13.15.15",
@@ -69,7 +67,6 @@
         "@types/node": "^24.12.2",
         "@types/nodemailer": "^7.0.3",
         "@types/pg": "^8.20.0",
-        "@types/stripe": "^8.0.417",
         "@types/validator": "^13.15.3",
         "nodemon": "^3.1.10",
         "prisma": "^7.7.0",

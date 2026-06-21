@@ -13,9 +13,9 @@ import {
     PaymentStatus,
 } from "../../generated/prisma/enums";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
-import { FRONTEND_URL } from "../../config/ENV";
-import { createStripePaymentLink } from "../../lib/Payments/stripe.healper";
 import { uploadFileToCloudinary } from "../../config/cloudinary";
+import { createNotification } from "../../lib/utils/createNotification";
+import { NotificationType } from '../../generated/prisma/enums';
 
 /**
  * Generates a unique invoice reference in the format #OP-INV-0001
@@ -211,10 +211,23 @@ const updateInvoiceStatus = async (
         data.sentAt = new Date();
     }
 
-    return await prisma.invoice.update({
+    const updated = await prisma.invoice.update({
         where: { id },
         data,
     });
+
+    // Notify admin when an invoice is manually marked PAID
+    if (invoiceStatus === InvoiceStatus.PAID) {
+        createNotification({
+            adminId: updated.adminId,
+            type: NotificationType.PAYMENT,
+            title: `Invoice ${updated.invoiceRef} paid`,
+            message: `Payment received from ${updated.clientName}`,
+            relatedId: updated.id,
+        }).catch(() => {});
+    }
+
+    return updated;
 };
 
 const deleteInvoice = async (id: string) => {
@@ -515,7 +528,7 @@ const recordPayment = async (
 
     const paidAt = payload.paidAt ? new Date(payload.paidAt) : new Date();
 
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
         // Create Payment record
         const payment = await tx.payment.create({
             data: {
@@ -539,66 +552,17 @@ const recordPayment = async (
 
         return { payment, invoice: updatedInvoice };
     });
-};
 
-// ─── Create Stripe Checkout Session for an invoice ───────────────────────────
-//
-// Returns a one-time Stripe Checkout URL the admin can share with the client.
-// The Stripe session metadata includes the invoiceId so the webhook handler
-// can auto-mark the invoice PAID when payment_intent.succeeded fires.
-const createInvoicePaymentLink = async (invoiceId: string, user: any) => {
-    const admin = await prisma.adminProfile.findUnique({
-        where: { userId: user.id },
-        include: { paymentGateway: true },
-    });
+    // Notify admin of the manual payment record
+    createNotification({
+        adminId: admin.id,
+        type: NotificationType.PAYMENT,
+        title: `Invoice ${invoice.invoiceRef} paid`,
+        message: `${payload.method} payment of $${Number(payload.amount).toFixed(2)} recorded`,
+        relatedId: invoice.id,
+    }).catch(() => {});
 
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-
-    const gatewayConfig = admin.paymentGateway;
-    if (!gatewayConfig?.stripeEnabled) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "Stripe is not enabled. Enable it in Settings → Payment Gateway.",
-        );
-    }
-
-    const invoice = await prisma.invoice.findFirst({
-        where: { id: invoiceId, adminId: admin.id },
-    });
-
-    if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
-    if (invoice.status === InvoiceStatus.PAID) {
-        throw new AppError(status.BAD_REQUEST, "Invoice is already paid");
-    }
-    if (invoice.status === InvoiceStatus.CANCELLED) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "Cannot create a payment link for a cancelled invoice",
-        );
-    }
-
-    // Amount is stored in major currency units (e.g. pounds/dollars).
-    // Stripe expects the smallest unit (pence/cents) so we multiply by 100.
-    const amountInCents = Math.round(Number(invoice.total) * 100);
-
-    const paymentUrl = await createStripePaymentLink({
-        amount: amountInCents,
-        name: `Invoice ${invoice.invoiceRef}`,
-        author_id: admin.id,
-        booking_id: invoice.id, // reuse booking_id field to pass invoice id
-    });
-
-    // Persist the link on the invoice for re-use (until it expires)
-    await prisma.invoice.update({
-        where: { id: invoice.id },
-        data: { notes: invoice.notes }, // no-op update to keep TS happy; link lives in response
-    });
-
-    return {
-        paymentUrl,
-        invoiceId: invoice.id,
-        invoiceRef: invoice.invoiceRef,
-    };
+    return result;
 };
 
 // ── Submit payment proof (bank-transfer screenshot) ──────────────────────────
@@ -672,7 +636,8 @@ const submitPaymentProof = async (
         const existing = await prisma.payment.findFirst({
             where: { id: paymentId, adminId: admin.id },
         });
-        if (!existing) throw new AppError(status.NOT_FOUND, "Payment not found");
+        if (!existing)
+            throw new AppError(status.NOT_FOUND, "Payment not found");
 
         payment = await prisma.payment.update({
             where: { id: paymentId },
@@ -741,6 +706,15 @@ const approvePayment = async (
             return { payment: updatedPayment, invoice: updatedInvoice };
         });
 
+        // Notify admin of approval
+        createNotification({
+            adminId: admin.id,
+            type: NotificationType.PAYMENT,
+            title: `Invoice ${invoice.invoiceRef} paid`,
+            message: "Manual payment proof approved — invoice marked as paid",
+            relatedId: invoice.id,
+        }).catch(() => {});
+
         // Send payment receipt email
         const fmt = (d: Date) =>
             d.toLocaleDateString("en-GB", {
@@ -761,7 +735,8 @@ const approvePayment = async (
                     paidDate: fmt(now),
                     amount: Number(invoice.total).toFixed(2),
                     paymentMethod: "Bank Transfer",
-                    serviceAddress: invoice.serviceAddress ?? invoice.clientName,
+                    serviceAddress:
+                        invoice.serviceAddress ?? invoice.clientName,
                 },
             });
         }
@@ -791,7 +766,6 @@ export const invoiceService = {
     deleteInvoice,
     getPaymentHistory,
     recordPayment,
-    createInvoicePaymentLink,
     submitPaymentProof,
     approvePayment,
 };

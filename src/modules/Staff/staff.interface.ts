@@ -31,3 +31,7 @@ export interface UpdateStaffPayload {
     staffRole?: string;
     mobileNumber?: string;
 }
+
+export interface UpdateAvailabilityPayload {
+    availability: StaffAvailabilityInput[];
+}

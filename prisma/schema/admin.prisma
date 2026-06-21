@@ -35,7 +35,6 @@ model AdminProfile {
   leads              Lead[]
   notificationPrefs  NotificationPreference?
   payment            Payment[]
-  paymentGateway     PaymentGatewayConfig?
   quotes             Quote[]
   quoteTemplates     QuoteTemplate[]
   checklistTemplates ChecklistTemplate[]
@@ -59,30 +58,6 @@ model WorkLocation {
   admin     AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
   @@index([adminId])
-}
-
-model PaymentGatewayConfig {
-  id                        String         @id @default(uuid())
-  activeGateway             PaymentGateway @default(NONE)
-  stripeEnabled             Boolean        @default(false)
-  stripePublishableKey      String?
-  stripeSecretKeyMasked     String?
-  stripeWebhookSecretMasked String?
-  stripeTestMode            Boolean        @default(true)
-  stripeConnectedAccountId  String?
-  paypalEnabled             Boolean        @default(false)
-  paypalClientId            String?
-  paypalClientSecretMasked  String?
-  paypalTestMode            Boolean        @default(true)
-  paypalConnectedMerchantId String?
-  invoicePaymentLink        Boolean        @default(true)
-  quotePaymentLink          Boolean        @default(false)
-  autoSendReceipt           Boolean        @default(true)
-  adminId                   String         @unique
-  updatedAt                 DateTime       @updatedAt
-  admin                     AdminProfile   @relation(fields: [adminId], references: [id], onDelete: Cascade)
-
-  @@map("payment_gateway_config")
 }
 
 model NotificationPreference {
@@ -140,3 +115,4 @@ model Notification {
   @@index([adminId, createdAt])
   @@map("notification")
 }
+

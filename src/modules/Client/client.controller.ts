@@ -74,8 +74,6 @@ const deleteClient = catchAsync(async (req, res) => {
 });
 
 const getClientPortal = catchAsync(async (req, res) => {
-    // FIX: route param is now :portalToken to make clear it is the opaque
-    // access token, not the plain client UUID.
     const { portalToken } = req.params;
     const result = await clientService.getClientPortal(portalToken as string);
 
@@ -87,6 +85,25 @@ const getClientPortal = catchAsync(async (req, res) => {
     });
 });
 
+// POST /client/:id/regenerate-portal-token
+// Admin-only: rotates the portalAccessToken, invalidating any previously
+// shared portal links.  Returns the new token so the admin can copy the
+// updated URL immediately without a page reload.
+const regeneratePortalToken = catchAsync(async (req, res) => {
+    const { id } = req.params;
+    const result = await clientService.regeneratePortalToken(
+        id as string,
+        req.user,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Portal token regenerated. The previous link is now invalid.",
+        data: result,
+    });
+});
+
 export const clientController = {
     createClient,
     getClients,
@@ -94,4 +111,5 @@ export const clientController = {
     updateClient,
     deleteClient,
     getClientPortal,
+    regeneratePortalToken,
 };

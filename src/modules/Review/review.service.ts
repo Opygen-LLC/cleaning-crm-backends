@@ -164,6 +164,8 @@ const getAllReviews = async (filters: IReviewFilters, user: any) => {
         status: filterStatus,
         rating,
         staffId,
+        dateFrom,
+        dateTo,
     } = filters;
 
     let adminId: string | undefined;
@@ -185,6 +187,14 @@ const getAllReviews = async (filters: IReviewFilters, user: any) => {
             { clientName: { contains: searchTerm, mode: "insensitive" } },
             { comment: { contains: searchTerm, mode: "insensitive" } },
         ];
+    }
+    if (dateFrom || dateTo) {
+        where.createdAt = {
+            ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+            ...(dateTo
+                ? { lte: new Date(new Date(dateTo).setHours(23, 59, 59, 999)) }
+                : {}),
+        };
     }
 
     const total = await prisma.review.count({ where });

@@ -37,18 +37,10 @@ enum DiscountType {
 }
 
 enum PaymentMethod {
-  STRIPE
-  PAYPAL
   BANK_TRANSFER
   CASH
   CHEQUE
   MANUAL
-}
-
-enum PaymentGateway {
-  STRIPE
-  PAYPAL
-  NONE
 }
 
 enum PaymentStatus {
