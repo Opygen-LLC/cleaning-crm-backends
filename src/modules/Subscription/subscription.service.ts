@@ -12,12 +12,35 @@ import { Decimal } from "@prisma/client/runtime/client";
 
 const TRIAL_DAYS = 7;
 
+// ─── Helper: resolve AdminProfile.id from the authenticated User ─────────────
+// BUGFIX: Subscription.adminId is a foreign key to AdminProfile.id, NOT
+// User.id (see prisma/schema/subscription.prisma — `admin AdminProfile
+// @relation(fields: [adminId], references: [id])`). Every method below that
+// queries Subscription must resolve the AdminProfile first; querying with
+// `adminId: user.id` directly silently matches zero rows for any real
+// account and throws "No active subscription found."
+
+const resolveAdminProfileId = async (user: IRequestUser): Promise<string> => {
+    const adminProfile = await prisma.adminProfile.findFirst({
+        where: { userId: user.id },
+        select: { id: true },
+    });
+
+    if (!adminProfile) {
+        throw new AppError(status.NOT_FOUND, "Admin profile not found.");
+    }
+
+    return adminProfile.id;
+};
+
 // ─── Existing: get my subscription ───────────────────────────────────────────
 
 const getMySubscription = async (user: IRequestUser) => {
+    const adminId = await resolveAdminProfileId(user);
+
     return await prisma.subscription
         .findFirstOrThrow({
-            where: { adminId: user.id },
+            where: { adminId },
             include: {
                 plan: true,
                 subscriptionPlan: true,
@@ -103,6 +126,7 @@ const changePlan = async (
     },
 ) => {
     const { planId, couponCode } = payload;
+    const adminId = await resolveAdminProfileId(user);
 
     // Validate target plan exists
     const targetPlan = await prisma.plan.findUnique({
@@ -115,7 +139,7 @@ const changePlan = async (
 
     // Find current active subscription
     const current = await prisma.subscription.findFirst({
-        where: { adminId: user.id, status: SubscriptionStatus.ACTIVE },
+        where: { adminId, status: SubscriptionStatus.ACTIVE },
     });
     if (!current) {
         throw new AppError(
@@ -185,8 +209,10 @@ const changePlan = async (
 // ─── New: cancel at period end ────────────────────────────────────────────────
 
 const cancelAtPeriodEnd = async (user: IRequestUser) => {
+    const adminId = await resolveAdminProfileId(user);
+
     const current = await prisma.subscription.findFirst({
-        where: { adminId: user.id, status: SubscriptionStatus.ACTIVE },
+        where: { adminId, status: SubscriptionStatus.ACTIVE },
     });
     if (!current) {
         throw new AppError(status.NOT_FOUND, "No active subscription found.");
@@ -208,8 +234,10 @@ const cancelAtPeriodEnd = async (user: IRequestUser) => {
 // ─── New: undo cancellation ───────────────────────────────────────────────────
 
 const resumeSubscription = async (user: IRequestUser) => {
+    const adminId = await resolveAdminProfileId(user);
+
     const current = await prisma.subscription.findFirst({
-        where: { adminId: user.id, status: SubscriptionStatus.ACTIVE },
+        where: { adminId, status: SubscriptionStatus.ACTIVE },
     });
     if (!current) {
         throw new AppError(status.NOT_FOUND, "No active subscription found.");
@@ -238,8 +266,10 @@ const getMyBillingHistory = async (
     const limit = paginationOptions.limit ?? 10;
     const skip = (page - 1) * limit;
 
+    const adminId = await resolveAdminProfileId(user);
+
     const subscription = await prisma.subscription.findFirst({
-        where: { adminId: user.id },
+        where: { adminId },
         select: { id: true },
     });
     if (!subscription) {
@@ -284,16 +314,10 @@ const submitPaymentProof = async (
     }
 
     // Find admin profile from user id
-    const admin = await prisma.adminProfile.findFirst({
-        where: { userId: user.id },
-        select: { id: true },
-    });
-    if (!admin) {
-        throw new AppError(status.NOT_FOUND, "Admin profile not found.");
-    }
+    const adminId = await resolveAdminProfileId(user);
 
     const sub = await prisma.subscription.findFirst({
-        where: { adminId: admin.id },
+        where: { adminId },
     });
     if (!sub) {
         throw new AppError(status.NOT_FOUND, "No subscription found.");
