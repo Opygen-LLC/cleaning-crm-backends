@@ -802,6 +802,7 @@ const getStaffDashboard = async (userId: string) => {
         .slice(0, 2);
 
     return {
+        staffId,
         staffName,
         avatarInitials: initials,
         stats,

@@ -30,7 +30,7 @@ import { jobSearchableFields, jobFilterableFields } from "./job.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { FRONTEND_URL } from "../../config/ENV";
-import { emitToAdmin } from "../../config/socketio";
+import { emitToAdmin, emitToStaff } from "../../config/socketio";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
 
@@ -538,7 +538,9 @@ const assignStaff = async (
                 });
             }
 
-            // Dispatch notification email to each newly assigned staff member
+            // Notify each assigned staff member directly — real-time push +
+            // dispatch email — so they find out the moment a job lands on
+            // their plate, not only when an admin happens to be watching.
             if (payload.staffIds.length && updatedJob) {
                 const staffList = await prisma.staffProfile.findMany({
                     where: { id: { in: payload.staffIds } },
@@ -549,7 +551,43 @@ const assignStaff = async (
                     select: { name: true },
                 });
                 const jobDetailUrl = `${FRONTEND_URL}/staff/dashboard/jobs/${jobId}`;
+                const clientName = client?.name ?? "Client";
+                const friendlyServiceType = updatedJob.serviceType.replace(
+                    /_/g,
+                    " ",
+                );
+                const scheduledDate = new Date(
+                    updatedJob.scheduledDate,
+                ).toLocaleDateString("en-GB", {
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric",
+                });
+                const scheduledTime = new Date(
+                    updatedJob.scheduledDate,
+                ).toLocaleTimeString("en-GB", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                });
 
+                // Real-time Socket.IO push — one event per assigned staff
+                // member's private room (see joinStaffRoom in socketio.ts).
+                for (const staff of staffList) {
+                    emitToStaff(staff.id, "job:assigned", {
+                        jobId: updatedJob.id,
+                        jobRef: updatedJob.jobRef,
+                        clientName,
+                        serviceType: friendlyServiceType,
+                        address: updatedJob.address,
+                        scheduledDate,
+                        scheduledTime,
+                        durationMins: updatedJob.durationMins,
+                        updatedAt: new Date().toISOString(),
+                    });
+                }
+
+                // Dispatch notification email to each newly assigned staff member
                 await Promise.all(
                     staffList.map((staff) =>
                         sendEmailSafely({
@@ -559,26 +597,11 @@ const assignStaff = async (
                             templateData: {
                                 staffName: staff.user.name,
                                 jobRef: updatedJob.jobRef,
-                                clientName: client?.name ?? "Client",
-                                serviceType: updatedJob.serviceType.replace(
-                                    /_/g,
-                                    " ",
-                                ),
+                                clientName,
+                                serviceType: friendlyServiceType,
                                 address: updatedJob.address,
-                                scheduledDate: new Date(
-                                    updatedJob.scheduledDate,
-                                ).toLocaleDateString("en-GB", {
-                                    weekday: "long",
-                                    day: "numeric",
-                                    month: "long",
-                                    year: "numeric",
-                                }),
-                                scheduledTime: new Date(
-                                    updatedJob.scheduledDate,
-                                ).toLocaleTimeString("en-GB", {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                }),
+                                scheduledDate,
+                                scheduledTime,
                                 durationMins: updatedJob.durationMins,
                                 jobDetailUrl,
                             },
