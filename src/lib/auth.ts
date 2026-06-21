@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth";
-import { BETTER_AUTH_SECRET, BETTER_AUTH_URL } from "../config/ENV";
+import { BETTER_AUTH_SECRET, BETTER_AUTH_URL, COOKIE_DOMAIN } from "../config/ENV";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "./prisma/prisma";
 import { AccountStatus, UserRole } from "../generated/prisma/enums";
@@ -15,6 +15,26 @@ export const auth = betterAuth({
     database: prismaAdapter(prisma, {
         provider: "postgresql",
     }),
+    // ─── Cross-subdomain cookies ───────────────────────────────────────────
+    // The API runs on api.faysaldev.com and the frontend on app.faysaldev.com.
+    // Without this, better-auth's own session cookie is host-only (scoped to
+    // api.faysaldev.com) and never reaches the Next.js middleware running on
+    // app.faysaldev.com, which makes it look like login "does nothing" even
+    // though the request succeeded. COOKIE_DOMAIN should be the shared parent
+    // domain with a leading dot, e.g. ".faysaldev.com". Left undefined in
+    // local dev (localhost) where a domain attribute breaks cookies.
+    advanced: COOKIE_DOMAIN
+        ? {
+              crossSubDomainCookies: {
+                  enabled: true,
+                  domain: COOKIE_DOMAIN,
+              },
+              defaultCookieAttributes: {
+                  sameSite: "none",
+                  secure: true,
+              },
+          }
+        : undefined,
     session: {
         expiresIn: 60 * 60 * 60 * 24, // 60 days in seconds
         updateAge: 60 * 60 * 60 * 24, // 50 days in seconds

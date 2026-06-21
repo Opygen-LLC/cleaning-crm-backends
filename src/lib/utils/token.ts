@@ -2,7 +2,7 @@ import { Response } from "express";
 import { JwtPayload, SignOptions } from "jsonwebtoken";
 import { CookieUtils } from "./cookie";
 import { jwtUtils } from "./jwt";
-import { ACCESS_TOKEN_EXPIRES_IN, ACCESS_TOKEN_SECRET, REFRESH_TOKEN_EXPIRES_IN, REFRESH_TOKEN_SECRET } from "../../config/ENV";
+import { ACCESS_TOKEN_EXPIRES_IN, ACCESS_TOKEN_SECRET, REFRESH_TOKEN_EXPIRES_IN, REFRESH_TOKEN_SECRET, COOKIE_DOMAIN } from "../../config/ENV";
 
 const getAccessToken = (payload: JwtPayload) => {
     const accessToken = jwtUtils.createToken(
@@ -29,6 +29,7 @@ const setAccessTokenCookie = (res: Response, token: string) => {
         secure: true,
         sameSite: "none",
         path: "/",
+        domain: COOKIE_DOMAIN,
         //1 day
         maxAge: 60 * 60 * 24 * 1000,
     });
@@ -40,6 +41,7 @@ const setRefreshTokenCookie = (res: Response, token: string) => {
         secure: true,
         sameSite: "none",
         path: "/",
+        domain: COOKIE_DOMAIN,
         //30d
         maxAge: 60 * 60 * 24 * 1000 * 30,
     });
@@ -51,6 +53,7 @@ const setBetterAuthSessionCookie = (res: Response, token: string) => {
         secure: true,
         sameSite: "none",
         path: "/",
+        domain: COOKIE_DOMAIN,
         //1 day
         maxAge: 60 * 60 * 24 * 1000,
     });

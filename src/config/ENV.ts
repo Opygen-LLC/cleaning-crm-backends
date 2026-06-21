@@ -19,6 +19,11 @@ export const BETTER_AUTH_URL: string = process.env.BETTER_AUTH_URL as string;
 export const APP_URL: string = process.env.APP_URL as string;
 export const FRONTEND_URL: string = process.env.FRONTEND_URL as string;
 
+// Cookie domain shared across subdomains (e.g. api.faysaldev.com and
+// app.faysaldev.com both need to read the same cookie). Leave unset in
+// local dev (localhost) where a domain attribute would break cookies.
+export const COOKIE_DOMAIN: string | undefined = process.env.COOKIE_DOMAIN;
+
 export const ACCESS_TOKEN_SECRET: string = process.env
     .ACCESS_TOKEN_SECRET as string;
 export const REFRESH_TOKEN_SECRET: string = process.env

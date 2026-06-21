@@ -5,6 +5,7 @@ import { sendResponse } from "../../shared/sendResponse";
 import { tokenUtils } from "../../lib/utils/token";
 import AppError from "../../errorHelper/AppError";
 import { CookieUtils } from "../../lib/utils/cookie";
+import { COOKIE_DOMAIN } from "../../config/ENV";
 
 const register = catchAsync(async (req, res) => {
   const result = await authService.register(req.body);
@@ -184,6 +185,7 @@ const logout = catchAsync(async (req, res) => {
     secure: true,
     sameSite: "none" as const,
     path: "/",
+    domain: COOKIE_DOMAIN,
   };
 
   CookieUtils.clearCookie(res, "accessToken", COOKIE_CLEAR_OPTS);
