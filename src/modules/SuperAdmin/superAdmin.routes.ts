@@ -2,6 +2,11 @@ import { Router } from "express";
 import { superAdminController } from "./superAdmin.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { UserRole } from "../../generated/prisma/enums";
+import {
+    zodValidate,
+    ValidationProperty,
+} from "../../middlewares/validations/zodValidation.middleware";
+import { createAdminAccountSchema } from "./superAdmin.validation";
 
 const router = Router();
 
@@ -67,12 +72,13 @@ router.patch(
     superAdminController.activateAdminAccount,
 );
 
-// POST /api/v1/super-admin/admin-accounts  ← NEW (item 12)
-// Body: { name, email, password, businessName }
+// POST /api/v1/super-admin/admin-accounts
+// Body: { name, email, password, businessName, sendWelcomeEmail? }
 // Creates an admin account bypassing email verification — account starts ACTIVE.
 router.post(
     "/admin-accounts",
     isSuperAdmin,
+    zodValidate(createAdminAccountSchema, ValidationProperty.BODY),
     superAdminController.createAdminAccount,
 );
 
@@ -107,7 +113,7 @@ router.patch(
     superAdminController.toggleSubscriptionPlanStatus,
 );
 
-// PATCH  /api/v1/super-admin/pricing-tiers/:tierId  (update a specific Plan price row)
+// PATCH  /api/v1/super-admin/pricing-tiers/:tierId
 router.patch(
     "/pricing-tiers/:tierId",
     isSuperAdmin,
@@ -123,36 +129,36 @@ router.get(
     superAdminController.getAllSubscriptions,
 );
 
-// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/cancel  (existing)
+// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/cancel
 router.patch(
     "/subscriptions/:subscriptionId/cancel",
     isSuperAdmin,
     superAdminController.cancelSubscription,
 );
 
-// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/grant-payment  ← NEW (item 2)
-// Body: { amount: number, method: "CASH"|"BANK_TRANSFER"|"CHEQUE"|"MANUAL", note?, transactionId?, periodMonths? }
+// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/grant-payment
+// Body: { amount, method, note?, transactionId?, periodMonths? }
 router.patch(
     "/subscriptions/:subscriptionId/grant-payment",
     isSuperAdmin,
     superAdminController.grantManualPayment,
 );
 
-// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/suspend  ← NEW (item 3)
+// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/suspend
 router.patch(
     "/subscriptions/:subscriptionId/suspend",
     isSuperAdmin,
     superAdminController.suspendSubscription,
 );
 
-// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/reactivate  ← NEW (item 4)
+// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/reactivate
 router.patch(
     "/subscriptions/:subscriptionId/reactivate",
     isSuperAdmin,
     superAdminController.reactivateSubscription,
 );
 
-// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/extend-trial  ← NEW (item 5)
+// PATCH  /api/v1/super-admin/subscriptions/:subscriptionId/extend-trial
 // Body: { days: number }
 router.patch(
     "/subscriptions/:subscriptionId/extend-trial",
@@ -160,8 +166,7 @@ router.patch(
     superAdminController.extendTrial,
 );
 
-// POST /api/v1/super-admin/subscriptions/:subscriptionId/nudge  ← NEW (item 16)
-// Sends a trial-expiry reminder email to the admin.
+// POST /api/v1/super-admin/subscriptions/:subscriptionId/nudge
 router.post(
     "/subscriptions/:subscriptionId/nudge",
     isSuperAdmin,
@@ -177,52 +182,45 @@ router.get(
     superAdminController.getBillingHistory,
 );
 
-// GET /api/v1/super-admin/billing-history/pending-proofs  ← NEW
-// Returns BillingHistory rows that have a paymentProofUrl and status=PENDING,
-// i.e. every proof waiting for super admin review.
-// IMPORTANT: this static segment must be declared BEFORE /:id routes so Express
-// doesn't swallow "pending-proofs" as a dynamic :id param.
+// IMPORTANT: static segments must come before /:id routes.
+// GET /api/v1/super-admin/billing-history/pending-proofs
 router.get(
     "/billing-history/pending-proofs",
     isSuperAdmin,
     superAdminController.getPendingProofs,
 );
 
-// PATCH /api/v1/super-admin/billing-history/:id/refund  ← existing (item 13)
-// Marks a BillingHistory record as REFUNDED.
+// PATCH /api/v1/super-admin/billing-history/:id/refund
 router.patch(
     "/billing-history/:id/refund",
     isSuperAdmin,
     superAdminController.refundBillingRecord,
 );
 
-// GET /api/v1/super-admin/billing-history/:id/invoice  ← existing (item 14)
-// Returns the invoiceUrl for the billing record (or generates a placeholder).
+// GET /api/v1/super-admin/billing-history/:id/invoice
 router.get(
     "/billing-history/:id/invoice",
     isSuperAdmin,
     superAdminController.getBillingInvoice,
 );
 
-// PATCH /api/v1/super-admin/billing-history/:id/approve-proof  ← NEW
-// Body (optional): { periodMonths?: number, note?: string }
-// Marks the proof PAID and transitions the subscription to ACTIVE.
+// PATCH /api/v1/super-admin/billing-history/:id/approve-proof
+// Body (optional): { periodMonths?, note? }
 router.patch(
     "/billing-history/:id/approve-proof",
     isSuperAdmin,
     superAdminController.approvePaymentProof,
 );
 
-// PATCH /api/v1/super-admin/billing-history/:id/reject-proof  ← NEW
-// Body (optional): { reason?: string }
-// Marks the proof FAILED; subscription remains PENDING_PAYMENT for re-submission.
+// PATCH /api/v1/super-admin/billing-history/:id/reject-proof
+// Body (optional): { reason? }
 router.patch(
     "/billing-history/:id/reject-proof",
     isSuperAdmin,
     superAdminController.rejectPaymentProof,
 );
 
-// ─── Platform Config (item 15) ────────────────────────────────────────────────
+// ─── Platform Config ──────────────────────────────────────────────────────────
 // GET  /api/v1/super-admin/platform-config
 router.get(
     "/platform-config",
