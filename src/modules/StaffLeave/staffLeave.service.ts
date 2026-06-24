@@ -1,8 +1,32 @@
+/**
+ * staffLeave.service.ts
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Production-ready leave service.
+ *
+ * Real-time notification flow (staff → admin):
+ *  1. Staff calls POST /staff/leave → requestLeave()
+ *  2. DB record created with status=PENDING
+ *  3. emitToAdmin(adminId, "leave:requested", payload)
+ *     → Any admin browser in the `admin:${adminId}` Socket.IO room receives
+ *       the event immediately (useSocketLeaveNotification hook on the frontend
+ *       catches it and invalidates "staff-leave" RTK tag).
+ *  4. createNotification() persists a DB notification so the bell badge
+ *     updates even if the admin wasn't connected when the request came in
+ *     (REST polling fallback via useGetNotificationsQuery).
+ *
+ * Real-time notification flow (admin → staff):
+ *  1. Admin calls PATCH /staff/leave/:id/review → reviewLeave()
+ *  2. DB record updated to APPROVED or DECLINED
+ *  3. emitToStaff(staffId, "leave:reviewed", payload)
+ *     → Staff browser in the `staff:${staffId}` room receives status update
+ *       instantly (useSocketStaffDashboard hook can catch "leave:reviewed"
+ *       and invalidate "staff-leave" tag).
+ */
+
 import { prisma } from "../../lib/prisma/prisma";
 import {
   LeaveStatus,
   NotificationType,
-  UserRole,
 } from "../../generated/prisma/enums";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
@@ -29,11 +53,11 @@ const requireAdminProfile = async (userId: string) => {
 // ─── Staff: request leave ─────────────────────────────────────────────────────
 
 /**
- * POST /staff-leave/leave
+ * POST /staff/leave
  *
- * After saving the DB record, emits "leave:requested" to the admin's
- * Socket.IO room and persists a notification so the bell badge updates
- * instantly on the LeaveApprovalsPage without a manual refresh.
+ * Creates a PENDING leave record, then:
+ *  • Emits "leave:requested" to the admin's Socket.IO room for instant UI update
+ *  • Persists a Notification row so the bell badge works even without a live socket
  */
 const requestLeave = async (
   userId: string,
@@ -51,17 +75,35 @@ const requestLeave = async (
     throw new AppError(status.BAD_REQUEST, "End date must be after start date");
   }
 
+  // Prevent duplicate pending requests that overlap existing ones
+  const overlap = await prisma.staffLeave.findFirst({
+    where: {
+      staffId: staff.id,
+      status: LeaveStatus.PENDING,
+      startDate: { lte: end },
+      endDate: { gte: start },
+    },
+  });
+  if (overlap) {
+    throw new AppError(
+      status.CONFLICT,
+      "You already have a pending leave request that overlaps these dates",
+    );
+  }
+
   const leave = await prisma.staffLeave.create({
     data: {
       staffId: staff.id,
       startDate: start,
       endDate: end,
-      reason: payload.reason,
+      reason: payload.reason ?? null,
       status: LeaveStatus.PENDING,
     },
   });
 
-  // ── Real-time: push to admin room ─────────────────────────────────────────
+  const days =
+    Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
   const socketPayload = {
     leaveId: leave.id,
     staffId: staff.id,
@@ -69,15 +111,14 @@ const requestLeave = async (
     startDate: start.toISOString(),
     endDate: end.toISOString(),
     reason: payload.reason ?? null,
+    daysCount: days,
     requestedAt: leave.createdAt.toISOString(),
   };
 
+  // ── Real-time push to admin room ──────────────────────────────────────────
   emitToAdmin(staff.adminId, "leave:requested", socketPayload);
 
-  // ── Persist notification (shows in admin bell + DB-backed) ────────────────
-  const days =
-    Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-
+  // ── Persist DB notification (polling / badge fallback) ───────────────────
   await createNotification({
     adminId: staff.adminId,
     type: NotificationType.GENERAL,
@@ -121,7 +162,7 @@ const cancelLeave = async (userId: string, leaveId: string) => {
 
   await prisma.staffLeave.delete({ where: { id: leaveId } });
 
-  // Notify admin that the pending request was withdrawn
+  // Notify admin that the pending request was withdrawn (invalidates cache on their end)
   emitToAdmin(staff.adminId, "leave:cancelled", {
     leaveId,
     staffId: staff.id,
@@ -171,10 +212,13 @@ const getStaffLeaves = async (
 // ─── Admin: approve or decline ────────────────────────────────────────────────
 
 /**
- * PATCH /staff-leave/leave/:id/review
+ * PATCH /staff/leave/:id/review
  *
- * After updating the DB, emits "leave:reviewed" to the staff member's
- * Socket.IO room so their leave page status badge updates instantly.
+ * Updates the leave status in the DB, then:
+ *  • Emits "leave:reviewed" to the staff member's Socket.IO room so their
+ *    leave page shows the new status badge instantly.
+ *  • Also emits "leave:cancelled" (for admin) if the request is declined so
+ *    the admin's LeaveApprovalsPage pending count refreshes without a reload.
  */
 const reviewLeave = async (
   adminUserId: string,
@@ -208,12 +252,12 @@ const reviewLeave = async (
     where: { id: leaveId },
     data: {
       status: payload.decision as LeaveStatus,
-      adminNote: payload.adminNote,
+      adminNote: payload.adminNote ?? null,
       reviewedAt: new Date(),
     },
   });
 
-  // ── Real-time: push decision to the staff member's room ───────────────────
+  // ── Real-time push to staff member's room ─────────────────────────────────
   emitToStaff(leave.staffId, "leave:reviewed", {
     leaveId,
     decision: payload.decision,
