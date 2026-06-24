@@ -774,20 +774,18 @@ const deleteSubscriptionPlan = async (id: string) => {
 };
 
 // ─── Toggle subscription plan active/inactive ─────────────────────────────────
-// The SubscriptionPlan model does not have a status column; we emulate it via
-// a boolean `isActive` that the frontend maps to "Active"/"Inactive".
-// If the column doesn't exist yet, this is a no-op stub until migration lands.
+// `isActive` is a real Boolean column on SubscriptionPlan (added via migration
+// 20260623_subscription_plan_is_active).  The frontend maps it to the
+// "Active" / "Inactive" display status.
 const toggleSubscriptionPlanStatus = async (id: string, isActive: boolean) => {
     const plan = await prisma.subscriptionPlan.findUnique({ where: { id } });
     if (!plan) {
         throw new AppError(status.NOT_FOUND, "Subscription plan not found.");
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return prisma.subscriptionPlan.update({
         where: { id },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        data: { isActive } as any,
+        data: { isActive },
         include: { plans: true },
     });
 };

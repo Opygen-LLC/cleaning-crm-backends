@@ -28,6 +28,9 @@ model SubscriptionPlan {
   description String?
   currency    Currency         @default(USD)
   features    String[]
+  /// Whether this plan is visible and selectable by tenants.
+  /// Defaults to true so existing rows remain active after migration.
+  isActive    Boolean          @default(true)
 
   plans         Plan[]
   subscriptions Subscription[]
