@@ -1,35 +1,33 @@
 /**
- * staff.routes.ts
+ * src/modules/Staff/staff.routes.ts
  * ─────────────────────────────────────────────────────────────────────────────
- * Production-ready route file that combines:
+ * Single router that owns the entire /staff/* namespace.
  *
- *  STAFF self-service routes  (must precede /:id so "me" isn't treated as an ID)
- *    GET    /staff/me              — own profile + availability + perf summary
- *    PATCH  /staff/me              — update name, phone, address, emergency
- *    POST   /staff/me/avatar       — upload photo to Cloudinary (multipart)
+ * Route order matters — Express matches in registration order:
+ *   1. Static "me" paths first  → /me, /me/avatar, /leave/all, /leave, /leave/:id
+ *   2. Admin CRUD paths last    → /, /:id, /:id/availability
  *
- *  STAFF leave routes  (kept here so the frontend's /staff/leave/* URLs work
- *                        without remounting at /staff-leave/)
- *    POST   /staff/leave           — request leave (fires Socket.IO to admin)
- *    GET    /staff/leave           — own leave list
- *    GET    /staff/leave/all       — admin: all leaves  ← must be before /:id
- *    DELETE /staff/leave/:id       — cancel pending leave
- *    PATCH  /staff/leave/:id/review — admin approve/decline
+ * Endpoints:
  *
- *  ADMIN CRUD routes
- *    POST   /staff/                — create staff member
- *    GET    /staff/                — list own staff
- *    GET    /staff/:id             — fetch single staff
- *    PATCH  /staff/:id             — update staff
- *    PUT    /staff/:id/availability — update availability slots
- *    DELETE /staff/:id             — delete staff
+ *  STAFF SELF-SERVICE
+ *   GET    /staff/me              own profile + availability + perf stats
+ *   PATCH  /staff/me              update name, phone, address, emergency contact
+ *   POST   /staff/me/avatar       upload profile photo → Cloudinary (multipart)
  *
- * IMPORTANT — In routes/index.ts:
- *   • Change the /staff-leave mount to use /staff:
- *       { path: "/staff", route: staffLeaveRoutes }
- *   • OR (preferred) remove staffLeaveRoutes from gatedRoutes entirely and
- *     keep everything in this one staffRoutes file via the staffLeaveController
- *     imports below. This file uses the second approach.
+ *  LEAVE (staff submits / admin reviews)
+ *   POST   /staff/leave           request leave  → emitToAdmin("leave:requested")
+ *   GET    /staff/leave           own leave list
+ *   GET    /staff/leave/all       admin: all leaves (must be before /:id)
+ *   DELETE /staff/leave/:id       cancel pending → emitToAdmin("leave:cancelled")
+ *   PATCH  /staff/leave/:id/review admin approve/decline → emitToStaff("leave:reviewed")
+ *
+ *  ADMIN CRUD
+ *   POST   /staff/                create staff member
+ *   GET    /staff/                list own staff (paginated, searchable)
+ *   GET    /staff/:id             single staff record
+ *   PATCH  /staff/:id             update staff (admin or staff can call)
+ *   PUT    /staff/:id/availability update availability slots
+ *   DELETE /staff/:id             soft-delete staff
  */
 
 import { Router } from "express";
@@ -46,20 +44,20 @@ import { multerMemory } from "../../config/multerMemory";
 
 const router = Router();
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STAFF self-service  (no /:id params — must come first)
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── STAFF SELF-SERVICE ───────────────────────────────────────────────────────
+// These must be registered before /:id so "me" is never treated as a MongoDB/UUID id.
 
 /** GET /staff/me — own profile + availability + performance summary */
 router.get("/me", checkAuth(UserRole.STAFF), staffController.getMyProfile);
 
-/** PATCH /staff/me — update personal details (name, phone, address, emergency) */
+/** PATCH /staff/me — update personal details */
 router.patch("/me", checkAuth(UserRole.STAFF), staffController.updateMyProfile);
 
 /**
  * POST /staff/me/avatar
- * Upload profile photo (multipart/form-data, field name: "avatar").
- * Streams buffer to Cloudinary, saves secure_url → user.image.
+ * Multipart upload (field: "avatar") → Cloudinary → user.image updated.
+ * Returns { avatarUrl: string } pointing to the Cloudinary secure URL.
+ * File size limit: 10 MB (set by multerMemory config).
  */
 router.post(
   "/me/avatar",
@@ -68,49 +66,51 @@ router.post(
   staffController.uploadMyAvatar,
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STAFF leave  (must come before /:id routes)
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── LEAVE ROUTES ─────────────────────────────────────────────────────────────
+// /leave/all must be registered BEFORE /leave/:id to avoid "all" being parsed as an ID.
 
-/** GET /staff/leave/all — admin sees all leave requests (before /:id!) */
+/** GET /staff/leave/all — admin sees all pending/approved/declined leaves */
 router.get(
   "/leave/all",
   checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
   staffLeaveController.getStaffLeaves,
 );
 
-/** POST /staff/leave — staff submits a leave request; fires Socket.IO to admin */
+/** POST /staff/leave — staff submits a new leave request */
 router.post(
   "/leave",
   checkAuth(UserRole.STAFF),
   staffLeaveController.requestLeave,
 );
 
-/** GET /staff/leave — staff views own leave requests */
+/** GET /staff/leave — staff views their own leave requests */
 router.get(
   "/leave",
   checkAuth(UserRole.STAFF),
   staffLeaveController.getMyLeaves,
 );
 
-/** DELETE /staff/leave/:id — staff cancels a PENDING leave; fires Socket.IO to admin */
+/** DELETE /staff/leave/:id — staff cancels a PENDING leave */
 router.delete(
   "/leave/:id",
   checkAuth(UserRole.STAFF),
   staffLeaveController.cancelLeave,
 );
 
-/** PATCH /staff/leave/:id/review — admin approves or declines; fires Socket.IO to staff */
+/**
+ * PATCH /staff/leave/:id/review
+ * Admin approves or declines. Body: { decision: "APPROVED"|"DECLINED", adminNote?: string }
+ * Fires Socket.IO "leave:reviewed" to staff member's room on success.
+ */
 router.patch(
   "/leave/:id/review",
   checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
   staffLeaveController.reviewLeave,
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ADMIN CRUD
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── ADMIN CRUD ───────────────────────────────────────────────────────────────
 
+/** POST /staff/ — admin creates a new staff member */
 router.post(
   "/",
   checkAuth(UserRole.ADMIN),
@@ -118,10 +118,13 @@ router.post(
   staffController.createStaff,
 );
 
+/** GET /staff/ — admin lists all their staff members */
 router.get("/", checkAuth(UserRole.ADMIN), staffController.getMyStaff);
 
+/** GET /staff/:id — admin fetches a single staff record */
 router.get("/:id", checkAuth(UserRole.ADMIN), staffController.getStaffById);
 
+/** PATCH /staff/:id — admin or staff updates a record */
 router.patch(
   "/:id",
   checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
@@ -129,6 +132,11 @@ router.patch(
   staffController.updateStaff,
 );
 
+/**
+ * PUT /staff/:id/availability
+ * Admin updates working hours for a staff member.
+ * Body: { availability: StaffAvailabilityInput[] }
+ */
 router.put(
   "/:id/availability",
   checkAuth(UserRole.ADMIN),
@@ -136,6 +144,7 @@ router.put(
   staffController.updateAvailability,
 );
 
+/** DELETE /staff/:id — admin removes a staff member */
 router.delete(
   "/:id",
   checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN),

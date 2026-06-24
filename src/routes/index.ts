@@ -1,3 +1,24 @@
+/**
+ * src/routes/index.ts
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Central route registration.
+ *
+ * KEY CHANGE FROM ORIGINAL:
+ *   The staffLeaveRoutes were previously mounted at "/staff-leave" which made
+ *   the real paths /api/v1/staff-leave/leave — a mismatch with what the
+ *   frontend's staffDashboardApi calls (/staff/leave, /staff/leave/all, etc.).
+ *
+ *   Fix: staffLeaveRoutes is now REMOVED from gatedRoutes entirely because
+ *   staffRoutes (staff.routes.ts) already imports staffLeaveController and
+ *   registers all /leave/* handlers directly. Keeping staffLeaveRoutes at
+ *   /staff would create duplicate route registrations.
+ *
+ *   The correct architecture is:
+ *     staffRoutes  (mounted at /staff) — owns ALL /staff/* paths including leave
+ *     staffLeaveRoutes — no longer mounted separately; left in codebase for
+ *                        reference but excluded here.
+ */
+
 import { Router } from "express";
 import authRoutes from "../modules/Auth/auth.route";
 import { userRoutes } from "../modules/User/user.routes";
@@ -25,66 +46,67 @@ import { superAdminRoutes } from "../modules/SuperAdmin/superAdmin.routes";
 import { pricingRulesRoutes } from "../modules/PricingRules/pricingRules.routes";
 import { dashboardRoutes } from "../modules/Dashboard/dashboard.routes";
 import { checklistRoutes } from "../modules/Checklist/checklist.routes";
-import { staffLeaveRoutes } from "../modules/StaffLeave/staffLeave.routes";
+// NOTE: staffLeaveRoutes intentionally NOT imported — staffRoutes owns all /staff/* paths.
+// See comment block at top of this file.
 import { couponRoutes } from "../modules/Coupon/coupon.routes";
 import { checkSubscription } from "../middlewares/checkSubscription";
-import express from "express";
 
 const router = Router();
 
-
 // ─── Public / auth routes (no subscription gate) ─────────────────────────────
-// These routes must remain open: auth, session, subscription self-service,
-// subscription plans listing, booking-form / estimate-form (public widgets),
-// and the super-admin portal.
 const openRoutes: { path: string; route: Router }[] = [
-    { path: "/auth", route: authRoutes },
-    { path: "/user", route: userRoutes },
-    { path: "/session", route: sessionRoutes },
-    { path: "/subscription", route: subscriptionRoutes }, // /me, /submit-proof, /change-plan etc.
-    { path: "/subscription-plan", route: subscriptionPlanRoutes }, // public plan listing
-    { path: "/booking-form", route: bookingFormRoutes }, // public booking widget
-    { path: "/estimate-form", route: estimateFormRoutes }, // public estimate widget
-    { path: "/super-admin", route: superAdminRoutes }, // SA has its own auth guard
+  { path: "/auth", route: authRoutes },
+  { path: "/user", route: userRoutes },
+  { path: "/session", route: sessionRoutes },
+  { path: "/subscription", route: subscriptionRoutes },
+  { path: "/subscription-plan", route: subscriptionPlanRoutes },
+  { path: "/booking-form", route: bookingFormRoutes },
+  { path: "/estimate-form", route: estimateFormRoutes },
+  { path: "/super-admin", route: superAdminRoutes },
 ];
 
 // ─── Gated routes (subscription required) ────────────────────────────────────
-// checkSubscription reads req.user (set by checkAuth inside each sub-router)
-// and returns 402 if the tenant's subscription is blocked.
+// staffRoutes handles ALL /staff/* paths including:
+//   GET  /staff/me             — own profile
+//   PATCH /staff/me            — update profile
+//   POST /staff/me/avatar      — upload photo
+//   POST /staff/leave          — request leave (→ socket to admin)
+//   GET  /staff/leave          — own leave list
+//   GET  /staff/leave/all      — admin: all leaves
+//   DELETE /staff/leave/:id    — cancel leave (→ socket to admin)
+//   PATCH /staff/leave/:id/review — admin review (→ socket to staff)
+//   GET  /staff/               — admin list staff
+//   GET  /staff/:id            — admin get single staff
+//   etc.
 const gatedRoutes: { path: string; route: Router }[] = [
-    { path: "/admin", route: adminRoutes },
-    { path: "/staff", route: staffRoutes },
-    { path: "/client", route: clientRoutes },
-    { path: "/service-catalog", route: serviceCatalogRoutes },
-    { path: "/invoice", route: invoiceRoutes },
-    { path: "/expense", route: expenseRoutes },
-    { path: "/booking", route: bookingRoutes },
-    { path: "/lead", route: leadRoutes },
-    { path: "/dashboard", route: dashboardRoutes },
-    { path: "/notification", route: notificationRoutes },
-    { path: "/job", route: jobRoutes },
-    { path: "/quote", route: quoteRoutes },
-    { path: "/estimate", route: estimateRoutes },
-    { path: "/review", route: reviewRoutes },
-    { path: "/reports", route: reportsRoutes },
-    { path: "/checklist", route: checklistRoutes },
-    { path: "/recurring-booking", route: recurringBookingRoutes },
-    { path: "/pricing-rules", route: pricingRulesRoutes },
-    { path: "/staff-leave", route: staffLeaveRoutes },
-    // Coupon module has its own per-route checkAuth guards (SUPER_ADMIN / SUPER_ADMIN_OR_ADMIN)
-    { path: "/coupon", route: couponRoutes },
+  { path: "/admin", route: adminRoutes },
+  { path: "/staff", route: staffRoutes }, // ← owns leave sub-routes too
+  { path: "/client", route: clientRoutes },
+  { path: "/service-catalog", route: serviceCatalogRoutes },
+  { path: "/invoice", route: invoiceRoutes },
+  { path: "/expense", route: expenseRoutes },
+  { path: "/booking", route: bookingRoutes },
+  { path: "/lead", route: leadRoutes },
+  { path: "/dashboard", route: dashboardRoutes }, // GET /dashboard/staff lives here
+  { path: "/notification", route: notificationRoutes },
+  { path: "/job", route: jobRoutes },
+  { path: "/quote", route: quoteRoutes },
+  { path: "/estimate", route: estimateRoutes },
+  { path: "/review", route: reviewRoutes },
+  { path: "/reports", route: reportsRoutes },
+  { path: "/checklist", route: checklistRoutes },
+  { path: "/recurring-booking", route: recurringBookingRoutes },
+  { path: "/pricing-rules", route: pricingRulesRoutes },
+  { path: "/coupon", route: couponRoutes },
+  // /staff-leave intentionally REMOVED — was causing path mismatch
 ];
 
-// Register open routes first
 openRoutes.forEach(({ path, route }) => {
-    router.use(path, route);
+  router.use(path, route);
 });
 
-// Register gated routes — checkSubscription fires before each sub-router's
-// own checkAuth, but since checkSubscription short-circuits on non-ADMIN
-// users (returning next() immediately), it is safe for staff/superadmin too.
 gatedRoutes.forEach(({ path, route }) => {
-    router.use(path, checkSubscription, route);
+  router.use(path, checkSubscription, route);
 });
 
 export default router;
