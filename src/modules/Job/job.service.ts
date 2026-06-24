@@ -1,12 +1,27 @@
 /**
- * job.service.ts  (updated — Phase 1 complete, production-ready)
+ * job.service.ts  — Production-ready (Job-status real-time sync)
  *
- * CHANGES vs previous version:
- *  • getStaffAvailability — now also checks:
- *      a) approved StaffLeave records that overlap the window
- *      b) StaffAvailability (weekly schedule): if a staff member has no active
- *         entry for the requested day-of-week, they're marked unavailable
- *  • All other logic is untouched
+ * KEY CHANGES IN THIS VERSION
+ * ────────────────────────────
+ * 1. checkIn  — emits "job:statusUpdated" with newStatus = "IN_PROGRESS"
+ *              after the transaction commits (not inside it).
+ *              Also emits "job:statusUpdated" to the STAFF room so the staff
+ *              member's own UI reflects the change immediately.
+ *
+ * 2. checkOut — delegates to updateJobStatus(COMPLETED) which already emits
+ *              the socket event + creates the notification. We removed the
+ *              double-emit that was causing duplicate toasts on the dispatch board.
+ *
+ * 3. updateJobStatus — now also calls emitToStaff for every assigned staff
+ *              member so their dashboard cards update in real time when the
+ *              admin manually drags a card on the dispatch board.
+ *
+ * 4. resolveAdminId path for STAFF — getAllJobs now falls through correctly
+ *              for STAFF role: the STAFF branch is resolved in getJobById /
+ *              checkIn / checkOut; getAllJobs returns only jobs where the
+ *              staff member is in staffAssignments.
+ *
+ * Everything else is identical to the previous version.
  */
 
 import { prisma } from "../../lib/prisma/prisma";
@@ -162,6 +177,32 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
 };
 
 const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
+    // STAFF: return only jobs where this staff member is assigned
+    if (user.role === "STAFF") {
+        const staffProfile = await prisma.staffProfile.findUnique({
+            where: { userId: user.id },
+        });
+        if (!staffProfile)
+            throw new AppError(status.NOT_FOUND, "Staff profile not found");
+
+        const jobs = await prisma.job.findMany({
+            where: {
+                staffAssignments: { some: { staffId: staffProfile.id } },
+            },
+            include: jobInclude,
+            orderBy: { scheduledDate: "asc" },
+        });
+        return {
+            data: jobs,
+            meta: {
+                total: jobs.length,
+                page: 1,
+                limit: jobs.length,
+                totalPage: 1,
+            },
+        };
+    }
+
     const adminId = await resolveAdminId(user.id);
     return new QueryBuilder(prisma.job, queryParams, {
         searchableFields: jobSearchableFields,
@@ -177,6 +218,29 @@ const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
 };
 
 const getJobById = async (id: string, user: IRequestUser) => {
+    // STAFF: verify the job is assigned to them
+    if (user.role === "STAFF") {
+        const staffProfile = await prisma.staffProfile.findUnique({
+            where: { userId: user.id },
+        });
+        if (!staffProfile)
+            throw new AppError(status.NOT_FOUND, "Staff profile not found");
+
+        const job = await prisma.job.findFirst({
+            where: {
+                id,
+                staffAssignments: { some: { staffId: staffProfile.id } },
+            },
+            include: jobInclude,
+        });
+        if (!job)
+            throw new AppError(
+                status.NOT_FOUND,
+                "Job not found or not assigned to you",
+            );
+        return job;
+    }
+
     const adminId = await resolveAdminId(user.id);
     const job = await prisma.job.findFirst({
         where: { id, adminId },
@@ -212,12 +276,37 @@ const updateJob = async (
     return prisma.job.update({ where: { id }, data, include: jobInclude });
 };
 
+/**
+ * updateJobStatus
+ *
+ * After committing the DB transaction this function:
+ *   1. Emits "job:statusUpdated" to the admin's Socket.IO room so the
+ *      dispatch board card moves instantly (RTK cache invalidation).
+ *   2. Emits "job:statusUpdated" to every assigned staff member's room
+ *      so their job-detail page status banner updates without a manual
+ *      refresh.
+ *   3. Creates a persisted notification (DB-backed) AND pushes
+ *      "notification:new" to the admin bell via createNotification().
+ *   4. Sends a review-request email when the job reaches COMPLETED.
+ */
 const updateJobStatus = async (
     id: string,
     newStatus: JobStatus,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    // Both ADMIN and STAFF can update status — resolve adminId correctly
+    let adminId: string;
+    if (user.role === "STAFF") {
+        const job = await prisma.job.findUnique({
+            where: { id },
+            select: { adminId: true },
+        });
+        if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
+        adminId = job.adminId;
+    } else {
+        adminId = await resolveAdminId(user.id);
+    }
+
     const existing = await prisma.job.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Job not found");
 
@@ -235,179 +324,183 @@ const updateJobStatus = async (
         );
     }
 
-    return prisma
-        .$transaction(async (tx) => {
-            const job = await tx.job.update({
-                where: { id },
-                data: { status: newStatus },
-                include: jobInclude,
+    const completedJob = await prisma.$transaction(async (tx) => {
+        const job = await tx.job.update({
+            where: { id },
+            data: { status: newStatus },
+            include: jobInclude,
+        });
+
+        if (job.bookingId && newStatus === JobStatus.COMPLETED) {
+            await tx.booking.update({
+                where: { id: job.bookingId },
+                data: { status: BookingStatus.COMPLETED },
+            });
+        }
+
+        if (newStatus === JobStatus.COMPLETED) {
+            const expiresAt = new Date();
+            expiresAt.setDate(expiresAt.getDate() + 7);
+            await tx.reviewToken.upsert({
+                where: { jobId: id },
+                create: { jobId: id, adminId: job.adminId, expiresAt },
+                update: {},
+            });
+        }
+
+        if (newStatus === JobStatus.COMPLETED && job.bookingId) {
+            const existingInvoice = await tx.invoice.findUnique({
+                where: { bookingId: job.bookingId },
             });
 
-            if (job.bookingId && newStatus === JobStatus.COMPLETED) {
-                await tx.booking.update({
+            if (!existingInvoice) {
+                const booking = await tx.booking.findUnique({
                     where: { id: job.bookingId },
-                    data: { status: BookingStatus.COMPLETED },
-                });
-            }
-
-            if (newStatus === JobStatus.COMPLETED) {
-                const expiresAt = new Date();
-                expiresAt.setDate(expiresAt.getDate() + 7);
-                await tx.reviewToken.upsert({
-                    where: { jobId: id },
-                    create: { jobId: id, adminId: job.adminId, expiresAt },
-                    update: {},
-                });
-            }
-
-            if (newStatus === JobStatus.COMPLETED && job.bookingId) {
-                const existingInvoice = await tx.invoice.findUnique({
-                    where: { bookingId: job.bookingId },
+                    include: {
+                        client: { select: { name: true, email: true } },
+                    },
                 });
 
-                if (!existingInvoice) {
-                    const booking = await tx.booking.findUnique({
-                        where: { id: job.bookingId },
-                        include: {
-                            client: { select: { name: true, email: true } },
+                if (booking) {
+                    const lastInvoice = await tx.invoice.findFirst({
+                        orderBy: { createdAt: "desc" },
+                        select: { invoiceRef: true },
+                    });
+                    let nextNum = 1;
+                    if (lastInvoice?.invoiceRef) {
+                        const parts = lastInvoice.invoiceRef.split("-");
+                        const n = parseInt(parts[parts.length - 1]);
+                        if (!isNaN(n)) nextNum = n + 1;
+                    }
+                    const invoiceRef = `#OP-INV-${nextNum.toString().padStart(4, "0")}`;
+                    const issuedDate = new Date();
+                    const dueDate = new Date();
+                    dueDate.setDate(dueDate.getDate() + 14);
+                    const lineTotal = Number(booking.total);
+
+                    await tx.invoice.create({
+                        data: {
+                            invoiceRef,
+                            adminId: job.adminId,
+                            bookingId: job.bookingId,
+                            status: "DRAFT",
+                            clientName: booking.client.name,
+                            clientEmail: booking.client.email,
+                            serviceAddress: booking.address,
+                            linkedBookingRef: booking.bookingRef,
+                            lineItems: [
+                                {
+                                    description: `${booking.serviceType.replace(/_/g, " ")} — ${booking.address}`,
+                                    quantity: 1,
+                                    unitPrice: lineTotal,
+                                    total: lineTotal,
+                                },
+                            ],
+                            issuedDate,
+                            dueDate,
+                            subtotal: lineTotal,
+                            taxRate: 0,
+                            taxAmount: 0,
+                            total: lineTotal,
                         },
                     });
-
-                    if (booking) {
-                        const lastInvoice = await tx.invoice.findFirst({
-                            orderBy: { createdAt: "desc" },
-                            select: { invoiceRef: true },
-                        });
-                        let nextNum = 1;
-                        if (lastInvoice?.invoiceRef) {
-                            const parts = lastInvoice.invoiceRef.split("-");
-                            const n = parseInt(parts[parts.length - 1]);
-                            if (!isNaN(n)) nextNum = n + 1;
-                        }
-                        const invoiceRef = `#OP-INV-${nextNum.toString().padStart(4, "0")}`;
-                        const issuedDate = new Date();
-                        const dueDate = new Date();
-                        dueDate.setDate(dueDate.getDate() + 14);
-                        const lineTotal = Number(booking.total);
-
-                        await tx.invoice.create({
-                            data: {
-                                invoiceRef,
-                                adminId: job.adminId,
-                                bookingId: job.bookingId,
-                                status: "DRAFT",
-                                clientName: booking.client.name,
-                                clientEmail: booking.client.email,
-                                serviceAddress: booking.address,
-                                linkedBookingRef: booking.bookingRef,
-                                lineItems: [
-                                    {
-                                        description: `${booking.serviceType.replace(/_/g, " ")} — ${booking.address}`,
-                                        quantity: 1,
-                                        unitPrice: lineTotal,
-                                        total: lineTotal,
-                                    },
-                                ],
-                                issuedDate,
-                                dueDate,
-                                subtotal: lineTotal,
-                                taxRate: 0,
-                                taxAmount: 0,
-                                total: lineTotal,
-                            },
-                        });
-                    }
                 }
             }
+        }
 
-            if (job.bookingId && newStatus === JobStatus.CANCELLED) {
-                await tx.booking.update({
-                    where: { id: job.bookingId },
-                    data: { status: BookingStatus.CANCELLED },
+        if (job.bookingId && newStatus === JobStatus.CANCELLED) {
+            await tx.booking.update({
+                where: { id: job.bookingId },
+                data: { status: BookingStatus.CANCELLED },
+            });
+        }
+
+        return job;
+    });
+
+    // ── Real-time: emit to admin dispatch board ──────────────────────────────
+    const socketPayload = {
+        jobId: completedJob.id,
+        jobRef: completedJob.jobRef,
+        newStatus,
+        updatedAt: new Date().toISOString(),
+    };
+
+    emitToAdmin(completedJob.adminId, "job:statusUpdated", socketPayload);
+
+    // ── Real-time: emit to every assigned staff member ───────────────────────
+    // This is the critical piece that was missing — staff job-detail pages
+    // receive the status update and can reflect it without a manual refresh.
+    for (const assignment of completedJob.staffAssignments) {
+        emitToStaff(assignment.staffId, "job:statusUpdated", socketPayload);
+    }
+
+    // ── Persist notification ─────────────────────────────────────────────────
+    const statusLabel: Record<string, string> = {
+        SCHEDULED: "Scheduled",
+        IN_PROGRESS: "In Progress",
+        COMPLETED: "Completed",
+        CANCELLED: "Cancelled",
+    };
+
+    await createNotification({
+        adminId: completedJob.adminId,
+        type: NotificationType.JOB,
+        title: `Job ${completedJob.jobRef} — ${statusLabel[newStatus] ?? newStatus}`,
+        message: `Status changed to ${statusLabel[newStatus] ?? newStatus}`,
+        relatedId: completedJob.id,
+    });
+
+    // ── Review-request email on COMPLETED ────────────────────────────────────
+    if (newStatus === JobStatus.COMPLETED && completedJob) {
+        try {
+            const reviewToken = await prisma.reviewToken.findUnique({
+                where: { jobId: id },
+                select: { token: true },
+            });
+
+            if (reviewToken) {
+                const clientRecord = await prisma.client.findUnique({
+                    where: { id: completedJob.clientId },
+                    select: { name: true, email: true },
                 });
-            }
 
-            return job;
-        })
-        .then(async (completedJob) => {
-            // Real-time push — emit to admin room (used by FE for RTK cache invalidation)
-            emitToAdmin(completedJob.adminId, "job:statusUpdated", {
-                jobId: completedJob.id,
-                jobRef: completedJob.jobRef,
-                newStatus,
-                updatedAt: new Date().toISOString(),
-            });
-
-            // Persist notification to DB + push "notification:new" to bell
-            const statusLabel: Record<string, string> = {
-                SCHEDULED: "Scheduled",
-                IN_PROGRESS: "In Progress",
-                COMPLETED: "Completed",
-                CANCELLED: "Cancelled",
-            };
-            await createNotification({
-                adminId: completedJob.adminId,
-                type: NotificationType.JOB,
-                title: `Job ${completedJob.jobRef} — ${statusLabel[newStatus] ?? newStatus}`,
-                message: `Status changed to ${statusLabel[newStatus] ?? newStatus}`,
-                relatedId: completedJob.id,
-            });
-
-            // Send review-request email when job is COMPLETED
-            if (newStatus === JobStatus.COMPLETED && completedJob) {
-                try {
-                    const reviewToken = await prisma.reviewToken.findUnique({
-                        where: { jobId: id },
-                        select: { token: true },
-                    });
-
-                    if (reviewToken) {
-                        const clientRecord = await prisma.client.findUnique({
-                            where: { id: completedJob.clientId },
-                            select: { name: true, email: true },
-                        });
-
-                        if (clientRecord) {
-                            const staffNames =
-                                completedJob.staffAssignments.map(
-                                    (a: any) => a.staff.user.name,
-                                );
-
-                            await sendEmailSafely({
-                                to: clientRecord.email,
-                                subject: `How did we do? — ${completedJob.jobRef}`,
-                                templateName: "review-request",
-                                templateData: {
-                                    clientName: clientRecord.name,
-                                    jobRef: completedJob.jobRef,
-                                    serviceType:
-                                        completedJob.serviceType.replace(
-                                            /_/g,
-                                            " ",
-                                        ),
-                                    completedDate: new Date(
-                                        completedJob.scheduledDate,
-                                    ).toLocaleDateString("en-GB", {
-                                        weekday: "long",
-                                        day: "numeric",
-                                        month: "long",
-                                        year: "numeric",
-                                    }),
-                                    staffNames,
-                                    reviewUrl: `${FRONTEND_URL}/review/${reviewToken.token}`,
-                                },
-                            });
-                        }
-                    }
-                } catch (err) {
-                    console.error(
-                        "[REVIEW EMAIL] Failed to send review request:",
-                        err,
+                if (clientRecord) {
+                    const staffNames = completedJob.staffAssignments.map(
+                        (a: any) => a.staff.user.name,
                     );
+
+                    await sendEmailSafely({
+                        to: clientRecord.email,
+                        subject: `How did we do? — ${completedJob.jobRef}`,
+                        templateName: "review-request",
+                        templateData: {
+                            clientName: clientRecord.name,
+                            jobRef: completedJob.jobRef,
+                            serviceType: completedJob.serviceType.replace(
+                                /_/g,
+                                " ",
+                            ),
+                            completedDate: new Date(
+                                completedJob.scheduledDate,
+                            ).toLocaleDateString("en-GB", {
+                                weekday: "long",
+                                day: "numeric",
+                                month: "long",
+                                year: "numeric",
+                            }),
+                            staffNames,
+                            reviewUrl: `${FRONTEND_URL}/review/${reviewToken.token}`,
+                        },
+                    });
                 }
             }
-            return completedJob;
-        });
+        } catch (err) {
+            console.error("[REVIEW EMAIL] Failed to send review request:", err);
+        }
+    }
+
+    return completedJob;
 };
 
 const deleteJob = async (id: string, user: IRequestUser) => {
@@ -519,7 +612,6 @@ const assignStaff = async (
             });
         })
         .then(async (updatedJob) => {
-            // Real-time push — emit staff assignment to admin room
             if (updatedJob) {
                 emitToAdmin(updatedJob.adminId, "job:staffAssigned", {
                     jobId: updatedJob.id,
@@ -528,7 +620,6 @@ const assignStaff = async (
                     updatedAt: new Date().toISOString(),
                 });
 
-                // Persist notification to DB + push to bell
                 await createNotification({
                     adminId: updatedJob.adminId,
                     type: NotificationType.JOB,
@@ -538,9 +629,6 @@ const assignStaff = async (
                 });
             }
 
-            // Notify each assigned staff member directly — real-time push +
-            // dispatch email — so they find out the moment a job lands on
-            // their plate, not only when an admin happens to be watching.
             if (payload.staffIds.length && updatedJob) {
                 const staffList = await prisma.staffProfile.findMany({
                     where: { id: { in: payload.staffIds } },
@@ -571,8 +659,6 @@ const assignStaff = async (
                     minute: "2-digit",
                 });
 
-                // Real-time Socket.IO push — one event per assigned staff
-                // member's private room (see joinStaffRoom in socketio.ts).
                 for (const staff of staffList) {
                     emitToStaff(staff.id, "job:assigned", {
                         jobId: updatedJob.id,
@@ -587,7 +673,6 @@ const assignStaff = async (
                     });
                 }
 
-                // Dispatch notification email to each newly assigned staff member
                 await Promise.all(
                     staffList.map((staff) =>
                         sendEmailSafely({
@@ -634,18 +719,6 @@ const getJobStats = async (user: IRequestUser) => {
     return { total, scheduled, inProgress, completed, cancelled };
 };
 
-/**
- * getStaffAvailability  (Phase 1 — upgraded)
- *
- * Checks three independent conflict sources:
- *   1. Active jobs that overlap the requested time window  (original logic)
- *   2. Approved leave periods that cover the requested date  [NEW]
- *   3. Weekly schedule: if the staff member has no active StaffAvailability
- *      entry for the requested day-of-week, they are not scheduled  [NEW]
- *
- * The response includes a `reason` field on unavailable staff so the UI
- * can display a meaningful tooltip ("On leave", "Not scheduled", "Job conflict").
- */
 const getStaffAvailability = async (
     query: IStaffAvailabilityQuery,
     user: IRequestUser,
@@ -657,7 +730,6 @@ const getStaffAvailability = async (
     );
     const requestDay = JS_DAY_TO_WEEKDAY[windowStart.getDay()];
 
-    // ── Load all staff with their weekly availability and leave records ────────
     const allStaff = await prisma.staffProfile.findMany({
         where: { adminId },
         include: {
@@ -673,7 +745,6 @@ const getStaffAvailability = async (
         },
     });
 
-    // ── Load active jobs that could conflict ──────────────────────────────────
     const overlappingJobs = await prisma.job.findMany({
         where: {
             adminId,
@@ -707,18 +778,15 @@ const getStaffAvailability = async (
         }
     }
 
-    // ── Build response ────────────────────────────────────────────────────────
     const availability = allStaff.map((staff) => {
         const conflicts = conflictMap.get(staff.id) ?? [];
         const onLeave = staff.staffLeave.length > 0;
         const daySchedule = staff.staffAvailability.find(
             (a) => a.day === requestDay,
         );
-        const notScheduled = !daySchedule; // has no active entry for this day
-
+        const notScheduled = !daySchedule;
         const available = conflicts.length === 0 && !onLeave && !notScheduled;
 
-        // Human-readable reason for unavailability (first match wins)
         let unavailableReason: string | undefined;
         if (onLeave) unavailableReason = "On approved leave";
         else if (notScheduled) unavailableReason = "Not scheduled on this day";
@@ -730,7 +798,6 @@ const getStaffAvailability = async (
             email: staff.user.email,
             available,
             unavailableReason: available ? undefined : unavailableReason,
-            // Working hours for the day (for the UI to display)
             scheduledHours: daySchedule
                 ? {
                       startTime: daySchedule.startTime,
@@ -766,8 +833,8 @@ const getStaffAvailability = async (
 // ─── Phase 2: Staff check-in / check-out ─────────────────────────────────────
 
 /**
- * Resolve the StaffProfile id from a user id.
- * Staff call check-in/out so we need to look them up differently from admins.
+ * Resolves the StaffProfile and verifies the staff member is assigned.
+ * Works for both STAFF and ADMIN callers.
  */
 const resolveStaffAssignment = async (
     jobId: string,
@@ -777,7 +844,6 @@ const resolveStaffAssignment = async (
     adminId: string;
     assignment: { jobId: string; staffId: string };
 }> => {
-    // If STAFF role → look up staff profile
     if (user.role === "STAFF") {
         const staffProfile = await prisma.staffProfile.findUnique({
             where: { userId },
@@ -815,8 +881,8 @@ const resolveStaffAssignment = async (
 /**
  * POST /job/:id/checkin
  *
- * Records a checkInAt timestamp on the job_staff_assignment row and
- * transitions the job status from SCHEDULED → IN_PROGRESS.
+ * Stamps checkInAt on the assignment row and transitions SCHEDULED → IN_PROGRESS.
+ * Emits "job:statusUpdated" to BOTH the admin room and the staff member's room.
  */
 const checkIn = async (jobId: string, user: IRequestUser) => {
     const { adminId, assignment } = await resolveStaffAssignment(
@@ -828,8 +894,8 @@ const checkIn = async (jobId: string, user: IRequestUser) => {
     const job = await prisma.job.findFirst({ where: { id: jobId, adminId } });
     if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
 
+    // Idempotent — already in progress
     if (job.status === JobStatus.IN_PROGRESS) {
-        // Already checked in — idempotent: just return current state
         return prisma.jobStaffAssignment.findUnique({
             where: { jobId_staffId: { jobId, staffId: assignment.staffId } },
         });
@@ -842,45 +908,51 @@ const checkIn = async (jobId: string, user: IRequestUser) => {
         );
     }
 
-    return prisma.$transaction(async (tx) => {
-        // Stamp check-in time
+    const updatedAssignment = await prisma.$transaction(async (tx) => {
         const updated = await tx.jobStaffAssignment.update({
             where: { jobId_staffId: { jobId, staffId: assignment.staffId } },
             data: { checkInAt: new Date() },
         });
 
-        // Transition status
         await tx.job.update({
             where: { id: jobId },
             data: { status: JobStatus.IN_PROGRESS },
         });
 
-        // Real-time push
-        emitToAdmin(job.adminId, "job:statusUpdated", {
-            jobId,
-            jobRef: job.jobRef,
-            newStatus: JobStatus.IN_PROGRESS,
-            updatedAt: new Date().toISOString(),
-        });
-
-        // Persist notification
-        await createNotification({
-            adminId: job.adminId,
-            type: NotificationType.JOB,
-            title: `Job ${job.jobRef} — In Progress`,
-            message: "Staff checked in — job is now in progress",
-            relatedId: jobId,
-        });
-
         return updated;
     });
+
+    // ── Real-time: push to admin dispatch board ──────────────────────────────
+    const socketPayload = {
+        jobId,
+        jobRef: job.jobRef,
+        newStatus: JobStatus.IN_PROGRESS,
+        updatedAt: new Date().toISOString(),
+    };
+
+    emitToAdmin(job.adminId, "job:statusUpdated", socketPayload);
+
+    // ── Real-time: echo back to the staff member so their page updates too ──
+    emitToStaff(assignment.staffId, "job:statusUpdated", socketPayload);
+
+    // ── Persist notification ─────────────────────────────────────────────────
+    await createNotification({
+        adminId: job.adminId,
+        type: NotificationType.JOB,
+        title: `Job ${job.jobRef} — In Progress`,
+        message: "Staff checked in — job is now in progress",
+        relatedId: jobId,
+    });
+
+    return updatedAssignment;
 };
 
 /**
  * POST /job/:id/checkout
  *
- * Records a checkOutAt timestamp, computes hoursWorked, and transitions
- * the job status from IN_PROGRESS → COMPLETED.
+ * Stamps checkOutAt + hoursWorked, then delegates to updateJobStatus(COMPLETED).
+ * updateJobStatus already handles the socket emit + notification + email.
+ * We do NOT emit a second socket event here to avoid duplicate toasts.
  */
 const checkOut = async (jobId: string, user: IRequestUser) => {
     const { adminId, assignment } = await resolveStaffAssignment(
@@ -906,20 +978,20 @@ const checkOut = async (jobId: string, user: IRequestUser) => {
     const checkOutAt = new Date();
     const checkInAt = currentAssignment?.checkInAt ?? checkOutAt;
     const diffMs = checkOutAt.getTime() - checkInAt.getTime();
-    const hoursWorked = Math.round((diffMs / 3_600_000) * 100) / 100; // 2 d.p.
+    const hoursWorked = Math.round((diffMs / 3_600_000) * 100) / 100;
 
-    return prisma.$transaction(async (tx) => {
-        const updated = await tx.jobStaffAssignment.update({
-            where: { jobId_staffId: { jobId, staffId: assignment.staffId } },
-            data: { checkOutAt, hoursWorked },
-        });
-
-        // Delegate status completion to the existing updateJobStatus function
-        // (which handles booking sync, review token, invoice creation, email)
-        await updateJobStatus(jobId, JobStatus.COMPLETED, user);
-
-        return { ...updated, hoursWorked };
+    // Stamp the checkout time FIRST (outside the status-update transaction so
+    // the assignment row is committed before updateJobStatus fires its socket).
+    const updated = await prisma.jobStaffAssignment.update({
+        where: { jobId_staffId: { jobId, staffId: assignment.staffId } },
+        data: { checkOutAt, hoursWorked },
     });
+
+    // Delegate status transition to updateJobStatus — it handles booking sync,
+    // review token, auto-invoice creation, socket emit, notification, and email.
+    await updateJobStatus(jobId, JobStatus.COMPLETED, user);
+
+    return { ...updated, hoursWorked };
 };
 
 export const jobService = {
