@@ -1,6 +1,9 @@
 import { deleteFileFromCloudinary } from "../../config/cloudinary";
 import { prisma } from "../../lib/prisma/prisma";
-import { UpdateAdminPayload, UpdateWorkLocationPayload } from "./admin.interface";
+import {
+    UpdateAdminPayload,
+    UpdateWorkLocationPayload,
+} from "./admin.interface";
 
 const createAdmin = async (payload: {
     userId: string;
@@ -118,7 +121,7 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
 const updateWorkLocation = async (
     userId: string,
     locationId: string,
-    payload: UpdateWorkLocationPayload
+    payload: UpdateWorkLocationPayload,
 ) => {
     return await prisma.$transaction(async (tx) => {
         const admin = await tx.adminProfile.findUnique({
@@ -174,10 +177,42 @@ const deleteWorkLocation = async (userId: string, locationId: string) => {
     });
 };
 
+// ─── Get admin usage counts (staff / clients / bookings this month) ───────────
+
+const getAdminUsage = async (userId: string) => {
+    const admin = await prisma.adminProfile.findUnique({
+        where: { userId },
+        select: { id: true },
+    });
+
+    if (!admin) {
+        throw new Error("Admin profile not found");
+    }
+
+    const adminId = admin.id;
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const [staffCount, clientCount, bookingCountThisMonth] = await Promise.all([
+        prisma.staffProfile.count({
+            where: { adminId, status: "ACTIVE" },
+        }),
+        prisma.client.count({
+            where: { adminId, status: "ACTIVE" },
+        }),
+        prisma.booking.count({
+            where: { adminId, createdAt: { gte: monthStart } },
+        }),
+    ]);
+
+    return { staffCount, clientCount, bookingCountThisMonth };
+};
+
 export const adminService = {
     createAdmin,
     getAdmin,
     updateAdmin,
     updateWorkLocation,
     deleteWorkLocation,
+    getAdminUsage,
 };
