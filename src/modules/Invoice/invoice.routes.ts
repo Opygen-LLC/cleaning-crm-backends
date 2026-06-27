@@ -1,5 +1,13 @@
+/**
+ * invoice.routes.ts  (updated — diff: added GET /:id/pdf route)
+ *
+ * One new line added: the GET /:id/pdf endpoint that streams a PDFKit-
+ * generated invoice PDF.  Everything else is unchanged from the original.
+ */
+
 import { Router } from "express";
 import { invoiceController } from "./invoice.controller";
+import { downloadInvoicePDF } from "./invoice.pdf.controller"; // ← NEW
 import { checkAuth } from "../../middlewares/checkAuth";
 import { UserRole } from "../../generated/prisma/enums";
 import {
@@ -29,6 +37,18 @@ router.get(
     checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.STAFF),
     invoiceController.getAllInvoices,
 );
+
+// ── NEW: PDF download ────────────────────────────────────────────────────────
+// Must be declared BEFORE /:id so the literal segment "pdf" never shadows it.
+// (Express matches routes in registration order; /:id would swallow /pdf if
+//  it were registered first.)
+// Placed here for clarity — it could also sit at the bottom of the file.
+router.get(
+    "/:id/pdf",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.STAFF),
+    downloadInvoicePDF,
+);
+// ─────────────────────────────────────────────────────────────────────────────
 
 router.get(
     "/:id",
@@ -68,7 +88,6 @@ router.post(
     checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
     invoiceController.sendInvoice,
 );
-
 
 // ── Manual bank-transfer proof upload (client or admin on behalf) ─────────────
 router.post(
