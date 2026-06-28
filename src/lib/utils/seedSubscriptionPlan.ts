@@ -259,13 +259,13 @@ export async function seedSubscriptionPlans() {
                 update: {
                     description: sub.description,
                     currency: sub.currency,
-                    features: sub.features,
+                    features: sub.features.map(f => JSON.stringify(f)),
                 },
                 create: {
                     name: sub.name,
                     description: sub.description,
                     currency: sub.currency,
-                    features: sub.features,
+                    features: sub.features.map(f => JSON.stringify(f)),
                 },
             });
         } catch (err) {

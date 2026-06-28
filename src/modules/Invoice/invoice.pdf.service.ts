@@ -75,7 +75,7 @@ export const generateInvoicePDFBuffer = async (
     }
 
     const lineItems: LineItem[] = Array.isArray(invoice.lineItems)
-        ? (invoice.lineItems as LineItem[])
+        ? (invoice.lineItems as unknown as LineItem[])
         : [];
 
     return new Promise<Buffer>((resolve, reject) => {
