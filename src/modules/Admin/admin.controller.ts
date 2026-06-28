@@ -42,7 +42,7 @@ const updateWorkLocation = catchAsync(async (req, res) => {
     const result = await adminService.updateWorkLocation(
         userId,
         locationId as string,
-        payload
+        payload,
     );
 
     sendResponse(res, {
@@ -57,7 +57,10 @@ const deleteWorkLocation = catchAsync(async (req, res) => {
     const userId = req.user.id;
     const locationId = req.params.id;
 
-    const result = await adminService.deleteWorkLocation(userId, locationId as string);
+    const result = await adminService.deleteWorkLocation(
+        userId,
+        locationId as string,
+    );
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -67,9 +70,23 @@ const deleteWorkLocation = catchAsync(async (req, res) => {
     });
 });
 
+const getAdminUsage = catchAsync(async (req, res) => {
+    const userId = req.user.id;
+
+    const result = await adminService.getAdminUsage(userId);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Admin usage fetched successfully",
+        data: result,
+    });
+});
+
 export const adminController = {
     getAdmin,
     updateAdmin,
     updateWorkLocation,
     deleteWorkLocation,
+    getAdminUsage,
 };

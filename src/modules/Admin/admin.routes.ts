@@ -11,11 +11,7 @@ import { multerUpload } from "../../config/multer";
 
 const router = Router();
 
-router.get(
-    "/profile",
-    checkAuth(UserRole.ADMIN),
-    adminController.getAdmin,
-);
+router.get("/profile", checkAuth(UserRole.ADMIN), adminController.getAdmin);
 
 router.patch(
     "/profile",
@@ -37,5 +33,8 @@ router.delete(
     checkAuth(UserRole.ADMIN),
     adminController.deleteWorkLocation,
 );
+
+// GET /api/v1/admin/usage — returns staffCount, clientCount, bookingCountThisMonth
+router.get("/usage", checkAuth(UserRole.ADMIN), adminController.getAdminUsage);
 
 export const adminRoutes = router;
