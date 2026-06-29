@@ -1,6 +1,15 @@
+/**
+ * review.routes.ts
+ *
+ * CHANGE: Added checkFeature("reviews") gate to all ADMIN read/write
+ * routes so the GROWTH-plan restriction is enforced at the API layer.
+ * Public review-submission routes (no auth) remain ungated.
+ */
+
 import { Router } from "express";
 import { reviewController } from "./review.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
+import { checkFeature } from "../../middlewares/checkSubscription";
 import { UserRole } from "../../generated/prisma/enums";
 import {
     ValidationProperty,
@@ -10,7 +19,13 @@ import { reviewValidation } from "./review.validation";
 
 const router = Router();
 
-// ── Public routes (no auth) ───────────────────────────────────────────────────
+const isAdminOrSuper = checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN);
+// SUPER_ADMIN is exempt from the feature gate (no subscription on file).
+// checkFeature already passes through when role !== ADMIN, so it is safe
+// to chain it after isAdminOrSuper.
+const hasReviews     = checkFeature("reviews");
+
+// ── Public routes (no auth, no feature gate) ──────────────────────────────────
 
 // GET  /review/public/:token  → validate token & return job summary
 router.get("/public/:token", reviewController.validateReviewToken);
@@ -22,47 +37,53 @@ router.post(
     reviewController.submitPublicReview,
 );
 
-// ── Admin routes ──────────────────────────────────────────────────────────────
+// ── Admin routes (feature-gated) ──────────────────────────────────────────────
 
 // GET  /review/staff-summaries  → per-staff rating breakdown
 router.get(
     "/staff-summaries",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    isAdminOrSuper,
+    hasReviews,
     reviewController.getStaffReviewSummaries,
 );
 
 // POST /review/generate-token/:jobId  → generate review token for a completed job
 router.post(
     "/generate-token/:jobId",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    isAdminOrSuper,
+    hasReviews,
     reviewController.generateTokenForJob,
 );
 
-// GET  /review         → paginated list with filters
+// GET  /review  → paginated list with filters
 router.get(
     "/",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    isAdminOrSuper,
+    hasReviews,
     reviewController.getAllReviews,
 );
 
-// POST /review/:id/resend-email  → resend review request email for an existing review
+// POST /review/:id/resend-email  → resend review request email
 router.post(
     "/:id/resend-email",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    isAdminOrSuper,
+    hasReviews,
     reviewController.resendReviewEmail,
 );
 
-// GET  /review/:id     → single review
+// GET  /review/:id  → single review
 router.get(
     "/:id",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    isAdminOrSuper,
+    hasReviews,
     reviewController.getReviewById,
 );
 
-// PATCH /review/:id    → update status / publish / reply
+// PATCH /review/:id  → update status / publish / reply
 router.patch(
     "/:id",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    isAdminOrSuper,
+    hasReviews,
     zodValidate(reviewValidation.updateReview, ValidationProperty.BODY),
     reviewController.updateReview,
 );

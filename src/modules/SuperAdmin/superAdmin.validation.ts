@@ -21,7 +21,9 @@ export const createAdminAccountSchema = z.object({
     password: z
         .string({ message: "password is required." })
         .min(8, "password must be at least 8 characters.")
-        .max(128, "password must be at most 128 characters."),
+        .max(128, "password must be at most 128 characters.")
+        .regex(/[A-Z]/, "password must contain at least one uppercase letter.")
+        .regex(/[0-9]/, "password must contain at least one number."),
 
     businessName: z
         .string({ message: "businessName is required." })
@@ -30,8 +32,9 @@ export const createAdminAccountSchema = z.object({
         .trim(),
 
     // ── Optional metadata fields ───────────────────────────────────────────────
-    // Accepted but not persisted yet — reserved for future expansion
-    // (e.g. plan assignment, country, notes).
+    // sendWelcomeEmail controls whether the admin-created email is sent.
+    // Remaining optional fields (plan, billingCycle, country, role, notes …)
+    // are accepted and stripped by Zod — reserved for future plan assignment.
     sendWelcomeEmail: z.boolean().optional().default(true),
 });
 

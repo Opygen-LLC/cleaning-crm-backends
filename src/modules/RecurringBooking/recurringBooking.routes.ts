@@ -1,6 +1,16 @@
+/**
+ * recurringBooking.routes.ts
+ *
+ * CHANGE: Added checkFeature("recurring bookings") gate to all ADMIN
+ * routes so the PRO-plan restriction is enforced at the API layer —
+ * not just the FE FeatureGate wrapper. checkSubscription (status gate)
+ * is applied at the router level in routes/index.ts.
+ */
+
 import { Router } from "express";
 import { recurringBookingController } from "./recurringBooking.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
+import { checkFeature } from "../../middlewares/checkSubscription";
 import { UserRole } from "../../generated/prisma/enums";
 import {
     ValidationProperty,
@@ -10,36 +20,44 @@ import { recurringBookingValidation } from "./recurringBooking.validation";
 
 const router = Router();
 
-// Stats (before /:id so Express doesn't treat "stats" as an id param)
+const isAdmin         = checkAuth(UserRole.ADMIN);
+const hasRecurring    = checkFeature("recurring bookings");
+
+// Stats — gated
 router.get(
     "/stats",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasRecurring,
     recurringBookingController.getScheduleStats,
 );
 
-// CRUD
+// CRUD — all gated
 router.post(
     "/",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasRecurring,
     zodValidate(recurringBookingValidation.createSchedule, ValidationProperty.BODY),
     recurringBookingController.createSchedule,
 );
 
 router.get(
     "/",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasRecurring,
     recurringBookingController.getAllSchedules,
 );
 
 router.get(
     "/:id",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasRecurring,
     recurringBookingController.getScheduleById,
 );
 
 router.patch(
     "/:id",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasRecurring,
     zodValidate(recurringBookingValidation.updateSchedule, ValidationProperty.BODY),
     recurringBookingController.updateSchedule,
 );
@@ -47,21 +65,24 @@ router.patch(
 // pause / resume / cancel
 router.patch(
     "/:id/status",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasRecurring,
     zodValidate(recurringBookingValidation.statusAction, ValidationProperty.BODY),
     recurringBookingController.updateScheduleStatus,
 );
 
 router.delete(
     "/:id",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasRecurring,
     recurringBookingController.deleteSchedule,
 );
 
 // Manually trigger booking generation for a schedule
 router.post(
     "/:id/generate",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasRecurring,
     recurringBookingController.generateNextBooking,
 );
 

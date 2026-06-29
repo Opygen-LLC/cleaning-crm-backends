@@ -13,6 +13,7 @@ import {
     IAdminAccountFilters,
 } from "./superAdmin.interface";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
+import { waitUntil } from "@vercel/functions";
 import { auth } from "../../lib/auth";
 import { adminService } from "../Admin/admin.service";
 
@@ -473,14 +474,16 @@ const activateAdminAccount = async (adminId: string) => {
 
 // ─── Create admin account (super-admin dedicated endpoint) ────────────────────
 // Bypasses email verification: account is set ACTIVE immediately.
+// Sends a welcome email with credentials when sendWelcomeEmail === true.
 
 const createAdminAccount = async (payload: {
     name: string;
     email: string;
     password: string;
     businessName: string;
+    sendWelcomeEmail?: boolean;
 }) => {
-    const { name, email, password, businessName } = payload;
+    const { name, email, password, businessName, sendWelcomeEmail = true } = payload;
 
     if (!name || !email || !password || !businessName) {
         throw new AppError(
@@ -542,6 +545,24 @@ const createAdminAccount = async (payload: {
             userId: data.user.id,
             businessName,
         });
+
+        // Fire-and-forget welcome email with login credentials
+        if (sendWelcomeEmail) {
+            waitUntil(
+                sendEmailSafely({
+                    to: email,
+                    subject: "Your Opygen CleanCRM Admin Account is Ready",
+                    templateName: "admin-created",
+                    templateData: {
+                        name,
+                        email,
+                        password,
+                        businessName,
+                        loginUrl: `${process.env.FRONTEND_URL ?? "https://app.opygen.io"}/login`,
+                    },
+                }),
+            );
+        }
 
         return {
             ...user,
