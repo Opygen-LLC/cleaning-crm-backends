@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { couponController } from "./coupon.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
+import { checkFeature } from "../../middlewares/checkSubscription";
 import { UserRole } from "../../generated/prisma/enums";
 import {
     ValidationProperty,
@@ -13,6 +14,12 @@ const router = Router();
 const isSuperAdmin = checkAuth(UserRole.SUPER_ADMIN);
 // ADMIN can read and validate coupons but cannot create/delete — only SUPER_ADMIN can
 const isSuperAdminOrAdmin = checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN);
+// "coupons" is a PRO-tier feature (see seedSubscriptionPlan.ts). checkFeature
+// short-circuits to next() for any non-ADMIN role (incl. SUPER_ADMIN), so on
+// today's SUPER_ADMIN-only mutation routes below this is a no-op pass-through —
+// it exists for defense-in-depth in case ADMIN-level coupon management is ever
+// enabled on these same routes, and to gate the ADMIN-facing /validate route.
+const hasCoupons = checkFeature("coupons");
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 // GET /api/v1/coupon/stats
@@ -24,6 +31,7 @@ router.get("/stats", isSuperAdminOrAdmin, couponController.getCouponStats);
 router.post(
     "/validate",
     checkAuth(UserRole.ADMIN),
+    hasCoupons,
     zodValidate(couponValidation.validateCoupon, ValidationProperty.BODY),
     couponController.validateCoupon,
 );
@@ -33,6 +41,7 @@ router.post(
 router.post(
     "/",
     isSuperAdmin,
+    hasCoupons,
     zodValidate(couponValidation.createCoupon, ValidationProperty.BODY),
     couponController.createCoupon,
 );
@@ -47,14 +56,20 @@ router.get("/:id", isSuperAdminOrAdmin, couponController.getCouponById);
 router.patch(
     "/:id",
     isSuperAdmin,
+    hasCoupons,
     zodValidate(couponValidation.updateCoupon, ValidationProperty.BODY),
     couponController.updateCoupon,
 );
 
 // PATCH /api/v1/coupon/:id/toggle — SUPER_ADMIN only
-router.patch("/:id/toggle", isSuperAdmin, couponController.toggleCoupon);
+router.patch(
+    "/:id/toggle",
+    isSuperAdmin,
+    hasCoupons,
+    couponController.toggleCoupon,
+);
 
 // DELETE /api/v1/coupon/:id — SUPER_ADMIN only
-router.delete("/:id", isSuperAdmin, couponController.deleteCoupon);
+router.delete("/:id", isSuperAdmin, hasCoupons, couponController.deleteCoupon);
 
 export const couponRoutes = router;
