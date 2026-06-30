@@ -10,3 +10,5 @@ dist
 task.md
 .Deployments.md
 .agent.md
+
+.vscode

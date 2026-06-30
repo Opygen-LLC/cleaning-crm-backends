@@ -80,7 +80,12 @@ router.get("/:id/dispatch", checkAuth(UserRole.ADMIN), checkFeature("auto-dispat
 router.post("/:id/dispatch", checkAuth(UserRole.ADMIN), checkFeature("auto-dispatch"), jobDispatchController.dispatchJob);
 
 // ── Job Notes ─────────────────────────────────────────────────────────────────
-router.get("/:id/notes", checkAuth(UserRole.ADMIN), jobNotesController.getNotes);
+router.get(
+    "/:id/notes",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(jobNotesValidation.getNotesQuery, ValidationProperty.QUERY),
+    jobNotesController.getNotes,
+);
 router.post(
     "/:id/notes",
     checkAuth(UserRole.ADMIN),
