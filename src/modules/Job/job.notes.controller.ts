@@ -14,16 +14,25 @@ import { NoteType }         from "../../generated/prisma/enums";
 
 /**
  * GET /job/:id/notes
- * Returns all notes for a job, pinned first then newest first.
+ * Returns paginated notes for a job, pinned first then newest first.
+ * Query params: ?page=1&limit=10 (both optional, defaults applied in service)
  */
 const getNotes = catchAsync(async (req, res) => {
-    const result = await jobNotesService.getNotes(req.params.id as string, req.user);
+    const page = req.query.page ? Number(req.query.page) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+
+    const result = await jobNotesService.getNotes(
+        req.params.id as string,
+        req.user,
+        { page, limit },
+    );
 
     sendResponse(res, {
         httpStatusCode: status.OK,
         success:        true,
         message:        "Job notes retrieved successfully",
-        data:           result,
+        data:           result.data,
+        meta:           result.meta,
     });
 });
 

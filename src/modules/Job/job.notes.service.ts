@@ -41,6 +41,16 @@ export interface IUpdateNote {
 
 export type PhotoType = "BEFORE" | "AFTER" | "ISSUE";
 
+/**
+ * [NEW] Pagination options for GET /job/:id/notes.
+ * Defaults match the project-wide convention (page 1, 10 per page) used by
+ * Expense, Client, and other list endpoints — see expense.service.ts.
+ */
+export interface IGetNotesOptions {
+    page?: number;
+    limit?: number;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const resolveAdminId = async (userId: string): Promise<string> => {
@@ -86,14 +96,50 @@ const assertJobOwnership = async (
 
 // ─── Notes ────────────────────────────────────────────────────────────────────
 
-const getNotes = async (jobId: string, user: IRequestUser) => {
+/**
+ * getNotes
+ *
+ * [UPDATED] Now paginated to match the project-wide list-endpoint convention.
+ * Ordering is preserved exactly as before: pinned notes first, then newest
+ * first within each group. Defaults to page=1, limit=10 when the caller
+ * passes no pagination options (keeps existing integrations working without
+ * a breaking change — they simply get page 1 of up to `limit` results plus
+ * a `meta` block instead of the full unbounded array).
+ */
+const getNotes = async (
+    jobId: string,
+    user: IRequestUser,
+    options: IGetNotesOptions = {},
+) => {
     const adminId = await resolveAdminId(user.id);
     await assertJobOwnership(jobId, adminId);
 
-    return prisma.jobNote.findMany({
-        where: { jobId, adminId },
-        orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
-    });
+    const { page = 1, limit = 10 } = options;
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.min(Math.max(1, limit), 100); // hard cap at 100/page
+    const skip = (safePage - 1) * safeLimit;
+
+    const whereConditions = { jobId, adminId };
+
+    const [data, total] = await Promise.all([
+        prisma.jobNote.findMany({
+            where: whereConditions,
+            orderBy: [{ pinned: "desc" }, { createdAt: "desc" }],
+            skip,
+            take: safeLimit,
+        }),
+        prisma.jobNote.count({ where: whereConditions }),
+    ]);
+
+    return {
+        data,
+        meta: {
+            page: safePage,
+            limit: safeLimit,
+            total,
+            totalPages: Math.ceil(total / safeLimit),
+        },
+    };
 };
 
 const createNote = async (
