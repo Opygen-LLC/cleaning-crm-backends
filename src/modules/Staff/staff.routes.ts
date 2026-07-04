@@ -13,6 +13,7 @@
  *   GET    /staff/me              own profile + availability + perf stats
  *   PATCH  /staff/me              update name, phone, address, emergency contact
  *   POST   /staff/me/avatar       upload profile photo → Cloudinary (multipart)
+ *   PATCH  /staff/me/availability toggle/edit own weekly working-hours schedule
  *
  *  LEAVE (staff submits / admin reviews)
  *   POST   /staff/leave           request leave  → emitToAdmin("leave:requested")
@@ -36,8 +37,8 @@ import { staffLeaveController } from "../StaffLeave/staffLeave.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { UserRole } from "../../generated/prisma/enums";
 import {
-  ValidationProperty,
-  zodValidate,
+    ValidationProperty,
+    zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
 import { staffValidation } from "./staff.validation";
 import { multerMemory } from "../../config/multerMemory";
@@ -60,10 +61,23 @@ router.patch("/me", checkAuth(UserRole.STAFF), staffController.updateMyProfile);
  * File size limit: 10 MB (set by multerMemory config).
  */
 router.post(
-  "/me/avatar",
-  checkAuth(UserRole.STAFF),
-  multerMemory.single("avatar"),
-  staffController.uploadMyAvatar,
+    "/me/avatar",
+    checkAuth(UserRole.STAFF),
+    multerMemory.single("avatar"),
+    staffController.uploadMyAvatar,
+);
+
+/**
+ * PATCH /staff/me/availability
+ * Staff member toggles/edits their own weekly working-hours schedule.
+ * Body: { availability: StaffAvailabilityInput[] } — all 7 days required,
+ * same validation as the admin PUT /:id/availability route below.
+ */
+router.patch(
+    "/me/availability",
+    checkAuth(UserRole.STAFF),
+    zodValidate(staffValidation.updateAvailability, ValidationProperty.BODY),
+    staffController.updateMyAvailability,
 );
 
 // ─── LEAVE ROUTES ─────────────────────────────────────────────────────────────
@@ -71,30 +85,30 @@ router.post(
 
 /** GET /staff/leave/all — admin sees all pending/approved/declined leaves */
 router.get(
-  "/leave/all",
-  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
-  staffLeaveController.getStaffLeaves,
+    "/leave/all",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    staffLeaveController.getStaffLeaves,
 );
 
 /** POST /staff/leave — staff submits a new leave request */
 router.post(
-  "/leave",
-  checkAuth(UserRole.STAFF),
-  staffLeaveController.requestLeave,
+    "/leave",
+    checkAuth(UserRole.STAFF),
+    staffLeaveController.requestLeave,
 );
 
 /** GET /staff/leave — staff views their own leave requests */
 router.get(
-  "/leave",
-  checkAuth(UserRole.STAFF),
-  staffLeaveController.getMyLeaves,
+    "/leave",
+    checkAuth(UserRole.STAFF),
+    staffLeaveController.getMyLeaves,
 );
 
 /** DELETE /staff/leave/:id — staff cancels a PENDING leave */
 router.delete(
-  "/leave/:id",
-  checkAuth(UserRole.STAFF),
-  staffLeaveController.cancelLeave,
+    "/leave/:id",
+    checkAuth(UserRole.STAFF),
+    staffLeaveController.cancelLeave,
 );
 
 /**
@@ -103,19 +117,19 @@ router.delete(
  * Fires Socket.IO "leave:reviewed" to staff member's room on success.
  */
 router.patch(
-  "/leave/:id/review",
-  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
-  staffLeaveController.reviewLeave,
+    "/leave/:id/review",
+    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    staffLeaveController.reviewLeave,
 );
 
 // ─── ADMIN CRUD ───────────────────────────────────────────────────────────────
 
 /** POST /staff/ — admin creates a new staff member */
 router.post(
-  "/",
-  checkAuth(UserRole.ADMIN),
-  zodValidate(staffValidation.createStaff, ValidationProperty.BODY),
-  staffController.createStaff,
+    "/",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(staffValidation.createStaff, ValidationProperty.BODY),
+    staffController.createStaff,
 );
 
 /** GET /staff/ — admin lists all their staff members */
@@ -126,10 +140,10 @@ router.get("/:id", checkAuth(UserRole.ADMIN), staffController.getStaffById);
 
 /** PATCH /staff/:id — admin or staff updates a record */
 router.patch(
-  "/:id",
-  checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
-  zodValidate(staffValidation.updateStaff, ValidationProperty.BODY),
-  staffController.updateStaff,
+    "/:id",
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    zodValidate(staffValidation.updateStaff, ValidationProperty.BODY),
+    staffController.updateStaff,
 );
 
 /**
@@ -138,17 +152,17 @@ router.patch(
  * Body: { availability: StaffAvailabilityInput[] }
  */
 router.put(
-  "/:id/availability",
-  checkAuth(UserRole.ADMIN),
-  zodValidate(staffValidation.updateAvailability, ValidationProperty.BODY),
-  staffController.updateAvailability,
+    "/:id/availability",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(staffValidation.updateAvailability, ValidationProperty.BODY),
+    staffController.updateAvailability,
 );
 
 /** DELETE /staff/:id — admin removes a staff member */
 router.delete(
-  "/:id",
-  checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN),
-  staffController.deleteStaff,
+    "/:id",
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN),
+    staffController.deleteStaff,
 );
 
 export const staffRoutes = router;
