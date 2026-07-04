@@ -17,6 +17,7 @@ import cors from "cors";
 import { globalErrorHandler } from "./middlewares/globalErrorHandler";
 import cookieParser from "cookie-parser";
 import { notFound } from "./middlewares/notFound";
+import { maintenanceModeGate } from "./middlewares/maintenanceMode";
 import path from "path";
 import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 
@@ -97,7 +98,7 @@ app.get("/", (_req: Request, res: Response) => {
     res.status(200).json({ success: true, message: "Cleaning CRM API is running...." });
 });
 
-app.use("/api/v1", routes);
+app.use("/api/v1", maintenanceModeGate, routes);
 
 app.use(globalErrorHandler);
 app.use(notFound);

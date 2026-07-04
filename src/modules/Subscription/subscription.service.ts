@@ -9,8 +9,13 @@ import {
 import { prisma } from "../../lib/prisma/prisma";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { Decimal } from "@prisma/client/runtime/client";
+import { getPlatformConfig } from "../../lib/utils/platformConfig";
 
-const TRIAL_DAYS = 7;
+// Fallback only — the real value is read from platform config
+// (super-admin → Settings → Platform Configuration → "Default trial days")
+// at the moment each trial is created, so changing the setting takes effect
+// for all new signups immediately without a redeploy.
+const FALLBACK_TRIAL_DAYS = 7;
 
 // ─── Helper: resolve AdminProfile.id from the authenticated User ─────────────
 // BUGFIX: Subscription.adminId is a foreign key to AdminProfile.id, NOT
@@ -93,8 +98,12 @@ const createTrialSubscription = async (adminId: string) => {
     }
 
     const now = new Date();
+    const platformConfig = await getPlatformConfig().catch(
+        () => null as null | { defaultTrialDays: number },
+    );
+    const trialDays = platformConfig?.defaultTrialDays ?? FALLBACK_TRIAL_DAYS;
     const trialEndsAt = new Date(
-        now.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000,
+        now.getTime() + trialDays * 24 * 60 * 60 * 1000,
     );
 
     return prisma.subscription.create({
