@@ -105,8 +105,27 @@ const getClientById = async (id: string, user: IRequestUser) => {
     const client = await prisma.client.findUniqueOrThrow({
         where: { id, adminId },
         include: {
-            notes: true,
-            bookings: true,
+            notes: {
+                orderBy: { createdAt: "desc" },
+            },
+            bookings: {
+                orderBy: { scheduledDate: "desc" },
+                include: {
+                    // Live invoice data per booking — status, ref, and total —
+                    // so the admin profile view reflects real payment state
+                    // instead of just the booking record on its own.
+                    invoice: {
+                        select: {
+                            id: true,
+                            invoiceRef: true,
+                            status: true,
+                            total: true,
+                            dueDate: true,
+                            paidDate: true,
+                        },
+                    },
+                },
+            },
         },
     });
 
