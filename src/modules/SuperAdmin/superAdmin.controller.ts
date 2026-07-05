@@ -222,6 +222,22 @@ const getAllSubscriptions = catchAsync(async (req, res) => {
         status: req.query.status as string,
         planId: req.query.planId as string,
         isTrial: req.query.isTrial as string,
+        search: req.query.search as string,
+        plan: req.query.plan as string,
+        billingCycle: req.query.billingCycle as
+            | "monthly"
+            | "annual"
+            | undefined,
+        sortField: req.query.sortField as
+            | "adminName"
+            | "plan"
+            | "status"
+            | "mrr"
+            | "billingCycle"
+            | "startedAt"
+            | "nextBillingDate"
+            | undefined,
+        sortDir: req.query.sortDir as "asc" | "desc" | undefined,
     };
     const paginationOptions = {
         page: req.query.page ? parseInt(req.query.page as string) : undefined,
@@ -240,6 +256,7 @@ const getAllSubscriptions = catchAsync(async (req, res) => {
         message: "Subscriptions retrieved successfully",
         meta: result.meta,
         data: result.data,
+        stats: result.stats,
     });
 });
 

@@ -11,6 +11,7 @@ import { IPaginationOptions } from "../../interface/query.interface";
 import {
     IActivityLogFilters,
     IAdminAccountFilters,
+    ISubscriptionFilters,
 } from "./superAdmin.interface";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { waitUntil } from "@vercel/functions";
@@ -777,7 +778,7 @@ const updateSubscriptionPlan = async (
         }
     }
 
-    return prisma.subscriptionPlan.update({
+    const updated = await prisma.subscriptionPlan.update({
         where: { id },
         data: {
             description: payload.description,
@@ -788,6 +789,48 @@ const updateSubscriptionPlan = async (
         },
         include: { plans: true },
     });
+
+    // ── Live feature-gate sync ──────────────────────────────────────────────
+    // BUGFIX: EditPlanModal lets a super-admin add/remove feature strings on
+    // a plan that already has paying subscribers. This update was previously
+    // DB-only — nothing told the affected admins' browsers to refetch, so
+    // FeatureGate/useGateMap/useFeatureAccess kept serving the *old* feature
+    // list from the RTK Query cache until the admin logged out and back in.
+    // getMySubscription's "subscriptions" tag is only invalidated client-side
+    // by a socket "notification:new" event of type SUBSCRIPTION (see
+    // useSocketJobStatus.ts) or one of the per-admin flows below (payment
+    // approval, refund, suspend, reactivate, extend-trial, etc.) that already
+    // call createNotification(). A plan-level edit had no equivalent, so it
+    // never reached those rooms. Fan the notification out to every admin
+    // currently on this plan so their sidebar locks update live, matching the
+    // behaviour already engineered for every other subscription-changing flow.
+    //
+    // Only fire when the feature list actually changed — description/currency
+    // edits don't affect gating and shouldn't spam every subscriber's bell.
+    const featuresChanged =
+        payload.features !== undefined &&
+        JSON.stringify([...payload.features].sort()) !==
+            JSON.stringify([...plan.features].sort());
+
+    if (featuresChanged) {
+        const affectedSubscriptions = await prisma.subscription.findMany({
+            where: { subscriptionPlanId: id },
+            select: { id: true, adminId: true },
+        });
+
+        for (const { id: subscriptionId, adminId } of affectedSubscriptions) {
+            createNotification({
+                adminId,
+                type: NotificationType.SUBSCRIPTION,
+                title: "Your plan's features were updated",
+                message:
+                    "The features included in your subscription plan have changed. Your sidebar has been refreshed to reflect the update.",
+                relatedId: subscriptionId,
+            }).catch(() => {});
+        }
+    }
+
+    return updated;
 };
 
 const updatePricingTier = async (
@@ -861,18 +904,98 @@ const toggleSubscriptionPlanStatus = async (id: string, isActive: boolean) => {
 // ─── Admin Subscription Management (super admin actions) ─────────────────────
 
 const getAllSubscriptions = async (
-    filters: { status?: string; planId?: string; isTrial?: string },
+    filters: ISubscriptionFilters,
     paginationOptions: IPaginationOptions,
 ) => {
     const { page, limit, skip } = buildPagination(paginationOptions);
 
-    const where: Record<string, unknown> = {};
+    const where: Prisma.SubscriptionWhereInput = {};
     if (filters.status) where.status = filters.status as SubscriptionStatus;
     if (filters.planId) where.planId = filters.planId;
     if (filters.isTrial !== undefined)
         where.isTrial = filters.isTrial === "true";
+    if (filters.plan)
+        where.subscriptionPlan = {
+            name: filters.plan as import("../../generated/prisma/enums").SubscriptionName,
+        };
+    if (filters.billingCycle)
+        where.plan = {
+            interval: filters.billingCycle === "annual" ? "YEARLY" : "MONTHLY",
+        };
+    if (filters.search) {
+        where.admin = {
+            OR: [
+                {
+                    businessName: {
+                        contains: filters.search,
+                        mode: "insensitive",
+                    },
+                },
+                {
+                    user: {
+                        is: {
+                            name: {
+                                contains: filters.search,
+                                mode: "insensitive",
+                            },
+                        },
+                    },
+                },
+                {
+                    user: {
+                        is: {
+                            email: {
+                                contains: filters.search,
+                                mode: "insensitive",
+                            },
+                        },
+                    },
+                },
+            ],
+        };
+    }
 
-    const [total, data] = await Promise.all([
+    // Map the FE's virtual sort keys onto the actual (possibly relational)
+    // Prisma fields they're derived from. Defaults to newest-first.
+    const sortDir = filters.sortDir ?? "desc";
+    let orderBy: Prisma.SubscriptionOrderByWithRelationInput = {
+        createdAt: "desc",
+    };
+    switch (filters.sortField) {
+        case "adminName":
+            orderBy = { admin: { businessName: sortDir } };
+            break;
+        case "plan":
+            orderBy = { subscriptionPlan: { name: sortDir } };
+            break;
+        case "status":
+            orderBy = { status: sortDir };
+            break;
+        case "mrr":
+            orderBy = { plan: { price: sortDir } };
+            break;
+        case "billingCycle":
+            orderBy = { plan: { interval: sortDir } };
+            break;
+        case "nextBillingDate":
+            orderBy = { currentPeriodEnd: sortDir };
+            break;
+        case "startedAt":
+            orderBy = { createdAt: sortDir };
+            break;
+        default:
+            orderBy = { createdAt: "desc" };
+    }
+
+    const [
+        total,
+        data,
+        activeNonTrialCount,
+        activeTrialCount,
+        suspendedCount,
+        annualActiveCount,
+        mrrSubs,
+    ] = await Promise.all([
         prisma.subscription.count({ where }),
         prisma.subscription.findMany({
             where,
@@ -891,15 +1014,53 @@ const getAllSubscriptions = async (
                     take: 1,
                 },
             },
-            orderBy: { createdAt: "desc" },
+            orderBy,
             skip,
             take: limit,
         }),
+        // ── Stats row — BUGFIX: previously derived client-side from only the
+        // current page of (at most `limit`) rows, so "Total MRR" / counts
+        // changed depending on which page or filter was active. These five
+        // aggregates are global (unaffected by the table's own filters/
+        // pagination), matching how getPlatformStats computes the same
+        // active/trial split elsewhere in this file.
+        prisma.subscription.count({
+            where: { status: SubscriptionStatus.ACTIVE, isTrial: false },
+        }),
+        prisma.subscription.count({
+            where: { status: SubscriptionStatus.ACTIVE, isTrial: true },
+        }),
+        prisma.subscription.count({
+            where: { status: SubscriptionStatus.SUSPENDED },
+        }),
+        prisma.subscription.count({
+            where: {
+                status: SubscriptionStatus.ACTIVE,
+                isTrial: false,
+                plan: { interval: "YEARLY" },
+            },
+        }),
+        prisma.subscription.findMany({
+            where: { status: SubscriptionStatus.ACTIVE, isTrial: false },
+            select: { plan: { select: { price: true } } },
+        }),
     ]);
+
+    const totalMRR = mrrSubs.reduce(
+        (sum, s) => sum + Number(s.plan?.price ?? 0),
+        0,
+    );
 
     return {
         meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
         data,
+        stats: {
+            totalMRR: parseFloat(totalMRR.toFixed(2)),
+            activeCount: activeNonTrialCount,
+            trialCount: activeTrialCount,
+            suspendedCount,
+            annualCount: annualActiveCount,
+        },
     };
 };
 
@@ -911,7 +1072,7 @@ const cancelSubscription = async (subscriptionId: string) => {
         throw new AppError(status.NOT_FOUND, "Subscription not found.");
     }
 
-    return prisma.subscription.update({
+    const updated = await prisma.subscription.update({
         where: { id: subscriptionId },
         data: {
             status: SubscriptionStatus.CANCELLED,
@@ -919,6 +1080,21 @@ const cancelSubscription = async (subscriptionId: string) => {
         },
         include: { plan: true, subscriptionPlan: true },
     });
+
+    // BUGFIX: this was DB-only. checkSubscription.ts's own comment notes the
+    // frontend's useGateMap already treats "Cancelled" as hasActiveAccess ===
+    // false — but without a live push the sidebar kept showing everything
+    // unlocked (stale cache) until the admin's next 402 or a re-login.
+    createNotification({
+        adminId: sub.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Subscription cancelled",
+        message:
+            "Your subscription has been cancelled by the platform admin. Subscribe to a plan to restore access.",
+        relatedId: updated.id,
+    }).catch(() => {});
+
+    return updated;
 };
 
 const getBillingHistory = async (
@@ -1028,6 +1204,21 @@ const grantManualPayment = async (
         }),
     ]);
 
+    // BUGFIX: DB-only before. This is the super-admin-initiated equivalent of
+    // approvePaymentProof (payment recorded off-platform, no proof upload) and
+    // needs the same live push so the tenant's lockout wall clears and their
+    // sidebar unlocks without a re-login.
+    createNotification({
+        adminId: sub.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Payment recorded",
+        message: `A payment has been recorded on your account. Your subscription is active through ${nextPeriodEnd.toLocaleDateString(
+            "en-GB",
+            { day: "numeric", month: "short", year: "numeric" },
+        )}.`,
+        relatedId: updatedSub.id,
+    }).catch(() => {});
+
     return { billingRecord, subscription: updatedSub };
 };
 
@@ -1045,11 +1236,26 @@ const suspendSubscription = async (subscriptionId: string) => {
         );
     }
 
-    return prisma.subscription.update({
+    const updated = await prisma.subscription.update({
         where: { id: subscriptionId },
         data: { status: SubscriptionStatus.SUSPENDED },
         include: { plan: true, subscriptionPlan: true },
     });
+
+    // BUGFIX: DB-only before — the admin kept full access in their open tab
+    // until they hit a 402 on some other request. checkSubscription.ts blocks
+    // SUSPENDED at the API layer immediately, but the sidebar/feature-gate UI
+    // didn't know until a manual refresh or re-login.
+    createNotification({
+        adminId: sub.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Account suspended",
+        message:
+            "Your account has been suspended by the platform admin. Please contact support or submit a payment proof.",
+        relatedId: updated.id,
+    }).catch(() => {});
+
+    return updated;
 };
 
 const reactivateSubscription = async (subscriptionId: string) => {
@@ -1066,7 +1272,7 @@ const reactivateSubscription = async (subscriptionId: string) => {
         );
     }
 
-    return prisma.subscription.update({
+    const updated = await prisma.subscription.update({
         where: { id: subscriptionId },
         data: {
             status: SubscriptionStatus.ACTIVE,
@@ -1075,6 +1281,20 @@ const reactivateSubscription = async (subscriptionId: string) => {
         },
         include: { plan: true, subscriptionPlan: true },
     });
+
+    // BUGFIX: DB-only before — reactivation is the moment the admin's lockout
+    // wall should disappear and their sidebar unlock; without this push that
+    // only happened after their next request 402'd through to a fresh fetch,
+    // or after a re-login.
+    createNotification({
+        adminId: sub.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Account reactivated",
+        message: "Your account has been reactivated. Access has been restored.",
+        relatedId: updated.id,
+    }).catch(() => {});
+
+    return updated;
 };
 
 const extendTrial = async (subscriptionId: string, days: number) => {
@@ -1108,7 +1328,7 @@ const extendTrial = async (subscriptionId: string, days: number) => {
     const periodBase = sub.currentPeriodEnd ?? new Date();
     const newPeriodEnd = new Date(periodBase.getTime() + msToAdd);
 
-    return prisma.subscription.update({
+    const updated = await prisma.subscription.update({
         where: { id: subscriptionId },
         data: {
             trialEndsAt: newTrialEnd,
@@ -1118,6 +1338,24 @@ const extendTrial = async (subscriptionId: string, days: number) => {
         },
         include: { plan: true, subscriptionPlan: true },
     });
+
+    // BUGFIX: DB-only before. When extendTrial is used to rescue an EXPIRED
+    // trial (the common case — a super admin granting grace time after the
+    // subscriptionExpiry cron locked the account), the admin's lockout wall
+    // needs to clear immediately, not just after their next request 402s
+    // through to a fresh fetch or they log back in.
+    createNotification({
+        adminId: sub.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Trial extended",
+        message: `Your free trial has been extended through ${newTrialEnd.toLocaleDateString(
+            "en-GB",
+            { day: "numeric", month: "short", year: "numeric" },
+        )}.`,
+        relatedId: updated.id,
+    }).catch(() => {});
+
+    return updated;
 };
 
 // ─── Platform Config (item 15) ───────────────────────────────────────────────

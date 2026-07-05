@@ -24,8 +24,17 @@ import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 import "../src/cron/staffStatus.cron";
 import "../src/cron/recurringBooking.cron";
 import "../src/cron/invoiceOverdue.cron";
-import "../src/cron/subscriptionExpiry.cron";
+// BUGFIX: unlike the three crons above (which self-schedule via a top-level
+// cron.schedule() call the moment their module is imported), subscriptionExpiry.cron.ts
+// deliberately wraps its scheduling in an exported scheduleSubscriptionExpiryJob()
+// function (see that file's own header comment). A bare side-effect import
+// never called it, so trial/paid subscription expiry silently never ran in
+// production — accounts whose trial or billing period lapsed stayed ACTIVE
+// forever with full feature access. Import the function and invoke it.
+import { scheduleSubscriptionExpiryJob } from "../src/cron/subscriptionExpiry.cron";
 import logRequestResponse from "./middlewares/logger.middleware";
+
+scheduleSubscriptionExpiryJob();
 
 const app = express();
 
@@ -58,7 +67,14 @@ app.use(
         },
         credentials: true,
         methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-        allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-Requested-With", "Accept", "Origin"],
+        allowedHeaders: [
+            "Content-Type",
+            "Authorization",
+            "Cookie",
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+        ],
         // Allow FE to read Content-Disposition header for CSV file downloads
         exposedHeaders: ["Content-Disposition"],
     }),
@@ -78,12 +94,16 @@ app.get("/health", async (_req: Request, res: Response) => {
         const { prisma } = await import("./lib/prisma/prisma");
         await prisma.$queryRaw`SELECT 1`;
         dbOk = true;
-    } catch { /* db unavailable */ }
+    } catch {
+        /* db unavailable */
+    }
 
     try {
         const redis = (await import("./config/redis")).default;
         redisOk = (await redis.ping()) === "PONG";
-    } catch { /* redis unavailable */ }
+    } catch {
+        /* redis unavailable */
+    }
 
     const allOk = dbOk && redisOk;
     res.status(allOk ? 200 : 503).json({
@@ -95,7 +115,10 @@ app.get("/health", async (_req: Request, res: Response) => {
 });
 
 app.get("/", (_req: Request, res: Response) => {
-    res.status(200).json({ success: true, message: "Cleaning CRM API is running...." });
+    res.status(200).json({
+        success: true,
+        message: "Cleaning CRM API is running....",
+    });
 });
 
 app.use("/api/v1", maintenanceModeGate, routes);

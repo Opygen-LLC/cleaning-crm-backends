@@ -157,12 +157,26 @@ const changePlan = async (
         );
     }
 
-    // Resolve coupon if provided
+    // Resolve coupon if provided.
+    // BUGFIX (data QA): three separate bugs here previously —
+    //   1. maxUses was never checked, so a coupon capped at e.g. 50 redemptions
+    //      could be applied unlimited times.
+    //   2. The resolved coupon's discountType/discountValue was never actually
+    //      applied to `newCost` below — couponId was stored on the subscription
+    //      but the admin was charged full price regardless of the code entered.
+    //   3. No CouponUsage row was ever created and Coupon.usedCount never
+    //      incremented, so getCouponStats/topCoupons and the super-admin's
+    //      per-coupon redemption list (getCouponById → couponUsage[]) were
+    //      permanently empty, and the same admin could "use" a single-use-per-
+    //      admin coupon (see the CouponUsage @@unique([couponId, adminId])
+    //      constraint) over and over on every plan change.
     let couponId: string | null = null;
+    let couponDiscountType: "PERCENTAGE" | "FIXED" | null = null;
+    let couponDiscountValue = 0;
     if (couponCode) {
         const coupon = await prisma.coupon.findFirst({
             where: {
-                code: couponCode,
+                code: couponCode.toUpperCase().trim(),
                 isActive: true,
                 OR: [{ validUntil: null }, { validUntil: { gte: new Date() } }],
             },
@@ -173,10 +187,27 @@ const changePlan = async (
                 "Invalid or expired coupon code.",
             );
         }
+        if (coupon.maxUses !== null && coupon.usedCount >= coupon.maxUses) {
+            throw new AppError(
+                status.GONE,
+                "This coupon has reached its maximum usage limit.",
+            );
+        }
+        const alreadyUsed = await prisma.couponUsage.findUnique({
+            where: { couponId_adminId: { couponId: coupon.id, adminId } },
+        });
+        if (alreadyUsed) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                "You have already used this coupon.",
+            );
+        }
         couponId = coupon.id;
+        couponDiscountType = coupon.discountType;
+        couponDiscountValue = Number(coupon.discountValue);
     }
 
-    // Calculate new total cost (base price after discount)
+    // Calculate new total cost (base price after plan promo discount, then coupon)
     let newCost = Number(targetPlan.price);
     if (targetPlan.discount && Number(targetPlan.discount) > 0) {
         const discountValid =
@@ -186,6 +217,12 @@ const changePlan = async (
             newCost = newCost - (newCost * Number(targetPlan.discount)) / 100;
         }
     }
+    if (couponDiscountType === "PERCENTAGE") {
+        newCost = newCost - (newCost * couponDiscountValue) / 100;
+    } else if (couponDiscountType === "FIXED") {
+        newCost = newCost - couponDiscountValue;
+    }
+    newCost = Math.max(0, newCost);
 
     const now = new Date();
     const nextPeriodEnd = new Date(now);
@@ -195,22 +232,35 @@ const changePlan = async (
 
     // Manual payment system: plan change requires proof upload + super-admin approval
     // before going ACTIVE. Set PENDING_PAYMENT so the tenant is prompted to upload proof.
-    const updated = await prisma.subscription.update({
-        where: { id: current.id },
-        data: {
-            planId: targetPlan.id,
-            subscriptionPlanId: targetPlan.subscriptionPlanId,
-            isTrial: false,
-            status: SubscriptionStatus.PENDING_PAYMENT,
-            currentPeriodStart: now,
-            currentPeriodEnd: nextPeriodEnd,
-            cancelAtPeriodEnd: false,
-            canceledAt: null,
-            totalCost: new Decimal(newCost.toFixed(2)),
-            couponId,
-        },
-        include: { plan: true, subscriptionPlan: true, coupon: true },
-    });
+    const [updated] = await prisma.$transaction([
+        prisma.subscription.update({
+            where: { id: current.id },
+            data: {
+                planId: targetPlan.id,
+                subscriptionPlanId: targetPlan.subscriptionPlanId,
+                isTrial: false,
+                status: SubscriptionStatus.PENDING_PAYMENT,
+                currentPeriodStart: now,
+                currentPeriodEnd: nextPeriodEnd,
+                cancelAtPeriodEnd: false,
+                canceledAt: null,
+                totalCost: new Decimal(newCost.toFixed(2)),
+                couponId,
+            },
+            include: { plan: true, subscriptionPlan: true, coupon: true },
+        }),
+        ...(couponId
+            ? [
+                  prisma.couponUsage.create({
+                      data: { couponId, adminId, subscriptionId: current.id },
+                  }),
+                  prisma.coupon.update({
+                      where: { id: couponId },
+                      data: { usedCount: { increment: 1 } },
+                  }),
+              ]
+            : []),
+    ]);
 
     return updated;
 };
