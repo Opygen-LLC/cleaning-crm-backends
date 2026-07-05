@@ -201,6 +201,83 @@ const deleteStaff = async (id: string, adminUser: IRequestUser) => {
 };
 
 /**
+ * POST /staff/:id/reset-password
+ *
+ * Admin-triggered password reset for a staff member (e.g. they're locked
+ * out and can't use the self-service "forgot password" OTP flow). Unlike
+ * the OTP-based /auth/reset-password route, this doesn't require the staff
+ * member to do anything first — the admin just clicks "Reset".
+ *
+ * We generate a new random password and write it via better-auth's
+ * internal context (`auth.$context`) rather than `auth.api.signInEmail`/
+ * `changePassword`, since neither of those fits: we don't have — and don't
+ * want — the old password, and there's no admin plugin installed that
+ * exposes a higher-level "set user password" endpoint. `ctx.password.hash`
+ * + `ctx.internalAdapter.updatePassword` is the same primitive better-auth's
+ * own password-reset routes use internally, so this stays consistent with
+ * how a real reset is performed, just without requiring an OTP roundtrip.
+ *
+ * After the swap we:
+ *  - flip needPasswordChange so the staff member is forced onto the
+ *    set-password screen on next login (same flag used at staff creation),
+ *  - revoke all of their existing sessions, since the old password (and
+ *    therefore anyone who obtained it) should no longer have standing access,
+ *  - email the new password so they can log back in.
+ *
+ * The generated password is never included in the API response — only the
+ * staff member's inbox receives it.
+ */
+const resetStaffPassword = async (id: string, adminUser: IRequestUser) => {
+    const adminProfile = await prisma.adminProfile.findFirst({
+        where: { userId: adminUser.id },
+    });
+    if (!adminProfile)
+        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+
+    const staffProfile = await prisma.staffProfile.findFirst({
+        where: { id, adminId: adminProfile.id },
+        include: { user: true },
+    });
+    if (!staffProfile)
+        throw new AppError(status.NOT_FOUND, "Staff member not found");
+
+    const newPassword = generateRandomPassword() ?? "Staff@123";
+
+    const ctx = await auth.$context;
+    const hashedPassword = await ctx.password.hash(newPassword);
+    await ctx.internalAdapter.updatePassword(
+        staffProfile.userId,
+        hashedPassword,
+    );
+
+    await prisma.$transaction([
+        prisma.user.update({
+            where: { id: staffProfile.userId },
+            data: { needPasswordChange: true },
+        }),
+        prisma.session.deleteMany({
+            where: { userId: staffProfile.userId },
+        }),
+    ]);
+
+    waitUntil(
+        sendEmailSafely({
+            to: staffProfile.user.email,
+            subject: "Your password has been reset",
+            templateName: "staff-password-reset",
+            templateData: {
+                name: staffProfile.user.name,
+                email: staffProfile.user.email,
+                password: newPassword,
+                loginUrl: `${process.env.FRONTEND_URL}/login`,
+            },
+        }),
+    );
+
+    return { success: true };
+};
+
+/**
  * upsertAvailability
  *
  * Shared by both the admin-facing updateAvailability() and the staff
@@ -471,6 +548,7 @@ export const staffService = {
     updateStaff,
     deleteStaff,
     updateAvailability,
+    resetStaffPassword,
     // New
     getMyProfile,
     updateMyProfile,

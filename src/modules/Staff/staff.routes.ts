@@ -28,6 +28,7 @@
  *   GET    /staff/:id             single staff record
  *   PATCH  /staff/:id             update staff (admin or staff can call)
  *   PUT    /staff/:id/availability update availability slots
+ *   POST   /staff/:id/reset-password admin resets staff member's password
  *   DELETE /staff/:id             soft-delete staff
  */
 
@@ -156,6 +157,18 @@ router.put(
     checkAuth(UserRole.ADMIN),
     zodValidate(staffValidation.updateAvailability, ValidationProperty.BODY),
     staffController.updateAvailability,
+);
+
+/**
+ * POST /staff/:id/reset-password
+ * Admin resets a staff member's password — generates a new random
+ * password, emails it to them, forces a password change on next login,
+ * and revokes their existing sessions. No request body required.
+ */
+router.post(
+    "/:id/reset-password",
+    checkAuth(UserRole.ADMIN),
+    staffController.resetPassword,
 );
 
 /** DELETE /staff/:id — admin removes a staff member */

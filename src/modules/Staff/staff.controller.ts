@@ -81,6 +81,27 @@ const updateAvailability = catchAsync(async (req, res) => {
     });
 });
 
+/**
+ * POST /staff/:id/reset-password
+ * Admin resets a staff member's password. A new random password is
+ * generated, emailed to the staff member, and their existing sessions are
+ * revoked. The generated password is intentionally left out of the
+ * response — it only ever reaches the staff member's inbox.
+ */
+const resetPassword = catchAsync(async (req, res) => {
+    const result = await staffService.resetStaffPassword(
+        req.params.id as string,
+        req.user,
+    );
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message:
+            "Password reset — a new password has been emailed to the staff member",
+        data: result,
+    });
+});
+
 // ─── Staff self-service ───────────────────────────────────────────────────────
 
 /** GET /staff/me — logged-in staff member's own profile */
@@ -154,6 +175,7 @@ export const staffController = {
     updateStaff,
     deleteStaff,
     updateAvailability,
+    resetPassword,
     // New
     getMyProfile,
     updateMyProfile,
