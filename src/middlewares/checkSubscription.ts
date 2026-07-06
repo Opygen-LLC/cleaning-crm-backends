@@ -141,10 +141,18 @@ export const checkSubscription = async (
  *   router.get("/",              checkAuth(UserRole.ADMIN), checkFeature("recurring bookings"), recurringBookingController.getAll);
  */
 export function checkFeature(featureKey: string) {
+    // NOTE: .trim() must run again *after* the replace, not just before it.
+    // A featureKey with leading/trailing punctuation (e.g. "Auto-Dispatch!")
+    // gets that punctuation collapsed into a boundary space by the regex
+    // (-> "auto dispatch "), which then fails to match a cleanly-normalised
+    // plan label ("auto dispatch") and silently locks a paying admin out of
+    // a feature their plan includes. Caught by the middleware's own test
+    // suite (see checkSubscription.test.ts — "normalises punctuation").
     const normKey = featureKey
         .trim()
         .toLowerCase()
-        .replace(/[^a-z0-9]+/g, " ");
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
 
     return async (req: Request, _res: Response, next: NextFunction) => {
         try {
@@ -193,7 +201,8 @@ export function checkFeature(featureKey: string) {
                     f.label
                         .trim()
                         .toLowerCase()
-                        .replace(/[^a-z0-9]+/g, " ") === normKey,
+                        .replace(/[^a-z0-9]+/g, " ")
+                        .trim() === normKey,
             );
 
             if (!hasFeature) {

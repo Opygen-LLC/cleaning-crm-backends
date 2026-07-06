@@ -1419,6 +1419,7 @@ const sendTrialNudge = async (subscriptionId: string) => {
             trialEnd: trialEnd
                 ? new Date(trialEnd).toLocaleDateString("en-GB")
                 : "soon",
+            upgradeUrl: `${process.env.FRONTEND_URL ?? "https://app.opygen.io"}/admin/dashboard/settings/subscription`,
         },
     });
 
