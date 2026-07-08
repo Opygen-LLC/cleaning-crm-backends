@@ -30,8 +30,24 @@ export interface IBillingHistoryFilters {
 
 export interface ISubscriptionFilters {
     status?: string;
+    /** Pricing-tier (Plan) row id — distinct from `plan` (tier name) below. */
     planId?: string;
     isTrial?: string;
+    /** Free-text match against admin business name / owner name / email. */
+    search?: string;
+    /** SubscriptionPlan tier name, e.g. STARTER/GROWTH/PRO/CUSTOM. */
+    plan?: string;
+    /** Plan pricing-row interval — MONTHLY maps to "monthly", YEARLY to "annual". */
+    billingCycle?: "monthly" | "annual";
+    sortField?:
+        | "adminName"
+        | "plan"
+        | "status"
+        | "mrr"
+        | "billingCycle"
+        | "startedAt"
+        | "nextBillingDate";
+    sortDir?: "asc" | "desc";
 }
 
 // ─── Manual Payment (grant by super admin) ────────────────────────────────────

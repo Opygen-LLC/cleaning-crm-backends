@@ -56,9 +56,39 @@ const updateUser = catchAsync(async (req, res) => {
     });
 });
 
+/**
+ * POST /user/me/avatar
+ * Multipart upload (field: "avatar") → Cloudinary → user.image updated.
+ * Returns { avatarUrl: string } pointing to the Cloudinary secure URL.
+ */
+const uploadMyAvatar = catchAsync(async (req, res) => {
+    if (!req.file) {
+        sendResponse(res, {
+            httpStatusCode: status.BAD_REQUEST,
+            success: false,
+            message: "No file uploaded",
+        });
+        return;
+    }
+
+    const result = await userService.uploadMyAvatar(
+        req.user.id,
+        req.file.buffer,
+        req.file.mimetype,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Avatar uploaded successfully",
+        data: result,
+    });
+});
+
 export const userController = {
     getMe,
     getAllUsers,
     getUserById,
     updateUser,
+    uploadMyAvatar,
 };

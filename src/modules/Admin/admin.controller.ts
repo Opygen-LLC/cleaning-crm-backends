@@ -83,10 +83,24 @@ const getAdminUsage = catchAsync(async (req, res) => {
     });
 });
 
+const getOnboardingStatus = catchAsync(async (req, res) => {
+    const userId = req.user.id;
+
+    const result = await adminService.getOnboardingStatus(userId);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Onboarding status fetched successfully",
+        data: result,
+    });
+});
+
 export const adminController = {
     getAdmin,
     updateAdmin,
     updateWorkLocation,
     deleteWorkLocation,
     getAdminUsage,
+    getOnboardingStatus,
 };

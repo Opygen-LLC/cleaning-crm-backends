@@ -8,7 +8,7 @@ const router = Router();
 router.get(
     "/my-session",
     checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
-    sessionController.geMySession,
+    sessionController.getMySessions,
 );
 
 router.delete(

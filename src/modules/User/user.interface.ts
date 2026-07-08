@@ -5,3 +5,8 @@ export interface UpdateUserPayload {
     status?: AccountStatus;
     image?: string; // Cloudinary URL
 }
+
+export interface UploadAvatarResult {
+    /** Cloudinary secure_url for the newly uploaded avatar. */
+    avatarUrl: string;
+}

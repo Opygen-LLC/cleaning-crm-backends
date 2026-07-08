@@ -11,11 +11,19 @@ import { IPaginationOptions } from "../../interface/query.interface";
 import {
     IActivityLogFilters,
     IAdminAccountFilters,
+    ISubscriptionFilters,
 } from "./superAdmin.interface";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { waitUntil } from "@vercel/functions";
 import { auth } from "../../lib/auth";
 import { adminService } from "../Admin/admin.service";
+import { createNotification } from "../../lib/utils/createNotification";
+import { NotificationType } from "../../generated/prisma/enums";
+import {
+    getPlatformConfig as sharedGetPlatformConfig,
+    updatePlatformConfig as sharedUpdatePlatformConfig,
+} from "../../lib/utils/platformConfig";
+import { findNearMissFeatureLabels } from "../../lib/constants/featureGateLabels";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -483,7 +491,13 @@ const createAdminAccount = async (payload: {
     businessName: string;
     sendWelcomeEmail?: boolean;
 }) => {
-    const { name, email, password, businessName, sendWelcomeEmail = true } = payload;
+    const {
+        name,
+        email,
+        password,
+        businessName,
+        sendWelcomeEmail = true,
+    } = payload;
 
     if (!name || !email || !password || !businessName) {
         throw new AppError(
@@ -687,6 +701,23 @@ const createSubscriptionPlan = async (payload: {
 }) => {
     const { plans, ...planData } = payload;
 
+    if (planData.features?.length) {
+        const nearMisses = findNearMissFeatureLabels(planData.features);
+        if (nearMisses.length > 0) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                `Feature label(s) look like typos of a known gate string: ${nearMisses
+                    .map(
+                        (w) =>
+                            `"${w.submitted}" (did you mean "${w.closestCanonical}"?)`,
+                    )
+                    .join(
+                        "; ",
+                    )}. Use the exact canonical label, or pick it from the plan editor's checklist.`,
+            );
+        }
+    }
+
     return prisma.subscriptionPlan.create({
         data: {
             name: planData.name as import("../../generated/prisma/enums").SubscriptionName,
@@ -730,7 +761,24 @@ const updateSubscriptionPlan = async (
         throw new AppError(status.NOT_FOUND, "Subscription plan not found.");
     }
 
-    return prisma.subscriptionPlan.update({
+    if (payload.features?.length) {
+        const nearMisses = findNearMissFeatureLabels(payload.features);
+        if (nearMisses.length > 0) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                `Feature label(s) look like typos of a known gate string: ${nearMisses
+                    .map(
+                        (w) =>
+                            `"${w.submitted}" (did you mean "${w.closestCanonical}"?)`,
+                    )
+                    .join(
+                        "; ",
+                    )}. Use the exact canonical label, or pick it from the plan editor's checklist.`,
+            );
+        }
+    }
+
+    const updated = await prisma.subscriptionPlan.update({
         where: { id },
         data: {
             description: payload.description,
@@ -741,6 +789,48 @@ const updateSubscriptionPlan = async (
         },
         include: { plans: true },
     });
+
+    // ── Live feature-gate sync ──────────────────────────────────────────────
+    // BUGFIX: EditPlanModal lets a super-admin add/remove feature strings on
+    // a plan that already has paying subscribers. This update was previously
+    // DB-only — nothing told the affected admins' browsers to refetch, so
+    // FeatureGate/useGateMap/useFeatureAccess kept serving the *old* feature
+    // list from the RTK Query cache until the admin logged out and back in.
+    // getMySubscription's "subscriptions" tag is only invalidated client-side
+    // by a socket "notification:new" event of type SUBSCRIPTION (see
+    // useSocketJobStatus.ts) or one of the per-admin flows below (payment
+    // approval, refund, suspend, reactivate, extend-trial, etc.) that already
+    // call createNotification(). A plan-level edit had no equivalent, so it
+    // never reached those rooms. Fan the notification out to every admin
+    // currently on this plan so their sidebar locks update live, matching the
+    // behaviour already engineered for every other subscription-changing flow.
+    //
+    // Only fire when the feature list actually changed — description/currency
+    // edits don't affect gating and shouldn't spam every subscriber's bell.
+    const featuresChanged =
+        payload.features !== undefined &&
+        JSON.stringify([...payload.features].sort()) !==
+            JSON.stringify([...plan.features].sort());
+
+    if (featuresChanged) {
+        const affectedSubscriptions = await prisma.subscription.findMany({
+            where: { subscriptionPlanId: id },
+            select: { id: true, adminId: true },
+        });
+
+        for (const { id: subscriptionId, adminId } of affectedSubscriptions) {
+            createNotification({
+                adminId,
+                type: NotificationType.SUBSCRIPTION,
+                title: "Your plan's features were updated",
+                message:
+                    "The features included in your subscription plan have changed. Your sidebar has been refreshed to reflect the update.",
+                relatedId: subscriptionId,
+            }).catch(() => {});
+        }
+    }
+
+    return updated;
 };
 
 const updatePricingTier = async (
@@ -814,18 +904,98 @@ const toggleSubscriptionPlanStatus = async (id: string, isActive: boolean) => {
 // ─── Admin Subscription Management (super admin actions) ─────────────────────
 
 const getAllSubscriptions = async (
-    filters: { status?: string; planId?: string; isTrial?: string },
+    filters: ISubscriptionFilters,
     paginationOptions: IPaginationOptions,
 ) => {
     const { page, limit, skip } = buildPagination(paginationOptions);
 
-    const where: Record<string, unknown> = {};
+    const where: Prisma.SubscriptionWhereInput = {};
     if (filters.status) where.status = filters.status as SubscriptionStatus;
     if (filters.planId) where.planId = filters.planId;
     if (filters.isTrial !== undefined)
         where.isTrial = filters.isTrial === "true";
+    if (filters.plan)
+        where.subscriptionPlan = {
+            name: filters.plan as import("../../generated/prisma/enums").SubscriptionName,
+        };
+    if (filters.billingCycle)
+        where.plan = {
+            interval: filters.billingCycle === "annual" ? "YEARLY" : "MONTHLY",
+        };
+    if (filters.search) {
+        where.admin = {
+            OR: [
+                {
+                    businessName: {
+                        contains: filters.search,
+                        mode: "insensitive",
+                    },
+                },
+                {
+                    user: {
+                        is: {
+                            name: {
+                                contains: filters.search,
+                                mode: "insensitive",
+                            },
+                        },
+                    },
+                },
+                {
+                    user: {
+                        is: {
+                            email: {
+                                contains: filters.search,
+                                mode: "insensitive",
+                            },
+                        },
+                    },
+                },
+            ],
+        };
+    }
 
-    const [total, data] = await Promise.all([
+    // Map the FE's virtual sort keys onto the actual (possibly relational)
+    // Prisma fields they're derived from. Defaults to newest-first.
+    const sortDir = filters.sortDir ?? "desc";
+    let orderBy: Prisma.SubscriptionOrderByWithRelationInput = {
+        createdAt: "desc",
+    };
+    switch (filters.sortField) {
+        case "adminName":
+            orderBy = { admin: { businessName: sortDir } };
+            break;
+        case "plan":
+            orderBy = { subscriptionPlan: { name: sortDir } };
+            break;
+        case "status":
+            orderBy = { status: sortDir };
+            break;
+        case "mrr":
+            orderBy = { plan: { price: sortDir } };
+            break;
+        case "billingCycle":
+            orderBy = { plan: { interval: sortDir } };
+            break;
+        case "nextBillingDate":
+            orderBy = { currentPeriodEnd: sortDir };
+            break;
+        case "startedAt":
+            orderBy = { createdAt: sortDir };
+            break;
+        default:
+            orderBy = { createdAt: "desc" };
+    }
+
+    const [
+        total,
+        data,
+        activeNonTrialCount,
+        activeTrialCount,
+        suspendedCount,
+        annualActiveCount,
+        mrrSubs,
+    ] = await Promise.all([
         prisma.subscription.count({ where }),
         prisma.subscription.findMany({
             where,
@@ -844,15 +1014,53 @@ const getAllSubscriptions = async (
                     take: 1,
                 },
             },
-            orderBy: { createdAt: "desc" },
+            orderBy,
             skip,
             take: limit,
         }),
+        // ── Stats row — BUGFIX: previously derived client-side from only the
+        // current page of (at most `limit`) rows, so "Total MRR" / counts
+        // changed depending on which page or filter was active. These five
+        // aggregates are global (unaffected by the table's own filters/
+        // pagination), matching how getPlatformStats computes the same
+        // active/trial split elsewhere in this file.
+        prisma.subscription.count({
+            where: { status: SubscriptionStatus.ACTIVE, isTrial: false },
+        }),
+        prisma.subscription.count({
+            where: { status: SubscriptionStatus.ACTIVE, isTrial: true },
+        }),
+        prisma.subscription.count({
+            where: { status: SubscriptionStatus.SUSPENDED },
+        }),
+        prisma.subscription.count({
+            where: {
+                status: SubscriptionStatus.ACTIVE,
+                isTrial: false,
+                plan: { interval: "YEARLY" },
+            },
+        }),
+        prisma.subscription.findMany({
+            where: { status: SubscriptionStatus.ACTIVE, isTrial: false },
+            select: { plan: { select: { price: true } } },
+        }),
     ]);
+
+    const totalMRR = mrrSubs.reduce(
+        (sum, s) => sum + Number(s.plan?.price ?? 0),
+        0,
+    );
 
     return {
         meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
         data,
+        stats: {
+            totalMRR: parseFloat(totalMRR.toFixed(2)),
+            activeCount: activeNonTrialCount,
+            trialCount: activeTrialCount,
+            suspendedCount,
+            annualCount: annualActiveCount,
+        },
     };
 };
 
@@ -864,7 +1072,7 @@ const cancelSubscription = async (subscriptionId: string) => {
         throw new AppError(status.NOT_FOUND, "Subscription not found.");
     }
 
-    return prisma.subscription.update({
+    const updated = await prisma.subscription.update({
         where: { id: subscriptionId },
         data: {
             status: SubscriptionStatus.CANCELLED,
@@ -872,6 +1080,21 @@ const cancelSubscription = async (subscriptionId: string) => {
         },
         include: { plan: true, subscriptionPlan: true },
     });
+
+    // BUGFIX: this was DB-only. checkSubscription.ts's own comment notes the
+    // frontend's useGateMap already treats "Cancelled" as hasActiveAccess ===
+    // false — but without a live push the sidebar kept showing everything
+    // unlocked (stale cache) until the admin's next 402 or a re-login.
+    createNotification({
+        adminId: sub.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Subscription cancelled",
+        message:
+            "Your subscription has been cancelled by the platform admin. Subscribe to a plan to restore access.",
+        relatedId: updated.id,
+    }).catch(() => {});
+
+    return updated;
 };
 
 const getBillingHistory = async (
@@ -981,6 +1204,21 @@ const grantManualPayment = async (
         }),
     ]);
 
+    // BUGFIX: DB-only before. This is the super-admin-initiated equivalent of
+    // approvePaymentProof (payment recorded off-platform, no proof upload) and
+    // needs the same live push so the tenant's lockout wall clears and their
+    // sidebar unlocks without a re-login.
+    createNotification({
+        adminId: sub.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Payment recorded",
+        message: `A payment has been recorded on your account. Your subscription is active through ${nextPeriodEnd.toLocaleDateString(
+            "en-GB",
+            { day: "numeric", month: "short", year: "numeric" },
+        )}.`,
+        relatedId: updatedSub.id,
+    }).catch(() => {});
+
     return { billingRecord, subscription: updatedSub };
 };
 
@@ -998,11 +1236,26 @@ const suspendSubscription = async (subscriptionId: string) => {
         );
     }
 
-    return prisma.subscription.update({
+    const updated = await prisma.subscription.update({
         where: { id: subscriptionId },
         data: { status: SubscriptionStatus.SUSPENDED },
         include: { plan: true, subscriptionPlan: true },
     });
+
+    // BUGFIX: DB-only before — the admin kept full access in their open tab
+    // until they hit a 402 on some other request. checkSubscription.ts blocks
+    // SUSPENDED at the API layer immediately, but the sidebar/feature-gate UI
+    // didn't know until a manual refresh or re-login.
+    createNotification({
+        adminId: sub.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Account suspended",
+        message:
+            "Your account has been suspended by the platform admin. Please contact support or submit a payment proof.",
+        relatedId: updated.id,
+    }).catch(() => {});
+
+    return updated;
 };
 
 const reactivateSubscription = async (subscriptionId: string) => {
@@ -1019,7 +1272,7 @@ const reactivateSubscription = async (subscriptionId: string) => {
         );
     }
 
-    return prisma.subscription.update({
+    const updated = await prisma.subscription.update({
         where: { id: subscriptionId },
         data: {
             status: SubscriptionStatus.ACTIVE,
@@ -1028,6 +1281,20 @@ const reactivateSubscription = async (subscriptionId: string) => {
         },
         include: { plan: true, subscriptionPlan: true },
     });
+
+    // BUGFIX: DB-only before — reactivation is the moment the admin's lockout
+    // wall should disappear and their sidebar unlock; without this push that
+    // only happened after their next request 402'd through to a fresh fetch,
+    // or after a re-login.
+    createNotification({
+        adminId: sub.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Account reactivated",
+        message: "Your account has been reactivated. Access has been restored.",
+        relatedId: updated.id,
+    }).catch(() => {});
+
+    return updated;
 };
 
 const extendTrial = async (subscriptionId: string, days: number) => {
@@ -1061,7 +1328,7 @@ const extendTrial = async (subscriptionId: string, days: number) => {
     const periodBase = sub.currentPeriodEnd ?? new Date();
     const newPeriodEnd = new Date(periodBase.getTime() + msToAdd);
 
-    return prisma.subscription.update({
+    const updated = await prisma.subscription.update({
         where: { id: subscriptionId },
         data: {
             trialEndsAt: newTrialEnd,
@@ -1071,52 +1338,37 @@ const extendTrial = async (subscriptionId: string, days: number) => {
         },
         include: { plan: true, subscriptionPlan: true },
     });
+
+    // BUGFIX: DB-only before. When extendTrial is used to rescue an EXPIRED
+    // trial (the common case — a super admin granting grace time after the
+    // subscriptionExpiry cron locked the account), the admin's lockout wall
+    // needs to clear immediately, not just after their next request 402s
+    // through to a fresh fetch or they log back in.
+    createNotification({
+        adminId: sub.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Trial extended",
+        message: `Your free trial has been extended through ${newTrialEnd.toLocaleDateString(
+            "en-GB",
+            { day: "numeric", month: "short", year: "numeric" },
+        )}.`,
+        relatedId: updated.id,
+    }).catch(() => {});
+
+    return updated;
 };
 
 // ─── Platform Config (item 15) ───────────────────────────────────────────────
 // Persisted as a single JSON blob in the SuperAdminConfig table.
 // Falls back to safe defaults when no row exists yet.
 
-const DEFAULT_PLATFORM_CONFIG = {
-    platformName: "CleanCRM",
-    supportEmail: "support@cleancrm.io",
-    maxAdminsPerTenant: 5,
-    maintenanceMode: false,
-    registrationOpen: true,
-    defaultTrialDays: 14,
-    defaultCurrency: "GBP",
-    defaultTimezone: "Europe/London",
-};
+// ─── Platform Configuration ───────────────────────────────────────────────────
+// Implementation lives in lib/utils/platformConfig.ts so other modules
+// (subscription trial creation, registration gating, maintenance-mode
+// middleware) can read it without importing the whole SuperAdmin service.
 
-const PLATFORM_CONFIG_KEY = "platformConfig";
-
-const getPlatformConfig = async () => {
-    const row = await prisma.superAdminConfig
-        .findUnique({
-            where: { key: PLATFORM_CONFIG_KEY },
-        })
-        .catch(() => null); // table may not exist yet; return defaults
-
-    if (!row) return DEFAULT_PLATFORM_CONFIG;
-    try {
-        return { ...DEFAULT_PLATFORM_CONFIG, ...JSON.parse(String(row.value)) };
-    } catch {
-        return DEFAULT_PLATFORM_CONFIG;
-    }
-};
-
-const updatePlatformConfig = async (patch: Record<string, unknown>) => {
-    const current = await getPlatformConfig();
-    const updated = { ...current, ...patch };
-
-    await prisma.superAdminConfig.upsert({
-        where: { key: PLATFORM_CONFIG_KEY },
-        create: { key: PLATFORM_CONFIG_KEY, value: JSON.stringify(updated) },
-        update: { value: JSON.stringify(updated) },
-    });
-
-    return updated;
-};
+const getPlatformConfig = sharedGetPlatformConfig;
+const updatePlatformConfig = sharedUpdatePlatformConfig;
 
 // ─── Trial Nudge Email (item 16) ─────────────────────────────────────────────
 // Sends a plain-text trial-expiry reminder to the admin email.
@@ -1167,14 +1419,34 @@ const sendTrialNudge = async (subscriptionId: string) => {
             trialEnd: trialEnd
                 ? new Date(trialEnd).toLocaleDateString("en-GB")
                 : "soon",
+            upgradeUrl: `${process.env.FRONTEND_URL ?? "https://app.opygen.io"}/admin/dashboard/settings/subscription`,
         },
     });
 
     return { sent: true, to: adminEmail, daysLeft };
 };
 
+/**
+ * PATCH /super-admin/billing-history/:id/refund
+ *
+ * Actions:
+ *   1. BillingHistory status → REFUNDED
+ *   2. If the subscription this record funded is currently ACTIVE, it is
+ *      moved to SUSPENDED — the tenant paid, got refunded, and should not
+ *      keep paid access. (If the subscription is already CANCELLED/EXPIRED/
+ *      SUSPENDED, or another later PAID record has taken over funding the
+ *      current period, we leave its status untouched.)
+ *   3. Tenant admin is notified in real time.
+ *
+ * NOTE: previously this only flipped the billing row to REFUNDED and never
+ * touched the subscription at all, so a refunded tenant kept full paid
+ * access indefinitely — that was the actual bug here.
+ */
 const refundBillingRecord = async (id: string) => {
-    const record = await prisma.billingHistory.findUnique({ where: { id } });
+    const record = await prisma.billingHistory.findUnique({
+        where: { id },
+        include: { subscription: true },
+    });
     if (!record) {
         throw new AppError(status.NOT_FOUND, "Billing record not found.");
     }
@@ -1185,23 +1457,49 @@ const refundBillingRecord = async (id: string) => {
         );
     }
 
-    return prisma.billingHistory.update({
-        where: { id },
-        data: { status: "REFUNDED" },
-        include: {
-            subscription: {
-                include: {
-                    subscriptionPlan: { select: { name: true } },
-                    admin: {
-                        select: {
-                            businessName: true,
-                            user: { select: { name: true, email: true } },
+    const sub = record.subscription;
+    const shouldSuspend =
+        record.status === "PAID" && sub.status === SubscriptionStatus.ACTIVE;
+
+    const [updatedBilling] = await prisma.$transaction([
+        prisma.billingHistory.update({
+            where: { id },
+            data: { status: "REFUNDED" },
+            include: {
+                subscription: {
+                    include: {
+                        subscriptionPlan: { select: { name: true } },
+                        admin: {
+                            select: {
+                                businessName: true,
+                                user: { select: { name: true, email: true } },
+                            },
                         },
                     },
                 },
             },
-        },
-    });
+        }),
+        ...(shouldSuspend
+            ? [
+                  prisma.subscription.update({
+                      where: { id: sub.id },
+                      data: { status: SubscriptionStatus.SUSPENDED },
+                  }),
+              ]
+            : []),
+    ]);
+
+    createNotification({
+        adminId: sub.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Payment refunded",
+        message: shouldSuspend
+            ? "A payment on your account was refunded and your subscription has been suspended. Contact support to reactivate."
+            : "A payment on your account has been refunded.",
+        relatedId: record.id,
+    }).catch(() => {});
+
+    return updatedBilling;
 };
 
 // ─── Billing History — Invoice URL (item 14) ──────────────────────────────────
@@ -1349,6 +1647,21 @@ const approvePaymentProof = async (
         }),
     ]);
 
+    // Notify the tenant admin in real time (persists + pushes over Socket.IO)
+    // so their subscription status / feature gates update without a re-login.
+    // The frontend's notification:new handler invalidates the "subscriptions"
+    // RTK Query tag whenever a SUBSCRIPTION-typed notification arrives.
+    createNotification({
+        adminId: sub.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Payment approved",
+        message: `Your payment has been confirmed. Your subscription is active through ${nextPeriodEnd.toLocaleDateString(
+            "en-GB",
+            { day: "numeric", month: "short", year: "numeric" },
+        )}.`,
+        relatedId: updatedSub.id,
+    }).catch(() => {});
+
     return { billingRecord: updatedBilling, subscription: updatedSub };
 };
 
@@ -1422,6 +1735,18 @@ const rejectPaymentProof = async (
             },
         },
     });
+
+    // Notify the tenant admin in real time so they can see the rejection
+    // reason and re-submit proof without needing to refresh/re-login.
+    createNotification({
+        adminId: record.subscription.adminId,
+        type: NotificationType.SUBSCRIPTION,
+        title: "Payment proof rejected",
+        message: reason
+            ? `Your payment proof was rejected: ${reason}`
+            : "Your payment proof was rejected. Please re-submit a valid proof of payment.",
+        relatedId: record.id,
+    }).catch(() => {});
 
     return updatedBilling;
 };

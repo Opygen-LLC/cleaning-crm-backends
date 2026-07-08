@@ -19,6 +19,7 @@ import {
 } from "../../generated/prisma/enums";
 import { adminService } from "../Admin/admin.service";
 import { subscriptionService } from "../Subscription/subscription.service";
+import { getPlatformConfig } from "../../lib/utils/platformConfig";
 
 //? Max sessions per user
 const MAX_SESSIONS = 3;
@@ -29,6 +30,14 @@ const register = async ({
     email,
     password,
 }: IRegisterUserPayload) => {
+    const platformConfig = await getPlatformConfig();
+    if (!platformConfig.registrationOpen) {
+        throw new AppError(
+            status.FORBIDDEN,
+            "New registrations are currently closed. Please contact support.",
+        );
+    }
+
     const data = await auth.api
         .signUpEmail({
             body: { name, email, password },
