@@ -1,49 +1,53 @@
 model AdminProfile {
-  id                 String                  @id @default(uuid())
-  businessName       String
-  businessLogo       String?
-  address            String?
-  currency           Currency                @default(USD)
-  userId             String                  @unique
-  createdAt          DateTime                @default(now())
-  updatedAt          DateTime                @updatedAt
-  brandColor         String?                 @default("#000000")
-  city               String?
-  mobileNumber       String?
-  zipcode            String?
-  country            Country?
-  businessEmail      String?
-  businessType       String?
-  website            String?
-  user               User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  couponUsage        CouponUsage[]
-  reviews            Review[]
-  reviewTokens       ReviewToken[]
-  staff              StaffProfile[]
-  subscription       Subscription[]
-  workLocations      WorkLocation[]
-  bookings           Booking[]
-  bookingForms       BookingForm[]
-  clients            Client[]
-  estimates          Estimate[]
-  estimateForms      EstimateForm[]
-  expenses           Expense[]
-  invoices           Invoice[]
-  jobs               Job[]
-  jobNotes           JobNote[] // [NEW] Phase 1
-  jobAttachments     JobAttachment[] // [NEW] Phase 1
-  leads              Lead[]
-  notificationPrefs  NotificationPreference?
-  payment            Payment[]
-  quotes             Quote[]
-  quoteTemplates     QuoteTemplate[]
-  checklistTemplates ChecklistTemplate[]
-  jobChecklists      JobChecklist[]
-  recurringSchedules RecurringSchedule[]
-  pricingRules       PricingRules?
-  serviceCatalogs    ServiceCatalog[]
-  activityLogs       ActivityLog[]
-  notifications      Notification[]
+  id                    String                  @id @default(uuid())
+  businessName          String
+  businessLogo          String?
+  address               String?
+  currency              Currency                @default(USD)
+  userId                String                  @unique
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  brandColor            String?                 @default("#000000")
+  city                  String?
+  mobileNumber          String?
+  zipcode               String?
+  country               Country?
+  businessEmail         String?
+  businessType          String?
+  website               String?
+  /// Set once the guided setup wizard's steps are all satisfied. Persisted so
+  /// completion never regresses if the admin later deletes the data that
+  /// originally satisfied a step (e.g. their only client).
+  onboardingCompletedAt DateTime?
+  user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  couponUsage           CouponUsage[]
+  reviews               Review[]
+  reviewTokens          ReviewToken[]
+  staff                 StaffProfile[]
+  subscription          Subscription[]
+  workLocations         WorkLocation[]
+  bookings              Booking[]
+  bookingForms          BookingForm[]
+  clients               Client[]
+  estimates             Estimate[]
+  estimateForms         EstimateForm[]
+  expenses              Expense[]
+  invoices              Invoice[]
+  jobs                  Job[]
+  jobNotes              JobNote[] // [NEW] Phase 1
+  jobAttachments        JobAttachment[] // [NEW] Phase 1
+  leads                 Lead[]
+  notificationPrefs     NotificationPreference?
+  payment               Payment[]
+  quotes                Quote[]
+  quoteTemplates        QuoteTemplate[]
+  checklistTemplates    ChecklistTemplate[]
+  jobChecklists         JobChecklist[]
+  recurringSchedules    RecurringSchedule[]
+  pricingRules          PricingRules?
+  serviceCatalogs       ServiceCatalog[]
+  activityLogs          ActivityLog[]
+  notifications         Notification[]
 
   @@index([createdAt])
 }
@@ -115,4 +119,3 @@ model Notification {
   @@index([adminId, createdAt])
   @@map("notification")
 }
-

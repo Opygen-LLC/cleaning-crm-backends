@@ -208,6 +208,102 @@ const getAdminUsage = async (userId: string) => {
     return { staffCount, clientCount, bookingCountThisMonth };
 };
 
+// ─── Guided setup wizard status ────────────────────────────────────────────────
+//
+// Steps are auto-detected from real data — a step is "completed" once the
+// corresponding record(s) actually exist, not from a manually-ticked flag.
+// This means admins who already had data before this feature shipped skip
+// straight past whichever steps they'd already done.
+//
+// Once every step is satisfied we stamp `onboardingCompletedAt` so a step
+// can never "un-complete" itself later (e.g. if the admin deletes their only
+// client) and force the wizard to reappear.
+
+const ONBOARDING_STEPS = [
+    { key: "business_profile", label: "Business Profile" },
+    { key: "service", label: "Add a Service" },
+    { key: "service_area", label: "Service Area" },
+    { key: "team", label: "Invite Your Team" },
+    { key: "client", label: "Add a Client" },
+    { key: "booking", label: "Create a Booking" },
+] as const;
+
+const getOnboardingStatus = async (userId: string) => {
+    const admin = await prisma.adminProfile.findUnique({
+        where: { userId },
+    });
+
+    if (!admin) {
+        throw new Error("Admin profile not found");
+    }
+
+    // Already fully completed previously — short-circuit, no need to recount
+    // and no risk of a later data change (e.g. a deleted client) reopening it.
+    if (admin.onboardingCompletedAt) {
+        return {
+            isComplete: true,
+            completedCount: ONBOARDING_STEPS.length,
+            totalCount: ONBOARDING_STEPS.length,
+            steps: ONBOARDING_STEPS.map((s) => ({ ...s, completed: true })),
+        };
+    }
+
+    const adminId = admin.id;
+
+    const [
+        serviceCount,
+        workLocationCount,
+        staffCount,
+        clientCount,
+        bookingCount,
+    ] = await Promise.all([
+        prisma.serviceCatalog.count({ where: { adminId } }),
+        prisma.workLocation.count({ where: { adminId } }),
+        prisma.staffProfile.count({ where: { adminId } }),
+        prisma.client.count({ where: { adminId } }),
+        prisma.booking.count({ where: { adminId } }),
+    ]);
+
+    const completedByKey: Record<
+        (typeof ONBOARDING_STEPS)[number]["key"],
+        boolean
+    > = {
+        business_profile: Boolean(
+            admin.address &&
+            admin.city &&
+            admin.mobileNumber &&
+            admin.businessType,
+        ),
+        service: serviceCount > 0,
+        service_area: workLocationCount > 0,
+        team: staffCount > 0,
+        client: clientCount > 0,
+        booking: bookingCount > 0,
+    };
+
+    const steps = ONBOARDING_STEPS.map((s) => ({
+        ...s,
+        completed: completedByKey[s.key],
+    }));
+
+    const completedCount = steps.filter((s) => s.completed).length;
+    const isComplete = completedCount === steps.length;
+
+    if (isComplete) {
+        await prisma.adminProfile.update({
+            where: { id: adminId },
+            data: { onboardingCompletedAt: new Date() },
+        });
+    }
+
+    return {
+        isComplete,
+        completedCount,
+        totalCount: steps.length,
+        steps,
+    };
+};
+
 export const adminService = {
     createAdmin,
     getAdmin,
@@ -215,4 +311,5 @@ export const adminService = {
     updateWorkLocation,
     deleteWorkLocation,
     getAdminUsage,
+    getOnboardingStatus,
 };

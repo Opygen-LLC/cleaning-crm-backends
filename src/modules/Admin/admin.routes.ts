@@ -37,4 +37,11 @@ router.delete(
 // GET /api/v1/admin/usage — returns staffCount, clientCount, bookingCountThisMonth
 router.get("/usage", checkAuth(UserRole.ADMIN), adminController.getAdminUsage);
 
+// GET /api/v1/admin/onboarding-status — guided setup wizard progress (auto-detected)
+router.get(
+    "/onboarding-status",
+    checkAuth(UserRole.ADMIN),
+    adminController.getOnboardingStatus,
+);
+
 export const adminRoutes = router;
