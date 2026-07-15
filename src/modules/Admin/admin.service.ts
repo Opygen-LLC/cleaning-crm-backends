@@ -1,9 +1,14 @@
+import status from "http-status";
 import { deleteFileFromCloudinary } from "../../config/cloudinary";
 import { prisma } from "../../lib/prisma/prisma";
+import AppError from "../../errorHelper/AppError";
+import { resolveCountryEnum } from "../../lib/constants/countryIsoMap";
 import {
+    OnboardingStepKey,
     UpdateAdminPayload,
     UpdateWorkLocationPayload,
 } from "./admin.interface";
+import { ONBOARDING_STEPS, SKIPPABLE_ONBOARDING_STEPS } from "./admin.constant";
 
 const createAdmin = async (payload: {
     userId: string;
@@ -48,6 +53,21 @@ const getAdmin = async (userId: string) => {
 
 const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
     const { workLocations, ...adminData } = payload;
+
+    // Resolve country (ISO-3166-1 alpha-2 code from the frontend, or an
+    // already-valid enum value) to the real Country enum member up front,
+    // so a bad/unsupported country fails fast with a clear message instead
+    // of surfacing as an opaque Prisma error mid-transaction.
+    if (adminData.country !== undefined) {
+        const resolved = resolveCountryEnum(adminData.country);
+        if (!resolved) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                `Unsupported country: "${adminData.country}"`,
+            );
+        }
+        adminData.country = resolved;
+    }
 
     return await prisma.$transaction(async (tx) => {
         const admin = await tx.adminProfile.findUnique({
@@ -215,18 +235,30 @@ const getAdminUsage = async (userId: string) => {
 // This means admins who already had data before this feature shipped skip
 // straight past whichever steps they'd already done.
 //
-// Once every step is satisfied we stamp `onboardingCompletedAt` so a step
-// can never "un-complete" itself later (e.g. if the admin deletes their only
-// client) and force the wizard to reappear.
+// Steps 4-6 (team / client / booking) can also be explicitly *skipped* —
+// tracked in `admin.skippedSteps` — which is a distinct state from
+// "pending": the admin made a deliberate choice to come back to it later,
+// rather than simply not having gotten there yet. Steps 1-3 can never be
+// skipped (enforced in skipOnboardingStep below), so they only ever report
+// "completed" or "pending".
+//
+// A step's rendered status is "completed" whenever its underlying data
+// exists — even if it was skipped first and then done later — since real
+// data always outranks a stale skip choice.
+//
+// Once every step is either completed or (for steps 4-6) skipped, we stamp
+// `onboardingCompletedAt` so the wizard can never reopen later just because
+// the admin deleted the data that originally satisfied a step (e.g. their
+// only client).
 
-const ONBOARDING_STEPS = [
-    { key: "business_profile", label: "Business Profile" },
-    { key: "service", label: "Add a Service" },
-    { key: "service_area", label: "Service Area" },
-    { key: "team", label: "Invite Your Team" },
-    { key: "client", label: "Add a Client" },
-    { key: "booking", label: "Create a Booking" },
-] as const;
+const buildStepStatus = (
+    completed: boolean,
+    skipped: boolean,
+): OnboardingStepStatus => {
+    if (completed) return "completed";
+    if (skipped) return "skipped";
+    return "pending";
+};
 
 const getOnboardingStatus = async (userId: string) => {
     const admin = await prisma.adminProfile.findUnique({
@@ -237,14 +269,33 @@ const getOnboardingStatus = async (userId: string) => {
         throw new Error("Admin profile not found");
     }
 
-    // Already fully completed previously — short-circuit, no need to recount
-    // and no risk of a later data change (e.g. a deleted client) reopening it.
+    const skippedSet = new Set(admin.skippedSteps as OnboardingStepKey[]);
+
+    // Already fully completed previously — short-circuit, no need to recount.
+    // Mandatory steps 1-3 must have been "completed" (real data) to have
+    // reached this state in the first place; steps 4-6 were either
+    // completed or skipped — admin.skippedSteps still tells us which, at no
+    // extra query cost, so we don't lose that distinction for the dashboard.
     if (admin.onboardingCompletedAt) {
+        const steps = ONBOARDING_STEPS.map((s) => {
+            const isSkippable = (
+                SKIPPABLE_ONBOARDING_STEPS as readonly string[]
+            ).includes(s.key);
+            const skipped = isSkippable && skippedSet.has(s.key);
+            return {
+                ...s,
+                status: buildStepStatus(!skipped, skipped),
+                completed: !skipped,
+            };
+        });
+
         return {
             isComplete: true,
-            completedCount: ONBOARDING_STEPS.length,
+            completedCount: steps.filter((s) => s.status === "completed")
+                .length,
+            skippedCount: steps.filter((s) => s.status === "skipped").length,
             totalCount: ONBOARDING_STEPS.length,
-            steps: ONBOARDING_STEPS.map((s) => ({ ...s, completed: true })),
+            steps,
         };
     }
 
@@ -281,13 +332,24 @@ const getOnboardingStatus = async (userId: string) => {
         booking: bookingCount > 0,
     };
 
-    const steps = ONBOARDING_STEPS.map((s) => ({
-        ...s,
-        completed: completedByKey[s.key],
-    }));
+    const steps = ONBOARDING_STEPS.map((s) => {
+        const completed = completedByKey[s.key];
+        const skipped = skippedSet.has(s.key);
+        return {
+            ...s,
+            status: buildStepStatus(completed, skipped),
+            // Kept for backwards compatibility with any existing frontend
+            // reading the old boolean field — "completed" here means
+            // "satisfied" (either real data exists, or the step was
+            // legitimately skipped), which is what gates wizard completion.
+            completed: completed || skipped,
+        };
+    });
 
-    const completedCount = steps.filter((s) => s.completed).length;
-    const isComplete = completedCount === steps.length;
+    const completedCount = steps.filter((s) => s.status === "completed")
+        .length;
+    const skippedCount = steps.filter((s) => s.status === "skipped").length;
+    const isComplete = steps.every((s) => s.status !== "pending");
 
     if (isComplete) {
         await prisma.adminProfile.update({
@@ -299,9 +361,51 @@ const getOnboardingStatus = async (userId: string) => {
     return {
         isComplete,
         completedCount,
+        skippedCount,
         totalCount: steps.length,
         steps,
     };
+};
+
+// ─── Skip a step (steps 4-6 only) ──────────────────────────────────────────
+//
+// Mandatory steps (business_profile / service / service_area) are rejected
+// here regardless of what the client sends — this is the real enforcement
+// point; the zod schema only checks the step name is one of the six known
+// keys, not that it's skippable, precisely so this check can't be bypassed
+// by calling the API directly.
+
+const skipOnboardingStep = async (userId: string, step: OnboardingStepKey) => {
+    if (
+        !(SKIPPABLE_ONBOARDING_STEPS as readonly string[]).includes(step)
+    ) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `"${step}" is a required setup step and cannot be skipped.`,
+        );
+    }
+
+    const admin = await prisma.adminProfile.findUnique({
+        where: { userId },
+        select: { id: true, skippedSteps: true, onboardingCompletedAt: true },
+    });
+
+    if (!admin) {
+        throw new Error("Admin profile not found");
+    }
+
+    // Idempotent — already skipped (or the wizard is already done, in which
+    // case there's nothing meaningful left to persist) — no write needed.
+    if (admin.onboardingCompletedAt || admin.skippedSteps.includes(step)) {
+        return { step, skipped: true };
+    }
+
+    await prisma.adminProfile.update({
+        where: { id: admin.id },
+        data: { skippedSteps: { push: step } },
+    });
+
+    return { step, skipped: true };
 };
 
 export const adminService = {
@@ -312,4 +416,5 @@ export const adminService = {
     deleteWorkLocation,
     getAdminUsage,
     getOnboardingStatus,
+    skipOnboardingStep,
 };

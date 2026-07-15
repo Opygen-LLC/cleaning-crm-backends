@@ -27,3 +27,19 @@ export interface UpdateWorkLocationPayload {
     postcode?: string;
     notes?: string;
 }
+
+// ─── Guided setup wizard ────────────────────────────────────────────────────
+
+export type OnboardingStepKey =
+    | "business_profile"
+    | "service"
+    | "service_area"
+    | "team"
+    | "client"
+    | "booking";
+
+export interface SkipOnboardingStepPayload {
+    step: OnboardingStepKey;
+}
+
+export type OnboardingStepStatus = "completed" | "skipped" | "pending";

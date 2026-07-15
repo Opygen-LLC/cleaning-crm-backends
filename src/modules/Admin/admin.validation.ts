@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { Country, Currency } from "../../generated/prisma/enums";
+import { Currency } from "../../generated/prisma/enums";
+import { ONBOARDING_STEPS } from "./admin.constant";
 
 export const createAdminSchema = z.object({
     businessName: z.string().min(1, "Business name is required"),
@@ -26,7 +27,10 @@ const updateAdminSchema = z
         address: z.string().optional(),
         city: z.string().optional(),
         zipcode: z.string().optional(),
-        country: z.enum(Country).optional(),
+        // Accepts an ISO-3166-1 alpha-2 code (e.g. "KR") or an already-valid
+        // Country enum value. Resolved to the real enum in admin.service via
+        // resolveCountryEnum — see src/lib/constants/countryIsoMap.ts for why.
+        country: z.string().min(1).max(64).optional(),
 
         workLocations: z.array(workLocationSchema).optional(),
     })
@@ -46,8 +50,20 @@ const updateWorkLocationSchema = z
     })
     .strict();
 
+const onboardingStepKeys = ONBOARDING_STEPS.map((s) => s.key) as [
+    (typeof ONBOARDING_STEPS)[number]["key"],
+    ...(typeof ONBOARDING_STEPS)[number]["key"][],
+];
+
+const skipOnboardingStepSchema = z
+    .object({
+        step: z.enum(onboardingStepKeys),
+    })
+    .strict();
+
 export const adminValidation = {
 	createAdmin: createAdminSchema,
 	updateAdmin: updateAdminSchema,
     updateWorkLocation: updateWorkLocationSchema,
+    skipOnboardingStep: skipOnboardingStepSchema,
 };

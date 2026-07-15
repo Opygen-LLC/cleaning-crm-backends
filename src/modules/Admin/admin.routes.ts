@@ -44,4 +44,14 @@ router.get(
     adminController.getOnboardingStatus,
 );
 
+// POST /api/v1/admin/onboarding-status/skip — skip a non-mandatory step
+// (team / client / booking only; mandatory steps 1-3 are rejected server-side
+// in adminService.skipOnboardingStep regardless of what's sent here)
+router.post(
+    "/onboarding-status/skip",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(adminValidation.skipOnboardingStep, ValidationProperty.BODY),
+    adminController.skipOnboardingStep,
+);
+
 export const adminRoutes = router;

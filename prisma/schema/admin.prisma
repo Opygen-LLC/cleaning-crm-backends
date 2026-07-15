@@ -19,6 +19,12 @@ model AdminProfile {
   /// completion never regresses if the admin later deletes the data that
   /// originally satisfied a step (e.g. their only client).
   onboardingCompletedAt DateTime?
+  /// Onboarding steps the admin explicitly chose to skip (only ever "team",
+  /// "client", "booking" — the mandatory steps 1-3 can never appear here,
+  /// enforced server-side in adminService.skipOnboardingStep). Lets the
+  /// wizard distinguish "not done yet" from "chose to do later" instead of
+  /// inferring everything purely from whether records exist.
+  skippedSteps          String[]                @default([])
   user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   couponUsage           CouponUsage[]
   reviews               Review[]

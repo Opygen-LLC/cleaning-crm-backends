@@ -96,6 +96,20 @@ const getOnboardingStatus = catchAsync(async (req, res) => {
     });
 });
 
+const skipOnboardingStep = catchAsync(async (req, res) => {
+    const userId = req.user.id;
+    const { step } = req.body;
+
+    const result = await adminService.skipOnboardingStep(userId, step);
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Onboarding step skipped successfully",
+        data: result,
+    });
+});
+
 export const adminController = {
     getAdmin,
     updateAdmin,
@@ -103,4 +117,5 @@ export const adminController = {
     deleteWorkLocation,
     getAdminUsage,
     getOnboardingStatus,
+    skipOnboardingStep,
 };
