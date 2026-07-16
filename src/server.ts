@@ -50,34 +50,35 @@ app.use(express.urlencoded({ extended: true }));
 // Add your production Next.js domain to FRONTEND_URL in the environment.
 // The static list below covers local dev and the known Vercel staging URL.
 const allowedOrigins = [
-    FRONTEND_URL,
-    BETTER_AUTH_URL,
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://localhost:5000",
-    "https://cleaning-crm-clients.vercel.app",
+  FRONTEND_URL,
+  BETTER_AUTH_URL,
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "http://localhost:5000",
+  "https://cleaning-crm-clients.vercel.app",
+  "https://cleaningcrm.opygen.com",
 ].filter(Boolean) as string[];
 
 app.use(
-    cors({
-        origin: (origin, callback) => {
-            if (!origin) return callback(null, true); // server-to-server / curl
-            if (allowedOrigins.includes(origin)) return callback(null, true);
-            callback(new Error(`CORS: origin '${origin}' not allowed`));
-        },
-        credentials: true,
-        methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-        allowedHeaders: [
-            "Content-Type",
-            "Authorization",
-            "Cookie",
-            "X-Requested-With",
-            "Accept",
-            "Origin",
-        ],
-        // Allow FE to read Content-Disposition header for CSV file downloads
-        exposedHeaders: ["Content-Disposition"],
-    }),
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true); // server-to-server / curl
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error(`CORS: origin '${origin}' not allowed`));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Cookie",
+      "X-Requested-With",
+      "Accept",
+      "Origin",
+    ],
+    // Allow FE to read Content-Disposition header for CSV file downloads
+    exposedHeaders: ["Content-Disposition"],
+  }),
 );
 
 app.use(compression());
@@ -87,38 +88,38 @@ app.use(logRequestResponse);
 // Configure Railway / Render / Render healthcheck to hit GET /health.
 // Returns 200 when DB + Redis are reachable, 503 when either is down.
 app.get("/health", async (_req: Request, res: Response) => {
-    let dbOk = false;
-    let redisOk = false;
+  let dbOk = false;
+  let redisOk = false;
 
-    try {
-        const { prisma } = await import("./lib/prisma/prisma");
-        await prisma.$queryRaw`SELECT 1`;
-        dbOk = true;
-    } catch {
-        /* db unavailable */
-    }
+  try {
+    const { prisma } = await import("./lib/prisma/prisma");
+    await prisma.$queryRaw`SELECT 1`;
+    dbOk = true;
+  } catch {
+    /* db unavailable */
+  }
 
-    try {
-        const redis = (await import("./config/redis")).default;
-        redisOk = (await redis.ping()) === "PONG";
-    } catch {
-        /* redis unavailable */
-    }
+  try {
+    const redis = (await import("./config/redis")).default;
+    redisOk = (await redis.ping()) === "PONG";
+  } catch {
+    /* redis unavailable */
+  }
 
-    const allOk = dbOk && redisOk;
-    res.status(allOk ? 200 : 503).json({
-        success: allOk,
-        status: allOk ? "ok" : "degraded",
-        timestamp: new Date().toISOString(),
-        checks: { database: dbOk, redis: redisOk },
-    });
+  const allOk = dbOk && redisOk;
+  res.status(allOk ? 200 : 503).json({
+    success: allOk,
+    status: allOk ? "ok" : "degraded",
+    timestamp: new Date().toISOString(),
+    checks: { database: dbOk, redis: redisOk },
+  });
 });
 
 app.get("/", (_req: Request, res: Response) => {
-    res.status(200).json({
-        success: true,
-        message: "Cleaning CRM API is running....",
-    });
+  res.status(200).json({
+    success: true,
+    message: "Cleaning CRM API is running....",
+  });
 });
 
 app.use("/api/v1", maintenanceModeGate, routes);

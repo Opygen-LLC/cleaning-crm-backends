@@ -2,7 +2,7 @@
 # docker-compose.yml — Opygen Cleaning CRM Backend
 # Server IP   : 43.205.126.45
 # Public Host : https://43.205.126.45.sslip.io  (free TLS via sslip.io)
-# Frontend    : https://opygen.com
+# Frontend    : https://cleaningcrm.opygen.com
 # ─────────────────────────────────────────────────────────────
 
 services:
@@ -14,7 +14,7 @@ services:
     container_name: cleaning_crm_app
     restart: always
     expose:
-      - "3000"              # internal only — Caddy reverse-proxies external traffic
+      - "3000" # internal only — Caddy reverse-proxies external traffic
     env_file:
       - .env
     environment:
@@ -27,8 +27,8 @@ services:
       - REDIS_PASSWORD=
       - REDIS_DB=0
       # Frontend URL for CORS whitelist
-      - FRONTEND_URL=https://opygen.com
-      - APP_URL=https://opygen.com
+      - FRONTEND_URL=https://cleaningcrm.opygen.com
+      - APP_URL=https://cleaningcrm.opygen.com
       # BetterAuth base URL = public backend URL served by Caddy
       - BETTER_AUTH_URL=https://43.205.126.45.sslip.io
     depends_on:
@@ -61,7 +61,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp"      # HTTP/3 (QUIC) support
+      - "443:443/udp" # HTTP/3 (QUIC) support
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

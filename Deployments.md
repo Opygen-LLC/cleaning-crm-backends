@@ -1,7 +1,7 @@
 # Opygen Cleaning CRM — AWS Deployment Guide
 
 > **Backend API:** `https://43.205.126.45.sslip.io`  
-> **Frontend App:** `https://opygen.com`  
+> **Frontend App:** `https://cleaningcrm.opygen.com`  
 > **AWS Instance:** EC2 · `43.205.126.45` · Ubuntu 24.04 LTS  
 > **Stack:** Node.js 20 · Express · Socket.IO · Prisma · Redis · Docker · Caddy
 
@@ -9,18 +9,18 @@
 
 ## Table of Contents
 
-1. [Architecture Overview](#1-architecture-overview)  
-2. [AWS EC2 Instance Setup](#2-aws-ec2-instance-setup)  
-3. [Security Group Rules](#3-security-group-rules)  
-4. [Install Required Software on the Server](#4-install-required-software-on-the-server)  
-5. [Clone the Repository](#5-clone-the-repository)  
-6. [Configure Environment Variables](#6-configure-environment-variables)  
-7. [Build & Launch with Docker Compose](#7-build--launch-with-docker-compose)  
-8. [Verify the Deployment](#8-verify-the-deployment)  
-9. [Common Management Commands](#9-common-management-commands)  
-10. [Updating the Application (Re-deploy)](#10-updating-the-application-re-deploy)  
-11. [Logs & Monitoring](#11-logs--monitoring)  
-12. [Troubleshooting](#12-troubleshooting)  
+1. [Architecture Overview](#1-architecture-overview)
+2. [AWS EC2 Instance Setup](#2-aws-ec2-instance-setup)
+3. [Security Group Rules](#3-security-group-rules)
+4. [Install Required Software on the Server](#4-install-required-software-on-the-server)
+5. [Clone the Repository](#5-clone-the-repository)
+6. [Configure Environment Variables](#6-configure-environment-variables)
+7. [Build & Launch with Docker Compose](#7-build--launch-with-docker-compose)
+8. [Verify the Deployment](#8-verify-the-deployment)
+9. [Common Management Commands](#9-common-management-commands)
+10. [Updating the Application (Re-deploy)](#10-updating-the-application-re-deploy)
+11. [Logs & Monitoring](#11-logs--monitoring)
+12. [Troubleshooting](#12-troubleshooting)
 13. [File Reference](#13-file-reference)
 
 ---
@@ -58,6 +58,7 @@ Internet (opygen.com  →  43.205.126.45)
 ```
 
 **Key points:**
+
 - **Caddy** handles TLS automatically using `43.205.126.45.sslip.io` (free Let's Encrypt via sslip.io — no real domain needed).
 - **Node.js app** runs internally on port `3000`, never exposed directly to the internet.
 - **Redis** is isolated in the private Docker network.
@@ -70,12 +71,12 @@ Internet (opygen.com  →  43.205.126.45)
 
 ### Instance details (already created)
 
-| Field          | Value                  |
-|----------------|------------------------|
-| Public IP      | `43.205.126.45`        |
-| OS             | Ubuntu 24.04 LTS       |
-| Elastic IP     | Not required           |
-| SSH Key        | Your `.pem` key file   |
+| Field      | Value                |
+| ---------- | -------------------- |
+| Public IP  | `43.205.126.45`      |
+| OS         | Ubuntu 24.04 LTS     |
+| Elastic IP | Not required         |
+| SSH Key    | Your `.pem` key file |
 
 ### Connect to the instance via SSH
 
@@ -94,16 +95,16 @@ Ensure the following rules are set in your EC2 Security Group.
 
 ### Inbound Rules
 
-| Type       | Protocol | Port | Source    |
-|------------|----------|------|-----------|
-| SSH        | TCP      | 22   | 0.0.0.0/0 |
-| HTTP       | TCP      | 80   | 0.0.0.0/0 |
-| HTTPS      | TCP      | 443  | 0.0.0.0/0 |
+| Type  | Protocol | Port | Source    |
+| ----- | -------- | ---- | --------- |
+| SSH   | TCP      | 22   | 0.0.0.0/0 |
+| HTTP  | TCP      | 80   | 0.0.0.0/0 |
+| HTTPS | TCP      | 443  | 0.0.0.0/0 |
 
 ### Outbound Rules
 
 | Type        | Protocol | Port | Destination |
-|-------------|----------|------|-------------|
+| ----------- | -------- | ---- | ----------- |
 | All traffic | All      | All  | 0.0.0.0/0   |
 
 > Port 3000 is **not** exposed — Caddy proxies all external requests internally.
@@ -213,8 +214,8 @@ BETTER_AUTH_SECRET=<your-secret>
 BETTER_AUTH_URL=https://43.205.126.45.sslip.io
 
 # ── Frontend URLs (for CORS whitelist) ────────────────────────
-APP_URL=https://opygen.com
-FRONTEND_URL=https://opygen.com
+APP_URL=https://cleaningcrm.opygen.com
+FRONTEND_URL=https://cleaningcrm.opygen.com
 
 # ── JWT ───────────────────────────────────────────────────────
 ACCESS_TOKEN_SECRET=<strong-random-string>
@@ -271,6 +272,7 @@ docker compose up -d
 ```
 
 This starts three containers in the background:
+
 - `cleaning_crm_app` — your Node.js backend
 - `cleaning_crm_redis` — Redis cache
 - `cleaning_crm_caddy` — Caddy reverse proxy + TLS
@@ -297,6 +299,7 @@ docker compose logs -f
 ```
 
 Look for these lines:
+
 ```
 cleaning_crm_app | Server is running at http://0.0.0.0:3000
 cleaning_crm_caddy | ... certificate obtained successfully
@@ -471,6 +474,7 @@ docker system df
 **Cause:** Port 80 or 443 is blocked, or the sslip.io hostname can't be reached.
 
 **Fix:**
+
 1. Verify Security Group inbound rules allow TCP 80 and 443 from `0.0.0.0/0`.
 2. Confirm `43.205.126.45.sslip.io` resolves to your IP: `nslookup 43.205.126.45.sslip.io`
 3. Check Caddy logs: `docker compose logs caddy`
@@ -482,8 +486,9 @@ docker system df
 **Cause:** `FRONTEND_URL` in `.env` or `docker-compose.yml` doesn't match the origin.
 
 **Fix:**
-1. Confirm `.env` has `FRONTEND_URL=https://opygen.com`
-2. Confirm `server.ts` includes `https://opygen.com` in the `cors()` origin array.
+
+1. Confirm `.env` has `FRONTEND_URL=https://cleaningcrm.opygen.com`
+2. Confirm `server.ts` includes `https://cleaningcrm.opygen.com` in the `cors()` origin array.
 3. Restart the app: `docker compose restart app`
 
 ---
@@ -493,6 +498,7 @@ docker system df
 **Cause:** The app container crashed at startup.
 
 **Fix:**
+
 ```bash
 docker compose logs app --tail=50
 # Look for error messages, then fix the .env or code and rebuild
@@ -515,6 +521,7 @@ docker compose up -d
 **Cause:** `DATABASE_URL` is incorrect or Neon is unreachable.
 
 **Fix:**
+
 1. Verify the `DATABASE_URL` in `.env` is correct (copy from Neon dashboard).
 2. Confirm `?sslmode=require` is appended.
 3. Restart: `docker compose restart app`
@@ -524,6 +531,7 @@ docker compose up -d
 ### ❌ "Permission denied" building Docker image
 
 **Fix:** Add your user to the docker group:
+
 ```bash
 sudo usermod -aG docker $USER && newgrp docker
 ```
@@ -532,18 +540,18 @@ sudo usermod -aG docker $USER && newgrp docker
 
 ## 13. File Reference
 
-| File                | Purpose                                              |
-|---------------------|------------------------------------------------------|
-| `Dockerfile`        | Multi-stage build: base → deps → build → production  |
-| `docker-compose.yml`| Orchestrates app, redis, and caddy containers        |
-| `Caddyfile`         | Caddy config: TLS, reverse proxy, compression, logs  |
-| `.dockerignore`     | Files excluded from the Docker build context         |
-| `.env`              | Secret environment variables (never commit to Git)   |
-| `.env.example`      | Template with all required variable names            |
-| `src/index.ts`      | App entry point: HTTP server + Socket.IO             |
-| `src/server.ts`     | Express app: CORS, routes, middleware                |
-| `src/config/ENV.ts` | Environment variable exports                         |
-| `prisma/schema/`    | Prisma data models                                   |
+| File                 | Purpose                                             |
+| -------------------- | --------------------------------------------------- |
+| `Dockerfile`         | Multi-stage build: base → deps → build → production |
+| `docker-compose.yml` | Orchestrates app, redis, and caddy containers       |
+| `Caddyfile`          | Caddy config: TLS, reverse proxy, compression, logs |
+| `.dockerignore`      | Files excluded from the Docker build context        |
+| `.env`               | Secret environment variables (never commit to Git)  |
+| `.env.example`       | Template with all required variable names           |
+| `src/index.ts`       | App entry point: HTTP server + Socket.IO            |
+| `src/server.ts`      | Express app: CORS, routes, middleware               |
+| `src/config/ENV.ts`  | Environment variable exports                        |
+| `prisma/schema/`     | Prisma data models                                  |
 
 ---
 

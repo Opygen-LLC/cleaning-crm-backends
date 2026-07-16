@@ -2,14 +2,14 @@
 # Caddyfile — Opygen Cleaning CRM Backend
 # Server IP  : 43.205.126.45
 # Public Host: https://43.205.126.45.sslip.io  (free TLS via sslip.io)
-# Frontend   : https://opygen.com
+# Frontend   : https://cleaningcrm.opygen.com
 #
 # How sslip.io works:
 #   43.205.126.45.sslip.io is a free wildcard DNS service.
 #   It resolves to 43.205.126.45 automatically.
 #   Caddy obtains a Let's Encrypt TLS certificate for that hostname,
 #   giving you HTTPS without a paid domain — fixing mixed-content
-#   errors when https://opygen.com (Vercel) calls this backend.
+#   errors when https://cleaningcrm.opygen.com (Vercel) calls this backend.
 #
 # CORS is handled entirely in Node.js (server.ts) — do NOT add
 # CORS headers here or they will be duplicated and break preflight.
