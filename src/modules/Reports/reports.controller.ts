@@ -88,7 +88,7 @@ const EXPORT_MAP: Record<
 
 const VALID_TYPES = Object.keys(EXPORT_MAP) as ExportType[];
 
-// GET /api/v1/reports/:type/export?period=7d|30d|90d|12m
+// GET /api/v1/reports/:type/export?period=7d|30d|90d|12m&format=csv|pdf
 const exportReport = catchAsync(async (req, res) => {
     const type = req.params.type as ExportType;
 
@@ -101,14 +101,25 @@ const exportReport = catchAsync(async (req, res) => {
     }
 
     const period = parsePeriod(req.query.period);
-    const csv = await EXPORT_MAP[type](req.user.id, period);
+    const format = (req.query.format as string)?.toLowerCase() === "pdf" ? "pdf" : "csv";
 
+    if (format === "pdf" && type === "revenue") {
+        const pdfBuffer = await reportsService.exportRevenueReportPdf(req.user.id, period);
+        const filename = `${type}-report-${period}-${new Date().toISOString().slice(0, 10)}.pdf`;
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.status(httpStatus.OK).end(pdfBuffer);
+        return;
+    }
+
+    const csv = await EXPORT_MAP[type](req.user.id, period);
     const filename = `${type}-report-${period}-${new Date().toISOString().slice(0, 10)}.csv`;
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.status(httpStatus.OK).send(csv);
 });
+
 
 export const reportsController = {
     getRevenueReport,

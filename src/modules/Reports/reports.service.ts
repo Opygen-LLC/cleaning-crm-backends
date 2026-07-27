@@ -1,6 +1,8 @@
+import PDFDocument from "pdfkit";
 import { prisma } from "../../lib/prisma/prisma";
 import { JobStatus } from "../../generated/prisma/enums";
 import redis from "../../config/redis";
+
 
 // ── Shared helper: resolve adminId from userId ────────────────────────────────
 
@@ -928,13 +930,64 @@ export const exportJobCompletionCsv = async (
     return sections.join("\n");
 };
 
+export const exportRevenueReportPdf = async (
+    userId: string,
+    period: Period,
+): Promise<Buffer> => {
+    const data = await getRevenueReport(userId, period);
+
+    return new Promise<Buffer>((resolve, reject) => {
+        const doc = new PDFDocument({ size: "A4", margin: 40 });
+        const chunks: Buffer[] = [];
+        doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+        doc.on("end", () => resolve(Buffer.concat(chunks)));
+        doc.on("error", reject);
+
+        // Document Header
+        doc.fontSize(20).fillColor("#111111").text("Revenue & Profit Report", { align: "left" });
+        doc.fontSize(10).fillColor("#666666").text(`Period: ${period.toUpperCase()} | Generated: ${new Date().toLocaleDateString()}`);
+        doc.moveDown(1.5);
+
+        // Summary Metrics
+        doc.fontSize(14).fillColor("#111111").text("Summary Metrics");
+        doc.moveDown(0.5);
+        doc.fontSize(10).fillColor("#333333")
+           .text(`Total Revenue: £${data.stats.totalRevenue.value.toLocaleString()} (${data.stats.totalRevenue.changePercent >= 0 ? "+" : ""}${data.stats.totalRevenue.changePercent}%)`)
+           .text(`Total Profit: £${data.stats.totalProfit.value.toLocaleString()} (${data.stats.totalProfit.changePercent >= 0 ? "+" : ""}${data.stats.totalProfit.changePercent}%)`)
+           .text(`Avg Job Value: £${data.stats.avgJobValue.value.toLocaleString()}`)
+           .text(`Outstanding Invoices: £${data.stats.outstandingInvoices.value.toLocaleString()}`);
+        doc.moveDown(1.5);
+
+        // Revenue Trend
+        doc.fontSize(14).fillColor("#111111").text("Revenue Trend");
+        doc.moveDown(0.5);
+        doc.fontSize(10).fillColor("#333333");
+        data.chart.forEach((pt) => {
+            doc.text(`${pt.label}: Revenue £${pt.revenue.toLocaleString()} | Profit £${pt.profit.toLocaleString()} | Expenses £${pt.expenses.toLocaleString()}`);
+        });
+        doc.moveDown(1.5);
+
+        // Service Breakdown
+        doc.fontSize(14).fillColor("#111111").text("Revenue by Service");
+        doc.moveDown(0.5);
+        doc.fontSize(10).fillColor("#333333");
+        data.byService.forEach((s) => {
+            doc.text(`${s.serviceType}: £${s.revenue.toLocaleString()} (${s.jobs} jobs, avg £${s.avgPerJob}/job)`);
+        });
+
+        doc.end();
+    });
+};
+
 export const reportsService = {
     getRevenueReport,
     getStaffPerformanceReport,
     getClientRetentionReport,
     getJobCompletionReport,
     exportRevenueReportCsv,
+    exportRevenueReportPdf,
     exportStaffPerformanceCsv,
     exportClientRetentionCsv,
     exportJobCompletionCsv,
 };
+

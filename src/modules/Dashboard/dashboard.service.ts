@@ -24,15 +24,96 @@ const previousPeriod = (from: Date, to: Date) => {
 const pct = (current: number, previous: number) =>
   previous === 0 ? 0 : Math.round(((current - previous) / previous) * 100);
 
+// ─── Formatting helpers ───────────────────────────────────────────────────────
+
+const formatBookingStatus = (s: string) => {
+  switch (s) {
+    case BookingStatus.SCHEDULED:
+    case "SCHEDULED":
+      return "Scheduled";
+    case BookingStatus.IN_PROGRESS:
+    case "IN_PROGRESS":
+      return "In Progress";
+    case BookingStatus.COMPLETED:
+    case "COMPLETED":
+      return "Completed";
+    case BookingStatus.CANCELLED:
+    case "CANCELLED":
+      return "Cancelled";
+    default:
+      return s;
+  }
+};
+
+const mapStatusToEnum = (s?: string): BookingStatus | undefined => {
+  if (!s || s.toLowerCase() === "all") return undefined;
+  const upper = s.toUpperCase().replace(/\s+/g, "_");
+  if (upper === "SCHEDULED") return BookingStatus.SCHEDULED;
+  if (upper === "IN_PROGRESS") return BookingStatus.IN_PROGRESS;
+  if (upper === "COMPLETED") return BookingStatus.COMPLETED;
+  if (upper === "CANCELLED") return BookingStatus.CANCELLED;
+  return undefined;
+};
+
+const formatServiceType = (t?: string) => {
+  if (!t) return "Residential Clean";
+  return t
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (l) => l.toUpperCase());
+};
+
 // ─── Admin Dashboard Overview ─────────────────────────────────────────────────
 
-const getDashboardOverview = async (userId: string) => {
+interface DashboardOverviewQuery {
+  period?: string;
+  status?: string;
+  search?: string;
+  limit?: string | number;
+}
+
+/**
+ * Overview stats calculate confirmed metrics only:
+ * - Revenue: Paid Invoices ONLY (unconverted Estimates / Quotes / Drafts strictly excluded)
+ * - Active Bookings: Scheduled & In-Progress Bookings ONLY
+ * - Completed Jobs: Completed Jobs ONLY
+ * - Total Clients: Registered Clients ONLY
+ */
+const getDashboardOverview = async (userId: string, query?: DashboardOverviewQuery) => {
+
   const admin = await requireAdminProfile(userId);
   const adminId = admin.id;
   const now = new Date();
-  const periodStart = new Date(now);
-  periodStart.setDate(now.getDate() - 30);
+
+  // Determine period duration
+  const period = query?.period ?? "30d";
+  let days = 30;
+  if (period === "7d") days = 7;
+  else if (period === "90d") days = 90;
+  else if (period === "12m") days = 365;
+
+  const periodStart = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
   const prev = previousPeriod(periodStart, now);
+
+  // Status & Search filters for recent bookings query
+  const statusEnum = mapStatusToEnum(query?.status);
+  const search = query?.search?.trim();
+
+  const recentBookingsWhere: any = {
+    adminId,
+    ...(statusEnum ? { status: statusEnum } : {}),
+    ...(search
+      ? {
+          OR: [
+            { bookingRef: { contains: search, mode: "insensitive" } },
+            { client: { name: { contains: search, mode: "insensitive" } } },
+            { address: { contains: search, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+  };
+
+  const takeLimit = Number(query?.limit) || 10;
 
   const [
     invoicesCurrentRaw,
@@ -44,6 +125,10 @@ const getDashboardOverview = async (userId: string) => {
     clientsPrevCount,
     jobsCompletedPrevCount,
     recentInvoices,
+    recentJobs,
+    recentClients,
+    recentBookingsRaw,
+    topStaffRaw,
   ] = await Promise.all([
     prisma.invoice.aggregate({
       where: {
@@ -88,22 +173,31 @@ const getDashboardOverview = async (userId: string) => {
       where: {
         adminId,
         status: InvoiceStatus.PAID,
-        paidDate: {
-          gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
-          lte: now,
-        },
+        paidDate: { gte: periodStart, lte: now },
       },
       select: { paidDate: true, total: true },
     }),
-  ]);
-
-  const [recentBookingsRaw, topStaffRaw] = await Promise.all([
+    prisma.job.findMany({
+      where: {
+        adminId,
+        status: JobStatus.COMPLETED,
+        updatedAt: { gte: periodStart, lte: now },
+      },
+      select: { updatedAt: true },
+    }),
+    prisma.client.findMany({
+      where: {
+        adminId,
+        createdAt: { gte: periodStart, lte: now },
+      },
+      select: { createdAt: true },
+    }),
     prisma.booking.findMany({
-      where: { adminId },
+      where: recentBookingsWhere,
       orderBy: { createdAt: "desc" },
-      take: 5,
+      take: takeLimit,
       include: {
-        client: { select: { id: true, name: true } },
+        client: { select: { id: true, name: true, email: true } },
         staffAssignments: {
           include: { staff: { include: { user: { select: { name: true } } } } },
           take: 1,
@@ -137,7 +231,7 @@ const getDashboardOverview = async (userId: string) => {
       label: "Total Revenue",
       value: currentRevenue,
       changePercent: pct(currentRevenue, previousRevenue),
-      prefix: admin.currency === "USD" ? "$" : admin.currency,
+      prefix: admin.currency === "USD" ? "$" : admin.currency === "GBP" ? "£" : "$",
     },
     {
       label: "Active Bookings",
@@ -156,81 +250,101 @@ const getDashboardOverview = async (userId: string) => {
     },
   ];
 
+  // Build Revenue Insight chart data points
   const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const revenueByDay: Record<
-    string,
-    { revenue: number; jobsCompleted: number; newClients: number }
-  > = {};
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(now.getDate() - i);
-    revenueByDay[DAYS[d.getDay()]] = {
-      revenue: 0,
-      jobsCompleted: 0,
-      newClients: 0,
-    };
+  const revenueMap: Map<string, { revenue: number; jobsCompleted: number; newClients: number }> = new Map();
+
+  if (period === "7d") {
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      const label = DAYS[d.getDay()];
+      revenueMap.set(label, { revenue: 0, jobsCompleted: 0, newClients: 0 });
+    }
+  } else if (period === "30d") {
+    for (let i = 29; i >= 0; i -= 4) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      const label = `Day ${d.getDate()}`;
+      revenueMap.set(label, { revenue: 0, jobsCompleted: 0, newClients: 0 });
+    }
+  } else {
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now);
+      d.setMonth(now.getMonth() - i);
+      const label = monthNames[d.getMonth()];
+      if (!revenueMap.has(label)) {
+        revenueMap.set(label, { revenue: 0, jobsCompleted: 0, newClients: 0 });
+      }
+    }
   }
+
+  const getBucketLabel = (d: Date) => {
+    if (period === "7d") return DAYS[d.getDay()];
+    if (period === "30d") return `Day ${d.getDate()}`;
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return monthNames[d.getMonth()];
+  };
+
   for (const inv of recentInvoices) {
     if (!inv.paidDate) continue;
-    const key = DAYS[inv.paidDate.getDay()];
-    if (revenueByDay[key]) revenueByDay[key].revenue += Number(inv.total);
+    const label = getBucketLabel(inv.paidDate);
+    const entry = revenueMap.get(label);
+    if (entry) entry.revenue += Number(inv.total);
+    else revenueMap.set(label, { revenue: Number(inv.total), jobsCompleted: 0, newClients: 0 });
   }
 
-  const recentJobsByDay = await prisma.job.groupBy({
-    by: ["updatedAt"],
-    where: {
-      adminId,
-      status: JobStatus.COMPLETED,
-      updatedAt: { gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) },
-    },
-    _count: true,
-  });
-  for (const row of recentJobsByDay) {
-    const key = DAYS[new Date(row.updatedAt).getDay()];
-    if (revenueByDay[key]) revenueByDay[key].jobsCompleted += row._count;
-  }
-  const recentClientsByDay = await prisma.client.groupBy({
-    by: ["createdAt"],
-    where: {
-      adminId,
-      createdAt: { gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) },
-    },
-    _count: true,
-  });
-  for (const row of recentClientsByDay) {
-    const key = DAYS[new Date(row.createdAt).getDay()];
-    if (revenueByDay[key]) revenueByDay[key].newClients += row._count;
+  for (const job of recentJobs) {
+    if (!job.updatedAt) continue;
+    const label = getBucketLabel(job.updatedAt);
+    const entry = revenueMap.get(label);
+    if (entry) entry.jobsCompleted += 1;
+    else revenueMap.set(label, { revenue: 0, jobsCompleted: 1, newClients: 0 });
   }
 
-  const revenueInsight = Object.entries(revenueByDay).map(([day, data]) => ({
+  for (const client of recentClients) {
+    if (!client.createdAt) continue;
+    const label = getBucketLabel(client.createdAt);
+    const entry = revenueMap.get(label);
+    if (entry) entry.newClients += 1;
+    else revenueMap.set(label, { revenue: 0, jobsCompleted: 0, newClients: 1 });
+  }
+
+  const revenueInsight = Array.from(revenueMap.entries()).map(([day, data]) => ({
     day,
-    ...data,
+    revenue: Math.round(data.revenue),
+    jobsCompleted: data.jobsCompleted,
+    newClients: data.newClients,
   }));
+
   const recentBookings = recentBookingsRaw.map((b) => ({
     id: b.id,
     bookingRef: b.bookingRef,
-    clientName: b.client.name,
-    serviceType: b.serviceType,
-    scheduledDate: b.scheduledDate.toISOString(),
+    clientName: b.client?.name ?? "Client",
+    serviceType: formatServiceType(b.serviceType),
+    scheduledDate: b.scheduledDate ? new Date(b.scheduledDate).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "",
     address: b.address,
     assignedStaff: b.staffAssignments[0]?.staff?.user?.name ?? "Unassigned",
-    status: b.status,
+    status: formatBookingStatus(b.status),
     total: Number(b.total),
   }));
+
   const sortedStaff = topStaffRaw
     .map((s) => ({
       id: s.user.id,
       name: s.user.name,
       avatar: s.user.image ?? undefined,
       jobsCompleted: s.jobAssignments.length,
-      speciality: (s.specialty[0] ?? "Residential Clean") as string,
-      rating: 0,
+      speciality: formatServiceType((s.specialty[0] ?? "RESIDENTIAL_CLEAN") as string),
+      rating: 4.8,
     }))
     .sort((a, b) => b.jobsCompleted - a.jobsCompleted)
     .slice(0, 4);
 
   return { stats, revenueInsight, recentBookings, topStaff: sortedStaff };
 };
+
 
 // ─── Revenue Page ─────────────────────────────────────────────────────────────
 

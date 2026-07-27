@@ -3,12 +3,15 @@ import nodemailer from "nodemailer";
 import path from "path";
 import AppError from "../errorHelper/AppError";
 import status from "http-status";
-import { SMTP_EMAIL, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT } from "../config/ENV";
+import { SMTP_EMAIL, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT, SMTP_SECURE, SMTP_FROM } from "../config/ENV";
 
-const transporter = nodemailer.createTransport({
+const portNumber = Number(SMTP_PORT) || 587;
+const isSecure = SMTP_SECURE !== undefined ? SMTP_SECURE === "true" : portNumber === 465;
+
+export const transporter = nodemailer.createTransport({
     host: SMTP_HOST,
-    port: Number(SMTP_PORT),
-    secure: true,
+    port: portNumber,
+    secure: isSecure,
     auth: {
         user: SMTP_EMAIL,
         pass: SMTP_PASSWORD,
@@ -44,8 +47,10 @@ export const sendEmail = async ({
         );
         const html = await ejs.renderFile(templatePath, templateData);
 
+        const fromAddress = SMTP_FROM || SMTP_EMAIL;
+
         const info = await transporter.sendMail({
-            from: SMTP_EMAIL,
+            from: fromAddress,
             to: to,
             subject: subject,
             html: html,
@@ -56,12 +61,15 @@ export const sendEmail = async ({
             })),
         });
 
-        console.log(`Email sent to ${to} : ${info.messageId}`);
+        console.log(`[SMTP SUCCESS] Email sent to ${to} (Message ID: ${info.messageId})`);
     } catch (error: any) {
-        console.log("Email Sending Error: ", error);
+        console.error(
+            `[SMTP ERROR] Failed to send email to ${to} (Subject: "${subject}") via ${SMTP_HOST}:${portNumber}:`,
+            error?.message || error
+        );
         throw new AppError(
             status.INTERNAL_SERVER_ERROR,
-            "Failed to send email",
+            `Failed to send email: ${error?.message || "Unknown SMTP error"}`,
         );
     }
-};
+};

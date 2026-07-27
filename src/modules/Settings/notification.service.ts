@@ -28,12 +28,18 @@ const updateNotificationPrefs = async (
     const admin = await prisma.adminProfile.findUnique({ where: { userId } });
     if (!admin) throw new Error("Admin profile not found");
 
+    // Clean payload: strip undefined / null keys before updating
+    const cleanedPayload = Object.fromEntries(
+        Object.entries(payload).filter(([, v]) => v !== undefined && v !== null),
+    );
+
     return prisma.notificationPreference.upsert({
         where: { adminId: admin.id },
-        update: payload,
-        create: { adminId: admin.id, ...payload },
+        update: cleanedPayload,
+        create: { adminId: admin.id, ...cleanedPayload },
     });
 };
+
 
 // ─── Item 18: In-app notification inbox service methods ───────────────────────
 
@@ -71,10 +77,43 @@ const markAllRead = async (userId: string) => {
     });
 };
 
+const getAdminPrefsByAdminId = async (adminId: string) => {
+    const prefs = await prisma.notificationPreference.findUnique({
+        where: { adminId },
+    });
+
+    if (!prefs) {
+        return prisma.notificationPreference.create({
+            data: { adminId },
+        });
+    }
+
+    return prefs;
+};
+
+const shouldSendEmail = async (
+    adminId: string,
+    preferenceKey: keyof UpdateNotificationPrefsPayload,
+): Promise<boolean> => {
+    try {
+        if (!adminId) return true;
+        const prefs = await getAdminPrefsByAdminId(adminId);
+        const val = prefs[preferenceKey];
+        return typeof val === "boolean" ? val : true;
+    } catch (err) {
+        console.warn(`[NOTIFICATION SERVICE] Failed to fetch preferences for admin ${adminId}, defaulting to true:`, err);
+        return true;
+    }
+};
+
+
 export const notificationService = {
     getNotificationPrefs,
     updateNotificationPrefs,
+    getAdminPrefsByAdminId,
+    shouldSendEmail,
     getInbox,
     markRead,
     markAllRead,
 };
+

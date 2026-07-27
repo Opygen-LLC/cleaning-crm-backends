@@ -16,6 +16,8 @@ import AppError from "../errorHelper/AppError";
 import { jwtUtils } from "../lib/utils/jwt";
 import { ACCESS_TOKEN_SECRET } from "../config/ENV";
 import { CookieUtils } from "../lib/utils/cookie";
+import redis from "../config/redis";
+
 
 function getAccessToken(req: Request): string | undefined {
     const authHeader = req.headers.authorization;
@@ -58,31 +60,53 @@ export const checkSubscription = async (
                 "This account has been deleted.",
             );
 
-        const admin = await prisma.adminProfile.findFirst({
-            where: { userId },
-            select: { id: true },
-        });
-        if (!admin) return next();
+        // ── Subscription lookup (Redis cached with 60s TTL) ────────────
+        let sub: any = null;
+        const cachedSub = await redis.get(`sub:user:${userId}`).catch(() => null);
 
-        const sub = await prisma.subscription.findFirst({
-            where: { adminId: admin.id },
-            select: {
-                status: true,
-                isTrial: true,
-                trialEndsAt: true,
-                currentPeriodEnd: true,
-                cancelAtPeriodEnd: true,
-            },
-            orderBy: { createdAt: "desc" },
-        });
-        if (!sub) return next();
+        if (cachedSub) {
+            try {
+                sub = JSON.parse(cachedSub);
+            } catch {
+                sub = null;
+            }
+        }
+
+        if (!sub) {
+            const admin = await prisma.adminProfile.findFirst({
+                where: { userId },
+                select: { id: true },
+            });
+            if (!admin) return next();
+
+            sub = await prisma.subscription.findFirst({
+                where: { adminId: admin.id },
+                select: {
+                    status: true,
+                    isTrial: true,
+                    trialEndsAt: true,
+                    currentPeriodEnd: true,
+                    cancelAtPeriodEnd: true,
+                },
+                orderBy: { createdAt: "desc" },
+            });
+            if (!sub) return next();
+
+            await redis
+                .setex(`sub:user:${userId}`, 60, JSON.stringify(sub))
+                .catch(() => {});
+        }
 
         const now = new Date();
+        const trialEnd = sub.trialEndsAt ? new Date(sub.trialEndsAt) : null;
+        const periodEnd = sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd) : null;
+
         if (sub.status === "SUSPENDED")
             throw new AppError(
                 status.PAYMENT_REQUIRED,
                 "Your account has been suspended. Please contact support or submit a payment proof.",
             );
+
         if (sub.status === "EXPIRED")
             throw new AppError(
                 status.PAYMENT_REQUIRED,
@@ -106,21 +130,19 @@ export const checkSubscription = async (
                 status.PAYMENT_REQUIRED,
                 "Your subscription has been cancelled. Please subscribe to a plan to continue using the platform.",
             );
-        if (sub.isTrial && sub.trialEndsAt && sub.trialEndsAt < now)
+        if (sub.isTrial && trialEnd && trialEnd < now)
             throw new AppError(
                 status.PAYMENT_REQUIRED,
                 "Your free trial has ended. Please upgrade to continue.",
             );
-        // Covers both the natural end-of-billing-period case AND a
-        // self-serve cancelAtPeriodEnd cancellation once its period elapses
-        // (status stays ACTIVE until then by design — see subscription.service.ts).
-        if (!sub.isTrial && sub.currentPeriodEnd && sub.currentPeriodEnd < now)
+        if (!sub.isTrial && periodEnd && periodEnd < now)
             throw new AppError(
                 status.PAYMENT_REQUIRED,
                 sub.cancelAtPeriodEnd
                     ? "Your subscription was cancelled and your billing period has ended. Please resubscribe to continue."
                     : "Your billing period has ended. Please renew your subscription.",
             );
+
 
         next();
     } catch (error) {

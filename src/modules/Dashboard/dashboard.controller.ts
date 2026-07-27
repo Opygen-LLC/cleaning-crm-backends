@@ -6,7 +6,7 @@ import { dashboardService } from "./dashboard.service";
 const getDashboardOverview = catchAsync(async (req, res) => {
     const userId = req.user.id;
 
-    const result = await dashboardService.getDashboardOverview(userId);
+    const result = await dashboardService.getDashboardOverview(userId, req.query);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -15,6 +15,7 @@ const getDashboardOverview = catchAsync(async (req, res) => {
         data: result,
     });
 });
+
 
 const getRevenueData = catchAsync(async (req, res) => {
     const userId = req.user.id;
