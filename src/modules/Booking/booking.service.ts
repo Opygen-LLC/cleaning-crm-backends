@@ -19,6 +19,7 @@ import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
+import { notificationService } from "../Settings/notification.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -71,12 +72,24 @@ const bookingInclude = {
 
 // ── Booking confirmation email helper ─────────────────────────────────────────
 
-const sendBookingConfirmationEmail = async (
+const sendBookingEmail = async (
     booking: any,
-    isCompleted = false,
+    eventType: "created" | "completed" | "cancelled" = "created",
 ) => {
     const clientEmail = booking.client?.email;
     if (!clientEmail) return;
+
+    // Verify admin preference before dispatching
+    const prefKey =
+        eventType === "cancelled"
+            ? "emailBookingCancelled"
+            : "emailNewBooking";
+
+    const allowed = await notificationService.shouldSendEmail(booking.adminId, prefKey);
+    if (!allowed) {
+        console.log(`[EMAIL NOTICE] Skipping ${eventType} email for booking ${booking.bookingRef} per admin preference.`);
+        return;
+    }
 
     const fmt = (d: Date) =>
         d.toLocaleDateString("en-GB", {
@@ -90,11 +103,15 @@ const sendBookingConfirmationEmail = async (
         (a: any) => a.staff?.user?.name ?? "Staff",
     );
 
+    const subjectMap = {
+        created: `Booking confirmed — ${booking.bookingRef}`,
+        completed: `Your cleaning is complete — ${booking.bookingRef}`,
+        cancelled: `Booking cancelled — ${booking.bookingRef}`,
+    };
+
     await sendEmailSafely({
         to: clientEmail,
-        subject: isCompleted
-            ? `Your cleaning is complete — ${booking.bookingRef}`
-            : `Booking confirmed — ${booking.bookingRef}`,
+        subject: subjectMap[eventType],
         templateName: "booking-confirmation",
         templateData: {
             clientName: booking.client?.name ?? "Valued Customer",
@@ -106,10 +123,12 @@ const sendBookingConfirmationEmail = async (
             total: Number(booking.total).toFixed(2),
             notes: booking.notes ?? null,
             staffNames,
-            isCompleted,
+            isCompleted: eventType === "completed",
+            isCancelled: eventType === "cancelled",
         },
     });
 };
+
 
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
@@ -188,7 +207,7 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
     });
 
     // Fire confirmation email (non-blocking)
-    sendBookingConfirmationEmail(booking, false).catch(() => {});
+    sendBookingEmail(booking, "created").catch(() => {});
 
     // Persist notification + push to bell
     createNotification({
@@ -300,9 +319,11 @@ const updateBookingStatus = async (
         include: bookingInclude,
     });
 
-    // Fire completion email when booking is marked COMPLETED
+    // Fire notification email when booking status changes to COMPLETED or CANCELLED
     if (newStatus === BookingStatus.COMPLETED) {
-        sendBookingConfirmationEmail(updated, true).catch(() => {});
+        sendBookingEmail(updated, "completed").catch(() => {});
+    } else if (newStatus === BookingStatus.CANCELLED) {
+        sendBookingEmail(updated, "cancelled").catch(() => {});
     }
 
     return updated;

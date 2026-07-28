@@ -23,8 +23,12 @@ const updateLeadSchema = z.object({
 });
 
 const updateLeadStageSchema = z.object({
-    stage: z.enum(["NEW", "CONTACTED", "QUOTE_SENT", "WON", "LOST"]),
+    stage: z.enum([
+        "NEW", "CONTACTED", "QUOTE_SENT", "WON", "LOST",
+        "New", "Contacted", "Quote Sent", "Won", "Lost",
+    ]),
 });
+
 
 export const leadValidation = {
     createLead: createLeadSchema,

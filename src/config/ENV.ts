@@ -42,5 +42,7 @@ export const SMTP_EMAIL: string = process.env.SMTP_EMAIL as string;
 export const SMTP_PASSWORD: string = process.env.SMTP_PASSWORD as string;
 export const SMTP_HOST: string = process.env.SMTP_HOST as string;
 export const SMTP_PORT: string = process.env.SMTP_PORT as string;
+export const SMTP_SECURE: string | undefined = process.env.SMTP_SECURE;
+export const SMTP_FROM: string | undefined = process.env.SMTP_FROM;
 
 

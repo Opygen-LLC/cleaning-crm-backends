@@ -134,6 +134,30 @@ const getMyStaff = async (query: IQueryParams, userReq: any) => {
     if (!adminProfile)
         throw new AppError(status.NOT_FOUND, "Admin profile not found");
 
+    const { role, status: statusParam, searchTerm, search } = query as any;
+
+    const extraWhere: Prisma.StaffProfileWhereInput = {
+        adminId: adminProfile.id,
+    };
+
+    if (statusParam && statusParam !== "All") {
+        const formattedStatus = statusParam.toUpperCase().replace(/\s+/g, "_");
+        extraWhere.status = formattedStatus as any;
+    }
+
+    if (role && role !== "All") {
+        extraWhere.staffRole = role as any;
+    }
+
+    const q = (searchTerm || search)?.toString().trim();
+    if (q) {
+        extraWhere.OR = [
+            { user: { name: { contains: q, mode: "insensitive" } } },
+            { user: { email: { contains: q, mode: "insensitive" } } },
+            { staffRole: { contains: q, mode: "insensitive" } },
+        ];
+    }
+
     const queryBuilder = new QueryBuilder<
         StaffProfile,
         Prisma.StaffProfileWhereInput,
@@ -146,13 +170,14 @@ const getMyStaff = async (query: IQueryParams, userReq: any) => {
     return queryBuilder
         .search()
         .filter()
-        .where({ adminId: adminProfile.id })
+        .where(extraWhere)
         .include({ user: true, staffAvailability: true })
         .paginate()
         .sort()
         .fields()
         .execute();
 };
+
 
 const getStaffById = async (id: string, userReq: IRequestUser) => {
     if (userReq.role !== UserRole.ADMIN)

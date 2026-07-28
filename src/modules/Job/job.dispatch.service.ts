@@ -46,13 +46,14 @@ const serviceKeywords: Partial<Record<ServiceType, string[]>> = {
     [ServiceType.MOVE_IN_OUT_CLEAN]: ["move", "in", "out"],
 };
 
-function specialtyMatchScore(staffSpecialties: string[], jobType: ServiceType): number {
+function specialtyMatchScore(staffSpecialties: string[] | undefined | null, jobType: ServiceType): number {
     const keywords = serviceKeywords[jobType] ?? [];
-    if (keywords.length === 0) return 0;
-    const lower = staffSpecialties.map((s) => s.toLowerCase());
+    if (keywords.length === 0 || !staffSpecialties) return 0;
+    const lower = (staffSpecialties ?? []).map((s) => s.toLowerCase());
     const matched = keywords.some((kw) => lower.some((sp) => sp.includes(kw)));
     return matched ? W_SPECIALTY : 0;
 }
+
 
 // ─── Core scoring function ────────────────────────────────────────────────────
 
@@ -303,11 +304,17 @@ const bulkAutoDispatch = async (
 
     const results: AutoDispatchResult[] = [];
     for (const { id } of unassignedJobs) {
-        const result = await autoDispatch(id, user, options);
-        results.push(result);
+        try {
+            const result = await autoDispatch(id, user, options);
+            results.push(result);
+        } catch {
+            // Log & skip failing individual job to prevent breaking the bulk run
+            continue;
+        }
     }
     return results;
 };
+
 
 export const jobDispatchService = {
     autoDispatch,

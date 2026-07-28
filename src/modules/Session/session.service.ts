@@ -8,12 +8,40 @@ import { IRequestUser } from "../../types/requestUser.interface";
  * Returns the caller's own sessions, most recent first, so the frontend
  * can mark the newest one as "this device" when it can't match by token.
  */
-const getMySessions = async (user: IRequestUser) => {
-    return await prisma.session.findMany({
+const getMySessions = async (
+    user: IRequestUser,
+    currentOpts?: {
+        refreshToken?: string;
+        userAgent?: string;
+        ipAddress?: string;
+    },
+) => {
+    const sessions = await prisma.session.findMany({
         where: { userId: user.id },
         orderBy: { createdAt: "desc" },
     });
+
+    const currentToken = currentOpts?.refreshToken;
+    const currentUA = currentOpts?.userAgent?.trim();
+
+    return sessions.map((s, index) => {
+        let isCurrentDevice = false;
+
+        if (currentToken && s.token === currentToken) {
+            isCurrentDevice = true;
+        } else if (currentUA && s.userAgent?.trim() === currentUA) {
+            isCurrentDevice = index === 0;
+        } else if (index === 0) {
+            isCurrentDevice = true;
+        }
+
+        return {
+            ...s,
+            isCurrentDevice,
+        };
+    });
 };
+
 
 /**
  * DELETE /session/my-session/:id

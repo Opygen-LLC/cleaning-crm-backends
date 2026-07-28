@@ -324,11 +324,17 @@ const updateEstimate = async (
     });
 };
 
+/**
+ * Updates estimate status (DRAFT -> SENT -> APPROVED / REJECTED).
+ * Note: Estimate status transitions do NOT alter actual revenue, active bookings,
+ * or completed job metrics on top-level dashboard overview until explicitly converted.
+ */
 const updateEstimateStatus = async (
     id: string,
     newStatus: EstimateStatus,
     user: IRequestUser,
 ) => {
+
     const adminId = await resolveAdminId(user.id);
 
     const existing = await prisma.estimate.findFirst({

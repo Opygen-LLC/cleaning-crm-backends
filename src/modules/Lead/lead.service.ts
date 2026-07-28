@@ -41,17 +41,40 @@ const resolveAdminProfile = async (user: IRequestUser) => {
     return adminProfile;
 };
 
-// ─── Decimal serialiser ───────────────────────────────────────────────────────
+const STAGE_MAP_TO_DB: Record<string, LeadStage> = {
+    "New": LeadStage.NEW,
+    "Contacted": LeadStage.CONTACTED,
+    "Quote Sent": LeadStage.QUOTE_SENT,
+    "Won": LeadStage.WON,
+    "Lost": LeadStage.LOST,
+    "NEW": LeadStage.NEW,
+    "CONTACTED": LeadStage.CONTACTED,
+    "QUOTE_SENT": LeadStage.QUOTE_SENT,
+    "WON": LeadStage.WON,
+    "LOST": LeadStage.LOST,
+};
+
+const STAGE_MAP_TO_FE: Record<string, string> = {
+    NEW: "New",
+    CONTACTED: "Contacted",
+    QUOTE_SENT: "Quote Sent",
+    WON: "Won",
+    LOST: "Lost",
+};
+
+// ─── Decimal serialiser & stage formatter ─────────────────────────────────────
 
 function serializeLead(
     lead: Lead & Record<string, unknown>,
 ): Record<string, unknown> {
     return {
         ...lead,
+        stage: STAGE_MAP_TO_FE[String(lead.stage)] ?? lead.stage,
         estimatedMin: Number(lead.estimatedMin),
         estimatedMax: Number(lead.estimatedMax),
     };
 }
+
 
 // ─── Service methods ──────────────────────────────────────────────────────────
 
@@ -181,12 +204,15 @@ const updateLeadStage = async (
         );
     }
 
+    const dbStage = STAGE_MAP_TO_DB[String(stage)] ?? LeadStage.NEW;
+
     const lead = await prisma.lead.update({
         where: { id },
-        data: { stage },
+        data: { stage: dbStage },
     });
 
     return serializeLead(lead as Lead & Record<string, unknown>);
+
 };
 
 const deleteLead = async (id: string, user: IRequestUser) => {
