@@ -54,4 +54,12 @@ router.post(
     adminController.skipOnboardingStep,
 );
 
+// POST /api/v1/admin/onboarding-status/skip-all — skip all onboarding steps & complete setup
+router.post(
+    "/onboarding-status/skip-all",
+    checkAuth(UserRole.ADMIN),
+    adminController.skipAllOnboarding,
+);
+
 export const adminRoutes = router;
+

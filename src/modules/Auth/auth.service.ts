@@ -87,6 +87,7 @@ const login = async ({ email, password }: ILoginUserPayload) => {
             role: true,
             needPasswordChange: true,          // ← added
             staff: { select: { status: true } },
+            admin: { select: { onboardingCompletedAt: true } },
         },
     });
 
@@ -141,11 +142,17 @@ const login = async ({ email, password }: ILoginUserPayload) => {
         emailVerified: signIn.user.emailVerified,
     };
 
+    let isOnboardingComplete: boolean | undefined = undefined;
+    if (user.role === UserRole.ADMIN) {
+        isOnboardingComplete = user.admin?.onboardingCompletedAt != null;
+    }
+
     return {
         ...signIn,
         // ✅ Expose needPasswordChange so LoginForm can redirect to /set-password
         //    before granting access to any dashboard route.
         needPasswordChange: user.needPasswordChange,
+        isOnboardingComplete,
         accessToken: tokenUtils.getAccessToken(tokenPayload),
         refreshToken: tokenUtils.getRefreshToken(tokenPayload),
     };
@@ -283,8 +290,18 @@ const verifyEmail = async (email: string, otp: string) => {
         emailVerified: result.user.emailVerified,
     };
 
+    let isOnboardingComplete: boolean | undefined = undefined;
+    if (result.user.role === UserRole.ADMIN) {
+        const admin = await prisma.adminProfile.findUnique({
+            where: { userId: result.user.id },
+            select: { onboardingCompletedAt: true },
+        });
+        isOnboardingComplete = admin?.onboardingCompletedAt != null;
+    }
+
     return {
         ...result,
+        isOnboardingComplete,
         accessToken: tokenUtils.getAccessToken(tokenPayload),
         refreshToken: tokenUtils.getRefreshToken(tokenPayload),
     };

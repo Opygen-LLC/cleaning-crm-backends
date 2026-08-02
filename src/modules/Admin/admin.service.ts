@@ -400,6 +400,26 @@ const skipOnboardingStep = async (userId: string, step: OnboardingStepKey) => {
   return { step, skipped: true };
 };
 
+const skipAllOnboarding = async (userId: string) => {
+  const admin = await prisma.adminProfile.findUnique({
+    where: { userId },
+    select: { id: true, onboardingCompletedAt: true },
+  });
+
+  if (!admin) {
+    throw new Error("Admin profile not found");
+  }
+
+  if (!admin.onboardingCompletedAt) {
+    await prisma.adminProfile.update({
+      where: { id: admin.id },
+      data: { onboardingCompletedAt: new Date() },
+    });
+  }
+
+  return { isComplete: true };
+};
+
 export const adminService = {
   createAdmin,
   getAdmin,
@@ -409,4 +429,6 @@ export const adminService = {
   getAdminUsage,
   getOnboardingStatus,
   skipOnboardingStep,
+  skipAllOnboarding,
 };
+
