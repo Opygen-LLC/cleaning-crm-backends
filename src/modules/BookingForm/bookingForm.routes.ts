@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { bookingFormController } from "./bookingForm.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
+import { checkFeature } from "../../middlewares/checkSubscription";
 import { UserRole } from "../../generated/prisma/enums";
 import {
     zodValidate,
@@ -26,8 +27,16 @@ router.post(
 );
 
 // ── Protected routes (ADMIN only) ─────────────────────────────────────────────
+// NOTE: this router backs the builder, availability, submissions, and settings
+// pages on the frontend (GATES.onlineBooking / onlineBookingBuilder /
+// onlineBookingAvailability / onlineBookingSettings / onlineBookingSubmissions).
+// All of those pages read/write the same BookingForm resource via the routes
+// below, and only a single "Online Booking" label is ever seeded on plans
+// (see seedSubscriptionPlan.ts), so one checkFeature("online booking") gate
+// covers every sub-page consistently with the frontend's OR-match logic.
 
 router.use(checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN));
+router.use(checkFeature("online booking"));
 
 // GET    /api/v1/booking-form                — list all forms for admin
 router.get("/", bookingFormController.getAllBookingForms);

@@ -30,10 +30,18 @@
 
 import { Router } from "express";
 import { checkAuth } from "../../middlewares/checkAuth";
+import { checkFeature } from "../../middlewares/checkSubscription";
 import { UserRole } from "../../generated/prisma/enums";
 import { staffLeaveController } from "./staffLeave.controller";
 
 const router = Router();
+
+// GATES.teamLeaveApprovals ("leave approvals") — defense-in-depth only.
+// As of this router's own file header, Staff/staff.routes.ts is mounted at
+// "/staff" BEFORE this router and defines the same /leave/all and
+// /leave/:id/review paths, so those handlers win in practice today. Gating
+// here too so this router is safe if that mount order is ever fixed/changed.
+const hasLeaveApprovals = checkFeature("leave approvals");
 
 // ── Staff endpoints ────────────────────────────────────────────────────────────
 
@@ -64,6 +72,7 @@ router.delete(
 router.get(
   "/leave/all",
   checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+  hasLeaveApprovals,
   staffLeaveController.getStaffLeaves,
 );
 
@@ -71,6 +80,7 @@ router.get(
 router.patch(
   "/leave/:id/review",
   checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+  hasLeaveApprovals,
   staffLeaveController.reviewLeave,
 );
 

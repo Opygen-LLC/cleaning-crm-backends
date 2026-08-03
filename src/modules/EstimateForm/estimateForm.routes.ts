@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { estimateFormController } from "./estimateForm.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
+import { checkFeature } from "../../middlewares/checkSubscription";
 import { UserRole } from "../../generated/prisma/enums";
 import {
     ValidationProperty,
@@ -9,6 +10,13 @@ import {
 import { estimateFormValidation } from "./estimateForm.validation";
 
 const router = Router();
+
+// Two distinct frontend gates share this router (see featureGateConfig.ts):
+//   GATES.estimateForms       ("pricing forms")     — builder/list/CRUD pages
+//   GATES.estimateSubmissions ("estimate submissions") — submissions inbox
+const isAdmin = checkAuth(UserRole.ADMIN);
+const hasPricingForms = checkFeature("pricing forms");
+const hasEstimateSubmissions = checkFeature("estimate submissions");
 
 // ── Public routes (no auth) ───────────────────────────────────────────────────
 // Must be declared before /:id routes
@@ -28,13 +36,15 @@ router.post(
 
 router.get(
     "/submissions",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasEstimateSubmissions,
     estimateFormController.getSubmissions,
 );
 
 router.patch(
     "/submissions/:submissionId/status",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasEstimateSubmissions,
     zodValidate(estimateFormValidation.updateSubmissionStatus, ValidationProperty.BODY),
     estimateFormController.updateSubmissionStatus,
 );
@@ -43,47 +53,56 @@ router.patch(
 
 router.post(
     "/",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasPricingForms,
     zodValidate(estimateFormValidation.createEstimateForm, ValidationProperty.BODY),
     estimateFormController.createEstimateForm,
 );
 
 router.get(
     "/",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasPricingForms,
     estimateFormController.getAllEstimateForms,
 );
 
 router.get(
     "/:id",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasPricingForms,
     estimateFormController.getEstimateFormById,
 );
 
 router.patch(
     "/:id",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasPricingForms,
     zodValidate(estimateFormValidation.updateEstimateForm, ValidationProperty.BODY),
     estimateFormController.updateEstimateForm,
 );
 
 router.delete(
     "/:id",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasPricingForms,
     estimateFormController.deleteEstimateForm,
 );
 
 router.patch(
     "/:id/toggle-published",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasPricingForms,
     estimateFormController.togglePublished,
 );
 
 // ── Per-form submissions ──────────────────────────────────────────────────────
+// This lists submissions scoped to one form, so it's gated the same as the
+// submissions inbox above, not the form-builder gate.
 
 router.get(
     "/:id/submissions",
-    checkAuth(UserRole.ADMIN),
+    isAdmin,
+    hasEstimateSubmissions,
     estimateFormController.getFormSubmissions,
 );
 

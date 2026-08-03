@@ -36,6 +36,7 @@ import { Router } from "express";
 import { staffController } from "./staff.controller";
 import { staffLeaveController } from "../StaffLeave/staffLeave.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
+import { checkFeature } from "../../middlewares/checkSubscription";
 import { UserRole } from "../../generated/prisma/enums";
 import {
     ValidationProperty,
@@ -45,6 +46,13 @@ import { staffValidation } from "./staff.validation";
 import { multerMemory } from "../../config/multerMemory";
 
 const router = Router();
+
+// GATES.teamLeaveApprovals ("leave approvals") gates the admin-facing leave
+// endpoints only. NOTE: this router is registered before StaffLeave/
+// staffLeave.routes.ts at the same "/staff" mount in routes/index.ts, so
+// these handlers — not the ones in staffLeave.routes.ts — are the ones that
+// actually serve /staff/leave/all and /staff/leave/:id/review.
+const hasLeaveApprovals = checkFeature("leave approvals");
 
 // ─── STAFF SELF-SERVICE ───────────────────────────────────────────────────────
 // These must be registered before /:id so "me" is never treated as a MongoDB/UUID id.
@@ -88,6 +96,7 @@ router.patch(
 router.get(
     "/leave/all",
     checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    hasLeaveApprovals,
     staffLeaveController.getStaffLeaves,
 );
 
@@ -120,6 +129,7 @@ router.delete(
 router.patch(
     "/leave/:id/review",
     checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    hasLeaveApprovals,
     staffLeaveController.reviewLeave,
 );
 
