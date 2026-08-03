@@ -2,6 +2,7 @@ import status from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { userService } from "./user.service";
+import { uploadToCloudinary } from "../../lib/utils/cloudinary";
 
 const getMe = catchAsync(async (req, res) => {
     const userId = req.user.id;
@@ -42,8 +43,17 @@ const updateUser = catchAsync(async (req, res) => {
     const { id } = req.params;
     const payload = req.body;
 
-    if (req.file?.path) {
-        payload.image = req.file.path; // 👈 Cloudinary URL
+    // FIX: see admin.controller.ts's updateAdmin for the same change —
+    // multer-storage-cloudinary (which populated req.file.path) is retired
+    // in favor of multerMemory + uploadToCloudinary, removing the package's
+    // cloudinary@^1.x peer-dependency conflict entirely.
+    if (req.file) {
+        const uploadResult = await uploadToCloudinary(req.file.buffer, {
+            folder: "Cleaning-CRM/images",
+            public_id: `user_${id}_${Date.now()}`,
+            overwrite: true,
+        });
+        payload.image = uploadResult.secure_url;
     }
 
     const result = await userService.updateUser(id as string, payload);

@@ -2,6 +2,7 @@ import status from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { adminService } from "./admin.service";
+import { uploadToCloudinary } from "../../lib/utils/cloudinary";
 
 const getAdmin = catchAsync(async (req, res) => {
     const userId = req.user.id;
@@ -20,8 +21,20 @@ const updateAdmin = catchAsync(async (req, res) => {
     const userId = req.user.id;
     const payload = req.body;
 
-    if (req.file?.path) {
-        payload.businessLogo = req.file.path; // 👈 Cloudinary URL
+    // FIX: previously relied on multer-storage-cloudinary populating
+    // req.file.path with the uploaded Cloudinary URL. That package pins a
+    // peer dependency on cloudinary@^1.x, which conflicts with this project's
+    // cloudinary@^2.x and breaks `npm install` on any strict resolver.
+    // Switched to multerMemory (buffer in req.file.buffer) + the same
+    // uploadToCloudinary() stream-upload helper Staff/User avatar uploads
+    // already use, so multer-storage-cloudinary is no longer a dependency.
+    if (req.file) {
+        const uploadResult = await uploadToCloudinary(req.file.buffer, {
+            folder: "Cleaning-CRM/business-logos",
+            public_id: `admin_${userId}_logo`,
+            overwrite: true,
+        });
+        payload.businessLogo = uploadResult.secure_url;
     }
 
     const result = await adminService.updateAdmin(userId, payload);

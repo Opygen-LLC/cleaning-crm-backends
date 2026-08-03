@@ -7,7 +7,7 @@ import {
 import { adminValidation } from "./admin.validation";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { UserRole } from "../../generated/prisma/enums";
-import { multerUpload } from "../../config/multer";
+import { multerMemory } from "../../config/multerMemory";
 
 const router = Router();
 
@@ -16,7 +16,7 @@ router.get("/profile", checkAuth(UserRole.ADMIN), adminController.getAdmin);
 router.patch(
     "/profile",
     checkAuth(UserRole.ADMIN),
-    multerUpload.single("businessLogo"),
+    multerMemory.single("businessLogo"),
     zodValidate(adminValidation.updateAdmin, ValidationProperty.BODY),
     adminController.updateAdmin,
 );

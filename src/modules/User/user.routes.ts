@@ -7,7 +7,6 @@ import {
     zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
 import { userValidation } from "./user.validation";
-import { multerUpload } from "../../config/multer";
 import { multerMemory } from "../../config/multerMemory";
 
 const router = Router();
@@ -45,7 +44,7 @@ router.get(
 router.patch(
     "/:id",
     checkAuth(UserRole.ADMIN, UserRole.STAFF, UserRole.SUPER_ADMIN),
-    multerUpload.single("image"),
+    multerMemory.single("image"),
     zodValidate(userValidation.updateUser, ValidationProperty.BODY),
     userController.updateUser,
 );
