@@ -3,7 +3,12 @@ import { BookingStatus, ServiceType } from "../../generated/prisma/enums";
 // ── Create ────────────────────────────────────────────────────────────────────
 
 export interface IBookingCreate {
-    clientId:      string;
+    // Either an existing client id…
+    clientId?:     string;
+    // …or new-lead details used to find-or-create the client inline.
+    clientName?:   string;
+    clientEmail?:  string;
+    clientPhone?:  string;
     serviceType:   ServiceType;
     address:       string;
     scheduledDate: string | Date;

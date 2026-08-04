@@ -52,6 +52,54 @@ const resolveAdminId = async (userId: string): Promise<string> => {
     return admin.id;
 };
 
+/**
+ * Resolves the clientId to book against.
+ *
+ * - If `clientId` is supplied, verifies it belongs to this admin.
+ * - Otherwise treats the payload as a brand-new lead (e.g. a converted
+ *   Online Booking / Estimate Form submission): reuses an existing client
+ *   with a matching email if one exists, or creates a new one — so the
+ *   "Convert to booking" action always succeeds for leads who aren't
+ *   already clients.
+ */
+const resolveOrCreateClient = async (
+    adminId: string,
+    payload: IBookingCreate,
+): Promise<string> => {
+    if (payload.clientId) {
+        const client = await prisma.client.findFirst({
+            where: { id: payload.clientId, adminId },
+        });
+        if (!client) throw new AppError(status.NOT_FOUND, "Client not found");
+        return client.id;
+    }
+
+    const email = payload.clientEmail!.trim();
+
+    const existing = await prisma.client.findUnique({
+        where: { email_adminId: { email, adminId } },
+    });
+    if (existing) return existing.id;
+
+    // Brand-new client — enforce plan limits before inserting.
+    await assertWithinLimit(adminId, "client");
+
+    const created = await prisma.client.create({
+        data: {
+            adminId,
+            name: payload.clientName!.trim(),
+            email,
+            phone: payload.clientPhone!.trim(),
+            addressLine1: payload.address,
+            city: "",
+            zipcode: "",
+            country: "",
+        },
+    });
+
+    return created.id;
+};
+
 // ─── Standard includes shared across queries ──────────────────────────────────
 
 const bookingInclude = {
@@ -138,11 +186,8 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
     // Enforce plan limits before inserting
     await assertWithinLimit(adminId, "booking");
 
-    // Verify client belongs to this admin
-    const client = await prisma.client.findFirst({
-        where: { id: payload.clientId, adminId },
-    });
-    if (!client) throw new AppError(status.NOT_FOUND, "Client not found");
+    // Resolve an existing client, or create one inline for a new lead
+    const clientId = await resolveOrCreateClient(adminId, payload);
 
     // Verify quote belongs to this admin (if provided)
     if (payload.quoteId) {
@@ -172,7 +217,7 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
             data: {
                 bookingRef,
                 adminId,
-                clientId: payload.clientId,
+                clientId,
                 serviceType: payload.serviceType,
                 address: payload.address,
                 scheduledDate: new Date(payload.scheduledDate),
@@ -196,7 +241,7 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
 
         // Update client aggregates
         await tx.client.update({
-            where: { id: payload.clientId },
+            where: { id: clientId },
             data: {
                 totalBookings: { increment: 1 },
                 lastBookingDate: new Date(payload.scheduledDate),
