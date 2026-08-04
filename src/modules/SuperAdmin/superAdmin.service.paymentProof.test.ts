@@ -1,0 +1,349 @@
+/**
+ * superAdmin.service.paymentProof.test.ts
+ *
+ * Coverage for the payment-proof review flow super-admins use at the end of
+ * the manual-payment path (tenant uploads proof -> super-admin approves or
+ * rejects it):
+ *
+ *   approvePaymentProof(billingId, { periodMonths, note })
+ *   rejectPaymentProof(billingId, { reason })
+ *
+ * Focus areas:
+ *   - The happy path actually extends the subscription and flips billing
+ *     status, atomically (via prisma.$transaction), and fires a real-time
+ *     notification to the tenant.
+ *   - "Bypass attempt" guards: a billing record can only be approved/
+ *     rejected once. Without the PENDING-only check, someone re-hitting the
+ *     approve endpoint on an already-approved (or already-rejected) record
+ *     could re-extend a subscription's period repeatedly, or "launder" a
+ *     rejected proof into an approval on a second call.
+ *   - Rejecting a proof must NOT touch the subscription — it should stay
+ *     exactly as it was (still PENDING_PAYMENT) so the tenant can re-submit,
+ *     per the source file's own contract comment.
+ *
+ * Heavy/unrelated module-level dependencies of superAdmin.service.ts
+ * (better-auth client construction, email sending, Vercel's waitUntil,
+ * platform config) are stubbed purely so the module can be imported in a
+ * test environment with no real network/DB — none of them are exercised by
+ * the two functions under test here.
+ */
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../lib/prisma/prisma", () => ({
+    prisma: {
+        billingHistory: {
+            findUnique: vi.fn(),
+            update: vi.fn(),
+        },
+        subscription: {
+            update: vi.fn(),
+        },
+        $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
+    },
+}));
+
+vi.mock("../../lib/utils/createNotification", () => ({
+    createNotification: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Unrelated module-load-time dependencies of superAdmin.service.ts — stubbed
+// so importing the service doesn't try to construct a real better-auth
+// client, send real email, etc. None of these are called by approve/reject.
+vi.mock("../../lib/auth", () => ({ auth: {} }));
+vi.mock("../../lib/utils/sendEmailSafely", () => ({
+    sendEmailSafely: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@vercel/functions", () => ({ waitUntil: vi.fn((p: unknown) => p) }));
+vi.mock("../Admin/admin.service", () => ({
+    adminService: new Proxy({}, { get: () => vi.fn() }),
+}));
+vi.mock("../../lib/utils/platformConfig", () => ({
+    getPlatformConfig: vi.fn(),
+    updatePlatformConfig: vi.fn(),
+}));
+vi.mock("../../lib/constants/featureGateLabels", () => ({
+    findNearMissFeatureLabels: vi.fn(() => []),
+}));
+
+import { prisma } from "../../lib/prisma/prisma";
+import { createNotification } from "../../lib/utils/createNotification";
+import { superAdminService } from "./superAdmin.service";
+
+const mockPrisma = prisma as unknown as {
+    billingHistory: {
+        findUnique: ReturnType<typeof vi.fn>;
+        update: ReturnType<typeof vi.fn>;
+    };
+    subscription: { update: ReturnType<typeof vi.fn> };
+    $transaction: ReturnType<typeof vi.fn>;
+};
+const mockCreateNotification = createNotification as ReturnType<typeof vi.fn>;
+
+const BILLING_ID = "billing-1";
+const SUB_ID = "sub-1";
+const ADMIN_ID = "admin-1";
+
+function daysFromNow(days: number): Date {
+    return new Date(Date.now() + days * 86_400_000);
+}
+
+function pendingRecord(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+        id: BILLING_ID,
+        status: "PENDING",
+        paymentProofUrl: "https://cloudinary.com/proof.jpg",
+        note: null,
+        subscription: {
+            id: SUB_ID,
+            adminId: ADMIN_ID,
+            currentPeriodEnd: daysFromNow(5),
+            ...((overrides.subscription as object) ?? {}),
+        },
+        ...overrides,
+    };
+}
+
+beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.$transaction.mockImplementation((ops: unknown[]) => Promise.all(ops));
+});
+
+describe("approvePaymentProof", () => {
+    it("throws 404 when the billing record doesn't exist", async () => {
+        mockPrisma.billingHistory.findUnique.mockResolvedValue(null);
+
+        await expect(
+            superAdminService.approvePaymentProof(BILLING_ID, {}),
+        ).rejects.toMatchObject({ statusCode: 404 });
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("throws 400 and does not touch billing/subscription if there's no attached proof", async () => {
+        mockPrisma.billingHistory.findUnique.mockResolvedValue(
+            pendingRecord({ paymentProofUrl: null }),
+        );
+
+        await expect(
+            superAdminService.approvePaymentProof(BILLING_ID, {}),
+        ).rejects.toMatchObject({ statusCode: 400 });
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    // ── Bypass-attempt guard ────────────────────────────────────────────────
+    it("bypass attempt: refuses to re-approve a record that's already PAID (blocks double-extension)", async () => {
+        mockPrisma.billingHistory.findUnique.mockResolvedValue(
+            pendingRecord({ status: "PAID" }),
+        );
+
+        await expect(
+            superAdminService.approvePaymentProof(BILLING_ID, {}),
+        ).rejects.toMatchObject({
+            statusCode: 400,
+            message: expect.stringMatching(/only pending proofs can be approved/i),
+        });
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+        expect(mockPrisma.subscription.update).not.toHaveBeenCalled();
+    });
+
+    it("bypass attempt: refuses to approve a record that was already rejected (FAILED)", async () => {
+        mockPrisma.billingHistory.findUnique.mockResolvedValue(
+            pendingRecord({ status: "FAILED" }),
+        );
+
+        await expect(
+            superAdminService.approvePaymentProof(BILLING_ID, {}),
+        ).rejects.toMatchObject({ statusCode: 400 });
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("on approval: marks the billing record PAID, activates the subscription, and extends by 1 month by default", async () => {
+        const periodEnd = daysFromNow(5);
+        mockPrisma.billingHistory.findUnique.mockResolvedValue(
+            pendingRecord({ subscription: { currentPeriodEnd: periodEnd } }),
+        );
+        mockPrisma.billingHistory.update.mockResolvedValue({ id: BILLING_ID, status: "PAID" });
+        mockPrisma.subscription.update.mockResolvedValue({
+            id: SUB_ID,
+            adminId: ADMIN_ID,
+            status: "ACTIVE",
+        });
+
+        await superAdminService.approvePaymentProof(BILLING_ID, {});
+
+        expect(mockPrisma.billingHistory.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: { id: BILLING_ID },
+                data: expect.objectContaining({ status: "PAID", paidAt: expect.any(Date) }),
+            }),
+        );
+
+        const subUpdateArg = mockPrisma.subscription.update.mock.calls[0][0];
+        expect(subUpdateArg.where).toEqual({ id: SUB_ID });
+        expect(subUpdateArg.data.status).toBe("ACTIVE");
+        expect(subUpdateArg.data.isTrial).toBe(false);
+        expect(subUpdateArg.data.cancelAtPeriodEnd).toBe(false);
+        expect(subUpdateArg.data.canceledAt).toBeNull();
+        // Extended from the still-future currentPeriodEnd, not from "now".
+        const expectedEnd = new Date(periodEnd);
+        expectedEnd.setMonth(expectedEnd.getMonth() + 1);
+        expect(subUpdateArg.data.currentPeriodEnd.getTime()).toBe(expectedEnd.getTime());
+
+        expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(mockCreateNotification).toHaveBeenCalledWith(
+            expect.objectContaining({
+                adminId: ADMIN_ID,
+                type: "SUBSCRIPTION",
+                relatedId: SUB_ID,
+                title: expect.stringMatching(/payment approved/i),
+            }),
+        );
+    });
+
+    it("extends from today (not the stale past date) when the current period has already lapsed", async () => {
+        const lapsedEnd = daysFromNow(-10);
+        mockPrisma.billingHistory.findUnique.mockResolvedValue(
+            pendingRecord({ subscription: { currentPeriodEnd: lapsedEnd } }),
+        );
+        mockPrisma.billingHistory.update.mockResolvedValue({});
+        mockPrisma.subscription.update.mockResolvedValue({ id: SUB_ID, adminId: ADMIN_ID });
+
+        const before = Date.now();
+        await superAdminService.approvePaymentProof(BILLING_ID, {});
+
+        const subUpdateArg = mockPrisma.subscription.update.mock.calls[0][0];
+        const newEnd: Date = subUpdateArg.data.currentPeriodEnd;
+        // ~1 month from "now" (test run time), not 1 month from the lapsed date.
+        const minExpected = new Date(before);
+        minExpected.setMonth(minExpected.getMonth() + 1);
+        expect(newEnd.getTime()).toBeGreaterThan(minExpected.getTime() - 5_000);
+    });
+
+    it("honours a custom periodMonths (e.g. quarterly manual payment)", async () => {
+        const periodEnd = daysFromNow(5);
+        mockPrisma.billingHistory.findUnique.mockResolvedValue(
+            pendingRecord({ subscription: { currentPeriodEnd: periodEnd } }),
+        );
+        mockPrisma.billingHistory.update.mockResolvedValue({});
+        mockPrisma.subscription.update.mockResolvedValue({ id: SUB_ID, adminId: ADMIN_ID });
+
+        await superAdminService.approvePaymentProof(BILLING_ID, { periodMonths: 3 });
+
+        const subUpdateArg = mockPrisma.subscription.update.mock.calls[0][0];
+        const expectedEnd = new Date(periodEnd);
+        expectedEnd.setMonth(expectedEnd.getMonth() + 3);
+        expect(subUpdateArg.data.currentPeriodEnd.getTime()).toBe(expectedEnd.getTime());
+    });
+});
+
+describe("rejectPaymentProof", () => {
+    function pendingRecordWithFullSubscription() {
+        return {
+            id: BILLING_ID,
+            status: "PENDING",
+            paymentProofUrl: "https://cloudinary.com/proof.jpg",
+            note: null,
+            subscription: {
+                id: SUB_ID,
+                adminId: ADMIN_ID,
+                status: "PENDING_PAYMENT",
+                subscriptionPlan: { name: "Growth" },
+                admin: { businessName: "Acme Cleaning", user: { name: "Jane", email: "jane@acme.com" } },
+            },
+        };
+    }
+
+    it("throws 404 when the billing record doesn't exist", async () => {
+        mockPrisma.billingHistory.findUnique.mockResolvedValue(null);
+
+        await expect(
+            superAdminService.rejectPaymentProof(BILLING_ID, {}),
+        ).rejects.toMatchObject({ statusCode: 404 });
+    });
+
+    // ── Bypass-attempt guard ────────────────────────────────────────────────
+    it("bypass attempt: refuses to reject a record that's already been approved (PAID)", async () => {
+        mockPrisma.billingHistory.findUnique.mockResolvedValue({
+            ...pendingRecordWithFullSubscription(),
+            status: "PAID",
+        });
+
+        await expect(
+            superAdminService.rejectPaymentProof(BILLING_ID, {}),
+        ).rejects.toMatchObject({
+            statusCode: 400,
+            message: expect.stringMatching(/only pending proofs can be rejected/i),
+        });
+        expect(mockPrisma.billingHistory.update).not.toHaveBeenCalled();
+    });
+
+    it("throws 400 when there's no attached proof to reject", async () => {
+        mockPrisma.billingHistory.findUnique.mockResolvedValue({
+            ...pendingRecordWithFullSubscription(),
+            paymentProofUrl: null,
+        });
+
+        await expect(
+            superAdminService.rejectPaymentProof(BILLING_ID, {}),
+        ).rejects.toMatchObject({ statusCode: 400 });
+    });
+
+    it("marks the record FAILED with the given reason and does NOT touch the subscription", async () => {
+        mockPrisma.billingHistory.findUnique.mockResolvedValue(
+            pendingRecordWithFullSubscription(),
+        );
+        mockPrisma.billingHistory.update.mockResolvedValue({
+            id: BILLING_ID,
+            status: "FAILED",
+            subscription: { adminId: ADMIN_ID, id: SUB_ID },
+        });
+
+        await superAdminService.rejectPaymentProof(BILLING_ID, {
+            reason: "Screenshot doesn't match the invoice amount",
+        });
+
+        expect(mockPrisma.billingHistory.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: { id: BILLING_ID },
+                data: expect.objectContaining({
+                    status: "FAILED",
+                    note: expect.stringContaining("Screenshot doesn't match the invoice amount"),
+                }),
+            }),
+        );
+        // The whole point of rejection: the subscription is left exactly as-is
+        // (still PENDING_PAYMENT) so the tenant can re-submit a corrected proof.
+        expect(mockPrisma.subscription.update).not.toHaveBeenCalled();
+
+        expect(mockCreateNotification).toHaveBeenCalledWith(
+            expect.objectContaining({
+                adminId: ADMIN_ID,
+                type: "SUBSCRIPTION",
+                title: expect.stringMatching(/rejected/i),
+                message: expect.stringContaining("Screenshot doesn't match the invoice amount"),
+            }),
+        );
+    });
+
+    it("falls back to a generic rejection note when no reason is given", async () => {
+        mockPrisma.billingHistory.findUnique.mockResolvedValue(
+            pendingRecordWithFullSubscription(),
+        );
+        mockPrisma.billingHistory.update.mockResolvedValue({
+            id: BILLING_ID,
+            status: "FAILED",
+        });
+
+        await superAdminService.rejectPaymentProof(BILLING_ID, {});
+
+        expect(mockPrisma.billingHistory.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({ note: expect.stringMatching(/rejected/i) }),
+            }),
+        );
+        expect(mockCreateNotification).toHaveBeenCalledWith(
+            expect.objectContaining({
+                message: expect.stringMatching(/re-submit a valid proof/i),
+            }),
+        );
+    });
+});

@@ -20,7 +20,11 @@ import { NotificationType } from "../generated/prisma/enums";
 
 const JOB_NAME = "subscriptionExpiry";
 
-async function runSubscriptionExpiryJob(): Promise<void> {
+// Exported (in addition to the schedule wrapper below) so tests can invoke
+// the job's logic directly and assert on the resulting prisma calls /
+// notifications, rather than only through the fire-and-forget
+// cron.schedule(...) callback which swallows its own promise via .catch().
+export async function runSubscriptionExpiryJob(): Promise<void> {
     const now = new Date();
 
     // ── 1. Expire paid subscriptions whose billing period has ended ─────────────
