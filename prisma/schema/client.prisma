@@ -43,6 +43,10 @@ model Client {
   jobs               Job[]
   quotes             Quote[]
   recurringSchedules RecurringSchedule[]
+  // Added to satisfy BookingChangeRequest.client's back-relation —
+  // rename to match whatever `BookingChangeRequest` calls this
+  // relation on your side if it differs.
+  bookingChangeRequests BookingChangeRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

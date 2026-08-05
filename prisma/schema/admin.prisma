@@ -54,6 +54,10 @@ model AdminProfile {
   serviceCatalogs       ServiceCatalog[]
   activityLogs          ActivityLog[]
   notifications         Notification[]
+  // Added to satisfy BookingChangeRequest.admin's back-relation —
+  // rename to match whatever `BookingChangeRequest` calls this
+  // relation on your side if it differs.
+  bookingChangeRequests BookingChangeRequest[]
 
   @@index([createdAt])
 }
