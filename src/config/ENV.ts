@@ -45,4 +45,17 @@ export const SMTP_PORT: string = process.env.SMTP_PORT as string;
 export const SMTP_SECURE: string | undefined = process.env.SMTP_SECURE;
 export const SMTP_FROM: string | undefined = process.env.SMTP_FROM;
 
+// ─── Geocoding (Phase 2 — location-aware dispatch) ─────────────────────────────
+// Provider is chosen explicitly rather than inferred from which key is set,
+// so a misconfigured env doesn't silently fall back to the wrong provider.
+// Supported values: "google" | "mapbox". Geocoding is skipped (addresses
+// simply stay ungeocoded) if this is unset or the matching key is missing —
+// see src/lib/utils/geocoding.ts.
+export const GEOCODING_PROVIDER: string | undefined =
+    process.env.GEOCODING_PROVIDER;
+export const GOOGLE_MAPS_API_KEY: string | undefined =
+    process.env.GOOGLE_MAPS_API_KEY;
+export const MAPBOX_ACCESS_TOKEN: string | undefined =
+    process.env.MAPBOX_ACCESS_TOKEN;
+
 

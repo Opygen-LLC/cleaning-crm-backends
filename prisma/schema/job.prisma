@@ -4,6 +4,11 @@ model Job {
   status           JobStatus            @default(SCHEDULED)
   serviceType      ServiceType
   address          String
+  /// [Phase 2 — location-aware dispatch] Geocoded from `address` on
+  /// create/update. Nullable — see Client.latitude for the same contract.
+  latitude         Float?
+  longitude        Float?
+  geocodedAt       DateTime?
   scheduledDate    DateTime
   durationMins     Int
   notes            String?

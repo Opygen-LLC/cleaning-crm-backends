@@ -54,7 +54,6 @@ model AdminProfile {
   serviceCatalogs       ServiceCatalog[]
   activityLogs          ActivityLog[]
   notifications         Notification[]
-  bookingChangeRequests BookingChangeRequest[]
 
   @@index([createdAt])
 }
@@ -67,6 +66,13 @@ model WorkLocation {
   adminId   String
   createdAt DateTime     @default(now())
   admin     AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  /// [Phase 2 — location-aware dispatch] Geocoded from city + postcode.
+  /// Used to draw service-area coverage on the dispatch map and as a
+  /// fallback origin point when a staff member has no address on file.
+  latitude   Float?
+  longitude  Float?
+  geocodedAt DateTime?
 
   @@index([adminId])
 }

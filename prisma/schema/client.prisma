@@ -12,6 +12,18 @@ model Client {
   zipcode      String
   country      String
 
+  /// [Phase 2 — location-aware dispatch] Geocoded from the address fields
+  /// above whenever they change. Null until the first successful geocode,
+  /// or if the geocoding provider could not resolve the address — callers
+  /// must treat these as optional and degrade gracefully (e.g. dispatch
+  /// scoring simply skips proximity for jobs/staff without coordinates).
+  latitude          Float?
+  longitude         Float?
+  /// When the coordinates above were last (re)computed. Used to avoid
+  /// re-geocoding on every update — only the address fields changing
+  /// invalidates this.
+  geocodedAt        DateTime?
+
   /// Token used to access the client self-service portal.
   /// A random UUID — separate from `id` — so portal URLs cannot be guessed
   /// by iterating over sequential IDs.  No auth session required; the token
@@ -31,7 +43,6 @@ model Client {
   jobs               Job[]
   quotes             Quote[]
   recurringSchedules RecurringSchedule[]
-  changeRequests     BookingChangeRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -479,7 +479,11 @@ const getCalendarView = async (query: ICalendarQuery, user: any) => {
         },
         include: {
             client: {
-                select: { id: true, name: true },
+                // [Phase 2 — location-aware dispatch] Bookings don't carry
+                // their own coordinates — they inherit the client's
+                // geocoded address, since a booking's address is always
+                // the client's address at time of booking.
+                select: { id: true, name: true, latitude: true, longitude: true },
             },
             staffAssignments: {
                 include: {

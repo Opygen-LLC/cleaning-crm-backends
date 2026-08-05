@@ -22,6 +22,24 @@ import { QueryBuilder } from "../../lib/utils/QueryBuilder";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 import { uploadToCloudinary } from "../../lib/utils/cloudinary";
+import { geocodeAddressSafely } from "../../lib/utils/geocoding";
+
+/**
+ * [Phase 2 — location-aware dispatch] Best-effort geocode of a staff
+ * member's home/base address, so the dispatch engine can score proximity
+ * to jobs. Never throws — staff creation/updates must succeed even if the
+ * address can't be resolved.
+ */
+const geocodeStaffAddress = async (address: string | null | undefined) => {
+    if (!address) return {};
+    const geo = await geocodeAddressSafely(address);
+    if (!geo) return {};
+    return {
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+        geocodedAt: new Date(),
+    };
+};
 
 const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
     const {
@@ -78,6 +96,7 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
             : [];
 
     const StaffRole = staffRole.toUpperCase();
+    const geo = await geocodeStaffAddress(address);
 
     const staffProfile = await prisma.$transaction(async (tx) => {
         await tx.user.update({
@@ -96,6 +115,7 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
                 staffRole: StaffRole,
                 mobileNumber,
                 address,
+                ...geo,
                 hourlyRate,
                 startDate: new Date(startDate),
                 specialty,
@@ -206,10 +226,19 @@ const updateStaff = async (
     if (!adminProfile)
         throw new AppError(status.NOT_FOUND, "Admin profile not found");
 
-    await prisma.staffProfile.findUniqueOrThrow({
+    const existing = await prisma.staffProfile.findUniqueOrThrow({
         where: { id, adminId: adminProfile.id },
     });
-    return prisma.staffProfile.update({ where: { id }, data: payload });
+
+    const geo =
+        payload.address !== undefined && payload.address !== existing.address
+            ? await geocodeStaffAddress(payload.address)
+            : {};
+
+    return prisma.staffProfile.update({
+        where: { id },
+        data: { ...payload, ...geo },
+    });
 };
 
 const deleteStaff = async (id: string, adminUser: IRequestUser) => {
@@ -480,15 +509,21 @@ const updateMyProfile = async (
 
     const { name, ...profileFields } = payload;
 
+    const geo =
+        profileFields.address !== undefined &&
+        profileFields.address !== profile.address
+            ? await geocodeStaffAddress(profileFields.address)
+            : {};
+
     // Run user name update and profile update in parallel for speed
     await Promise.all([
         name
             ? prisma.user.update({ where: { id: userId }, data: { name } })
             : Promise.resolve(),
-        Object.keys(profileFields).length > 0
+        Object.keys(profileFields).length > 0 || Object.keys(geo).length > 0
             ? prisma.staffProfile.update({
                   where: { id: profile.id },
-                  data: profileFields,
+                  data: { ...profileFields, ...geo },
               })
             : Promise.resolve(),
     ]);

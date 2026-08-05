@@ -25,6 +25,10 @@ const router = Router();
 // ── Stats ─────────────────────────────────────────────────────────────────────
 router.get("/stats", checkAuth(UserRole.ADMIN), jobController.getJobStats);
 
+// ── Map data (Phase 2 — location-aware dispatch) ───────────────────────────────
+// Must stay above "/:id" so "/map-data" isn't swallowed as a job id param.
+router.get("/map-data", checkAuth(UserRole.ADMIN), jobController.getMapData);
+
 // ── Staff availability ────────────────────────────────────────────────────────
 router.get(
     "/staff-availability",

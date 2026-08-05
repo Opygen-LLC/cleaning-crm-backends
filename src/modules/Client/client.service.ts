@@ -12,6 +12,35 @@ import {
     clientSearchableFields,
 } from "./client.constant";
 import { randomUUID } from "crypto";
+import {
+    buildAddressString,
+    geocodeAddressSafely,
+} from "../../lib/utils/geocoding";
+
+/**
+ * Geocodes the client's structured address into lat/lng. Never throws —
+ * on failure this just resolves to `{}`, and the client is created/updated
+ * without coordinates (dispatch proximity scoring skips it gracefully).
+ */
+const geocodeClientAddress = async (address: {
+    addressLine1?: string;
+    addressLine2?: string;
+    city?: string;
+    zipcode?: string;
+    country?: string;
+}) => {
+    const full = buildAddressString(address);
+    if (!full) return {};
+
+    const geo = await geocodeAddressSafely(full);
+    if (!geo) return {};
+
+    return {
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+        geocodedAt: new Date(),
+    };
+};
 
 const resolveAdminId = async (userId: string): Promise<string> => {
     const adminProfile = await prisma.adminProfile.findUnique({
@@ -37,6 +66,10 @@ const createClient = async (
 
     const { notes, servicePreference, email, ...rest } = payload;
 
+    // Best-effort geocode — never blocks client creation on a bad/unmatched
+    // address or a provider outage.
+    const geo = await geocodeClientAddress(rest);
+
     return await prisma.client.upsert({
         where: {
             email_adminId: {
@@ -48,6 +81,7 @@ const createClient = async (
             ...rest,
             email,
             ...(servicePreference ? { servicePreference } : {}),
+            ...geo,
             adminId,
             notes: notes
                 ? {
@@ -60,6 +94,7 @@ const createClient = async (
         update: {
             ...rest,
             ...(servicePreference ? { servicePreference } : {}),
+            ...geo,
             notes: notes
                 ? {
                       create: {
@@ -149,9 +184,30 @@ const updateClient = async (
         throw new AppError(status.NOT_FOUND, "Client not found");
     }
 
+    // Only re-geocode when an address field actually changed — avoids an
+    // API call (and the tiny risk of it failing) on every unrelated edit,
+    // e.g. changing the phone number.
+    const addressChanged =
+        payload.addressLine1 !== undefined ||
+        payload.addressLine2 !== undefined ||
+        payload.city !== undefined ||
+        payload.zipcode !== undefined ||
+        payload.country !== undefined;
+
+    const geo = addressChanged
+        ? await geocodeClientAddress({
+              addressLine1: payload.addressLine1 ?? existing.addressLine1,
+              addressLine2:
+                  payload.addressLine2 ?? existing.addressLine2 ?? undefined,
+              city: payload.city ?? existing.city,
+              zipcode: payload.zipcode ?? existing.zipcode,
+              country: payload.country ?? existing.country,
+          })
+        : {};
+
     return await prisma.client.update({
         where: { id },
-        data: payload,
+        data: { ...payload, ...geo },
         include: { notes: true },
     });
 };
@@ -225,53 +281,8 @@ const getClientPortal = async (portalAccessToken: string) => {
                             status: true,
                             total: true,
                             dueDate: true,
-                            // Surfaces an already-pending proof submission so the
-                            // portal can update it instead of creating a
-                            // duplicate payment row on re-upload.
-                            payments: {
-                                where: { status: "PENDING_APPROVAL" },
-                                orderBy: { createdAt: "desc" },
-                                take: 1,
-                                select: { id: true },
-                            },
                         },
                     },
-                    changeRequests: {
-                        orderBy: { createdAt: "desc" },
-                        take: 5,
-                        select: {
-                            id: true,
-                            type: true,
-                            status: true,
-                            requestedDate: true,
-                            reason: true,
-                            createdAt: true,
-                        },
-                    },
-                },
-            },
-            // Quotes/estimates aren't tied to a booking until converted, so
-            // they're surfaced separately for the "download PDF" action.
-            quotes: {
-                orderBy: { createdAt: "desc" },
-                take: 20,
-                select: {
-                    id: true,
-                    quoteRef: true,
-                    status: true,
-                    total: true,
-                    validUntil: true,
-                },
-            },
-            estimates: {
-                orderBy: { createdAt: "desc" },
-                take: 20,
-                select: {
-                    id: true,
-                    estimateRef: true,
-                    status: true,
-                    total: true,
-                    validUntil: true,
                 },
             },
         },

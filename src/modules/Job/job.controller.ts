@@ -175,6 +175,27 @@ const checkOut = catchAsync(async (req, res) => {
     });
 });
 
+// ── Phase 2 — location-aware dispatch ───────────────────────────────────────────
+
+/**
+ * GET /job/map-data?date=YYYY-MM-DD
+ * Jobs + active staff (with coordinates) for a single day, for the
+ * dispatch board / calendar map view. Defaults to today if no date given.
+ */
+const getMapData = catchAsync(async (req, res) => {
+    const result = await jobService.getMapData(
+        req.query.date as string | undefined,
+        req.user,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Map data retrieved successfully",
+        data: result,
+    });
+});
+
 // ── Export ────────────────────────────────────────────────────────────────────
 
 export const jobController = {
@@ -191,4 +212,5 @@ export const jobController = {
     // Phase 2
     checkIn,
     checkOut,
+    getMapData,
 };

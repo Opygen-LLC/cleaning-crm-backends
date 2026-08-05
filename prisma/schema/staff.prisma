@@ -4,6 +4,16 @@ model StaffProfile {
     mobileNumber String
     address      String?
 
+    /// [Phase 2 — location-aware dispatch] Geocoded from `address` so the
+    /// dispatch engine can factor staff proximity/travel time into
+    /// recommendations. Not part of the original Phase 2 field list
+    /// (Client/WorkLocation/Job) but required for "nearest available
+    /// staff" to work at all — proximity scoring is skipped for any staff
+    /// member without coordinates rather than penalizing them.
+    latitude   Float?
+    longitude  Float?
+    geocodedAt DateTime?
+
     hourlyRate Float?
     startDate  DateTime
     specialty  String[]    @default([])

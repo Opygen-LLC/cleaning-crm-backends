@@ -10,6 +10,24 @@ import {
   UpdateWorkLocationPayload,
 } from "./admin.interface";
 import { ONBOARDING_STEPS, SKIPPABLE_ONBOARDING_STEPS } from "./admin.constant";
+import { geocodeAddressSafely } from "../../lib/utils/geocoding";
+
+/**
+ * [Phase 2 — location-aware dispatch] Best-effort geocode of a work
+ * location's city/postcode. Never throws — service-area creation must
+ * succeed even when the geocoder can't resolve it.
+ */
+const geocodeWorkLocation = async (city: string, postcode?: string | null) => {
+  const address = [city, postcode].filter(Boolean).join(", ");
+  if (!address) return {};
+  const geo = await geocodeAddressSafely(address);
+  if (!geo) return {};
+  return {
+    latitude: geo.latitude,
+    longitude: geo.longitude,
+    geocodedAt: new Date(),
+  };
+};
 
 const createAdmin = async (payload: {
   userId: string;
@@ -114,15 +132,21 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
         (loc) => !existingCities.has(loc.city),
       );
 
-      // Create only non-existing ones
+      // Create only non-existing ones. Geocoded up front (in parallel)
+      // since createMany can't run an async transform per row.
       if (newLocations.length) {
-        await tx.workLocation.createMany({
-          data: newLocations.map((loc) => ({
+        const geocoded = await Promise.all(
+          newLocations.map(async (loc) => ({
             city: loc.city,
             postcode: loc.postcode,
             notes: loc.notes,
             adminId: admin.id,
+            ...(await geocodeWorkLocation(loc.city, loc.postcode)),
           })),
+        );
+
+        await tx.workLocation.createMany({
+          data: geocoded,
         });
       }
     }
@@ -162,9 +186,17 @@ const updateWorkLocation = async (
       throw new Error("Work location not found");
     }
 
+    const geo =
+      payload.city !== undefined || payload.postcode !== undefined
+        ? await geocodeWorkLocation(
+            payload.city ?? workLocation.city,
+            payload.postcode ?? workLocation.postcode,
+          )
+        : {};
+
     return await tx.workLocation.update({
       where: { id: locationId },
-      data: payload,
+      data: { ...payload, ...geo },
     });
   });
 };

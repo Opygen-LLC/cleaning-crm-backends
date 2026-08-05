@@ -1,14 +1,25 @@
 /**
  * job.dispatch.service.ts
  * ──────────────────────────────────────────────────────────────────────────────
- * Auto-dispatch / smart-assign engine  (Phase 1 — missing feature)
+ * Auto-dispatch / smart-assign engine
  *
  * Strategy (weighted scoring, O(staff × jobs)):
  *   1. Filter out busy staff  (hard conflict on the scheduled window)
  *   2. Prefer staff whose specialty matches the job's serviceType
- *   3. Prefer staff with fewer jobs on the same day   (load balancing)
- *   4. Prefer staff with lower total hours this week  (fatigue balancing)
- *   5. Prefer staff already assigned to this client   (continuity)
+ *   3. Prefer staff close to the job / with a short estimated commute (Phase 2)
+ *   4. Prefer staff with fewer jobs on the same day   (load balancing)
+ *   5. Prefer staff with lower total hours this week  (fatigue balancing)
+ *   6. Prefer staff already assigned to this client   (continuity)
+ *
+ * Phase 2 — location-aware dispatch: proximity is scored from straight-line
+ * (haversine) distance between the staff member's geocoded address and the
+ * job's geocoded address, converted to an estimated drive time. Distance is
+ * used instead of a routing API for the scoring pass because it runs once
+ * per (staff × job) pair — see src/lib/utils/geo.ts for the tradeoff. Staff
+ * or jobs without coordinates yet (not geocoded, or address unresolved)
+ * simply don't receive a proximity score or penalty — they're neither
+ * boosted nor excluded, so the feature degrades gracefully while an admin's
+ * data is still being backfilled.
  *
  * Returns the top-N recommended staff IDs so the controller can either
  * auto-assign them or surface them to the admin for confirmation.
@@ -19,13 +30,40 @@ import AppError from "../../errorHelper/AppError";
 import status from "http-status";
 import { JobStatus, ServiceType } from "../../generated/prisma/enums";
 import { IRequestUser } from "../../types/requestUser.interface";
+import {
+    haversineDistanceKm,
+    estimateTravelMins,
+    isValidLatLng,
+} from "../../lib/utils/geo";
 
 // ─── Scoring weights ──────────────────────────────────────────────────────────
 
 const W_SPECIALTY   = 40;   // staff specialty matches job service type
+const W_PROXIMITY   = 35;   // staff is close to the job (Phase 2)
 const W_CONTINUITY  = 25;   // staff has worked with this client before
 const W_DAILY_LOAD  = 20;   // fewer jobs today  → higher score
 const W_WEEKLY_LOAD = 15;   // fewer hours this week → higher score
+
+/**
+ * Distance beyond which proximity contributes nothing further to the
+ * score — a staff member 60km away scores the same (0) as one 200km away;
+ * both are "not close", and hard exclusion is left to the admin's judgment
+ * rather than this heuristic. Tunable per-market if needed later.
+ */
+const PROXIMITY_MAX_KM = 40;
+
+/**
+ * Proximity score: 1.0 at 0km, linearly down to 0 at PROXIMITY_MAX_KM.
+ * Returns null (no score, not zero) when either point lacks coordinates,
+ * so callers can distinguish "far away" from "unknown".
+ */
+function proximityScore(
+    distanceKm: number | null,
+): { points: number; factor: number } | null {
+    if (distanceKm === null) return null;
+    const factor = Math.max(0, 1 - distanceKm / PROXIMITY_MAX_KM);
+    return { points: Math.round(W_PROXIMITY * factor), factor };
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -64,6 +102,9 @@ export interface DispatchRecommendation {
     score:          number;
     reasons:        string[];
     available:      boolean;
+    /** null when either the staff member or the job has no coordinates yet. */
+    distanceKm:          number | null;
+    estimatedTravelMins: number | null;
     conflictingJobs: {
         jobId:        string;
         jobRef:       string;
@@ -79,6 +120,9 @@ export interface AutoDispatchResult {
     scheduledDate:   Date;
     durationMins:    number;
     serviceType:     ServiceType;
+    address:         string;
+    latitude:        number | null;
+    longitude:       number | null;
     recommendations: DispatchRecommendation[];
     autoAssigned:    boolean;
     assignedStaffIds: string[];
@@ -114,6 +158,11 @@ const autoDispatch = async (
         },
     });
     if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
+
+    const jobLocation =
+        isValidLatLng(job.latitude, job.longitude)
+            ? { latitude: job.latitude as number, longitude: job.longitude as number }
+            : null;
 
     const windowStart = job.scheduledDate.getTime();
     const windowEnd   = windowStart + job.durationMins * 60_000;
@@ -194,6 +243,20 @@ const autoDispatch = async (
         const reasons:   string[] = [];
         let   score = 0;
 
+        // Proximity (Phase 2) — computed regardless of availability so the
+        // UI can still show "12 min away" on a busy staff card, but only
+        // contributes to `score` when the staff member is available.
+        const staffLocation =
+            isValidLatLng(staff.latitude, staff.longitude)
+                ? { latitude: staff.latitude as number, longitude: staff.longitude as number }
+                : null;
+        const distanceKm =
+            staffLocation && jobLocation
+                ? Math.round(haversineDistanceKm(staffLocation, jobLocation) * 10) / 10
+                : null;
+        const estimatedTravelMins =
+            distanceKm !== null ? estimateTravelMins(distanceKm) : null;
+
         if (!available) {
             score = -9999; // hard exclusion unless we allow override
         } else {
@@ -202,6 +265,17 @@ const autoDispatch = async (
             if (specialtyScore > 0) {
                 score += specialtyScore;
                 reasons.push("Specialty match");
+            }
+
+            // Proximity / travel time (Phase 2)
+            const proximity = proximityScore(distanceKm);
+            if (proximity) {
+                score += proximity.points;
+                if (proximity.factor > 0.66) {
+                    reasons.push("Nearby");
+                } else if (proximity.factor > 0) {
+                    reasons.push(`${estimatedTravelMins} min away`);
+                }
             }
 
             // Client continuity
@@ -234,6 +308,8 @@ const autoDispatch = async (
             score,
             reasons,
             available,
+            distanceKm,
+            estimatedTravelMins,
             conflictingJobs: conflicts.map((j) => ({
                 jobId:         j.id,
                 jobRef:        j.jobRef,
@@ -244,8 +320,18 @@ const autoDispatch = async (
         };
     });
 
-    // Sort: highest score first, then alphabetically
-    scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+    // Sort: highest score first, then nearest (unknown distance sorts last
+    // within a score tier, not first — we don't want to imply "closest"
+    // for staff we simply have no coordinates for), then alphabetically.
+    scored.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (a.distanceKm !== b.distanceKm) {
+            if (a.distanceKm === null) return 1;
+            if (b.distanceKm === null) return -1;
+            return a.distanceKm - b.distanceKm;
+        }
+        return a.name.localeCompare(b.name);
+    });
 
     // 6. Optionally commit the top-N available staff
     let autoAssigned    = false;
@@ -276,6 +362,9 @@ const autoDispatch = async (
         scheduledDate:   job.scheduledDate,
         durationMins:    job.durationMins,
         serviceType:     job.serviceType,
+        address:         job.address,
+        latitude:        job.latitude,
+        longitude:       job.longitude,
         recommendations: scored,
         autoAssigned,
         assignedStaffIds,
@@ -302,33 +391,16 @@ const bulkAutoDispatch = async (
         orderBy: { scheduledDate: "asc" },
     });
 
-    // PERF FIX (Phase 2.1): this used to await autoDispatch() one job at a
-    // time in a plain for-loop — each call does several DB round-trips
-    // internally, so dispatching N unassigned jobs took N sequential
-    // round-trips end to end (the slowest single operation found in the
-    // audit: a 50-job bulk dispatch ran 50x slower than necessary).
-    //
-    // Fixed by running in small concurrent batches instead of either fully
-    // sequential (too slow) or fully unbounded parallel (would flood the
-    // Prisma connection pool, which is capped at 10 — see prisma.ts). A
-    // batch size of 5 leaves headroom for other concurrent requests hitting
-    // the same pool while still cutting wall-clock time dramatically.
-    const BULK_DISPATCH_CONCURRENCY = 5;
     const results: AutoDispatchResult[] = [];
-
-    for (let i = 0; i < unassignedJobs.length; i += BULK_DISPATCH_CONCURRENCY) {
-        const batch = unassignedJobs.slice(i, i + BULK_DISPATCH_CONCURRENCY);
-        const batchResults = await Promise.allSettled(
-            batch.map(({ id }) => autoDispatch(id, user, options)),
-        );
-        for (const outcome of batchResults) {
-            if (outcome.status === "fulfilled") {
-                results.push(outcome.value);
-            }
-            // rejected → log & skip, same behavior as before (don't break the bulk run)
+    for (const { id } of unassignedJobs) {
+        try {
+            const result = await autoDispatch(id, user, options);
+            results.push(result);
+        } catch {
+            // Log & skip failing individual job to prevent breaking the bulk run
+            continue;
         }
     }
-
     return results;
 };
 

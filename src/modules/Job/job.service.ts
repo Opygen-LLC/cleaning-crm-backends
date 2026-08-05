@@ -48,6 +48,23 @@ import { FRONTEND_URL } from "../../config/ENV";
 import { emitToAdmin, emitToStaff } from "../../config/socketio";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
+import { geocodeAddressSafely } from "../../lib/utils/geocoding";
+
+/**
+ * Best-effort geocode for a job's free-text `address`. Never throws — a
+ * job must always be creatable/editable even if the address can't be
+ * resolved (typo, new-build not yet indexed, provider outage, etc).
+ */
+const geocodeJobAddress = async (address: string | undefined) => {
+  if (!address) return {};
+  const geo = await geocodeAddressSafely(address);
+  if (!geo) return {};
+  return {
+    latitude: geo.latitude,
+    longitude: geo.longitude,
+    geocodedAt: new Date(),
+  };
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -149,6 +166,7 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
   }
 
   const jobRef = await generateJobRef();
+  const geo = await geocodeJobAddress(payload.address);
 
   return prisma.job.create({
     data: {
@@ -157,6 +175,7 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
       clientId: payload.clientId,
       serviceType: payload.serviceType,
       address: payload.address,
+      ...geo,
       scheduledDate: new Date(payload.scheduledDate),
       durationMins: payload.durationMins,
       notes: payload.notes,
@@ -271,6 +290,11 @@ const updateJob = async (
   const data: Record<string, unknown> = { ...payload };
   if (payload.scheduledDate)
     data.scheduledDate = new Date(payload.scheduledDate);
+
+  // Only re-geocode when the address text actually changed.
+  if (payload.address && payload.address !== existing.address) {
+    Object.assign(data, await geocodeJobAddress(payload.address));
+  }
 
   return prisma.job.update({ where: { id }, data, include: jobInclude });
 };
@@ -984,6 +1008,98 @@ const checkOut = async (jobId: string, user: IRequestUser) => {
   return { ...updated, hoursWorked };
 };
 
+/**
+ * getMapData  (Phase 2 — location-aware dispatch)
+ *
+ * GET /job/map-data?date=YYYY-MM-DD
+ *
+ * Returns everything the dispatch-board / calendar map view needs to plot
+ * a single day: each job's coordinates (or null if not yet geocoded) plus
+ * its assigned staff, and every active staff member's own base coordinates
+ * so the admin can see who's near what before dispatching.
+ *
+ * Deliberately a single combined payload (jobs + staff) rather than two
+ * round trips — the map always needs both to be useful.
+ */
+const getMapData = async (
+  dateStr: string | undefined,
+  user: IRequestUser,
+) => {
+  const adminId = await resolveAdminId(user.id);
+
+  const targetDate = dateStr ? new Date(dateStr) : new Date();
+  if (isNaN(targetDate.getTime())) {
+    throw new AppError(status.BAD_REQUEST, "Invalid date");
+  }
+
+  const dayStart = new Date(targetDate);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60_000);
+
+  const [jobs, staff] = await Promise.all([
+    prisma.job.findMany({
+      where: {
+        adminId,
+        scheduledDate: { gte: dayStart, lt: dayEnd },
+      },
+      select: {
+        id: true,
+        jobRef: true,
+        status: true,
+        serviceType: true,
+        address: true,
+        latitude: true,
+        longitude: true,
+        scheduledDate: true,
+        durationMins: true,
+        client: { select: { id: true, name: true } },
+        staffAssignments: {
+          select: {
+            staff: {
+              select: {
+                id: true,
+                latitude: true,
+                longitude: true,
+                user: { select: { name: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { scheduledDate: "asc" },
+    }),
+    prisma.staffProfile.findMany({
+      where: { adminId, status: "ACTIVE" },
+      select: {
+        id: true,
+        address: true,
+        latitude: true,
+        longitude: true,
+        staffRole: true,
+        user: { select: { id: true, name: true, email: true } },
+      },
+    }),
+  ]);
+
+  const unresolvedJobCount = jobs.filter(
+    (j) => j.latitude === null || j.longitude === null,
+  ).length;
+  const unresolvedStaffCount = staff.filter(
+    (s) => s.latitude === null || s.longitude === null,
+  ).length;
+
+  return {
+    date: dayStart.toISOString().slice(0, 10),
+    jobs,
+    staff,
+    // Surfaced so the frontend can show a "N jobs/staff missing
+    // coordinates — check their address" hint instead of just silently
+    // dropping unpinned markers.
+    unresolvedJobCount,
+    unresolvedStaffCount,
+  };
+};
+
 export const jobService = {
   createJob,
   getAllJobs,
@@ -998,4 +1114,5 @@ export const jobService = {
   // Phase 2
   checkIn,
   checkOut,
+  getMapData,
 };
