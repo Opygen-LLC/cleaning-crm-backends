@@ -9,6 +9,7 @@ import { Router } from "express";
 import { invoiceController } from "./invoice.controller";
 import { downloadInvoicePDF } from "./invoice.pdf.controller"; // ← NEW
 import { checkAuth } from "../../middlewares/checkAuth";
+import { checkAuthOrPortalClient } from "../../middlewares/checkPortalAuth";
 import { UserRole } from "../../generated/prisma/enums";
 import {
     ValidationProperty,
@@ -43,9 +44,12 @@ router.get(
 // (Express matches routes in registration order; /:id would swallow /pdf if
 //  it were registered first.)
 // Placed here for clarity — it could also sit at the bottom of the file.
+// Admin/staff session OR the client's own portalAccessToken (via
+// `x-portal-token` header) can download the PDF. Ownership is enforced
+// inside downloadInvoicePDF for the portal-token path.
 router.get(
     "/:id/pdf",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.STAFF),
+    checkAuthOrPortalClient(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.STAFF),
     downloadInvoicePDF,
 );
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,10 +93,13 @@ router.post(
     invoiceController.sendInvoice,
 );
 
-// ── Manual bank-transfer proof upload (client or admin on behalf) ─────────────
+// ── Manual bank-transfer proof upload ──────────────────────────────────────────
+// Open to the client's own portalAccessToken (client uploads their own bank
+// transfer screenshot) as well as admin auth (admin uploads on the client's
+// behalf). Ownership is enforced inside invoiceService.submitPaymentProof.
 router.post(
     "/:id/payments/:paymentId/proof",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checkAuthOrPortalClient(UserRole.ADMIN, UserRole.SUPER_ADMIN),
     multerMemory.single("proof"),
     invoiceController.submitPaymentProof,
 );

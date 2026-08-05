@@ -12,6 +12,7 @@ import { Request, Response } from "express";
 import status from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import AppError from "../../errorHelper/AppError";
+import { prisma } from "../../lib/prisma/prisma";
 import { generateInvoicePDFBuffer } from "./invoice.pdf.service";
 
 export const downloadInvoicePDF = catchAsync(async (req: Request, res: Response) => {
@@ -19,6 +20,20 @@ export const downloadInvoicePDF = catchAsync(async (req: Request, res: Response)
 
     if (!id) {
         throw new AppError(status.BAD_REQUEST, "Invoice ID is required");
+    }
+
+    // When the request came in via the client portal token (no admin/staff
+    // session), confirm the invoice actually belongs to a booking for that
+    // client before generating anything — the id in the URL is otherwise
+    // guessable and would leak other clients' invoices.
+    if (req.portalClient) {
+        const owned = await prisma.invoice.findFirst({
+            where: { id, booking: { clientId: req.portalClient.id } },
+            select: { id: true },
+        });
+        if (!owned) {
+            throw new AppError(status.NOT_FOUND, "Invoice not found");
+        }
     }
 
     const pdfBuffer = await generateInvoicePDFBuffer(id as string);

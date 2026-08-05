@@ -31,6 +31,7 @@ model Client {
   jobs               Job[]
   quotes             Quote[]
   recurringSchedules RecurringSchedule[]
+  changeRequests     BookingChangeRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

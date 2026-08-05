@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { quoteController } from "./quote.controller";
+import { downloadQuotePDF } from "./quote.pdf.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
+import { checkAuthOrPortalClient } from "../../middlewares/checkPortalAuth";
 import { UserRole } from "../../generated/prisma/enums";
 import {
     ValidationProperty,
@@ -61,6 +63,16 @@ router.post(
 router.get("/", checkAuth(UserRole.ADMIN), quoteController.getAllQuotes);
 
 router.get("/:id", checkAuth(UserRole.ADMIN), quoteController.getQuoteById);
+
+// ── PDF download (admin/staff session OR client portal token) ────────────────
+// Declared right after /:id (both are GETs on distinct literal vs param
+// segments, so registration order here doesn't matter for Express, but kept
+// close to /:id for readability).
+router.get(
+    "/:id/pdf",
+    checkAuthOrPortalClient(UserRole.ADMIN),
+    downloadQuotePDF,
+);
 
 router.patch(
     "/:id",

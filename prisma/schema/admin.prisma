@@ -54,6 +54,7 @@ model AdminProfile {
   serviceCatalogs       ServiceCatalog[]
   activityLogs          ActivityLog[]
   notifications         Notification[]
+  bookingChangeRequests BookingChangeRequest[]
 
   @@index([createdAt])
 }

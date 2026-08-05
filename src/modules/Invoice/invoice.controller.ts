@@ -145,7 +145,7 @@ const submitPaymentProof = catchAsync(async (req, res) => {
         id as string,
         paymentId as string,
         req.file,
-        req.user,
+        { user: req.user, portalClient: req.portalClient },
     );
 
     sendResponse(res, {

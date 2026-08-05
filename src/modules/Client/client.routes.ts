@@ -7,8 +7,30 @@ import {
 import { clientController } from "./client.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { UserRole } from "../../generated/prisma/enums";
+import { resolvePortalClient } from "../../middlewares/checkPortalAuth";
+import { bookingChangeRequestController } from "../BookingChangeRequest/bookingChangeRequest.controller";
+import { bookingChangeRequestValidation } from "../BookingChangeRequest/bookingChangeRequest.validation";
 
 const router = Router();
+
+// ── Booking change requests (client reschedule/cancellation asks) ────────────
+// Must be registered BEFORE "/:adminId" below — otherwise Express's
+// single-segment ":adminId" param route would shadow "/booking-requests".
+router.get(
+    "/booking-requests",
+    checkAuth(UserRole.ADMIN),
+    bookingChangeRequestController.getRequests,
+);
+
+router.patch(
+    "/booking-requests/:id/decision",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(
+        bookingChangeRequestValidation.decideBookingChangeRequest,
+        ValidationProperty.BODY,
+    ),
+    bookingChangeRequestController.decideRequest,
+);
 
 // Create client
 router.post(
@@ -43,6 +65,19 @@ router.delete("/:id", checkAuth(UserRole.ADMIN), clientController.deleteClient);
 // Access is gated by the opaque portalAccessToken (a random UUID), NOT the
 // plain client id.  The token is what makes the URL unguessable.
 router.get("/portal/:portalToken", clientController.getClientPortal);
+
+// Client (portal): request a reschedule or cancellation on an upcoming
+// booking. Creates a pending BookingChangeRequest for the admin to review —
+// the booking itself is untouched until approved.
+router.post(
+    "/portal/:portalToken/booking-requests",
+    resolvePortalClient,
+    zodValidate(
+        bookingChangeRequestValidation.createBookingChangeRequest,
+        ValidationProperty.BODY,
+    ),
+    bookingChangeRequestController.createRequest,
+);
 
 // Admin: rotate the portal access token — invalidates previously shared links.
 // Must be authenticated as ADMIN and must own the client record.

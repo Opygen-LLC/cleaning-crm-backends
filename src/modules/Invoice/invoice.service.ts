@@ -670,21 +670,50 @@ const recordPayment = async (
 // with status PENDING_APPROVAL, and keeps the invoice in its current state
 // until an admin approves.
 
+interface ISubmitPaymentProofAuthCtx {
+    user?: { id: string } | undefined;
+    portalClient?: { id: string; adminId: string } | undefined;
+}
+
 const submitPaymentProof = async (
     invoiceId: string,
     paymentId: string,
     file: Express.Multer.File,
-    user: any,
+    authCtx: ISubmitPaymentProofAuthCtx,
 ) => {
-    const admin = await prisma.adminProfile.findUnique({
-        where: { userId: user.id },
-    });
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    // Two callers hit this route: an authenticated admin submitting proof on
+    // a client's behalf, or the client themselves via their portal token.
+    // Either way we resolve to an `adminId` that scopes the invoice lookup —
+    // for the portal path that also doubles as the ownership check (the
+    // invoice must belong to a booking for *this* client).
+    let adminId: string;
+    let invoice: Awaited<ReturnType<typeof prisma.invoice.findFirst>>;
 
-    const invoice = await prisma.invoice.findFirst({
-        where: { id: invoiceId, adminId: admin.id },
-    });
-    if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
+    if (authCtx.portalClient) {
+        invoice = await prisma.invoice.findFirst({
+            where: {
+                id: invoiceId,
+                booking: { clientId: authCtx.portalClient.id },
+            },
+        });
+        if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
+        adminId = authCtx.portalClient.adminId;
+    } else {
+        if (!authCtx.user) {
+            throw new AppError(status.UNAUTHORIZED, "Unauthorized");
+        }
+        const admin = await prisma.adminProfile.findUnique({
+            where: { userId: authCtx.user.id },
+        });
+        if (!admin)
+            throw new AppError(status.NOT_FOUND, "Admin profile not found");
+
+        invoice = await prisma.invoice.findFirst({
+            where: { id: invoiceId, adminId: admin.id },
+        });
+        if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
+        adminId = admin.id;
+    }
 
     if (invoice.status === InvoiceStatus.PAID) {
         throw new AppError(status.BAD_REQUEST, "Invoice is already paid");
@@ -725,14 +754,14 @@ const submitPaymentProof = async (
                 method: PaymentMethod.BANK_TRANSFER,
                 status: PaymentStatus.PENDING_APPROVAL,
                 paymentProofUrl: uploadResult.secure_url,
-                adminId: admin.id,
+                adminId,
                 invoiceId: invoice.id,
             },
         });
     } else {
         // Update an existing payment record
         const existing = await prisma.payment.findFirst({
-            where: { id: paymentId, adminId: admin.id },
+            where: { id: paymentId, adminId },
         });
         if (!existing)
             throw new AppError(status.NOT_FOUND, "Payment not found");

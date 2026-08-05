@@ -225,8 +225,53 @@ const getClientPortal = async (portalAccessToken: string) => {
                             status: true,
                             total: true,
                             dueDate: true,
+                            // Surfaces an already-pending proof submission so the
+                            // portal can update it instead of creating a
+                            // duplicate payment row on re-upload.
+                            payments: {
+                                where: { status: "PENDING_APPROVAL" },
+                                orderBy: { createdAt: "desc" },
+                                take: 1,
+                                select: { id: true },
+                            },
                         },
                     },
+                    changeRequests: {
+                        orderBy: { createdAt: "desc" },
+                        take: 5,
+                        select: {
+                            id: true,
+                            type: true,
+                            status: true,
+                            requestedDate: true,
+                            reason: true,
+                            createdAt: true,
+                        },
+                    },
+                },
+            },
+            // Quotes/estimates aren't tied to a booking until converted, so
+            // they're surfaced separately for the "download PDF" action.
+            quotes: {
+                orderBy: { createdAt: "desc" },
+                take: 20,
+                select: {
+                    id: true,
+                    quoteRef: true,
+                    status: true,
+                    total: true,
+                    validUntil: true,
+                },
+            },
+            estimates: {
+                orderBy: { createdAt: "desc" },
+                take: 20,
+                select: {
+                    id: true,
+                    estimateRef: true,
+                    status: true,
+                    total: true,
+                    validUntil: true,
                 },
             },
         },

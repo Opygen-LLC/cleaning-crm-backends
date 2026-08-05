@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { estimateController } from "./estimate.controller";
+import { downloadEstimatePDF } from "./estimate.pdf.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
+import { checkAuthOrPortalClient } from "../../middlewares/checkPortalAuth";
 import { UserRole } from "../../generated/prisma/enums";
 import {
     ValidationProperty,
@@ -25,6 +27,13 @@ router.get(
     "/:id",
     checkAuth(UserRole.ADMIN),
     estimateController.getEstimateById,
+);
+
+// ── PDF download (admin/staff session OR client portal token) ────────────────
+router.get(
+    "/:id/pdf",
+    checkAuthOrPortalClient(UserRole.ADMIN),
+    downloadEstimatePDF,
 );
 
 router.patch(

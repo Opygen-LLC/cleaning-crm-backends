@@ -21,6 +21,7 @@ model Booking {
   staffAssignments BookingStaffAssignment[]
   job              Job?
   invoice          Invoice?
+  changeRequests   BookingChangeRequest[]
 
   @@index([adminId, status])
   @@index([clientId])
@@ -37,4 +38,41 @@ model BookingStaffAssignment {
 
   @@id([bookingId, staffId])
   @@map("booking_staff_assignment")
+}
+
+// ── Client-initiated reschedule/cancellation requests ─────────────────────────
+// Created from the client portal (POST /client/portal/:portalToken/booking-
+// requests). The booking itself is left untouched until an admin approves
+// the request — this keeps the admin in control while cutting down on
+// back-and-forth emails for simple reschedule asks.
+model BookingChangeRequest {
+  id     String                     @id @default(uuid())
+  type   BookingChangeRequestType
+  status BookingChangeRequestStatus @default(PENDING)
+
+  // Client-provided context
+  requestedDate DateTime? // only set for RESCHEDULE requests
+  reason        String?   @db.Text
+
+  // Admin decision
+  decisionNote String?
+  decidedAt    DateTime?
+  decidedBy    String? // AdminProfile.id of whoever actioned it
+
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  adminId String
+  admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([adminId, status])
+  @@index([bookingId])
+  @@index([clientId])
+  @@map("booking_change_request")
 }
