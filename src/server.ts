@@ -24,6 +24,10 @@ import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
 import "../src/cron/staffStatus.cron";
 import "../src/cron/recurringBooking.cron";
 import "../src/cron/invoiceOverdue.cron";
+// PERF FIX (Phase 1.1): keeps the Neon Postgres compute instance warm so
+// requests don't pay a multi-second cold-start cost after idle periods.
+// See dbKeepAlive.cron.ts for full context.
+import "../src/cron/dbKeepAlive.cron";
 // BUGFIX: unlike the three crons above (which self-schedule via a top-level
 // cron.schedule() call the moment their module is imported), subscriptionExpiry.cron.ts
 // deliberately wraps its scheduling in an exported scheduleSubscriptionExpiryJob()

@@ -13,8 +13,7 @@ import status from "http-status";
 import { AccountStatus, UserRole } from "../generated/prisma/enums";
 import { prisma } from "../lib/prisma/prisma";
 import AppError from "../errorHelper/AppError";
-import { jwtUtils } from "../lib/utils/jwt";
-import { ACCESS_TOKEN_SECRET } from "../config/ENV";
+import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import { CookieUtils } from "../lib/utils/cookie";
 import redis from "../config/redis";
 
@@ -24,6 +23,95 @@ function getAccessToken(req: Request): string | undefined {
     if (authHeader?.startsWith("Bearer "))
         return authHeader.slice("Bearer ".length).trim();
     return CookieUtils.getCookie(req, "accessToken");
+}
+
+// ─── Shared cached subscription + plan loader ─────────────────────────────────
+//
+// PERF FIX (Phase 1.3): checkSubscription (the status gate, mounted at router
+// level) and checkFeature (mounted per-route) used to each independently:
+//   1. look up the admin profile for the user, and
+//   2. look up the subscription (checkFeature additionally joined the plan)
+// on every single request — checkFeature had NO caching at all, unlike the
+// status gate below, so every hit on a feature-gated route (auto-dispatch,
+// coupons, recurring bookings, ...) paid for two uncached DB round-trips.
+//
+// This single helper now backs both gates: one Redis-cached payload (60s
+// TTL) per user, containing everything either gate needs, including the
+// plan's feature list. This cuts checkFeature from 2 uncached queries per
+// request down to a Redis GET on the (very common) cache-hit path.
+type CachedSubscriptionPayload = {
+    adminId: string | null;
+    status: string | null;
+    isTrial: boolean | null;
+    trialEndsAt: string | null;
+    currentPeriodEnd: string | null;
+    cancelAtPeriodEnd: boolean | null;
+    features: string[];
+} | null; // null = admin has no subscription/profile at all → both gates just call next()
+
+const SUBSCRIPTION_CACHE_TTL_SECONDS = 60;
+const subscriptionCacheKey = (userId: string) => `sub:full:user:${userId}`;
+
+async function getCachedSubscriptionForUser(
+    userId: string,
+): Promise<CachedSubscriptionPayload> {
+    const cached = await redis
+        .get(subscriptionCacheKey(userId))
+        .catch(() => null);
+
+    if (cached !== null) {
+        try {
+            return JSON.parse(cached) as CachedSubscriptionPayload;
+        } catch {
+            // fall through and reload from DB on a corrupt cache entry
+        }
+    }
+
+    const admin = await prisma.adminProfile.findFirst({
+        where: { userId },
+        select: { id: true },
+    });
+
+    let payload: CachedSubscriptionPayload = null;
+
+    if (admin) {
+        const sub = await prisma.subscription.findFirst({
+            where: { adminId: admin.id },
+            select: {
+                status: true,
+                isTrial: true,
+                trialEndsAt: true,
+                currentPeriodEnd: true,
+                cancelAtPeriodEnd: true,
+                subscriptionPlan: { select: { features: true } },
+            },
+            orderBy: { createdAt: "desc" },
+        });
+
+        if (sub) {
+            payload = {
+                adminId: admin.id,
+                status: sub.status,
+                isTrial: sub.isTrial,
+                trialEndsAt: sub.trialEndsAt ? sub.trialEndsAt.toISOString() : null,
+                currentPeriodEnd: sub.currentPeriodEnd
+                    ? sub.currentPeriodEnd.toISOString()
+                    : null,
+                cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+                features: sub.subscriptionPlan?.features ?? [],
+            };
+        }
+    }
+
+    await redis
+        .setex(
+            subscriptionCacheKey(userId),
+            SUBSCRIPTION_CACHE_TTL_SECONDS,
+            JSON.stringify(payload),
+        )
+        .catch(() => {});
+
+    return payload;
 }
 
 // ─── Status gate (mounted at router level) ────────────────────────────────────
@@ -36,8 +124,13 @@ export const checkSubscription = async (
         const accessToken = getAccessToken(req);
         if (!accessToken) return next();
 
-        const verified = jwtUtils.verifyToken(accessToken, ACCESS_TOKEN_SECRET);
-        if (!verified.success || !verified.data) return next();
+        // PERF FIX (Phase 1.4): shared per-request verification cache — see
+        // src/lib/utils/verifiedRequestToken.ts. checkSubscription is the
+        // first gate to run on gated routes, so this is normally the call
+        // that performs the actual jwt.verify(); checkAuth/checkFeature
+        // reuse the cached result afterwards instead of re-verifying.
+        const verified = getVerifiedAccessToken(req, accessToken);
+        if (!verified.success) return next();
 
         const { userId, role } = verified.data as {
             userId: string;
@@ -60,42 +153,9 @@ export const checkSubscription = async (
                 "This account has been deleted.",
             );
 
-        // ── Subscription lookup (Redis cached with 60s TTL) ────────────
-        let sub: any = null;
-        const cachedSub = await redis.get(`sub:user:${userId}`).catch(() => null);
-
-        if (cachedSub) {
-            try {
-                sub = JSON.parse(cachedSub);
-            } catch {
-                sub = null;
-            }
-        }
-
-        if (!sub) {
-            const admin = await prisma.adminProfile.findFirst({
-                where: { userId },
-                select: { id: true },
-            });
-            if (!admin) return next();
-
-            sub = await prisma.subscription.findFirst({
-                where: { adminId: admin.id },
-                select: {
-                    status: true,
-                    isTrial: true,
-                    trialEndsAt: true,
-                    currentPeriodEnd: true,
-                    cancelAtPeriodEnd: true,
-                },
-                orderBy: { createdAt: "desc" },
-            });
-            if (!sub) return next();
-
-            await redis
-                .setex(`sub:user:${userId}`, 60, JSON.stringify(sub))
-                .catch(() => {});
-        }
+        // ── Subscription lookup (shared Redis-cached loader, 60s TTL) ────────
+        const sub = await getCachedSubscriptionForUser(userId);
+        if (!sub) return next();
 
         const now = new Date();
         const trialEnd = sub.trialEndsAt ? new Date(sub.trialEndsAt) : null;
@@ -181,11 +241,11 @@ export function checkFeature(featureKey: string) {
             const accessToken = getAccessToken(req);
             if (!accessToken) return next();
 
-            const verified = jwtUtils.verifyToken(
-                accessToken,
-                ACCESS_TOKEN_SECRET,
-            );
-            if (!verified.success || !verified.data) return next();
+            // PERF FIX (Phase 1.4): reuses the same per-request cached
+            // verification result as checkSubscription/checkAuth instead of
+            // calling jwt.verify() a third time for this request.
+            const verified = getVerifiedAccessToken(req, accessToken);
+            if (!verified.success) return next();
 
             const { userId, role } = verified.data as {
                 userId: string;
@@ -193,20 +253,13 @@ export function checkFeature(featureKey: string) {
             };
             if (role !== UserRole.ADMIN) return next();
 
-            const admin = await prisma.adminProfile.findFirst({
-                where: { userId },
-                select: { id: true },
-            });
-            if (!admin) return next();
-
-            const sub = await prisma.subscription.findFirst({
-                where: { adminId: admin.id },
-                include: { subscriptionPlan: { select: { features: true } } },
-                orderBy: { createdAt: "desc" },
-            });
+            // PERF FIX (Phase 1.3): was two uncached DB queries (adminProfile +
+            // subscription join) on every request to a feature-gated route.
+            // Now shares the same 60s Redis-cached payload as checkSubscription.
+            const sub = await getCachedSubscriptionForUser(userId);
             if (!sub) return next();
 
-            const includedRaw = sub.subscriptionPlan?.features ?? [];
+            const includedRaw = sub.features ?? [];
             const included = includedRaw.map((f) => {
                 try {
                     return JSON.parse(f) as {

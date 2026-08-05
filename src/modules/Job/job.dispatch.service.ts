@@ -302,16 +302,33 @@ const bulkAutoDispatch = async (
         orderBy: { scheduledDate: "asc" },
     });
 
+    // PERF FIX (Phase 2.1): this used to await autoDispatch() one job at a
+    // time in a plain for-loop — each call does several DB round-trips
+    // internally, so dispatching N unassigned jobs took N sequential
+    // round-trips end to end (the slowest single operation found in the
+    // audit: a 50-job bulk dispatch ran 50x slower than necessary).
+    //
+    // Fixed by running in small concurrent batches instead of either fully
+    // sequential (too slow) or fully unbounded parallel (would flood the
+    // Prisma connection pool, which is capped at 10 — see prisma.ts). A
+    // batch size of 5 leaves headroom for other concurrent requests hitting
+    // the same pool while still cutting wall-clock time dramatically.
+    const BULK_DISPATCH_CONCURRENCY = 5;
     const results: AutoDispatchResult[] = [];
-    for (const { id } of unassignedJobs) {
-        try {
-            const result = await autoDispatch(id, user, options);
-            results.push(result);
-        } catch {
-            // Log & skip failing individual job to prevent breaking the bulk run
-            continue;
+
+    for (let i = 0; i < unassignedJobs.length; i += BULK_DISPATCH_CONCURRENCY) {
+        const batch = unassignedJobs.slice(i, i + BULK_DISPATCH_CONCURRENCY);
+        const batchResults = await Promise.allSettled(
+            batch.map(({ id }) => autoDispatch(id, user, options)),
+        );
+        for (const outcome of batchResults) {
+            if (outcome.status === "fulfilled") {
+                results.push(outcome.value);
+            }
+            // rejected → log & skip, same behavior as before (don't break the bulk run)
         }
     }
+
     return results;
 };
 

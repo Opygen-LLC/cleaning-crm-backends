@@ -4,8 +4,7 @@ import status from "http-status";
 import { AccountStatus, UserRole } from "../generated/prisma/enums";
 import { CookieUtils } from "../lib/utils/cookie";
 import { prisma } from "../lib/prisma/prisma";
-import { jwtUtils } from "../lib/utils/jwt";
-import { ACCESS_TOKEN_SECRET } from "../config/ENV";
+import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import redis from "../config/redis";
 
 // ─── Cross-domain auth note ──────────────────────────────────────────────────
@@ -37,15 +36,16 @@ export const checkAuth =
             }
 
             // ── JWT verification ────────────────────────────────────────────
-            const verifiedToken = jwtUtils.verifyToken(
-                accessToken,
-                ACCESS_TOKEN_SECRET,
-            );
+            // PERF FIX (Phase 1.4): reuses the cached verification result if
+            // checkSubscription (which runs earlier, at router level, on
+            // gated routes) already verified this exact token for this
+            // request — avoids a second jwt.verify() call per request.
+            const verifiedToken = getVerifiedAccessToken(req, accessToken);
             if (!verifiedToken.success) {
                 throw new AppError(status.UNAUTHORIZED, "Invalid access token.");
             }
 
-            const tokenData = verifiedToken.data!;
+            const tokenData = verifiedToken.data;
 
             // ── Role check (from JWT) ───────────────────────────────────────
             if (

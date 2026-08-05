@@ -37,14 +37,25 @@ export const DEFAULT_PLATFORM_CONFIG: PlatformConfig = {
 
 export const PLATFORM_CONFIG_KEY = "platformConfig";
 
-/**
- * Reads the current platform config, falling back to defaults for any
- * missing keys (and entirely if the row/table doesn't exist yet).
- *
- * Cheap enough to call per-request (single indexed PK lookup); if this ends
- * up on a very hot path, wrap it with a short in-memory TTL cache.
- */
-export const getPlatformConfig = async (): Promise<PlatformConfig> => {
+// ─── In-memory TTL cache ───────────────────────────────────────────────────────
+//
+// PERF FIX (Phase 1.2): getPlatformConfig() is called by maintenanceModeGate,
+// which runs on nearly every API request in the app. Hitting Postgres for a
+// single-row config lookup on every single request adds a full DB round-trip
+// to the critical path of the entire API — on a remote/serverless Postgres
+// instance (Neon) that round-trip alone can be tens to hundreds of ms.
+//
+// The config changes maybe a few times a year (super-admin toggles
+// maintenance mode, trial length, etc.), so a short TTL cache is safe:
+// worst case, a change takes up to CONFIG_CACHE_TTL_MS to become visible on
+// instances that don't call updatePlatformConfig() directly, and even that
+// window is eliminated below by busting the cache on every write.
+const CONFIG_CACHE_TTL_MS = 30_000;
+
+let cachedConfig: PlatformConfig | null = null;
+let cacheExpiresAt = 0;
+
+const readConfigFromDb = async (): Promise<PlatformConfig> => {
     const row = await prisma.superAdminConfig
         .findUnique({ where: { key: PLATFORM_CONFIG_KEY } })
         .catch(() => null); // table may not exist yet (pre-migration) — use defaults
@@ -58,6 +69,27 @@ export const getPlatformConfig = async (): Promise<PlatformConfig> => {
     }
 };
 
+/**
+ * Reads the current platform config, falling back to defaults for any
+ * missing keys (and entirely if the row/table doesn't exist yet).
+ *
+ * Cached in-memory for CONFIG_CACHE_TTL_MS since this sits on the request
+ * path of every API call via maintenanceModeGate. The cache is bypassed
+ * automatically once it expires, and busted immediately on write via
+ * updatePlatformConfig() below, so a super-admin's change is never stale by
+ * more than a single in-flight request.
+ */
+export const getPlatformConfig = async (): Promise<PlatformConfig> => {
+    if (cachedConfig && cacheExpiresAt > Date.now()) {
+        return cachedConfig;
+    }
+
+    const value = await readConfigFromDb();
+    cachedConfig = value;
+    cacheExpiresAt = Date.now() + CONFIG_CACHE_TTL_MS;
+    return value;
+};
+
 export const updatePlatformConfig = async (
     patch: Partial<PlatformConfig>,
 ): Promise<PlatformConfig> => {
@@ -69,6 +101,11 @@ export const updatePlatformConfig = async (
         create: { key: PLATFORM_CONFIG_KEY, value: JSON.stringify(updated) },
         update: { value: JSON.stringify(updated) },
     });
+
+    // Bust the cache immediately so the change is visible on this instance's
+    // very next request instead of waiting out the TTL.
+    cachedConfig = updated;
+    cacheExpiresAt = Date.now() + CONFIG_CACHE_TTL_MS;
 
     return updated;
 };
