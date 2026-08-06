@@ -41,12 +41,9 @@ const redis = new Redis({
     password: process.env.REDIS_PASSWORD || undefined,
     db: Number(process.env.REDIS_DB) || 0,
     lazyConnect: true, // don't open a socket (or log a connection attempt) until the first command actually runs
+    enableOfflineQueue: false, // reject commands immediately if Redis is not connected instead of queuing/hanging
     maxRetriesPerRequest: 1, // fail a pending command fast instead of queueing/retrying it repeatedly
     retryStrategy(times) {
-        // Background reconnection with capped exponential-ish backoff.
-        // Returning a number means "try again in this many ms"; we never
-        // return null/false, so ioredis keeps trying indefinitely in the
-        // background without blocking anything in the foreground.
         return Math.min(times * 500, 10_000);
     },
 });

@@ -99,8 +99,9 @@ const geocodeJobAddressInBackground = (
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const generateJobRef = async (): Promise<string> => {
+const generateJobRef = async (adminId?: string): Promise<string> => {
   const last = await prisma.job.findFirst({
+    where: adminId ? { adminId } : undefined,
     orderBy: { createdAt: "desc" },
     select: { jobRef: true },
   });
@@ -206,7 +207,7 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
     );
   }
 
-  const jobRef = await generateJobRef();
+  const jobRef = await generateJobRef(adminId);
 
   // PERF FIX (Phase 5.2): job is created immediately without waiting on the
   // external geocoding call — geocoding now runs in the background (see
@@ -621,7 +622,7 @@ const convertBookingToJob = async (bookingId: string, user: IRequestUser) => {
     );
   }
 
-  const jobRef = await generateJobRef();
+  const jobRef = await generateJobRef(adminId);
   return prisma.job.create({
     data: {
       jobRef,

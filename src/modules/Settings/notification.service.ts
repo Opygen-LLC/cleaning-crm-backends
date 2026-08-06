@@ -1,5 +1,7 @@
 import { prisma } from "../../lib/prisma/prisma";
 import type { UpdateNotificationPrefsPayload } from "./notification.interface";
+import redis from "../../config/redis";
+import { getAdminId as resolveAdminId } from "../../lib/utils/resolveAdminId";
 
 const getNotificationPrefs = async (userId: string) => {
     const admin = await prisma.adminProfile.findUnique({
@@ -23,20 +25,17 @@ const updateNotificationPrefs = async (
     userId: string,
     payload: UpdateNotificationPrefsPayload,
 ) => {
-    // NotificationPreference.adminId references AdminProfile.id, NOT User.id.
-    // We must resolve the admin profile first, exactly like getNotificationPrefs does.
-    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new Error("Admin profile not found");
+    const admin = await prisma.adminProfile.findUnique({
+        where: { userId },
+        select: { id: true },
+    });
 
-    // Clean payload: strip undefined / null keys before updating
-    const cleanedPayload = Object.fromEntries(
-        Object.entries(payload).filter(([, v]) => v !== undefined && v !== null),
-    );
+    if (!admin) throw new Error("Admin profile not found");
 
     return prisma.notificationPreference.upsert({
         where: { adminId: admin.id },
-        update: cleanedPayload,
-        create: { adminId: admin.id, ...cleanedPayload },
+        update: payload,
+        create: { adminId: admin.id, ...payload },
     });
 };
 
@@ -53,28 +52,45 @@ const getAdminId = async (userId: string): Promise<string> => {
 };
 
 const getInbox = async (userId: string) => {
-    const adminId = await getAdminId(userId);
-    return prisma.notification.findMany({
+    const adminId = await resolveAdminId({ id: userId } as any);
+    const cacheKey = `notifications:${adminId}`;
+
+    const cached = await redis.get(cacheKey).catch(() => null);
+    if (cached) {
+        try {
+            return JSON.parse(cached);
+        } catch {
+            // fall through if corrupt
+        }
+    }
+
+    const notifications = await prisma.notification.findMany({
         where: { adminId },
         orderBy: { createdAt: "desc" },
         take: 50,
     });
+
+    await redis.setex(cacheKey, 30, JSON.stringify(notifications)).catch(() => {});
+
+    return notifications;
 };
 
 const markRead = async (userId: string, notificationId: string) => {
-    const adminId = await getAdminId(userId);
+    const adminId = await resolveAdminId({ id: userId } as any);
     await prisma.notification.updateMany({
         where: { id: notificationId, adminId },
         data: { isRead: true },
     });
+    await redis.del(`notifications:${adminId}`).catch(() => {});
 };
 
 const markAllRead = async (userId: string) => {
-    const adminId = await getAdminId(userId);
+    const adminId = await resolveAdminId({ id: userId } as any);
     await prisma.notification.updateMany({
         where: { adminId, isRead: false },
         data: { isRead: true },
     });
+    await redis.del(`notifications:${adminId}`).catch(() => {});
 };
 
 const getAdminPrefsByAdminId = async (adminId: string) => {

@@ -4,6 +4,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import { resolveCountryEnum } from "../../lib/constants/countryIsoMap";
 import { ONBOARDING_STEPS, SKIPPABLE_ONBOARDING_STEPS } from "./admin.constant";
+import redis from "../../config/redis";
 import type {
   OnboardingStepKey,
   OnboardingStepStatus,
@@ -58,6 +59,16 @@ const findAdminIdOrThrow = async (userId: string): Promise<string> => {
 
 // ── Get admin profile (identity + business + work locations) ───────────────
 const getAdmin = async (userId: string) => {
+  const cacheKey = `admin:profile:${userId}`;
+  const cached = await redis.get(cacheKey).catch(() => null);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch {
+      // fall through if corrupt
+    }
+  }
+
   const admin = await prisma.adminProfile.findUnique({
     where: { userId },
     include: {
@@ -82,7 +93,7 @@ const getAdmin = async (userId: string) => {
 
   const { user, workLocations, id: _adminProfileId, userId: _userId, ...profileFields } = admin;
 
-  return {
+  const result = {
     id: user.id,
     name: user.name,
     email: user.email,
@@ -91,6 +102,10 @@ const getAdmin = async (userId: string) => {
     ...profileFields,
     workLocations,
   };
+
+  await redis.setex(cacheKey, 300, JSON.stringify(result)).catch(() => {});
+
+  return result;
 };
 
 // ── Update admin profile (scalar fields + optional bulk work-location set) ──
@@ -136,6 +151,7 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
     }
   });
 
+  await redis.del(`admin:profile:${userId}`).catch(() => {});
   return getAdmin(userId);
 };
 
