@@ -34,6 +34,7 @@ import {
   WeekDay,
 } from "../../generated/prisma/enums";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { IQueryParams } from "../../interface/query.interface";
 import {
   IJobCreate,
@@ -114,12 +115,6 @@ const generateJobRef = async (adminId?: string): Promise<string> => {
   return `#OP-JB-${next.toString().padStart(4, "0")}`;
 };
 
-const resolveAdminId = async (userId: string): Promise<string> => {
-  const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-  if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-  return admin.id;
-};
-
 const jobInclude = {
   client: {
     select: { id: true, name: true, email: true, phone: true },
@@ -150,7 +145,7 @@ const JS_DAY_TO_WEEKDAY: Record<number, WeekDay> = {
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 const createJob = async (payload: IJobCreate, user: IRequestUser) => {
-  const adminId = await resolveAdminId(user.id);
+  const adminId = await getAdminId(user);
 
   // PERF FIX (Phase 5.3): these four lookups are all independent — none of
   // them depends on the result of another — so there's no reason to await
@@ -253,25 +248,22 @@ const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
     if (!staffProfile)
       throw new AppError(status.NOT_FOUND, "Staff profile not found");
 
-    const jobs = await prisma.job.findMany({
-      where: {
+    return new QueryBuilder(prisma.job, queryParams, {
+      searchableFields: jobSearchableFields,
+      filterableFields: jobFilterableFields,
+    })
+      .where({
         staffAssignments: { some: { staffId: staffProfile.id } },
-      },
-      include: jobInclude,
-      orderBy: { scheduledDate: "asc" },
-    });
-    return {
-      data: jobs,
-      meta: {
-        total: jobs.length,
-        page: 1,
-        limit: jobs.length,
-        totalPages: 1,
-      },
-    };
+      })
+      .search()
+      .filter()
+      .sort()
+      .paginate()
+      .include(jobInclude)
+      .execute();
   }
 
-  const adminId = await resolveAdminId(user.id);
+  const adminId = await getAdminId(user);
   return new QueryBuilder(prisma.job, queryParams, {
     searchableFields: jobSearchableFields,
     filterableFields: jobFilterableFields,
@@ -309,7 +301,7 @@ const getJobById = async (id: string, user: IRequestUser) => {
     return job;
   }
 
-  const adminId = await resolveAdminId(user.id);
+  const adminId = await getAdminId(user);
   const job = await prisma.job.findFirst({
     where: { id, adminId },
     include: jobInclude,
@@ -323,7 +315,7 @@ const updateJob = async (
   payload: IJobUpdate,
   user: IRequestUser,
 ) => {
-  const adminId = await resolveAdminId(user.id);
+  const adminId = await getAdminId(user);
   const existing = await prisma.job.findFirst({ where: { id, adminId } });
   if (!existing) throw new AppError(status.NOT_FOUND, "Job not found");
 
@@ -389,7 +381,7 @@ const updateJobStatus = async (
     if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
     adminId = job.adminId;
   } else {
-    adminId = await resolveAdminId(user.id);
+    adminId = await getAdminId(user);
   }
 
   const existing = await prisma.job.findFirst({ where: { id, adminId } });
@@ -555,7 +547,7 @@ const updateJobStatus = async (
             (a: any) => a.staff.user.name,
           );
 
-          await sendEmailSafely({
+          sendEmailSafely({
             to: clientRecord.email,
             subject: `How did we do? — ${completedJob.jobRef}`,
             templateName: "review-request",
@@ -574,6 +566,8 @@ const updateJobStatus = async (
               staffNames,
               reviewUrl: `${FRONTEND_URL}/review/${reviewToken.token}`,
             },
+          }).catch((err) => {
+            console.error("[REVIEW EMAIL] Failed to send review request:", err);
           });
         }
       }
@@ -586,7 +580,7 @@ const updateJobStatus = async (
 };
 
 const deleteJob = async (id: string, user: IRequestUser) => {
-  const adminId = await resolveAdminId(user.id);
+  const adminId = await getAdminId(user);
   const existing = await prisma.job.findFirst({ where: { id, adminId } });
   if (!existing) throw new AppError(status.NOT_FOUND, "Job not found");
 
@@ -600,7 +594,7 @@ const deleteJob = async (id: string, user: IRequestUser) => {
 };
 
 const convertBookingToJob = async (bookingId: string, user: IRequestUser) => {
-  const adminId = await resolveAdminId(user.id);
+  const adminId = await getAdminId(user);
   const booking = await prisma.booking.findFirst({
     where: { id: bookingId, adminId },
     include: {
@@ -654,7 +648,7 @@ const assignStaff = async (
   payload: IAssignJobStaff,
   user: IRequestUser,
 ) => {
-  const adminId = await resolveAdminId(user.id);
+  const adminId = await getAdminId(user);
   const job = await prisma.job.findFirst({ where: { id: jobId, adminId } });
   if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
 
@@ -752,7 +746,7 @@ const assignStaff = async (
           });
         }
 
-        await Promise.all(
+        Promise.all(
           staffList.map((staff) =>
             sendEmailSafely({
               to: staff.user.email,
@@ -771,14 +765,19 @@ const assignStaff = async (
               },
             }),
           ),
-        );
+        ).catch((err) => {
+          console.error(
+            `[STAFF DISPATCH EMAIL] Failed to send dispatch emails for job ${updatedJob.jobRef}:`,
+            err,
+          );
+        });
       }
       return updatedJob;
     });
 };
 
 const getJobStats = async (user: IRequestUser) => {
-  const adminId = await resolveAdminId(user.id);
+  const adminId = await getAdminId(user);
   const [total, scheduled, inProgress, completed, cancelled] =
     await Promise.all([
       prisma.job.count({ where: { adminId } }),
@@ -802,7 +801,7 @@ const getStaffAvailability = async (
   query: IStaffAvailabilityQuery,
   user: IRequestUser,
 ) => {
-  const adminId = await resolveAdminId(user.id);
+  const adminId = await getAdminId(user);
   const windowStart = new Date(query.date);
   const windowEnd = new Date(
     windowStart.getTime() + query.durationMins * 60_000,
@@ -944,7 +943,7 @@ const resolveStaffAssignment = async (
   }
 
   // ADMIN path
-  const adminId = await resolveAdminId(userId);
+  const adminId = await getAdminId(user);
   const assignment = await prisma.jobStaffAssignment.findFirst({
     where: { jobId },
   });
@@ -1136,7 +1135,7 @@ const getMapData = async (
   dateStr: string | undefined,
   user: IRequestUser,
 ) => {
-  const adminId = await resolveAdminId(user.id);
+  const adminId = await getAdminId(user);
 
   const targetDate = dateStr ? new Date(dateStr) : new Date();
   if (isNaN(targetDate.getTime())) {
