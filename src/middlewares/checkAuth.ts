@@ -93,6 +93,39 @@ export const checkAuth =
                 );
             }
 
+            // ── adminId resolution (Redis cached, 5 min TTL) ─────────────────
+            // PERF FIX (Phase 2): resolves userId -> AdminProfile.id once per
+            // request here, instead of leaving it for every individual
+            // service function to re-query Postgres for (the old
+            // `resolveAdminId()` pattern, duplicated 107 times across
+            // Booking/Client/Job/Quote/Estimate/Checklist/etc.). Only ADMIN
+            // accounts have an AdminProfile, so this is skipped for
+            // STAFF/SUPER_ADMIN. See src/lib/utils/resolveAdminId.ts for the
+            // shared helper that reads req.user.adminId set below.
+            let adminId: string | null = null;
+            if (tokenData.role === UserRole.ADMIN) {
+                const adminIdCacheKey = `adminId:${tokenData.userId}`;
+                const cachedAdminId = await redis
+                    .get(adminIdCacheKey)
+                    .catch(() => null);
+
+                if (cachedAdminId) {
+                    // Redis has no native "null" value; a cache miss on a
+                    // user who genuinely has no AdminProfile is stored as
+                    // the sentinel string below so we don't re-query on
+                    // every request for that (rare/invalid) case either.
+                    adminId = cachedAdminId === "__none__" ? null : cachedAdminId;
+                } else {
+                    const admin = await prisma.adminProfile.findUnique({
+                        where: { userId: tokenData.userId as string },
+                        select: { id: true },
+                    });
+                    adminId = admin?.id ?? null;
+                    await redis
+                        .setex(adminIdCacheKey, 300, adminId ?? "__none__")
+                        .catch(() => {});
+                }
+            }
 
             // ── Optional session bookkeeping ────────────────────────────────
             // If the better-auth session cookie is present (same-origin / local
@@ -121,6 +154,7 @@ export const checkAuth =
                 id: tokenData.userId as string,
                 role: tokenData.role as UserRole,
                 email: tokenData.email as string,
+                adminId,
             };
 
             next();

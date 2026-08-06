@@ -3,6 +3,7 @@ import { deleteFileFromCloudinary } from "../../config/cloudinary";
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import { resolveCountryEnum } from "../../lib/constants/countryIsoMap";
+import redis from "../../config/redis";
 import {
   OnboardingStepKey,
   OnboardingStepStatus,
@@ -49,6 +50,15 @@ const createAdmin = async (payload: {
       userId,
     },
   });
+
+  // PERF FIX (Phase 2) correctness note: checkAuth.ts Redis-caches
+  // userId -> adminId for 5 minutes, including a "__none__" sentinel when a
+  // user has no AdminProfile yet. Clear any such stale entry now so a
+  // brand-new admin isn't incorrectly treated as adminId-less for up to 5
+  // minutes if they happened to hit an authenticated route between account
+  // creation and onboarding (defensive — normally shouldn't happen, but
+  // cheap to guarantee).
+  await redis.del(`adminId:${userId}`).catch(() => {});
 
   //? Subscription trial for 15 days
 

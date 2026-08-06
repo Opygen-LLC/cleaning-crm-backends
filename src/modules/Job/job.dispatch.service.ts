@@ -27,6 +27,7 @@
 
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import { JobStatus, ServiceType } from "../../generated/prisma/enums";
 import { IRequestUser } from "../../types/requestUser.interface";
@@ -67,12 +68,6 @@ function proximityScore(
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const resolveAdminId = async (userId: string): Promise<string> => {
-    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-    return admin.id;
-};
-
 /** Map prisma ServiceType enum values → human-readable keywords for matching */
 const serviceKeywords: Partial<Record<ServiceType, string[]>> = {
     [ServiceType.RESIDENTIAL_CLEAN]: ["residential", "clean"],
@@ -91,7 +86,6 @@ function specialtyMatchScore(staffSpecialties: string[] | undefined | null, jobT
     const matched = keywords.some((kw) => lower.some((sp) => sp.includes(kw)));
     return matched ? W_SPECIALTY : 0;
 }
-
 
 // ─── Core scoring function ────────────────────────────────────────────────────
 
@@ -147,7 +141,7 @@ const autoDispatch = async (
 ): Promise<AutoDispatchResult> => {
     const { count = 1, commit = false } = options;
 
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     // 1. Load the job
     const job = await prisma.job.findFirst({
@@ -379,7 +373,7 @@ const bulkAutoDispatch = async (
     user: IRequestUser,
     options: AutoDispatchOptions = {},
 ): Promise<AutoDispatchResult[]> => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const unassignedJobs = await prisma.job.findMany({
         where: {
@@ -403,7 +397,6 @@ const bulkAutoDispatch = async (
     }
     return results;
 };
-
 
 export const jobDispatchService = {
     autoDispatch,

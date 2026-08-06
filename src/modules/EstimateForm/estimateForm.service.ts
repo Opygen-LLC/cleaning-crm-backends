@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import {
     ServiceType,
@@ -11,12 +12,6 @@ import { IRequestUser } from "../../types/requestUser.interface";
 import { IEstimateFormCreate } from "./estimateForm.interface";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const resolveAdminId = async (userId: string): Promise<string> => {
-    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-    return admin.id;
-};
 
 const generateSubmissionRef = async (): Promise<string> => {
     const last = await prisma.estimateFormSubmission.findFirst({
@@ -58,7 +53,7 @@ const createEstimateForm = async (
     payload: IEstimateFormCreate,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     const slug    = generateSlug(payload.headline, adminId);
 
     // Ensure slug uniqueness — append a short random suffix if taken
@@ -124,7 +119,7 @@ const getAllEstimateForms = async (
     queryParams: IQueryParams,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const forms = await prisma.estimateForm.findMany({
         where:   { adminId },
@@ -174,7 +169,7 @@ const getAllEstimateForms = async (
 };
 
 const getEstimateFormById = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const form = await prisma.estimateForm.findFirst({
         where:   { id, adminId },
@@ -190,7 +185,7 @@ const updateEstimateForm = async (
     payload: Partial<IEstimateFormCreate> & { published?: boolean },
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.estimateForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Estimate form not found");
@@ -259,14 +254,14 @@ const updateEstimateForm = async (
 };
 
 const deleteEstimateForm = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     const existing = await prisma.estimateForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Estimate form not found");
     await prisma.estimateForm.delete({ where: { id } });
 };
 
 const togglePublished = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     const existing = await prisma.estimateForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Estimate form not found");
 
@@ -284,7 +279,7 @@ const getSubmissions = async (
     queryParams: IQueryParams,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     // If formId provided, verify it belongs to this admin
     if (formId) {
@@ -318,7 +313,7 @@ const updateSubmissionStatus = async (
     newStatus: EstimateSubmissionStatus,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     // Verify ownership via the form relationship
     const submission = await prisma.estimateFormSubmission.findFirst({

@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import { QuoteStatus } from "../../generated/prisma/enums";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
@@ -38,11 +39,6 @@ export const generateQuoteRef = async (): Promise<string> => {
  * Resolve adminProfile.id from the authenticated user id.
  * Throws 404 when not found.
  */
-const resolveAdminId = async (userId: string): Promise<string> => {
-    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-    return admin.id;
-};
 
 /**
  * Compute subtotal, tax and total from line items + taxRate.
@@ -100,7 +96,7 @@ const ALLOWED_TRANSITIONS: Record<QuoteStatus, QuoteStatus[]> = {
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     // Verify client belongs to this admin
     const client = await prisma.client.findFirst({
@@ -153,7 +149,7 @@ const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
 };
 
 const getAllQuotes = async (queryParams: IQueryParams, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     return new QueryBuilder(prisma.quote, queryParams, {
         searchableFields: quoteSearchableFields,
@@ -169,7 +165,7 @@ const getAllQuotes = async (queryParams: IQueryParams, user: IRequestUser) => {
 };
 
 const getQuoteById = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const quote = await prisma.quote.findFirst({
         where: { id, adminId },
@@ -186,7 +182,7 @@ const updateQuote = async (
     payload: IQuoteUpdate,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.quote.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Quote not found");
@@ -266,7 +262,7 @@ const updateQuoteStatus = async (
     newStatus: QuoteStatus,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.quote.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Quote not found");
@@ -293,7 +289,7 @@ const updateQuoteStatus = async (
 };
 
 const deleteQuote = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.quote.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Quote not found");
@@ -321,7 +317,7 @@ const convertQuoteToBooking = async (
     payload: IQuoteConvertToBooking,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const quote = await prisma.quote.findFirst({
         where: { id, adminId },
@@ -614,7 +610,7 @@ import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
 
 const sendQuoteEmail = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const quote = await prisma.quote.findFirst({
         where: { id, adminId },
@@ -725,7 +721,7 @@ const templateInclude = {
 } as const;
 
 const getAllQuoteTemplates = async (user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     return prisma.quoteTemplate.findMany({
         where: { adminId },
         include: templateInclude,
@@ -737,7 +733,7 @@ const createQuoteTemplate = async (
     payload: IQuoteTemplateCreate,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     return prisma.quoteTemplate.create({
         data: {
@@ -765,7 +761,7 @@ const updateQuoteTemplate = async (
     payload: IQuoteTemplateUpdate,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.quoteTemplate.findFirst({
         where: { id, adminId },
@@ -806,7 +802,7 @@ const updateQuoteTemplate = async (
 };
 
 const deleteQuoteTemplate = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.quoteTemplate.findFirst({
         where: { id, adminId },

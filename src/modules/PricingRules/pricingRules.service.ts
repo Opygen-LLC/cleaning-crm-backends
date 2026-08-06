@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import { ServiceType } from "../../generated/prisma/enums";
 import { IRequestUser } from "../../types/requestUser.interface";
@@ -10,12 +11,6 @@ import {
 } from "./pricingRules.interface";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const resolveAdminId = async (userId: string): Promise<string> => {
-    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-    return admin.id;
-};
 
 // Default pricing rules shown the first time an admin opens the page
 const DEFAULT_RULES: Omit<IPricingRule, "id">[] = [
@@ -89,7 +84,7 @@ const seedDefaults = () => ({
  * If no record exists yet, returns seeded defaults (not persisted until admin saves).
  */
 const getPricingRules = async (user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const record = await prisma.pricingRules.findUnique({ where: { adminId } });
 
@@ -112,7 +107,7 @@ const upsertPricingRules = async (
     payload: IPricingRulesUpsert,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     // Validate service types
     const validServices = Object.values(ServiceType) as string[];

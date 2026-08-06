@@ -19,6 +19,7 @@ import AppError from "../../errorHelper/AppError";
 import status from "http-status";
 import { NoteType } from "../../generated/prisma/enums";
 import { IRequestUser } from "../../types/requestUser.interface";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 import {
     uploadFileToCloudinary,
     deleteFileFromCloudinary,
@@ -53,23 +54,21 @@ export interface IGetNotesOptions {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const resolveAdminId = async (userId: string): Promise<string> => {
-    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-    return admin.id;
-};
-
 /**
  * For notes/attachments endpoints that are now accessible to STAFF,
  * resolve the adminId that owns the job (for ownership checks) and
  * determine the uploader role string.
+ *
+ * PERF FIX (Phase 2): the ADMIN branch used to call a locally-duplicated
+ * resolveAdminId(userId) that re-queried Postgres on every call. It now
+ * goes through the shared getAdminId() helper, which reads the value
+ * checkAuth.ts already resolved onto req.user for this request.
  */
 const resolveAdminIdForJob = async (
-    userId: string,
+    user: IRequestUser,
     jobId: string,
-    userRole: string,
 ): Promise<{ adminId: string; uploaderRole: string }> => {
-    if (userRole === "STAFF") {
+    if (user.role === "STAFF") {
         // Staff → look up which job this is and get its adminId
         const job = await prisma.job.findUnique({
             where: { id: jobId },
@@ -78,7 +77,7 @@ const resolveAdminIdForJob = async (
         if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
         return { adminId: job.adminId, uploaderRole: "STAFF" };
     }
-    const adminId = await resolveAdminId(userId);
+    const adminId = await getAdminId(user);
     return { adminId, uploaderRole: "ADMIN" };
 };
 
@@ -111,7 +110,7 @@ const getNotes = async (
     user: IRequestUser,
     options: IGetNotesOptions = {},
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     await assertJobOwnership(jobId, adminId);
 
     const { page = 1, limit = 10 } = options;
@@ -147,7 +146,7 @@ const createNote = async (
     payload: ICreateNote,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     await assertJobOwnership(jobId, adminId);
 
     if (!payload.body?.trim()) {
@@ -172,7 +171,7 @@ const updateNote = async (
     payload: IUpdateNote,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     await assertJobOwnership(jobId, adminId);
 
     const note = await prisma.jobNote.findFirst({
@@ -197,7 +196,7 @@ const deleteNote = async (
     noteId: string,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     await assertJobOwnership(jobId, adminId);
 
     const note = await prisma.jobNote.findFirst({
@@ -223,7 +222,7 @@ const ALLOWED_MIMES = new Set([
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 const getAttachments = async (jobId: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id).catch(async () => {
+    const adminId = await getAdminId(user).catch(async () => {
         // STAFF role: fetch adminId via job
         const job = await prisma.job.findUnique({
             where: { id: jobId },
@@ -246,11 +245,7 @@ const uploadAttachment = async (
     user: IRequestUser,
     photoType?: PhotoType,
 ) => {
-    const { adminId, uploaderRole } = await resolveAdminIdForJob(
-        user.id,
-        jobId,
-        user.role,
-    );
+    const { adminId, uploaderRole } = await resolveAdminIdForJob(user, jobId);
     await assertJobOwnership(jobId, adminId);
 
     if (!file) {
@@ -306,7 +301,7 @@ const deleteAttachment = async (
     attachId: string,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     await assertJobOwnership(jobId, adminId);
 
     const attachment = await prisma.jobAttachment.findFirst({

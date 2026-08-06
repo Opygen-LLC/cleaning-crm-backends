@@ -6,6 +6,19 @@ export const BACKEND_IP: string = process.env.BACKEND_IP as string;
 export const PORT: number = parseInt(process.env.PORT as string, 10);
 export const DATABASE_URL: string = process.env.DATABASE_URL as string;
 
+// ─── DB connection pool (Phase 1.2 of the performance audit) ───────────────
+// Neon's pooled ("PgBouncer") connection strings comfortably support far
+// more than the previous hardcoded max of 10 — check your Neon compute
+// size/plan for the actual ceiling and set DB_POOL_MAX accordingly in env.
+// Falls back to 10 only if the env var is missing/invalid, matching the
+// previous hardcoded behaviour so this is a safe no-op until configured.
+export const DB_POOL_MAX: number = Number(process.env.DB_POOL_MAX) || 10;
+
+// Logs any query slower than this many ms via the Phase 1.3 slow-query
+// logger in src/lib/prisma/prisma.ts. Defaults to 300ms.
+export const SLOW_QUERY_THRESHOLD_MS: number =
+    Number(process.env.SLOW_QUERY_THRESHOLD_MS) || 300;
+
 export const CLOUDINARY_CLOUD_NAME: string = process.env
     .CLOUDINARY_CLOUD_NAME as string;
 export const CLOUDINARY_API_KEY: string = process.env

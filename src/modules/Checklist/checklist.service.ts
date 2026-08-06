@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import { ServiceType, UserRole } from "../../generated/prisma/enums";
 import { IRequestUser } from "../../types/requestUser.interface";
@@ -10,12 +11,6 @@ import { IRequestUser } from "../../types/requestUser.interface";
 // different profile tables. We resolve the right profile depending on the
 // caller's role, and re-use a single authorisation helper that understands
 // both paths.
-
-const resolveAdminId = async (userId: string): Promise<string> => {
-    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-    return admin.id;
-};
 
 /**
  * Resolve the StaffProfile for a STAFF user, then return both the profile id
@@ -71,7 +66,7 @@ interface ITemplateCreate {
 }
 
 const createTemplate = async (payload: ITemplateCreate, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     return prisma.checklistTemplate.create({
         data: {
@@ -95,7 +90,7 @@ const createTemplate = async (payload: ITemplateCreate, user: IRequestUser) => {
 };
 
 const getAllTemplates = async (user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const templates = await prisma.checklistTemplate.findMany({
         where: { adminId },
@@ -107,7 +102,7 @@ const getAllTemplates = async (user: IRequestUser) => {
 };
 
 const getTemplateById = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const template = await prisma.checklistTemplate.findFirst({
         where: { id, adminId },
@@ -124,7 +119,7 @@ const updateTemplate = async (
     payload: Partial<ITemplateCreate>,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.checklistTemplate.findFirst({
         where: { id, adminId },
@@ -159,7 +154,7 @@ const updateTemplate = async (
 };
 
 const deleteTemplate = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     const existing = await prisma.checklistTemplate.findFirst({
         where: { id, adminId },
     });
@@ -188,7 +183,7 @@ const getJobChecklists = async (jobId: string, user: IRequestUser) => {
         if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
     } else {
         // ADMIN or SUPER_ADMIN
-        const adminId = await resolveAdminId(user.id);
+        const adminId = await getAdminId(user);
         const job = await prisma.job.findFirst({
             where: { id: jobId, adminId },
         });
@@ -211,7 +206,7 @@ const attachToJob = async (
     templateId: string,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const job = await prisma.job.findFirst({ where: { id: jobId, adminId } });
     if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
@@ -255,7 +250,7 @@ const attachToJob = async (
 };
 
 const detachFromJob = async (checklistId: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const checklist = await prisma.jobChecklist.findFirst({
         where: { id: checklistId, adminId },
@@ -311,7 +306,7 @@ const updateItemCompletion = async (
         resolvedCompletedBy = completed ? staffId : null;
     } else {
         // ADMIN / SUPER_ADMIN — must own the checklist
-        const adminId = await resolveAdminId(user.id);
+        const adminId = await getAdminId(user);
         if (adminId !== checklist.adminId) {
             throw new AppError(status.FORBIDDEN, "Access denied.");
         }

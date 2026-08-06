@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import { FormSubmissionStatus } from "../../generated/prisma/enums";
 import { IRequestUser } from "../../types/requestUser.interface";
@@ -72,12 +73,6 @@ function getDayName(dateStr: string): string {
 
 // ─── Other helpers ────────────────────────────────────────────────────────────
 
-const resolveAdminId = async (userId: string): Promise<string> => {
-    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-    return admin.id;
-};
-
 const generateSubmissionRef = async (): Promise<string> => {
     const last = await prisma.bookingFormSubmission.findFirst({
         orderBy: { createdAt: "desc" },
@@ -117,7 +112,7 @@ const createBookingForm = async (
     payload: IBookingFormCreate,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     const slug    = generateSlug(payload.headline, adminId);
 
     const existing = await prisma.bookingForm.findUnique({ where: { slug } });
@@ -172,7 +167,7 @@ const createBookingForm = async (
 };
 
 const getAllBookingForms = async (user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const forms = await prisma.bookingForm.findMany({
         where:   { adminId },
@@ -221,7 +216,7 @@ const getAllBookingForms = async (user: IRequestUser) => {
 };
 
 const getBookingFormById = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const form = await prisma.bookingForm.findFirst({
         where:   { id, adminId },
@@ -237,7 +232,7 @@ const updateBookingForm = async (
     payload: Partial<IBookingFormCreate> & { published?: boolean },
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.bookingForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Booking form not found");
@@ -297,14 +292,14 @@ const updateBookingForm = async (
 };
 
 const deleteBookingForm = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     const existing = await prisma.bookingForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Booking form not found");
     await prisma.bookingForm.delete({ where: { id } });
 };
 
 const togglePublished = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     const existing = await prisma.bookingForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Booking form not found");
 
@@ -321,7 +316,7 @@ const getSubmissions = async (
     formId: string | undefined,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     if (formId) {
         const form = await prisma.bookingForm.findFirst({ where: { id: formId, adminId } });
@@ -347,7 +342,7 @@ const updateSubmissionStatus = async (
     newStatus: FormSubmissionStatus,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const submission = await prisma.bookingFormSubmission.findFirst({
         where: {

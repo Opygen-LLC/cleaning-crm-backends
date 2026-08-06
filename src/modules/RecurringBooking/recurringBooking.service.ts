@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import {
     RecurringFrequency,
@@ -48,11 +49,6 @@ const generateScheduleRef = async (): Promise<string> => {
 /**
  * Resolves the admin profile ID from the authenticated user.
  */
-const resolveAdminId = async (userId: string): Promise<string> => {
-    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-    return admin.id;
-};
 
 /**
  * Computes the first UTC DateTime on or after `from` that falls on `dayOfWeek`
@@ -143,7 +139,7 @@ const createSchedule = async (
     payload: IRecurringScheduleCreate,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     // Verify client belongs to this admin
     const client = await prisma.client.findFirst({
@@ -202,7 +198,7 @@ const createSchedule = async (
 };
 
 const getAllSchedules = async (queryParams: IQueryParams, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     return new QueryBuilder(prisma.recurringSchedule, queryParams, {
         searchableFields: ["scheduleRef", "address"],
@@ -218,7 +214,7 @@ const getAllSchedules = async (queryParams: IQueryParams, user: IRequestUser) =>
 };
 
 const getScheduleById = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const schedule = await prisma.recurringSchedule.findFirst({
         where: { id, adminId },
@@ -234,7 +230,7 @@ const updateSchedule = async (
     payload: IRecurringScheduleUpdate,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.recurringSchedule.findFirst({
         where: { id, adminId },
@@ -287,7 +283,7 @@ const updateSchedule = async (
 };
 
 const pauseSchedule = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     const existing = await prisma.recurringSchedule.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Recurring schedule not found");
     if (existing.status !== RecurringStatus.ACTIVE) {
@@ -301,7 +297,7 @@ const pauseSchedule = async (id: string, user: IRequestUser) => {
 };
 
 const resumeSchedule = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     const existing = await prisma.recurringSchedule.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Recurring schedule not found");
     if (existing.status !== RecurringStatus.PAUSED) {
@@ -323,7 +319,7 @@ const resumeSchedule = async (id: string, user: IRequestUser) => {
 };
 
 const cancelSchedule = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     const existing = await prisma.recurringSchedule.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Recurring schedule not found");
     if (existing.status === RecurringStatus.CANCELLED) {
@@ -337,7 +333,7 @@ const cancelSchedule = async (id: string, user: IRequestUser) => {
 };
 
 const deleteSchedule = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
     const existing = await prisma.recurringSchedule.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Recurring schedule not found");
     return prisma.recurringSchedule.delete({ where: { id } });
@@ -346,7 +342,7 @@ const deleteSchedule = async (id: string, user: IRequestUser) => {
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
 const getScheduleStats = async (user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const [total, active, paused, cancelled] = await Promise.all([
         prisma.recurringSchedule.count({ where: { adminId } }),
@@ -366,7 +362,7 @@ const getScheduleStats = async (user: IRequestUser) => {
  * After creating the booking it advances nextRunAt exactly as the cron does.
  */
 const generateNextBooking = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const schedule = await prisma.recurringSchedule.findFirst({
         where: { id, adminId },

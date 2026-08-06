@@ -2,6 +2,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { Server } from "http";
 import { prisma } from "../lib/prisma/prisma";
 import { BETTER_AUTH_URL, FRONTEND_URL } from "./ENV";
+import logger from "../lib/logger";
 
 // Singleton — exported so other modules can emit events (e.g. job status changes)
 let io: SocketIOServer;
@@ -28,7 +29,7 @@ const setUpSocketIO = (server: Server): SocketIOServer => {
     });
 
     io.on("connection", (socket) => {
-        console.log("A New user Connected To Socket");
+        logger.debug("[Socket.IO] New client connected");
 
         /**
          * FIX: joinAdminRoom now requires a valid, unexpired session token and
@@ -40,7 +41,7 @@ const setUpSocketIO = (server: Server): SocketIOServer => {
             "joinAdminRoom",
             async (adminId: string, sessionToken: string) => {
                 if (!adminId || !sessionToken) {
-                    console.warn(
+                    logger.warn(
                         "[Socket.IO] joinAdminRoom rejected: missing adminId or sessionToken",
                     );
                     return;
@@ -61,16 +62,16 @@ const setUpSocketIO = (server: Server): SocketIOServer => {
 
                     if (session?.user?.admin?.id === adminId) {
                         socket.join(`admin:${adminId}`);
-                        console.log(
+                        logger.debug(
                             `[Socket.IO] Socket joined admin room: admin:${adminId}`,
                         );
                     } else {
-                        console.warn(
+                        logger.warn(
                             `[Socket.IO] joinAdminRoom rejected: token does not match adminId ${adminId}`,
                         );
                     }
                 } catch (err) {
-                    console.error("[Socket.IO] joinAdminRoom error:", err);
+                    logger.error(`[Socket.IO] joinAdminRoom error: ${err}`);
                 }
             },
         );
@@ -89,7 +90,7 @@ const setUpSocketIO = (server: Server): SocketIOServer => {
             "joinStaffRoom",
             async (staffId: string, sessionToken: string) => {
                 if (!staffId || !sessionToken) {
-                    console.warn(
+                    logger.warn(
                         "[Socket.IO] joinStaffRoom rejected: missing staffId or sessionToken",
                     );
                     return;
@@ -110,35 +111,35 @@ const setUpSocketIO = (server: Server): SocketIOServer => {
 
                     if (session?.user?.staff?.id === staffId) {
                         socket.join(`staff:${staffId}`);
-                        console.log(
+                        logger.debug(
                             `[Socket.IO] Socket joined staff room: staff:${staffId}`,
                         );
                     } else {
-                        console.warn(
+                        logger.warn(
                             `[Socket.IO] joinStaffRoom rejected: token does not match staffId ${staffId}`,
                         );
                     }
                 } catch (err) {
-                    console.error("[Socket.IO] joinStaffRoom error:", err);
+                    logger.error(`[Socket.IO] joinStaffRoom error: ${err}`);
                 }
             },
         );
 
         // Listen for messages
         socket.on("message", (data) => {
-            console.log("Message from client:", data);
+            logger.debug(`[Socket.IO] Message from client: ${JSON.stringify(data)}`);
             io.emit("message", { text: "Hello from the server!" });
         });
 
         // Handle disconnect
         socket.on("disconnect", () => {
-            console.log("A user disconnected");
+            logger.debug("[Socket.IO] Client disconnected");
         });
 
         // Custom event example
         socket.on("joinRoom", (room) => {
             socket.join(room);
-            console.log(`User joined room: ${room}`);
+            logger.debug(`[Socket.IO] User joined room: ${room}`);
         });
 
         // Example: send a message to a specific room
@@ -157,7 +158,7 @@ export const emitToAdmin = (
     payload: unknown,
 ): void => {
     if (!io) {
-        console.warn("[Socket.IO] emitToAdmin called before io is initialised");
+        logger.warn("[Socket.IO] emitToAdmin called before io is initialised");
         return;
     }
     io.to(`admin:${adminId}`).emit(event, payload);
@@ -170,7 +171,7 @@ export const emitToStaff = (
     payload: unknown,
 ): void => {
     if (!io) {
-        console.warn("[Socket.IO] emitToStaff called before io is initialised");
+        logger.warn("[Socket.IO] emitToStaff called before io is initialised");
         return;
     }
     io.to(`staff:${staffId}`).emit(event, payload);
@@ -179,7 +180,7 @@ export const emitToStaff = (
 /** Emit a real-time event to all connected clients (broadcast) */
 export const emitToAll = (event: string, payload: unknown): void => {
     if (!io) {
-        console.warn("[Socket.IO] emitToAll called before io is initialised");
+        logger.warn("[Socket.IO] emitToAll called before io is initialised");
         return;
     }
     io.emit(event, payload);

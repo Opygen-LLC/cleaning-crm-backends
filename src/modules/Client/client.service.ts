@@ -1,5 +1,6 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { createClientPayload, updateClientPayload } from "./client.interface";
 import { prisma } from "../../lib/prisma/prisma";
@@ -42,24 +43,11 @@ const geocodeClientAddress = async (address: {
     };
 };
 
-const resolveAdminId = async (userId: string): Promise<string> => {
-    const adminProfile = await prisma.adminProfile.findUnique({
-        where: { userId },
-        select: { id: true },
-    });
-
-    if (!adminProfile) {
-        throw new AppError(status.NOT_FOUND, "Admin profile not found");
-    }
-
-    return adminProfile.id;
-};
-
 const createClient = async (
     payload: createClientPayload,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     // Enforce plan limits before inserting
     await assertWithinLimit(adminId, "client");
@@ -110,7 +98,7 @@ const createClient = async (
 };
 
 const getClients = async (query: IQueryParams, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const queryBuilder = new QueryBuilder<
         Client,
@@ -135,7 +123,7 @@ const getClients = async (query: IQueryParams, user: IRequestUser) => {
 };
 
 const getClientById = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const client = await prisma.client.findUniqueOrThrow({
         where: { id, adminId },
@@ -174,7 +162,7 @@ const updateClient = async (
     payload: updateClientPayload,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.client.findUnique({
         where: { id, adminId },
@@ -213,7 +201,7 @@ const updateClient = async (
 };
 
 const deleteClient = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.client.findUnique({
         where: { id, adminId },
@@ -300,7 +288,7 @@ const getClientPortal = async (portalAccessToken: string) => {
 // the new URL without refreshing.
 
 const regeneratePortalToken = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.client.findUnique({
         where: { id, adminId },

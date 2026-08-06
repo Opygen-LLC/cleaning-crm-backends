@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import { BookingStatus, UserRole } from "../../generated/prisma/enums";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
@@ -46,11 +47,6 @@ const generateBookingRef = async (): Promise<string> => {
  * Resolve adminProfile.id from the authenticated user id.
  * Throws 404 when not found.
  */
-const resolveAdminId = async (userId: string): Promise<string> => {
-    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-    return admin.id;
-};
 
 /**
  * Resolves the clientId to book against.
@@ -177,11 +173,10 @@ const sendBookingEmail = async (
     });
 };
 
-
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     // Enforce plan limits before inserting
     await assertWithinLimit(adminId, "booking");
@@ -267,7 +262,7 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
 };
 
 const getAllBookings = async (queryParams: IQueryParams, user: any) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     return new QueryBuilder(prisma.booking, queryParams, {
         searchableFields: bookingSearchableFields,
@@ -283,7 +278,7 @@ const getAllBookings = async (queryParams: IQueryParams, user: any) => {
 };
 
 const getBookingById = async (id: string, user: any) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const booking = await prisma.booking.findFirst({
         where: { id, adminId },
@@ -300,7 +295,7 @@ const updateBooking = async (
     payload: IBookingUpdate,
     user: any,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.booking.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Booking not found");
@@ -332,7 +327,7 @@ const updateBookingStatus = async (
     newStatus: BookingStatus,
     user: any,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.booking.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Booking not found");
@@ -375,7 +370,7 @@ const updateBookingStatus = async (
 };
 
 const deleteBooking = async (id: string, user: any) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.booking.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Booking not found");
@@ -409,7 +404,7 @@ const assignStaff = async (
     payload: IAssignStaff,
     user: any,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const booking = await prisma.booking.findFirst({
         where: { id: bookingId, adminId },
@@ -464,7 +459,7 @@ const assignStaff = async (
  * for efficient calendar rendering on the frontend.
  */
 const getCalendarView = async (query: ICalendarQuery, user: any) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const { year, month } = query;
 

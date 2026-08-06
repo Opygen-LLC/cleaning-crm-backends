@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import { EstimateStatus } from "../../generated/prisma/enums";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
@@ -41,11 +42,6 @@ const generateEstimateRef = async (): Promise<string> => {
 /**
  * Resolve adminProfile.id from the authenticated user id.
  */
-const resolveAdminId = async (userId: string): Promise<string> => {
-    const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-    return admin.id;
-};
 
 /**
  * Compute estimate totals from line items with per-line tax and discount,
@@ -158,7 +154,7 @@ const estimateInclude = {
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 const createEstimate = async (payload: IEstimateCreate, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     // Verify client belongs to this admin
     const client = await prisma.client.findFirst({
@@ -217,7 +213,7 @@ const getAllEstimates = async (
     queryParams: IQueryParams,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     return new QueryBuilder(prisma.estimate, queryParams, {
         searchableFields: estimateSearchableFields,
@@ -233,7 +229,7 @@ const getAllEstimates = async (
 };
 
 const getEstimateById = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const estimate = await prisma.estimate.findFirst({
         where: { id, adminId },
@@ -250,7 +246,7 @@ const updateEstimate = async (
     payload: IEstimateUpdate,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.estimate.findFirst({
         where: { id, adminId },
@@ -335,7 +331,7 @@ const updateEstimateStatus = async (
     user: IRequestUser,
 ) => {
 
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.estimate.findFirst({
         where: { id, adminId },
@@ -364,7 +360,7 @@ const updateEstimateStatus = async (
 };
 
 const deleteEstimate = async (id: string, user: IRequestUser) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const existing = await prisma.estimate.findFirst({
         where: { id, adminId },
@@ -388,7 +384,7 @@ const convertEstimateToBooking = async (
     payload: IEstimateConvertToBooking,
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const estimate = await prisma.estimate.findFirst({
         where: { id, adminId },
@@ -507,7 +503,7 @@ const convertEstimateToQuote = async (
     payload: { validUntil: string; notes?: string; internalNotes?: string },
     user: IRequestUser,
 ) => {
-    const adminId = await resolveAdminId(user.id);
+    const adminId = await getAdminId(user);
 
     const estimate = await prisma.estimate.findFirst({
         where: { id, adminId },
