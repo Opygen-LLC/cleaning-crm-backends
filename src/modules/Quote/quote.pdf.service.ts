@@ -26,13 +26,13 @@ export const generateQuotePDFBuffer = async (quoteId: string): Promise<Buffer> =
         lineItems: quote.lineItems.map((li) => ({
             description: li.description,
             quantity: li.quantity,
-            unitPrice: li.unitPrice,
-            total: li.total,
+            unitPrice: li.unitPrice.toString(),
+            total: li.total.toString(),
         })),
-        subtotal: quote.subtotal,
-        taxRate: quote.taxRate,
-        taxAmount: quote.tax,
-        total: quote.total,
+        subtotal: quote.subtotal.toString(),
+        taxRate: quote.taxRate.toString(),
+        taxAmount: quote.tax.toString(),
+        total: quote.total.toString(),
         notes: quote.notes,
     });
 };

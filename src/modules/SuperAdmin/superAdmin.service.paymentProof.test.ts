@@ -88,6 +88,13 @@ function daysFromNow(days: number): Date {
 }
 
 function pendingRecord(overrides: Partial<Record<string, unknown>> = {}) {
+    // NOTE: `subscription` is pulled out and merged separately from the
+    // rest of `overrides` — spreading the whole `overrides` object at the
+    // end (after `subscription` is already set below) would otherwise
+    // clobber the carefully-merged subscription object with the raw,
+    // unmerged override, silently dropping `id`/`adminId` whenever a test
+    // only meant to override one nested field (e.g. `currentPeriodEnd`).
+    const { subscription: subscriptionOverride, ...rest } = overrides;
     return {
         id: BILLING_ID,
         status: "PENDING",
@@ -97,9 +104,9 @@ function pendingRecord(overrides: Partial<Record<string, unknown>> = {}) {
             id: SUB_ID,
             adminId: ADMIN_ID,
             currentPeriodEnd: daysFromNow(5),
-            ...((overrides.subscription as object) ?? {}),
+            ...((subscriptionOverride as object) ?? {}),
         },
-        ...overrides,
+        ...rest,
     };
 }
 

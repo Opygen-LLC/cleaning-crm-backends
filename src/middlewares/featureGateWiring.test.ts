@@ -25,7 +25,7 @@
  * wired onto *which* routes.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { NextFunction, Request, Response } from "express";
+import type { NextFunction, Request, Response, Router } from "express";
 
 type Marker = (req: Request, res: Response, next: NextFunction) => void;
 
@@ -113,12 +113,17 @@ interface RouteLayer {
  * and a route registered earlier — e.g. a public endpoint — never reaches a
  * `.use()` layer that comes after it in the stack). */
 function routeHasMiddleware(
-    router: { stack: RouteLayer[] },
+    router: Router,
     method: "get" | "post" | "patch" | "put" | "delete",
     path: string,
     marker: Marker,
 ): boolean {
-    const stack = router.stack;
+    // Express's public `Router` type doesn't expose `.stack` with a shape
+    // precise enough to type-check the reads below (its `IRoute.methods` is
+    // effectively untyped) — but `.stack` is a stable, well-documented
+    // runtime structure, so we narrow to what we actually read here rather
+    // than fighting the upstream types.
+    const stack = router.stack as unknown as RouteLayer[];
     const routeIndex = stack.findIndex(
         (l) => l.route?.path === path && l.route?.methods[method],
     );

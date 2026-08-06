@@ -30,6 +30,11 @@ export interface CreateStaffPayload {
 export interface UpdateStaffPayload {
     staffRole?: string;
     mobileNumber?: string;
+    // Editable address for a staff member already on the roster — feeds
+    // geocodeStaffAddress() in staff.service.ts so their dispatch-map pin
+    // and distance calculations stay accurate. See updateStaffSchema in
+    // staff.validation.ts, which must accept this same field.
+    address?: string;
 }
 
 export interface UpdateAvailabilityPayload {

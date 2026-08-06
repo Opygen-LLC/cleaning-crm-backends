@@ -35,6 +35,7 @@ const updateStaffSchema = z
     .object({
         staffRole: z.string().optional(),
         mobileNumber: z.string().optional(),
+        address: z.string().optional(),
     })
     .strict()
     .refine((data) => Object.keys(data).length > 0, {

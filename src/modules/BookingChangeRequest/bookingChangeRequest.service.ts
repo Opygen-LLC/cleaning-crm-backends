@@ -24,9 +24,11 @@ const createRequest = async (
     });
     if (!booking) throw new AppError(status.NOT_FOUND, "Booking not found");
 
-    if (![BookingStatus.SCHEDULED, BookingStatus.IN_PROGRESS].includes(
-        booking.status,
-    )) {
+    const reschedulableStatuses: BookingStatus[] = [
+        BookingStatus.SCHEDULED,
+        BookingStatus.IN_PROGRESS,
+    ];
+    if (!reschedulableStatuses.includes(booking.status)) {
         throw new AppError(
             status.BAD_REQUEST,
             "Only upcoming bookings can have a reschedule or cancellation requested.",

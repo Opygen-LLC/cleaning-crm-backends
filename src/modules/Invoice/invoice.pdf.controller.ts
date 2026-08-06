@@ -28,7 +28,7 @@ export const downloadInvoicePDF = catchAsync(async (req: Request, res: Response)
     // guessable and would leak other clients' invoices.
     if (req.portalClient) {
         const owned = await prisma.invoice.findFirst({
-            where: { id, booking: { clientId: req.portalClient.id } },
+            where: { id: id as string, booking: { clientId: req.portalClient.id } },
             select: { id: true },
         });
         if (!owned) {

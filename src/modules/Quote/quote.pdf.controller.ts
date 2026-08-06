@@ -23,7 +23,7 @@ export const downloadQuotePDF = catchAsync(async (req: Request, res: Response) =
 
     if (req.portalClient) {
         const owned = await prisma.quote.findFirst({
-            where: { id, clientId: req.portalClient.id },
+            where: { id: id as string, clientId: req.portalClient.id },
             select: { id: true },
         });
         if (!owned) {

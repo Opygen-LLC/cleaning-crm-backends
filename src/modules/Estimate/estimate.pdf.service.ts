@@ -26,13 +26,13 @@ export const generateEstimatePDFBuffer = async (estimateId: string): Promise<Buf
         lineItems: estimate.lineItems.map((li) => ({
             description: li.description,
             quantity: li.quantity,
-            unitPrice: li.unitPrice,
-            total: li.total,
+            unitPrice: li.unitPrice.toString(),
+            total: li.total.toString(),
         })),
-        subtotal: estimate.subtotal,
-        taxRate: estimate.taxRate,
-        taxAmount: estimate.tax,
-        total: estimate.total,
+        subtotal: estimate.subtotal.toString(),
+        taxRate: estimate.taxRate.toString(),
+        taxAmount: estimate.tax.toString(),
+        total: estimate.total.toString(),
         notes: estimate.notes,
     });
 };
