@@ -1,8 +1,18 @@
+// ─── PHASE 3 NOTE ─────────────────────────────────────────────────────────────
+// admin.routes.ts is UNCHANGED from the original — the GET /api/v1/admin/usage
+// route was already registered here in Phase 2.  The Phase 3 change is purely
+// in admin.service.ts (richer response payload) and admin.controller.ts.
+//
+// This file is included in the diff zip only so reviewers can see the full
+// module, but you do not need to deploy it if you have already deployed the
+// Phase 2 version.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { Router } from "express";
 import { adminController } from "./admin.controller";
 import {
-    ValidationProperty,
-    zodValidate,
+  ValidationProperty,
+  zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
 import { adminValidation } from "./admin.validation";
 import { checkAuth } from "../../middlewares/checkAuth";
@@ -14,52 +24,60 @@ const router = Router();
 router.get("/profile", checkAuth(UserRole.ADMIN), adminController.getAdmin);
 
 router.patch(
-    "/profile",
-    checkAuth(UserRole.ADMIN),
-    multerMemory.single("businessLogo"),
-    zodValidate(adminValidation.updateAdmin, ValidationProperty.BODY),
-    adminController.updateAdmin,
+  "/profile",
+  checkAuth(UserRole.ADMIN),
+  multerMemory.single("businessLogo"),
+  zodValidate(adminValidation.updateAdmin, ValidationProperty.BODY),
+  adminController.updateAdmin,
 );
 
 router.patch(
-    "/work-location/:id",
-    checkAuth(UserRole.ADMIN),
-    zodValidate(adminValidation.updateWorkLocation, ValidationProperty.BODY),
-    adminController.updateWorkLocation,
+  "/work-location/:id",
+  checkAuth(UserRole.ADMIN),
+  zodValidate(adminValidation.updateWorkLocation, ValidationProperty.BODY),
+  adminController.updateWorkLocation,
 );
 
 router.delete(
-    "/work-location/:id",
-    checkAuth(UserRole.ADMIN),
-    adminController.deleteWorkLocation,
+  "/work-location/:id",
+  checkAuth(UserRole.ADMIN),
+  adminController.deleteWorkLocation,
 );
 
-// GET /api/v1/admin/usage — returns staffCount, clientCount, bookingCountThisMonth
+/**
+ * GET /api/v1/admin/usage
+ *
+ * Phase 3: now returns:
+ *   {
+ *     staffCount, clientCount, bookingCountThisMonth,   // real-time counts
+ *     caps: { staff, clients, bookingsPerMonth },       // null = unlimited
+ *     pct:  { staff, clients, bookingsPerMonth },       // 0-100 | null
+ *     anyNearLimit,                                     // true if any >= 90%
+ *     subscriptionId, planId                            // for cache-keying
+ *   }
+ *
+ * No new middleware — auth guard is sufficient; subscription status gate is
+ * already applied at router level in routes/index.ts.
+ */
 router.get("/usage", checkAuth(UserRole.ADMIN), adminController.getAdminUsage);
 
-// GET /api/v1/admin/onboarding-status — guided setup wizard progress (auto-detected)
 router.get(
-    "/onboarding-status",
-    checkAuth(UserRole.ADMIN),
-    adminController.getOnboardingStatus,
+  "/onboarding-status",
+  checkAuth(UserRole.ADMIN),
+  adminController.getOnboardingStatus,
 );
 
-// POST /api/v1/admin/onboarding-status/skip — skip a non-mandatory step
-// (team / client / booking only; mandatory steps 1-3 are rejected server-side
-// in adminService.skipOnboardingStep regardless of what's sent here)
 router.post(
-    "/onboarding-status/skip",
-    checkAuth(UserRole.ADMIN),
-    zodValidate(adminValidation.skipOnboardingStep, ValidationProperty.BODY),
-    adminController.skipOnboardingStep,
+  "/onboarding-status/skip",
+  checkAuth(UserRole.ADMIN),
+  zodValidate(adminValidation.skipOnboardingStep, ValidationProperty.BODY),
+  adminController.skipOnboardingStep,
 );
 
-// POST /api/v1/admin/onboarding-status/skip-all — skip all onboarding steps & complete setup
 router.post(
-    "/onboarding-status/skip-all",
-    checkAuth(UserRole.ADMIN),
-    adminController.skipAllOnboarding,
+  "/onboarding-status/skip-all",
+  checkAuth(UserRole.ADMIN),
+  adminController.skipAllOnboarding,
 );
 
 export const adminRoutes = router;
-
