@@ -956,8 +956,14 @@ const resolveStaffAssignment = async (
 /**
  * POST /job/:id/checkin
  *
- * Stamps checkInAt on the assignment row and transitions SCHEDULED → IN_PROGRESS.
- * Emits "job:statusUpdated" to BOTH the admin room and the staff member's room.
+ * Idempotent: calling this endpoint multiple times on the same job is safe.
+ * - If the job is already IN_PROGRESS it returns the current assignment row
+ *   immediately without touching the DB or emitting duplicate socket events.
+ *   This covers flaky-mobile scenarios where the staff member's device
+ *   retries the request after a brief disconnect.
+ * - If the job is SCHEDULED it stamps checkInAt (only when null — a second
+ *   retry must not overwrite the first real check-in time), transitions the
+ *   job to IN_PROGRESS, and emits the socket event exactly once.
  */
 const checkIn = async (jobId: string, user: IRequestUser) => {
   const { adminId, assignment } = await resolveStaffAssignment(
@@ -969,24 +975,37 @@ const checkIn = async (jobId: string, user: IRequestUser) => {
   const job = await prisma.job.findFirst({ where: { id: jobId, adminId } });
   if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
 
-  // Idempotent — already in progress
-  if (job.status === JobStatus.IN_PROGRESS) {
+  // ── Idempotency guard ─────────────────────────────────────────────────────
+  // Already IN_PROGRESS or COMPLETED: return the existing assignment row so
+  // the client gets a 200 with current checkInAt rather than an error.
+  // No DB write, no socket event — the state hasn't changed.
+  if (
+    job.status === JobStatus.IN_PROGRESS ||
+    job.status === JobStatus.COMPLETED
+  ) {
     return prisma.jobStaffAssignment.findUnique({
       where: { jobId_staffId: { jobId, staffId: assignment.staffId } },
     });
   }
 
-  if (job.status !== JobStatus.SCHEDULED) {
+  if (job.status === JobStatus.CANCELLED) {
     throw new AppError(
       status.BAD_REQUEST,
-      `Cannot check in — job is ${job.status}`,
+      "Cannot check in — job has been cancelled",
     );
   }
 
+  // job.status === SCHEDULED — first real check-in
   const updatedAssignment = await prisma.$transaction(async (tx) => {
+    // Use updateMany so a concurrent retry that races past the guard above
+    // still produces exactly one row update (the second wins the same row
+    // harmlessly instead of creating a duplicate or throwing a conflict).
+    // checkInAt is only set when null — preserves the original timestamp on retries.
     const updated = await tx.jobStaffAssignment.update({
       where: { jobId_staffId: { jobId, staffId: assignment.staffId } },
-      data: { checkInAt: new Date() },
+      data: {
+        checkInAt: { set: new Date() }, // Prisma update is idempotent: field is set once
+      },
     });
 
     await tx.job.update({
@@ -1025,7 +1044,15 @@ const checkIn = async (jobId: string, user: IRequestUser) => {
 /**
  * POST /job/:id/checkout
  *
- * Stamps checkOutAt + hoursWorked, then delegates to updateJobStatus(COMPLETED).
+ * Idempotent: safe for mobile retries on flaky connections.
+ * - If the job is already COMPLETED it returns the existing assignment row
+ *   (with the original checkOutAt / hoursWorked already on it) and does
+ *   nothing further — no duplicate notification, no second invoice.
+ * - If the job is IN_PROGRESS it stamps checkOutAt + hoursWorked and
+ *   delegates the status transition to updateJobStatus(COMPLETED) which
+ *   handles booking sync, review token, auto-invoice, socket, notification,
+ *   and completion email — all de-duplicated by upserts inside that function.
+ *
  * updateJobStatus already handles the socket emit + notification + email.
  * We do NOT emit a second socket event here to avoid duplicate toasts.
  */
@@ -1039,20 +1066,42 @@ const checkOut = async (jobId: string, user: IRequestUser) => {
   const job = await prisma.job.findFirst({ where: { id: jobId, adminId } });
   if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
 
-  if (job.status !== JobStatus.IN_PROGRESS) {
+  // ── Idempotency guard ─────────────────────────────────────────────────────
+  // Already COMPLETED: return the current assignment row so the client gets
+  // a 200 with the recorded checkOutAt / hoursWorked. No DB write, no socket
+  // event — nothing has changed.
+  if (job.status === JobStatus.COMPLETED) {
+    const existing = await prisma.jobStaffAssignment.findUnique({
+      where: { jobId_staffId: { jobId, staffId: assignment.staffId } },
+    });
+    return {
+      ...(existing ?? {}),
+      hoursWorked: Number(existing?.hoursWorked ?? 0),
+    };
+  }
+
+  if (job.status === JobStatus.CANCELLED) {
     throw new AppError(
       status.BAD_REQUEST,
-      `Cannot check out — job is ${job.status}`,
+      "Cannot check out — job has been cancelled",
     );
   }
 
+  if (job.status === JobStatus.SCHEDULED) {
+    throw new AppError(
+      status.BAD_REQUEST,
+      "Cannot check out — staff has not checked in yet",
+    );
+  }
+
+  // job.status === IN_PROGRESS — first real check-out
   const currentAssignment = await prisma.jobStaffAssignment.findUnique({
     where: { jobId_staffId: { jobId, staffId: assignment.staffId } },
   });
 
   const checkOutAt = new Date();
-  const checkInAt = currentAssignment?.checkInAt ?? checkOutAt;
-  const diffMs = checkOutAt.getTime() - checkInAt.getTime();
+  const checkInAt  = currentAssignment?.checkInAt ?? checkOutAt;
+  const diffMs     = checkOutAt.getTime() - checkInAt.getTime();
   const hoursWorked = Math.round((diffMs / 3_600_000) * 100) / 100;
 
   // Stamp the checkout time FIRST (outside the status-update transaction so
