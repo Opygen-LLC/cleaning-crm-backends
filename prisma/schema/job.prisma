@@ -34,6 +34,12 @@ model Job {
   @@index([adminId, status])
   @@index([clientId])
   @@index([scheduledDate])
+  // PERF FIX (Phase 3.3): generateJobRef() looks up this admin's most
+  // recent job via `where: { adminId }, orderBy: { createdAt: "desc" }`
+  // on every job creation. Without this, that query (and the STAFF/admin
+  // job-history-by-recency access patterns generally) forces a sort over
+  // every row for the admin instead of an index-backed lookup.
+  @@index([adminId, createdAt])
   @@map("job")
 }
 
@@ -49,5 +55,12 @@ model JobStaffAssignment {
   staff       StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
   @@id([jobId, staffId])
+  // PERF FIX (Phase 3.2): the composite primary key (jobId, staffId) is
+  // jobId-first, so it only helps lookups that *start* with jobId. Every
+  // "jobs for this staff member" query (getAllJobs' STAFF branch above,
+  // plus dashboard.service.ts's getStaffDashboard) filters by staffId
+  // alone, which couldn't use that PK and forced a full scan of this
+  // table. This index makes those lookups index-backed.
+  @@index([staffId])
   @@map("job_staff_assignment")
 }

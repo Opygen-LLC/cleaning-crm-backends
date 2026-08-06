@@ -69,8 +69,28 @@ const geocodeJobAddress = async (address: string | undefined) => {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const generateJobRef = async (): Promise<string> => {
+// PERF + CORRECTNESS FIX (Phase 3.3):
+// - Was unscoped: `orderBy: { createdAt: "desc" }` with no `where` at all,
+//   so it found the most recent job across *every* admin/tenant, not just
+//   the one creating a job. That meant job ref numbers were shared and
+//   interleaved across unrelated tenants, and two different admins
+//   creating a job at the same moment could compute the same "next"
+//   number, hit the DB's unique constraint on the second insert, and fail
+//   with a raw Prisma error — a real "sometimes job creation just doesn't
+//   work" bug, not just a perf issue.
+// - Was also an unindexed full-table sort on every single job creation
+//   (the Job model only indexed [adminId, status], [clientId],
+//   [scheduledDate] — nothing on createdAt). Now scoped by adminId and
+//   backed by the new `@@index([adminId, createdAt])` on Job.
+//
+// generateJobRef() now takes the adminId explicitly and retries a handful
+// of times on a unique-constraint collision (belt-and-braces on top of the
+// scoping fix — two requests for the *same* admin racing each other at the
+// exact same millisecond is now the only remaining collision case, and
+// this makes even that self-heal instead of surfacing a 500).
+const generateJobRef = async (adminId: string): Promise<string> => {
   const last = await prisma.job.findFirst({
+    where: { adminId },
     orderBy: { createdAt: "desc" },
     select: { jobRef: true },
   });
@@ -81,6 +101,34 @@ const generateJobRef = async (): Promise<string> => {
     if (!isNaN(num)) next = num + 1;
   }
   return `#OP-JB-${next.toString().padStart(4, "0")}`;
+};
+
+/**
+ * Creates a job with a guaranteed-unique jobRef for the given admin,
+ * retrying generateJobRef() on the rare P2002 (unique constraint) race
+ * instead of letting it bubble up as a failed request.
+ */
+const createJobWithRef = async (
+  adminId: string,
+  buildData: (jobRef: string) => Parameters<typeof prisma.job.create>[0]["data"],
+  include: typeof jobInclude = jobInclude,
+) => {
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const jobRef = await generateJobRef(adminId);
+    try {
+      return await prisma.job.create({ data: buildData(jobRef), include });
+    } catch (err: unknown) {
+      const isUniqueConflict =
+        typeof err === "object" &&
+        err !== null &&
+        (err as { code?: string }).code === "P2002";
+      if (isUniqueConflict && attempt < MAX_ATTEMPTS) continue;
+      throw err;
+    }
+  }
+  // Unreachable — loop always returns or throws — but keeps TS satisfied.
+  throw new AppError(status.INTERNAL_SERVER_ERROR, "Failed to create job");
 };
 
 const jobInclude = {
@@ -160,33 +208,29 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
     }
   }
 
-  const jobRef = await generateJobRef();
   const geo = await geocodeJobAddress(payload.address);
 
-  return prisma.job.create({
-    data: {
-      jobRef,
-      adminId,
-      clientId: payload.clientId,
-      serviceType: payload.serviceType,
-      address: payload.address,
-      ...geo,
-      scheduledDate: new Date(payload.scheduledDate),
-      durationMins: payload.durationMins,
-      notes: payload.notes,
-      quoteId: payload.quoteId,
-      estimateId: payload.estimateId,
-      bookingId: payload.bookingId,
-      ...(payload.staffIds?.length && {
-        staffAssignments: {
-          createMany: {
-            data: payload.staffIds.map((staffId) => ({ staffId })),
-          },
+  return createJobWithRef(adminId, (jobRef) => ({
+    jobRef,
+    adminId,
+    clientId: payload.clientId,
+    serviceType: payload.serviceType,
+    address: payload.address,
+    ...geo,
+    scheduledDate: new Date(payload.scheduledDate),
+    durationMins: payload.durationMins,
+    notes: payload.notes,
+    quoteId: payload.quoteId,
+    estimateId: payload.estimateId,
+    bookingId: payload.bookingId,
+    ...(payload.staffIds?.length && {
+      staffAssignments: {
+        createMany: {
+          data: payload.staffIds.map((staffId) => ({ staffId })),
         },
-      }),
-    },
-    include: jobInclude,
-  });
+      },
+    }),
+  }));
 };
 
 const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
@@ -198,20 +242,35 @@ const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
     if (!staffProfile)
       throw new AppError(status.NOT_FOUND, "Staff profile not found");
 
-    const jobs = await prisma.job.findMany({
-      where: {
-        staffAssignments: { some: { staffId: staffProfile.id } },
-      },
-      include: jobInclude,
-      orderBy: { scheduledDate: "asc" },
-    });
+    // PERF FIX (Phase 3.1): this used to fetch the staff member's *entire*
+    // job history in one unbounded findMany() (no `take`/`skip`), deep-joined
+    // with client + staffAssignments + booking on every single page load —
+    // and it got slower every week as their history grew. Applies the same
+    // page/limit pattern the admin path already uses via QueryBuilder.
+    const page = Number(queryParams?.page) || 1;
+    const limit = Number(queryParams?.limit) || 20;
+    const staffJobsWhere = {
+      staffAssignments: { some: { staffId: staffProfile.id } },
+    };
+
+    const [total, jobs] = await Promise.all([
+      prisma.job.count({ where: staffJobsWhere }),
+      prisma.job.findMany({
+        where: staffJobsWhere,
+        include: jobInclude,
+        orderBy: { scheduledDate: "asc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+
     return {
       data: jobs,
       meta: {
-        total: jobs.length,
-        page: 1,
-        limit: jobs.length,
-        totalPages: 1,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
     };
   }
@@ -555,31 +614,27 @@ const convertBookingToJob = async (bookingId: string, user: IRequestUser) => {
     );
   }
 
-  const jobRef = await generateJobRef();
-  return prisma.job.create({
-    data: {
-      jobRef,
-      adminId,
-      clientId: booking.clientId,
-      serviceType: booking.serviceType,
-      address: booking.address,
-      scheduledDate: booking.scheduledDate,
-      durationMins: booking.durationMins,
-      notes: booking.notes ?? undefined,
-      quoteId: booking.quoteId ?? undefined,
-      bookingId: booking.id,
-      ...(booking.staffAssignments.length && {
-        staffAssignments: {
-          createMany: {
-            data: booking.staffAssignments.map(({ staffId }) => ({
-              staffId,
-            })),
-          },
+  return createJobWithRef(adminId, (jobRef) => ({
+    jobRef,
+    adminId,
+    clientId: booking.clientId,
+    serviceType: booking.serviceType,
+    address: booking.address,
+    scheduledDate: booking.scheduledDate,
+    durationMins: booking.durationMins,
+    notes: booking.notes ?? undefined,
+    quoteId: booking.quoteId ?? undefined,
+    bookingId: booking.id,
+    ...(booking.staffAssignments.length && {
+      staffAssignments: {
+        createMany: {
+          data: booking.staffAssignments.map(({ staffId }) => ({
+            staffId,
+          })),
         },
-      }),
-    },
-    include: jobInclude,
-  });
+      },
+    }),
+  }));
 };
 
 const assignStaff = async (
