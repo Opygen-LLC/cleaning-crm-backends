@@ -34,6 +34,16 @@ const GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json";
 const MAPBOX_GEOCODE_URL =
     "https://api.mapbox.com/geocoding/v5/mapbox.places";
 
+// PERF FIX (Phase 5.1): neither provider call had a timeout, so a slow or
+// hanging geocoding provider could stall a job/client create-or-update
+// request indefinitely — the request would just sit there until the
+// provider eventually responded (or the client gave up). Geocoding is
+// explicitly "best effort" per the design goals above, so it must never be
+// allowed to block longer than this. 4s is generous for a geocoding API
+// under normal conditions but short enough that a slow provider degrades
+// gracefully instead of stalling the request.
+const GEOCODE_TIMEOUT_MS = 4_000;
+
 const isConfigured = (): boolean => {
     if (GEOCODING_PROVIDER === "google") return Boolean(GOOGLE_MAPS_API_KEY);
     if (GEOCODING_PROVIDER === "mapbox") return Boolean(MAPBOX_ACCESS_TOKEN);
@@ -47,7 +57,9 @@ const geocodeWithGoogle = async (
         address,
     )}&key=${GOOGLE_MAPS_API_KEY}`;
 
-    const res = await fetch(url);
+    // PERF FIX (Phase 5.1): bounded with AbortSignal.timeout so a slow/hung
+    // provider can never block the caller past GEOCODE_TIMEOUT_MS.
+    const res = await fetch(url, { signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) });
     if (!res.ok) {
         throw new Error(`Google geocoding HTTP ${res.status}`);
     }
@@ -80,7 +92,9 @@ const geocodeWithMapbox = async (
         address,
     )}.json?access_token=${MAPBOX_ACCESS_TOKEN}&limit=1`;
 
-    const res = await fetch(url);
+    // PERF FIX (Phase 5.1): bounded with AbortSignal.timeout so a slow/hung
+    // provider can never block the caller past GEOCODE_TIMEOUT_MS.
+    const res = await fetch(url, { signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) });
     if (!res.ok) {
         throw new Error(`Mapbox geocoding HTTP ${res.status}`);
     }

@@ -4,6 +4,14 @@ import { prisma } from "../lib/prisma/prisma";
 import { BETTER_AUTH_URL, FRONTEND_URL } from "./ENV";
 import logger from "../lib/logger";
 
+// CLEANUP (audit "Other Small Things"): this file used to log every
+// connection/join/disconnect event via plain console.log/warn/error, which
+// bypasses the app's existing winston setup (log level control, daily
+// rotating file transport, etc.) and spams stdout under real traffic.
+// Routed through the shared `logger` instead — connection lifecycle events
+// go to `debug` (only visible when explicitly enabled), rejections/errors
+// stay visible at `warn`/`error` in every environment.
+
 // Singleton — exported so other modules can emit events (e.g. job status changes)
 let io: SocketIOServer;
 
@@ -29,7 +37,7 @@ const setUpSocketIO = (server: Server): SocketIOServer => {
     });
 
     io.on("connection", (socket) => {
-        logger.debug("[Socket.IO] New client connected");
+        logger.debug("[Socket.IO] A new client connected");
 
         /**
          * FIX: joinAdminRoom now requires a valid, unexpired session token and
@@ -71,7 +79,7 @@ const setUpSocketIO = (server: Server): SocketIOServer => {
                         );
                     }
                 } catch (err) {
-                    logger.error(`[Socket.IO] joinAdminRoom error: ${err}`);
+                    logger.error(`[Socket.IO] joinAdminRoom error: ${String(err)}`);
                 }
             },
         );
@@ -120,7 +128,7 @@ const setUpSocketIO = (server: Server): SocketIOServer => {
                         );
                     }
                 } catch (err) {
-                    logger.error(`[Socket.IO] joinStaffRoom error: ${err}`);
+                    logger.error(`[Socket.IO] joinStaffRoom error: ${String(err)}`);
                 }
             },
         );
@@ -133,13 +141,13 @@ const setUpSocketIO = (server: Server): SocketIOServer => {
 
         // Handle disconnect
         socket.on("disconnect", () => {
-            logger.debug("[Socket.IO] Client disconnected");
+            logger.debug("[Socket.IO] A client disconnected");
         });
 
         // Custom event example
         socket.on("joinRoom", (room) => {
             socket.join(room);
-            logger.debug(`[Socket.IO] User joined room: ${room}`);
+            logger.debug(`[Socket.IO] Socket joined room: ${room}`);
         });
 
         // Example: send a message to a specific room

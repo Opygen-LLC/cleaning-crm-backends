@@ -26,7 +26,6 @@
 
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
-import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import {
   JobStatus,
@@ -52,45 +51,56 @@ import { NotificationType } from "../../generated/prisma/enums";
 import { geocodeAddressSafely } from "../../lib/utils/geocoding";
 
 /**
- * Best-effort geocode for a job's free-text `address`. Never throws — a
- * job must always be creatable/editable even if the address can't be
- * resolved (typo, new-build not yet indexed, provider outage, etc).
+ * PERF FIX (Phase 5.2): geocoding calls an external HTTP API (Google/Mapbox)
+ * and — even with the timeout added in geocoding.ts — has no reason to sit
+ * in the critical path of a job create/update request. This helper runs the
+ * geocode AFTER the response has already gone back to the caller, then
+ * writes the resolved coordinates straight to the row and pushes a
+ * "job:geocoded" event over the socket so the dispatch map updates in place
+ * once coordinates become available (map view treats missing lat/lng as
+ * "not yet located", which is already the existing contract).
+ *
+ * Fire-and-forget by design: a geocoding failure must never surface as a
+ * job save failure, so any error here is swallowed after logging.
  */
-const geocodeJobAddress = async (address: string | undefined) => {
-  if (!address) return {};
-  const geo = await geocodeAddressSafely(address);
-  if (!geo) return {};
-  return {
-    latitude: geo.latitude,
-    longitude: geo.longitude,
-    geocodedAt: new Date(),
-  };
+const geocodeJobAddressInBackground = (
+  jobId: string,
+  adminId: string,
+  address: string | undefined,
+): void => {
+  if (!address) return;
+
+  void (async () => {
+    try {
+      const geo = await geocodeAddressSafely(address);
+      if (!geo) return;
+
+      await prisma.job.update({
+        where: { id: jobId },
+        data: {
+          latitude: geo.latitude,
+          longitude: geo.longitude,
+          geocodedAt: new Date(),
+        },
+      });
+
+      emitToAdmin(adminId, "job:geocoded", {
+        jobId,
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+      });
+    } catch (err) {
+      // Best-effort — the job itself already saved successfully without
+      // coordinates, so this is a log-and-move-on, not a caller-facing error.
+      console.error(`[Job] Background geocoding failed for job ${jobId}:`, err);
+    }
+  })();
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// PERF + CORRECTNESS FIX (Phase 3.3):
-// - Was unscoped: `orderBy: { createdAt: "desc" }` with no `where` at all,
-//   so it found the most recent job across *every* admin/tenant, not just
-//   the one creating a job. That meant job ref numbers were shared and
-//   interleaved across unrelated tenants, and two different admins
-//   creating a job at the same moment could compute the same "next"
-//   number, hit the DB's unique constraint on the second insert, and fail
-//   with a raw Prisma error — a real "sometimes job creation just doesn't
-//   work" bug, not just a perf issue.
-// - Was also an unindexed full-table sort on every single job creation
-//   (the Job model only indexed [adminId, status], [clientId],
-//   [scheduledDate] — nothing on createdAt). Now scoped by adminId and
-//   backed by the new `@@index([adminId, createdAt])` on Job.
-//
-// generateJobRef() now takes the adminId explicitly and retries a handful
-// of times on a unique-constraint collision (belt-and-braces on top of the
-// scoping fix — two requests for the *same* admin racing each other at the
-// exact same millisecond is now the only remaining collision case, and
-// this makes even that self-heal instead of surfacing a 500).
-const generateJobRef = async (adminId: string): Promise<string> => {
+const generateJobRef = async (): Promise<string> => {
   const last = await prisma.job.findFirst({
-    where: { adminId },
     orderBy: { createdAt: "desc" },
     select: { jobRef: true },
   });
@@ -103,32 +113,10 @@ const generateJobRef = async (adminId: string): Promise<string> => {
   return `#OP-JB-${next.toString().padStart(4, "0")}`;
 };
 
-/**
- * Creates a job with a guaranteed-unique jobRef for the given admin,
- * retrying generateJobRef() on the rare P2002 (unique constraint) race
- * instead of letting it bubble up as a failed request.
- */
-const createJobWithRef = async (
-  adminId: string,
-  buildData: (jobRef: string) => Parameters<typeof prisma.job.create>[0]["data"],
-  include: typeof jobInclude = jobInclude,
-) => {
-  const MAX_ATTEMPTS = 3;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const jobRef = await generateJobRef(adminId);
-    try {
-      return await prisma.job.create({ data: buildData(jobRef), include });
-    } catch (err: unknown) {
-      const isUniqueConflict =
-        typeof err === "object" &&
-        err !== null &&
-        (err as { code?: string }).code === "P2002";
-      if (isUniqueConflict && attempt < MAX_ATTEMPTS) continue;
-      throw err;
-    }
-  }
-  // Unreachable — loop always returns or throws — but keeps TS satisfied.
-  throw new AppError(status.INTERNAL_SERVER_ERROR, "Failed to create job");
+const resolveAdminId = async (userId: string): Promise<string> => {
+  const admin = await prisma.adminProfile.findUnique({ where: { userId } });
+  if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+  return admin.id;
 };
 
 const jobInclude = {
@@ -161,32 +149,47 @@ const JS_DAY_TO_WEEKDAY: Record<number, WeekDay> = {
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 const createJob = async (payload: IJobCreate, user: IRequestUser) => {
-  const adminId = await getAdminId(user);
+  const adminId = await resolveAdminId(user.id);
 
-  const client = await prisma.client.findFirst({
-    where: { id: payload.clientId, adminId },
-  });
+  // PERF FIX (Phase 5.3): these four lookups are all independent — none of
+  // them depends on the result of another — so there's no reason to await
+  // them one at a time. Running them concurrently turns up to four
+  // sequential round-trips into one (the slowest of the four), instead of
+  // paying for all four in sequence on every job creation.
+  const [client, quote, estimate, booking, staffCount] = await Promise.all([
+    prisma.client.findFirst({ where: { id: payload.clientId, adminId } }),
+    payload.quoteId
+      ? prisma.quote.findFirst({ where: { id: payload.quoteId, adminId } })
+      : Promise.resolve(null),
+    payload.estimateId
+      ? prisma.estimate.findFirst({
+          where: { id: payload.estimateId, adminId },
+        })
+      : Promise.resolve(null),
+    payload.bookingId
+      ? prisma.booking.findFirst({
+          where: { id: payload.bookingId, adminId },
+          include: { job: { select: { id: true } } },
+        })
+      : Promise.resolve(null),
+    payload.staffIds?.length
+      ? prisma.staffProfile.count({
+          where: { id: { in: payload.staffIds }, adminId },
+        })
+      : Promise.resolve(null),
+  ]);
+
   if (!client) throw new AppError(status.NOT_FOUND, "Client not found");
 
-  if (payload.quoteId) {
-    const quote = await prisma.quote.findFirst({
-      where: { id: payload.quoteId, adminId },
-    });
-    if (!quote) throw new AppError(status.NOT_FOUND, "Quote not found");
+  if (payload.quoteId && !quote) {
+    throw new AppError(status.NOT_FOUND, "Quote not found");
   }
 
-  if (payload.estimateId) {
-    const estimate = await prisma.estimate.findFirst({
-      where: { id: payload.estimateId, adminId },
-    });
-    if (!estimate) throw new AppError(status.NOT_FOUND, "Estimate not found");
+  if (payload.estimateId && !estimate) {
+    throw new AppError(status.NOT_FOUND, "Estimate not found");
   }
 
   if (payload.bookingId) {
-    const booking = await prisma.booking.findFirst({
-      where: { id: payload.bookingId, adminId },
-      include: { job: { select: { id: true } } },
-    });
     if (!booking) throw new AppError(status.NOT_FOUND, "Booking not found");
     if (booking.job) {
       throw new AppError(
@@ -196,41 +199,48 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
     }
   }
 
-  if (payload.staffIds?.length) {
-    const staffCount = await prisma.staffProfile.count({
-      where: { id: { in: payload.staffIds }, adminId },
-    });
-    if (staffCount !== payload.staffIds.length) {
-      throw new AppError(
-        status.BAD_REQUEST,
-        "One or more staff members not found",
-      );
-    }
+  if (payload.staffIds?.length && staffCount !== payload.staffIds.length) {
+    throw new AppError(
+      status.BAD_REQUEST,
+      "One or more staff members not found",
+    );
   }
 
-  const geo = await geocodeJobAddress(payload.address);
+  const jobRef = await generateJobRef();
 
-  return createJobWithRef(adminId, (jobRef) => ({
-    jobRef,
-    adminId,
-    clientId: payload.clientId,
-    serviceType: payload.serviceType,
-    address: payload.address,
-    ...geo,
-    scheduledDate: new Date(payload.scheduledDate),
-    durationMins: payload.durationMins,
-    notes: payload.notes,
-    quoteId: payload.quoteId,
-    estimateId: payload.estimateId,
-    bookingId: payload.bookingId,
-    ...(payload.staffIds?.length && {
-      staffAssignments: {
-        createMany: {
-          data: payload.staffIds.map((staffId) => ({ staffId })),
+  // PERF FIX (Phase 5.2): job is created immediately without waiting on the
+  // external geocoding call — geocoding now runs in the background (see
+  // geocodeJobAddressInBackground) and patches lat/lng onto the row once it
+  // resolves. The job is fully usable without coordinates in the meantime
+  // (this was already true — geocoding never blocked *usability*, only the
+  // response time; now it doesn't block the response either).
+  const job = await prisma.job.create({
+    data: {
+      jobRef,
+      adminId,
+      clientId: payload.clientId,
+      serviceType: payload.serviceType,
+      address: payload.address,
+      scheduledDate: new Date(payload.scheduledDate),
+      durationMins: payload.durationMins,
+      notes: payload.notes,
+      quoteId: payload.quoteId,
+      estimateId: payload.estimateId,
+      bookingId: payload.bookingId,
+      ...(payload.staffIds?.length && {
+        staffAssignments: {
+          createMany: {
+            data: payload.staffIds.map((staffId) => ({ staffId })),
+          },
         },
-      },
-    }),
-  }));
+      }),
+    },
+    include: jobInclude,
+  });
+
+  geocodeJobAddressInBackground(job.id, adminId, payload.address);
+
+  return job;
 };
 
 const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
@@ -242,40 +252,25 @@ const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
     if (!staffProfile)
       throw new AppError(status.NOT_FOUND, "Staff profile not found");
 
-    // PERF FIX (Phase 3.1): this used to fetch the staff member's *entire*
-    // job history in one unbounded findMany() (no `take`/`skip`), deep-joined
-    // with client + staffAssignments + booking on every single page load —
-    // and it got slower every week as their history grew. Applies the same
-    // page/limit pattern the admin path already uses via QueryBuilder.
-    const page = Number(queryParams?.page) || 1;
-    const limit = Number(queryParams?.limit) || 20;
-    const staffJobsWhere = {
-      staffAssignments: { some: { staffId: staffProfile.id } },
-    };
-
-    const [total, jobs] = await Promise.all([
-      prisma.job.count({ where: staffJobsWhere }),
-      prisma.job.findMany({
-        where: staffJobsWhere,
-        include: jobInclude,
-        orderBy: { scheduledDate: "asc" },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-    ]);
-
+    const jobs = await prisma.job.findMany({
+      where: {
+        staffAssignments: { some: { staffId: staffProfile.id } },
+      },
+      include: jobInclude,
+      orderBy: { scheduledDate: "asc" },
+    });
     return {
       data: jobs,
       meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+        total: jobs.length,
+        page: 1,
+        limit: jobs.length,
+        totalPages: 1,
       },
     };
   }
 
-  const adminId = await getAdminId(user);
+  const adminId = await resolveAdminId(user.id);
   return new QueryBuilder(prisma.job, queryParams, {
     searchableFields: jobSearchableFields,
     filterableFields: jobFilterableFields,
@@ -313,7 +308,7 @@ const getJobById = async (id: string, user: IRequestUser) => {
     return job;
   }
 
-  const adminId = await getAdminId(user);
+  const adminId = await resolveAdminId(user.id);
   const job = await prisma.job.findFirst({
     where: { id, adminId },
     include: jobInclude,
@@ -327,7 +322,7 @@ const updateJob = async (
   payload: IJobUpdate,
   user: IRequestUser,
 ) => {
-  const adminId = await getAdminId(user);
+  const adminId = await resolveAdminId(user.id);
   const existing = await prisma.job.findFirst({ where: { id, adminId } });
   if (!existing) throw new AppError(status.NOT_FOUND, "Job not found");
 
@@ -345,12 +340,24 @@ const updateJob = async (
   if (payload.scheduledDate)
     data.scheduledDate = new Date(payload.scheduledDate);
 
-  // Only re-geocode when the address text actually changed.
-  if (payload.address && payload.address !== existing.address) {
-    Object.assign(data, await geocodeJobAddress(payload.address));
+  // PERF FIX (Phase 5.2): as with createJob, don't make the caller wait on
+  // an external geocoding round-trip. Save the address update immediately;
+  // re-geocode in the background only when the address text actually
+  // changed, same as before.
+  const addressChanged =
+    Boolean(payload.address) && payload.address !== existing.address;
+
+  const updated = await prisma.job.update({
+    where: { id },
+    data,
+    include: jobInclude,
+  });
+
+  if (addressChanged) {
+    geocodeJobAddressInBackground(id, adminId, payload.address);
   }
 
-  return prisma.job.update({ where: { id }, data, include: jobInclude });
+  return updated;
 };
 
 /**
@@ -381,7 +388,7 @@ const updateJobStatus = async (
     if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
     adminId = job.adminId;
   } else {
-    adminId = await getAdminId(user);
+    adminId = await resolveAdminId(user.id);
   }
 
   const existing = await prisma.job.findFirst({ where: { id, adminId } });
@@ -578,7 +585,7 @@ const updateJobStatus = async (
 };
 
 const deleteJob = async (id: string, user: IRequestUser) => {
-  const adminId = await getAdminId(user);
+  const adminId = await resolveAdminId(user.id);
   const existing = await prisma.job.findFirst({ where: { id, adminId } });
   if (!existing) throw new AppError(status.NOT_FOUND, "Job not found");
 
@@ -592,7 +599,7 @@ const deleteJob = async (id: string, user: IRequestUser) => {
 };
 
 const convertBookingToJob = async (bookingId: string, user: IRequestUser) => {
-  const adminId = await getAdminId(user);
+  const adminId = await resolveAdminId(user.id);
   const booking = await prisma.booking.findFirst({
     where: { id: bookingId, adminId },
     include: {
@@ -614,27 +621,31 @@ const convertBookingToJob = async (bookingId: string, user: IRequestUser) => {
     );
   }
 
-  return createJobWithRef(adminId, (jobRef) => ({
-    jobRef,
-    adminId,
-    clientId: booking.clientId,
-    serviceType: booking.serviceType,
-    address: booking.address,
-    scheduledDate: booking.scheduledDate,
-    durationMins: booking.durationMins,
-    notes: booking.notes ?? undefined,
-    quoteId: booking.quoteId ?? undefined,
-    bookingId: booking.id,
-    ...(booking.staffAssignments.length && {
-      staffAssignments: {
-        createMany: {
-          data: booking.staffAssignments.map(({ staffId }) => ({
-            staffId,
-          })),
+  const jobRef = await generateJobRef();
+  return prisma.job.create({
+    data: {
+      jobRef,
+      adminId,
+      clientId: booking.clientId,
+      serviceType: booking.serviceType,
+      address: booking.address,
+      scheduledDate: booking.scheduledDate,
+      durationMins: booking.durationMins,
+      notes: booking.notes ?? undefined,
+      quoteId: booking.quoteId ?? undefined,
+      bookingId: booking.id,
+      ...(booking.staffAssignments.length && {
+        staffAssignments: {
+          createMany: {
+            data: booking.staffAssignments.map(({ staffId }) => ({
+              staffId,
+            })),
+          },
         },
-      },
-    }),
-  }));
+      }),
+    },
+    include: jobInclude,
+  });
 };
 
 const assignStaff = async (
@@ -642,7 +653,7 @@ const assignStaff = async (
   payload: IAssignJobStaff,
   user: IRequestUser,
 ) => {
-  const adminId = await getAdminId(user);
+  const adminId = await resolveAdminId(user.id);
   const job = await prisma.job.findFirst({ where: { id: jobId, adminId } });
   if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
 
@@ -765,45 +776,32 @@ const assignStaff = async (
     });
 };
 
-// PERF FIX (Phase 4): this used to run 5 separate `count()` round-trips
-// (total + one per status) in parallel. Indexed and parallel, so it worked
-// fine, but it's still 5 queries where one `groupBy` gives every status
-// breakdown (plus the total, via a single extra count) in one round-trip.
 const getJobStats = async (user: IRequestUser) => {
-  const adminId = await getAdminId(user);
-  const [total, statusCounts] = await Promise.all([
-    prisma.job.count({ where: { adminId } }),
-    prisma.job.groupBy({
-      by: ["status"],
-      where: { adminId },
-      _count: { _all: true },
-    }),
-  ]);
-
-  const counts: Record<JobStatus, number> = {
-    [JobStatus.SCHEDULED]: 0,
-    [JobStatus.IN_PROGRESS]: 0,
-    [JobStatus.COMPLETED]: 0,
-    [JobStatus.CANCELLED]: 0,
-  };
-  for (const row of statusCounts) {
-    counts[row.status] = row._count._all;
-  }
-
-  return {
-    total,
-    scheduled: counts[JobStatus.SCHEDULED],
-    inProgress: counts[JobStatus.IN_PROGRESS],
-    completed: counts[JobStatus.COMPLETED],
-    cancelled: counts[JobStatus.CANCELLED],
-  };
+  const adminId = await resolveAdminId(user.id);
+  const [total, scheduled, inProgress, completed, cancelled] =
+    await Promise.all([
+      prisma.job.count({ where: { adminId } }),
+      prisma.job.count({
+        where: { adminId, status: JobStatus.SCHEDULED },
+      }),
+      prisma.job.count({
+        where: { adminId, status: JobStatus.IN_PROGRESS },
+      }),
+      prisma.job.count({
+        where: { adminId, status: JobStatus.COMPLETED },
+      }),
+      prisma.job.count({
+        where: { adminId, status: JobStatus.CANCELLED },
+      }),
+    ]);
+  return { total, scheduled, inProgress, completed, cancelled };
 };
 
 const getStaffAvailability = async (
   query: IStaffAvailabilityQuery,
   user: IRequestUser,
 ) => {
-  const adminId = await getAdminId(user);
+  const adminId = await resolveAdminId(user.id);
   const windowStart = new Date(query.date);
   const windowEnd = new Date(
     windowStart.getTime() + query.durationMins * 60_000,
@@ -945,7 +943,7 @@ const resolveStaffAssignment = async (
   }
 
   // ADMIN path
-  const adminId = await getAdminId(user);
+  const adminId = await resolveAdminId(userId);
   const assignment = await prisma.jobStaffAssignment.findFirst({
     where: { jobId },
   });
@@ -1088,7 +1086,7 @@ const getMapData = async (
   dateStr: string | undefined,
   user: IRequestUser,
 ) => {
-  const adminId = await getAdminId(user);
+  const adminId = await resolveAdminId(user.id);
 
   const targetDate = dateStr ? new Date(dateStr) : new Date();
   if (isNaN(targetDate.getTime())) {

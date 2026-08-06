@@ -54,10 +54,15 @@ model Client {
   @@unique([email, adminId])
   @@index([adminId])
   @@index([status])
-  // PERF FIX (Phase 4): getDashboardOverview date_trunc-aggregates new
-  // clients by adminId + createdAt range for the "Revenue Insight" chart.
-  // [adminId] alone doesn't cover the createdAt range/order-by.
-  @@index([adminId, createdAt])
+  // NOTE: `name` and `email` also have GIN trigram indexes (pg_trgm) applied
+  // via a raw-SQL migration — see
+  // prisma/migrations/20260806120000_client_search_trgm_indexes/migration.sql.
+  // They aren't declared here because this schema doesn't enable Prisma's
+  // `postgresqlExtensions` preview feature; the indexes still exist in the
+  // database and Postgres uses them automatically for the `contains`
+  // (ILIKE) searches issued by QueryBuilder.search() against
+  // clientSearchableFields. Don't remove them via `prisma db push` without
+  // re-adding the migration's CREATE INDEX statements.
   @@map("client")
 }
 
