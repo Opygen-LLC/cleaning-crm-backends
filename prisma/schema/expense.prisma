@@ -17,5 +17,9 @@ model Expense {
 
   @@index([adminId, category])
   @@index([date])
+  // PERF FIX (Phase 4): getRevenuePage date_trunc-aggregates expenses by
+  // adminId + date range for the revenue/expense chart. Neither existing
+  // index covers an adminId-scoped date range scan.
+  @@index([adminId, date])
   @@map("expense")
 }

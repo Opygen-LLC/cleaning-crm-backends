@@ -42,5 +42,11 @@ model Invoice {
 
   @@index([adminId, status])
   @@index([dueDate])
+  // PERF FIX (Phase 4): getDashboardOverview / getRevenuePage both
+  // date_trunc-aggregate PAID invoices by adminId + paidDate range. The
+  // existing [adminId, status] index still helps filter to PAID, but the
+  // paidDate range/order-by isn't covered — this index lets that filter +
+  // range scan happen without touching status-mismatched rows at all.
+  @@index([adminId, status, paidDate])
   @@map("invoice")
 }

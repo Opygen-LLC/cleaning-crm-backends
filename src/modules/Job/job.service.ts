@@ -765,25 +765,38 @@ const assignStaff = async (
     });
 };
 
+// PERF FIX (Phase 4): this used to run 5 separate `count()` round-trips
+// (total + one per status) in parallel. Indexed and parallel, so it worked
+// fine, but it's still 5 queries where one `groupBy` gives every status
+// breakdown (plus the total, via a single extra count) in one round-trip.
 const getJobStats = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const [total, scheduled, inProgress, completed, cancelled] =
-    await Promise.all([
-      prisma.job.count({ where: { adminId } }),
-      prisma.job.count({
-        where: { adminId, status: JobStatus.SCHEDULED },
-      }),
-      prisma.job.count({
-        where: { adminId, status: JobStatus.IN_PROGRESS },
-      }),
-      prisma.job.count({
-        where: { adminId, status: JobStatus.COMPLETED },
-      }),
-      prisma.job.count({
-        where: { adminId, status: JobStatus.CANCELLED },
-      }),
-    ]);
-  return { total, scheduled, inProgress, completed, cancelled };
+  const [total, statusCounts] = await Promise.all([
+    prisma.job.count({ where: { adminId } }),
+    prisma.job.groupBy({
+      by: ["status"],
+      where: { adminId },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const counts: Record<JobStatus, number> = {
+    [JobStatus.SCHEDULED]: 0,
+    [JobStatus.IN_PROGRESS]: 0,
+    [JobStatus.COMPLETED]: 0,
+    [JobStatus.CANCELLED]: 0,
+  };
+  for (const row of statusCounts) {
+    counts[row.status] = row._count._all;
+  }
+
+  return {
+    total,
+    scheduled: counts[JobStatus.SCHEDULED],
+    inProgress: counts[JobStatus.IN_PROGRESS],
+    completed: counts[JobStatus.COMPLETED],
+    cancelled: counts[JobStatus.CANCELLED],
+  };
 };
 
 const getStaffAvailability = async (

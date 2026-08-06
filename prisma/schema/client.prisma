@@ -54,6 +54,10 @@ model Client {
   @@unique([email, adminId])
   @@index([adminId])
   @@index([status])
+  // PERF FIX (Phase 4): getDashboardOverview date_trunc-aggregates new
+  // clients by adminId + createdAt range for the "Revenue Insight" chart.
+  // [adminId] alone doesn't cover the createdAt range/order-by.
+  @@index([adminId, createdAt])
   @@map("client")
 }
 
