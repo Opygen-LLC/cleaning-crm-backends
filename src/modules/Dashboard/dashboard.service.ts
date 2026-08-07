@@ -4,9 +4,14 @@ import {
   JobStatus,
   InvoiceStatus,
   LeaveStatus,
+  RecurringFrequency,
+  RecurringStatus,
 } from "../../generated/prisma/enums";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
+import redis from "../../config/redis";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { IRequestUser } from "../../types/requestUser.interface";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -79,14 +84,25 @@ interface DashboardOverviewQuery {
  * - Completed Jobs: Completed Jobs ONLY
  * - Total Clients: Registered Clients ONLY
  */
-const getDashboardOverview = async (userId: string, query?: DashboardOverviewQuery) => {
-
-  const admin = await requireAdminProfile(userId);
-  const adminId = admin.id;
-  const now = new Date();
-
-  // Determine period duration
+const getDashboardOverview = async (user: IRequestUser | string, query?: DashboardOverviewQuery) => {
+  const adminId = typeof user === "string" ? user : await getAdminId(user);
   const period = query?.period ?? "30d";
+  const statusEnum = mapStatusToEnum(query?.status);
+  const search = query?.search?.trim();
+  const takeLimit = Number(query?.limit) || 10;
+
+  // ── Redis Cache Check ──────────────────────────────────────────────────────
+  const cacheKey = `dashboard:overview:${adminId}:${period}:${statusEnum ?? "all"}:${search ?? ""}:${takeLimit}`;
+  const cached = await redis.get(cacheKey).catch(() => null);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch {
+      // fall through if corrupt
+    }
+  }
+
+  const now = new Date();
   let days = 30;
   if (period === "7d") days = 7;
   else if (period === "90d") days = 90;
@@ -94,10 +110,7 @@ const getDashboardOverview = async (userId: string, query?: DashboardOverviewQue
 
   const periodStart = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
   const prev = previousPeriod(periodStart, now);
-
-  // Status & Search filters for recent bookings query
-  const statusEnum = mapStatusToEnum(query?.status);
-  const search = query?.search?.trim();
+  const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
 
   const recentBookingsWhere: any = {
     adminId,
@@ -113,19 +126,6 @@ const getDashboardOverview = async (userId: string, query?: DashboardOverviewQue
       : {}),
   };
 
-  const takeLimit = Number(query?.limit) || 10;
-
-  // PERF FIX (Phase 4): the chart series ("Revenue Insight") used to be built
-  // by pulling *every* paid invoice / completed job / new client row for the
-  // whole period into Node and looping over them to bucket into days/months
-  // (unbounded — for "12m" this was every row from the last 365 days). That
-  // scaled linearly with data volume and re-did work Postgres is built for.
-  // Below, the same bucketing (day for 7d/30d, month for 12m — matching
-  // `getBucketLabel` further down) now happens in SQL via `date_trunc`, so
-  // each query returns at most one row per calendar day/month in the period
-  // (≤31 rows for 30d, ≤365/12 ≈ 12 rows for 12m) instead of one row per
-  // record. The JS loops below then aggregate a handful of pre-summed rows
-  // instead of the raw dataset.
   const bucketUnit: "day" | "month" = period === "12m" ? "month" : "day";
 
   const [
@@ -142,6 +142,8 @@ const getDashboardOverview = async (userId: string, query?: DashboardOverviewQue
     dailyNewClients,
     recentBookingsRaw,
     topStaffRaw,
+    activeRecurringSchedules,
+    adminProfile,
   ] = await Promise.all([
     prisma.invoice.aggregate({
       where: {
@@ -182,8 +184,6 @@ const getDashboardOverview = async (userId: string, query?: DashboardOverviewQue
     prisma.job.count({
       where: { adminId, status: JobStatus.COMPLETED, updatedAt: prev },
     }),
-    // PERF FIX (Phase 4): SUM(total) grouped by day/month in SQL, instead of
-    // fetching every paid invoice row for the period and summing in Node.
     prisma.$queryRaw<{ bucket: Date; total: string | null }[]>`
       SELECT date_trunc(${bucketUnit}, "paidDate") AS bucket,
              COALESCE(SUM("total"), 0) AS total
@@ -194,8 +194,6 @@ const getDashboardOverview = async (userId: string, query?: DashboardOverviewQue
       GROUP BY 1
       ORDER BY 1
     `,
-    // PERF FIX (Phase 4): COUNT(*) grouped by day/month in SQL, instead of
-    // fetching every completed job row for the period and counting in Node.
     prisma.$queryRaw<{ bucket: Date; count: bigint }[]>`
       SELECT date_trunc(${bucketUnit}, "updatedAt") AS bucket,
              COUNT(*) AS count
@@ -206,8 +204,6 @@ const getDashboardOverview = async (userId: string, query?: DashboardOverviewQue
       GROUP BY 1
       ORDER BY 1
     `,
-    // PERF FIX (Phase 4): COUNT(*) grouped by day/month in SQL, instead of
-    // fetching every new client row for the period and counting in Node.
     prisma.$queryRaw<{ bucket: Date; count: bigint }[]>`
       SELECT date_trunc(${bucketUnit}, "createdAt") AS bucket,
              COUNT(*) AS count
@@ -229,34 +225,45 @@ const getDashboardOverview = async (userId: string, query?: DashboardOverviewQue
         },
       },
     }),
-    prisma.staffProfile.findMany({
-      where: { adminId },
-      include: {
-        user: { select: { id: true, name: true, image: true } },
-        jobAssignments: {
-          where: {
-            job: {
-              status: JobStatus.COMPLETED,
-              updatedAt: {
-                gte: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000),
-              },
-            },
-          },
-          include: { job: { select: { status: true } } },
-        },
-      },
+    // PERF FIX (Phase 1.3): SQL aggregation for topStaff counting completed jobs per staff in DB
+    prisma.$queryRaw<{ userId: string; name: string; image: string | null; specialty: string[]; jobCount: bigint }[]>`
+      SELECT
+        u.id AS "userId",
+        u.name,
+        u.image,
+        sp.specialty,
+        COUNT(jsa."jobId") AS "jobCount"
+      FROM "StaffProfile" sp
+      JOIN "user" u ON u.id = sp."userId"
+      LEFT JOIN "job_staff_assignment" jsa ON jsa."staffId" = sp.id
+      LEFT JOIN "job" j ON j.id = jsa."jobId"
+        AND j.status = 'COMPLETED'
+        AND j."updatedAt" >= ${ninetyDaysAgo}
+      WHERE sp."adminId" = ${adminId}
+      GROUP BY u.id, u.name, u.image, sp.specialty
+      ORDER BY "jobCount" DESC
+      LIMIT 4
+    `,
+    prisma.recurringSchedule.findMany({
+      where: { adminId, status: RecurringStatus.ACTIVE },
+      select: { total: true, frequency: true },
+    }),
+    prisma.adminProfile.findUnique({
+      where: { id: adminId },
+      select: { currency: true },
     }),
   ]);
 
   const currentRevenue = Number(invoicesCurrentRaw._sum.total ?? 0);
   const previousRevenue = Number(invoicesPrevRaw._sum.total ?? 0);
+  const currency = adminProfile?.currency ?? "USD";
 
   const stats = [
     {
       label: "Total Revenue",
       value: currentRevenue,
       changePercent: pct(currentRevenue, previousRevenue),
-      prefix: admin.currency === "USD" ? "$" : admin.currency === "GBP" ? "£" : "$",
+      prefix: currency === "USD" ? "$" : currency === "GBP" ? "£" : "$",
     },
     {
       label: "Active Bookings",
@@ -275,7 +282,6 @@ const getDashboardOverview = async (userId: string, query?: DashboardOverviewQue
     },
   ];
 
-  // Build Revenue Insight chart data points
   const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const revenueMap: Map<string, { revenue: number; jobsCompleted: number; newClients: number }> = new Map();
 
@@ -312,9 +318,6 @@ const getDashboardOverview = async (userId: string, query?: DashboardOverviewQue
     return monthNames[d.getMonth()];
   };
 
-  // PERF FIX (Phase 4): these now iterate the small SQL-aggregated bucket
-  // rows (one per day/month) instead of one row per invoice/job/client, but
-  // otherwise bucket into `revenueMap` exactly as before via `getBucketLabel`.
   for (const row of dailyRevenue) {
     if (!row.bucket) continue;
     const label = getBucketLabel(new Date(row.bucket));
@@ -361,19 +364,35 @@ const getDashboardOverview = async (userId: string, query?: DashboardOverviewQue
     total: Number(b.total),
   }));
 
-  const sortedStaff = topStaffRaw
-    .map((s) => ({
-      id: s.user.id,
-      name: s.user.name,
-      avatar: s.user.image ?? undefined,
-      jobsCompleted: s.jobAssignments.length,
-      speciality: formatServiceType((s.specialty[0] ?? "RESIDENTIAL_CLEAN") as string),
-      rating: 4.8,
-    }))
-    .sort((a, b) => b.jobsCompleted - a.jobsCompleted)
-    .slice(0, 4);
+  const sortedStaff = topStaffRaw.map((s) => ({
+    id: s.userId,
+    name: s.name,
+    avatar: s.image ?? undefined,
+    jobsCompleted: Number(s.jobCount),
+    speciality: formatServiceType((s.specialty?.[0] ?? "RESIDENTIAL_CLEAN") as string),
+    rating: 4.8,
+  }));
 
-  return { stats, revenueInsight, recentBookings, topStaff: sortedStaff };
+  let monthlyRecurringValue = 0;
+  for (const s of activeRecurringSchedules) {
+    const val = Number(s.total);
+    if (s.frequency === RecurringFrequency.WEEKLY) monthlyRecurringValue += val * 4;
+    else if (s.frequency === RecurringFrequency.BIWEEKLY) monthlyRecurringValue += val * 2;
+    else monthlyRecurringValue += val;
+  }
+
+  const result = {
+    stats,
+    revenueInsight,
+    recentBookings,
+    topStaff: sortedStaff,
+    monthlyRecurringValue: Math.round(monthlyRecurringValue),
+  };
+
+  // Cache in Redis for 60 seconds
+  await redis.setex(cacheKey, 60, JSON.stringify(result)).catch(() => {});
+
+  return result;
 };
 
 
@@ -381,9 +400,8 @@ const getDashboardOverview = async (userId: string, query?: DashboardOverviewQue
 
 type RevenuePeriod = "7d" | "30d" | "90d" | "12m";
 
-const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
-  const admin = await requireAdminProfile(userId);
-  const adminId = admin.id;
+const getRevenuePage = async (user: IRequestUser | string, period: RevenuePeriod) => {
+  const adminId = typeof user === "string" ? user : await getAdminId(user);
   const now = new Date();
   const msPerDay = 24 * 60 * 60 * 1000;
   let from: Date;
@@ -421,10 +439,6 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
 
   const prev = previousPeriod(from, now);
 
-  // PERF FIX (Phase 4): same pattern as getDashboardOverview — bucket
-  // revenue/expenses in SQL via date_trunc (matching bucketFn's granularity:
-  // day for 7d/30d, month for 90d/12m) instead of pulling every invoice and
-  // expense row for the period into Node and looping to build the chart.
   const bucketUnit: "day" | "month" = period === "90d" || period === "12m" ? "month" : "day";
 
   const [
@@ -437,7 +451,8 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
     dailyExpenses,
     serviceGroups,
     recentInv,
-    staffWithJobs,
+    staffWithJobsRaw,
+    jobCountCurrent,
   ] = await Promise.all([
     prisma.invoice.aggregate({
       where: {
@@ -466,7 +481,6 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
       },
       _sum: { total: true },
     }),
-    // PERF FIX (Phase 4): SUM(total) grouped by day/month in SQL.
     prisma.$queryRaw<{ bucket: Date; total: string | null }[]>`
       SELECT date_trunc(${bucketUnit}, "paidDate") AS bucket,
              COALESCE(SUM("total"), 0) AS total
@@ -477,7 +491,6 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
       GROUP BY 1
       ORDER BY 1
     `,
-    // PERF FIX (Phase 4): SUM(amount) grouped by day/month in SQL.
     prisma.$queryRaw<{ bucket: Date; total: string | null }[]>`
       SELECT date_trunc(${bucketUnit}, "date") AS bucket,
              COALESCE(SUM("amount"), 0) AS total
@@ -487,9 +500,6 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
       GROUP BY 1
       ORDER BY 1
     `,
-    // PERF FIX (Phase 4): revenue-by-service breakdown now aggregated in SQL
-    // via groupBy (one row per service) instead of looping over every paid
-    // invoice row in Node to build the same totals.
     prisma.invoice.groupBy({
       by: ["serviceCatalogId"],
       where: {
@@ -514,19 +524,29 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
         status: true,
       },
     }),
-    prisma.staffProfile.findMany({
-      where: { adminId },
-      include: {
-        user: { select: { id: true, name: true, image: true } },
-        jobAssignments: {
-          where: {
-            job: {
-              status: JobStatus.COMPLETED,
-              updatedAt: { gte: from, lte: now },
-            },
-          },
-          include: { job: { select: { id: true } } },
-        },
+    // PERF FIX (Phase 2.4): SQL aggregate for staffWithJobs in getRevenuePage
+    prisma.$queryRaw<{ userId: string; name: string; image: string | null; jobCount: bigint }[]>`
+      SELECT
+        u.id AS "userId",
+        u.name,
+        u.image,
+        COUNT(jsa."jobId") AS "jobCount"
+      FROM "StaffProfile" sp
+      JOIN "user" u ON u.id = sp."userId"
+      LEFT JOIN "job_staff_assignment" jsa ON jsa."staffId" = sp.id
+      LEFT JOIN "job" j ON j.id = jsa."jobId"
+        AND j.status = 'COMPLETED'
+        AND j."updatedAt" BETWEEN ${from} AND ${now}
+      WHERE sp."adminId" = ${adminId}
+      GROUP BY u.id, u.name, u.image
+      ORDER BY "jobCount" DESC
+    `,
+    // PERF FIX (Phase 1.6): Move jobCountCurrent into Promise.all array
+    prisma.job.count({
+      where: {
+        adminId,
+        status: JobStatus.COMPLETED,
+        updatedAt: { gte: from, lte: now },
       },
     }),
   ]);
@@ -538,16 +558,7 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
   const totalProfit = totalRevenue - totalExpenses;
   const prevProfit = prevRevenue - prevExpenses;
   const outstanding = Number(outstandingRaw._sum.total ?? 0);
-  const jobCountCurrent = await prisma.job.count({
-    where: {
-      adminId,
-      status: JobStatus.COMPLETED,
-      updatedAt: { gte: from, lte: now },
-    },
-  });
 
-  // PERF FIX (Phase 4): these now iterate the small SQL-aggregated bucket
-  // rows (one per day/month) instead of one row per invoice/expense.
   const chartMap: Record<string, { revenue: number; expenses: number }> = {};
   for (const row of dailyRevenue) {
     if (!row.bucket) continue;
@@ -568,10 +579,6 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
     profit: d.revenue - d.expenses,
   }));
 
-  // PERF FIX (Phase 4): revenue-by-service now comes from the `groupBy`
-  // above (one row per service) instead of a per-invoice loop. Only the
-  // (typically small) set of service names actually present in this period
-  // is looked up, rather than joining every invoice row.
   const serviceIds = serviceGroups
     .map((g) => g.serviceCatalogId)
     .filter((id): id is string => Boolean(id));
@@ -596,13 +603,13 @@ const getRevenuePage = async (userId: string, period: RevenuePeriod) => {
       changePercent: 0,
     };
   });
-  const byStaff = staffWithJobs
+  const byStaff = staffWithJobsRaw
     .map((s) => ({
-      staffId: s.user.id,
-      name: s.user.name,
-      avatar: s.user.image ?? undefined,
+      staffId: s.userId,
+      name: s.name,
+      avatar: s.image ?? undefined,
       revenue: 0,
-      jobs: s.jobAssignments.length,
+      jobs: Number(s.jobCount),
       avgRating: 0,
     }))
     .sort((a, b) => b.jobs - a.jobs);

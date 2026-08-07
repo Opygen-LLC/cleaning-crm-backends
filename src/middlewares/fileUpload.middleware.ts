@@ -1,4 +1,5 @@
 import multer from "multer";
+import os from "os";
 import path from "path";
 import { v2 as cloudinary } from "cloudinary";
 import {
@@ -48,9 +49,21 @@ const userFileUploadMiddleware = (uploadFolder: string) => {
   });
 };
 
-// Middleware for Cloudinary file upload
+// Middleware for Cloudinary file upload (disk-backed temp storage to avoid high RAM pressure)
 const cloudinaryFileUploadMiddleware = () => {
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      cb(null, os.tmpdir());
+    },
+    filename: (req, file, cb) => {
+      const extname = path.extname(file.originalname);
+      const filename = `cld-upload-${Date.now()}-${Math.random().toString(36).substring(2)}${extname}`;
+      cb(null, filename);
+    },
+  });
+
   return multer({
+    storage,
     limits: { fileSize: 10 * 1024 * 1024 }, // Max file size: 10MB
     fileFilter: (req, file, cb) => {
       const fileTypes = /jpeg|jpg|png/;

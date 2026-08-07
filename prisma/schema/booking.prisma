@@ -24,6 +24,7 @@ model Booking {
   changeRequests   BookingChangeRequest[]
 
   @@index([adminId, status])
+  @@index([adminId, status, createdAt(sort: Desc)])
   @@index([clientId])
   @@index([scheduledDate])
   @@map("booking")

@@ -138,16 +138,29 @@ export const checkSubscription = async (
         };
         if (role !== UserRole.ADMIN) return next();
 
-        const user = await prisma.user.findUnique({
-            where: { id: userId },
-            select: { status: true },
-        });
-        if (user?.status === AccountStatus.SUSPENDED)
+        let userStatus: string | null = await redis
+            .get(`auth:status:${userId}`)
+            .catch(() => null);
+
+        if (!userStatus) {
+            const user = await prisma.user.findUnique({
+                where: { id: userId },
+                select: { status: true },
+            });
+            if (user) {
+                userStatus = user.status;
+                await redis
+                    .setex(`auth:status:${userId}`, 60, user.status)
+                    .catch(() => {});
+            }
+        }
+
+        if (userStatus === AccountStatus.SUSPENDED)
             throw new AppError(
                 status.FORBIDDEN,
                 "Your account has been suspended. Please contact support.",
             );
-        if (user?.status === AccountStatus.DELETED)
+        if (userStatus === AccountStatus.DELETED)
             throw new AppError(
                 status.FORBIDDEN,
                 "This account has been deleted.",

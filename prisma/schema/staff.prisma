@@ -73,4 +73,6 @@ model StaffLeave {
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
+
+    @@index([staffId, status, endDate])
 }

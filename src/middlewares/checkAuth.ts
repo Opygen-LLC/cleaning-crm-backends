@@ -136,13 +136,26 @@ export const checkAuth =
                 "better-auth.session_token",
             );
             if (sessionToken) {
-                const sessionExists = await prisma.session.findFirst({
-                    where: {
-                        token: sessionToken,
-                        expiresAt: { gt: new Date() },
-                    },
-                });
-                if (!sessionExists) {
+                const cacheKey = `session:${sessionToken}`;
+                let isSessionValid: boolean | null = await redis
+                    .get(cacheKey)
+                    .then((v) => (v !== null ? v === "true" : null))
+                    .catch(() => null);
+
+                if (isSessionValid === null) {
+                    const sessionExists = await prisma.session.findFirst({
+                        where: {
+                            token: sessionToken,
+                            expiresAt: { gt: new Date() },
+                        },
+                    });
+                    isSessionValid = !!sessionExists;
+                    await redis
+                        .setex(cacheKey, 60, isSessionValid ? "true" : "false")
+                        .catch(() => {});
+                }
+
+                if (!isSessionValid) {
                     throw new AppError(
                         status.UNAUTHORIZED,
                         "Session has been revoked. Please log in again.",
