@@ -122,7 +122,7 @@ describe("Job Service Performance Fixes", () => {
     ]);
     (prisma.job.count as any).mockResolvedValue(1);
 
-    const result = await jobService.getAllJobs({ page: 1, limit: 10 }, mockStaffUser);
+    const result = await jobService.getAllJobs({ page: "1", limit: "10" }, mockStaffUser);
 
     expect(prisma.staffProfile.findUnique).toHaveBeenCalledWith({
       where: { userId: "user-staff-1" },
