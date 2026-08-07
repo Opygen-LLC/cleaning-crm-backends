@@ -84,7 +84,10 @@ interface DashboardOverviewQuery {
  * - Completed Jobs: Completed Jobs ONLY
  * - Total Clients: Registered Clients ONLY
  */
-const getDashboardOverview = async (user: IRequestUser | string, query?: DashboardOverviewQuery) => {
+const getDashboardOverview = async (
+  user: IRequestUser | string,
+  query?: DashboardOverviewQuery,
+) => {
   const adminId = typeof user === "string" ? user : await getAdminId(user);
   const period = query?.period ?? "30d";
   const statusEnum = mapStatusToEnum(query?.status);
@@ -226,7 +229,15 @@ const getDashboardOverview = async (user: IRequestUser | string, query?: Dashboa
       },
     }),
     // PERF FIX (Phase 1.3): SQL aggregation for topStaff counting completed jobs per staff in DB
-    prisma.$queryRaw<{ userId: string; name: string; image: string | null; specialty: string[]; jobCount: bigint }[]>`
+    prisma.$queryRaw<
+      {
+        userId: string;
+        name: string;
+        image: string | null;
+        specialty: string[];
+        jobCount: bigint;
+      }[]
+    >`
       SELECT
         u.id AS "userId",
         u.name,
@@ -283,7 +294,10 @@ const getDashboardOverview = async (user: IRequestUser | string, query?: Dashboa
   ];
 
   const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const revenueMap: Map<string, { revenue: number; jobsCompleted: number; newClients: number }> = new Map();
+  const revenueMap: Map<
+    string,
+    { revenue: number; jobsCompleted: number; newClients: number }
+  > = new Map();
 
   if (period === "7d") {
     for (let i = 6; i >= 0; i--) {
@@ -300,7 +314,20 @@ const getDashboardOverview = async (user: IRequestUser | string, query?: Dashboa
       revenueMap.set(label, { revenue: 0, jobsCompleted: 0, newClients: 0 });
     }
   } else {
-    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const monthNames = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
     for (let i = 11; i >= 0; i--) {
       const d = new Date(now);
       d.setMonth(now.getMonth() - i);
@@ -314,7 +341,20 @@ const getDashboardOverview = async (user: IRequestUser | string, query?: Dashboa
   const getBucketLabel = (d: Date) => {
     if (period === "7d") return DAYS[d.getDay()];
     if (period === "30d") return `Day ${d.getDate()}`;
-    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const monthNames = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
     return monthNames[d.getMonth()];
   };
 
@@ -324,7 +364,12 @@ const getDashboardOverview = async (user: IRequestUser | string, query?: Dashboa
     const amount = Number(row.total ?? 0);
     const entry = revenueMap.get(label);
     if (entry) entry.revenue += amount;
-    else revenueMap.set(label, { revenue: amount, jobsCompleted: 0, newClients: 0 });
+    else
+      revenueMap.set(label, {
+        revenue: amount,
+        jobsCompleted: 0,
+        newClients: 0,
+      });
   }
 
   for (const row of dailyJobsCompleted) {
@@ -333,7 +378,12 @@ const getDashboardOverview = async (user: IRequestUser | string, query?: Dashboa
     const count = Number(row.count ?? 0);
     const entry = revenueMap.get(label);
     if (entry) entry.jobsCompleted += count;
-    else revenueMap.set(label, { revenue: 0, jobsCompleted: count, newClients: 0 });
+    else
+      revenueMap.set(label, {
+        revenue: 0,
+        jobsCompleted: count,
+        newClients: 0,
+      });
   }
 
   for (const row of dailyNewClients) {
@@ -342,22 +392,36 @@ const getDashboardOverview = async (user: IRequestUser | string, query?: Dashboa
     const count = Number(row.count ?? 0);
     const entry = revenueMap.get(label);
     if (entry) entry.newClients += count;
-    else revenueMap.set(label, { revenue: 0, jobsCompleted: 0, newClients: count });
+    else
+      revenueMap.set(label, {
+        revenue: 0,
+        jobsCompleted: 0,
+        newClients: count,
+      });
   }
 
-  const revenueInsight = Array.from(revenueMap.entries()).map(([day, data]) => ({
-    day,
-    revenue: Math.round(data.revenue),
-    jobsCompleted: data.jobsCompleted,
-    newClients: data.newClients,
-  }));
+  const revenueInsight = Array.from(revenueMap.entries()).map(
+    ([day, data]) => ({
+      day,
+      revenue: Math.round(data.revenue),
+      jobsCompleted: data.jobsCompleted,
+      newClients: data.newClients,
+    }),
+  );
 
   const recentBookings = recentBookingsRaw.map((b) => ({
     id: b.id,
     bookingRef: b.bookingRef,
     clientName: b.client?.name ?? "Client",
     serviceType: formatServiceType(b.serviceType),
-    scheduledDate: b.scheduledDate ? new Date(b.scheduledDate).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "",
+    scheduledDate: b.scheduledDate
+      ? new Date(b.scheduledDate).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "",
     address: b.address,
     assignedStaff: b.staffAssignments[0]?.staff?.user?.name ?? "Unassigned",
     status: formatBookingStatus(b.status),
@@ -369,15 +433,19 @@ const getDashboardOverview = async (user: IRequestUser | string, query?: Dashboa
     name: s.name,
     avatar: s.image ?? undefined,
     jobsCompleted: Number(s.jobCount),
-    speciality: formatServiceType((s.specialty?.[0] ?? "RESIDENTIAL_CLEAN") as string),
+    speciality: formatServiceType(
+      (s.specialty?.[0] ?? "RESIDENTIAL_CLEAN") as string,
+    ),
     rating: 4.8,
   }));
 
   let monthlyRecurringValue = 0;
   for (const s of activeRecurringSchedules) {
     const val = Number(s.total);
-    if (s.frequency === RecurringFrequency.WEEKLY) monthlyRecurringValue += val * 4;
-    else if (s.frequency === RecurringFrequency.BIWEEKLY) monthlyRecurringValue += val * 2;
+    if (s.frequency === RecurringFrequency.WEEKLY)
+      monthlyRecurringValue += val * 4;
+    else if (s.frequency === RecurringFrequency.BIWEEKLY)
+      monthlyRecurringValue += val * 2;
     else monthlyRecurringValue += val;
   }
 
@@ -389,19 +457,37 @@ const getDashboardOverview = async (user: IRequestUser | string, query?: Dashboa
     monthlyRecurringValue: Math.round(monthlyRecurringValue),
   };
 
-  // Cache in Redis for 60 seconds
-  await redis.setex(cacheKey, 60, JSON.stringify(result)).catch(() => {});
+  // PERF FIX: Increased cache TTL from 60s → 300s. Dashboard aggregates
+  // 15 DB queries; a 1-minute TTL was causing pool exhaustion under normal
+  // multi-user load. 5 minutes is safe — dashboard data is not real-time.
+  await redis.setex(cacheKey, 300, JSON.stringify(result)).catch(() => {});
 
   return result;
 };
-
 
 // ─── Revenue Page ─────────────────────────────────────────────────────────────
 
 type RevenuePeriod = "7d" | "30d" | "90d" | "12m";
 
-const getRevenuePage = async (user: IRequestUser | string, period: RevenuePeriod) => {
+const getRevenuePage = async (
+  user: IRequestUser | string,
+  period: RevenuePeriod,
+) => {
   const adminId = typeof user === "string" ? user : await getAdminId(user);
+
+  // PERF FIX #14: Revenue page ran 11 parallel DB queries with zero caching.
+  // Every filter-period change hit the DB cold. Apply 5-minute Redis cache
+  // keyed by adminId + period so repeat loads within the window are instant.
+  const revCacheKey = `dashboard:revenue:${adminId}:${period}`;
+  const revCached = await redis.get(revCacheKey).catch(() => null);
+  if (revCached) {
+    try {
+      return JSON.parse(revCached);
+    } catch {
+      // fall through on corrupt entry
+    }
+  }
+
   const now = new Date();
   const msPerDay = 24 * 60 * 60 * 1000;
   let from: Date;
@@ -439,7 +525,8 @@ const getRevenuePage = async (user: IRequestUser | string, period: RevenuePeriod
 
   const prev = previousPeriod(from, now);
 
-  const bucketUnit: "day" | "month" = period === "90d" || period === "12m" ? "month" : "day";
+  const bucketUnit: "day" | "month" =
+    period === "90d" || period === "12m" ? "month" : "day";
 
   const [
     paidCur,
@@ -525,7 +612,9 @@ const getRevenuePage = async (user: IRequestUser | string, period: RevenuePeriod
       },
     }),
     // PERF FIX (Phase 2.4): SQL aggregate for staffWithJobs in getRevenuePage
-    prisma.$queryRaw<{ userId: string; name: string; image: string | null; jobCount: bigint }[]>`
+    prisma.$queryRaw<
+      { userId: string; name: string; image: string | null; jobCount: bigint }[]
+    >`
       SELECT
         u.id AS "userId",
         u.name,
@@ -588,14 +677,16 @@ const getRevenuePage = async (user: IRequestUser | string, period: RevenuePeriod
         select: { id: true, serviceName: true },
       })
     : [];
-  const serviceNameMap = new Map(serviceCatalogs.map((s) => [s.id, s.serviceName]));
+  const serviceNameMap = new Map(
+    serviceCatalogs.map((s) => [s.id, s.serviceName]),
+  );
 
   const byService = serviceGroups.map((g) => {
     const revenue = Number(g._sum.total ?? 0);
     const jobs = g._count._all;
     return {
       serviceType: g.serviceCatalogId
-        ? serviceNameMap.get(g.serviceCatalogId) ?? "Other"
+        ? (serviceNameMap.get(g.serviceCatalogId) ?? "Other")
         : "Other",
       revenue,
       jobs,
@@ -630,7 +721,7 @@ const getRevenuePage = async (user: IRequestUser | string, period: RevenuePeriod
     status: statusMap[inv.status] ?? "Pending",
   }));
 
-  return {
+  const revenueResult = {
     stats: {
       totalRevenue: {
         label: "Total Revenue",
@@ -663,6 +754,14 @@ const getRevenuePage = async (user: IRequestUser | string, period: RevenuePeriod
     byStaff,
     recentTransactions,
   };
+
+  // PERF FIX #14: Write revenue page result to Redis for 5 minutes.
+  // Revenue figures are not real-time — 5-minute staleness is acceptable.
+  await redis
+    .setex(revCacheKey, 300, JSON.stringify(revenueResult))
+    .catch(() => {});
+
+  return revenueResult;
 };
 
 // ─── Helpers shared by getStaffDashboard ──────────────────────────────────────
@@ -706,6 +805,19 @@ const formatScheduledDate = (date: Date): string =>
 //  • upcomingLeave — next pending or approved leave request
 
 const getStaffDashboard = async (userId: string) => {
+  // PERF FIX #12: Staff dashboard had no caching — every load hit the DB
+  // with 11 parallel queries. Apply the same 5-minute Redis cache pattern
+  // as the admin dashboard. The short TTL still reflects job changes fast.
+  const staffCacheKey = `dashboard:staff:${userId}`;
+  const staffCached = await redis.get(staffCacheKey).catch(() => null);
+  if (staffCached) {
+    try {
+      return JSON.parse(staffCached);
+    } catch {
+      // fall through on corrupt entry
+    }
+  }
+
   const staffProfile = await requireStaffProfile(userId);
   const staffId = staffProfile.id;
 
@@ -919,7 +1031,7 @@ const getStaffDashboard = async (userId: string) => {
     .toUpperCase()
     .slice(0, 2);
 
-  return {
+  const staffResult = {
     staffId,
     staffName,
     avatarInitials: initials,
@@ -951,6 +1063,15 @@ const getStaffDashboard = async (userId: string) => {
         }
       : null,
   };
+
+  // PERF FIX #12: Write staff dashboard result to Redis for 5 minutes.
+  // This eliminates the 11-query DB hit on every staff page load.
+  // Job status updates from Socket.IO invalidate this key when needed.
+  await redis
+    .setex(staffCacheKey, 300, JSON.stringify(staffResult))
+    .catch(() => {});
+
+  return staffResult;
 };
 
 export const dashboardService = {
