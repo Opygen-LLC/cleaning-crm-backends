@@ -16,20 +16,30 @@ import { log, fail } from "./index.cron";
  * work" reports: a request landing right after an idle period pays the
  * full cold-start cost (or times out), while the next one is instant.
  *
- * Fix: run a trivial, cheap query on a fixed interval short enough to keep
- * Neon's compute from ever suspending during normal operating hours. This
- * runs every 2 minutes — a wider safety margin inside typical
- * serverless-Postgres auto-suspend windows (commonly ~5 minutes) — so a
- * missed tick (slow event loop, deployment restart, cold cron boot) still
- * leaves room before the next real request would pay the cold-start cost.
+ * PERF FIX (Phase 1, performance audit — interval bug): this used to run
+ * every 2 minutes (120s) while the local pg pool's `idleTimeoutMillis` was
+ * only 30s (see src/lib/prisma/prisma.ts). That meant the pool was
+ * *guaranteed* to have already evicted its connections by the time this
+ * cron fired — so the "keep-alive" ping itself paid for a full reconnect
+ * across the Mumbai<->Virginia link every single time, instead of reusing a
+ * warm one. That's the exact cause of `SELECT 1` logging ~2000ms in
+ * production, right next to "[CRON] DB keep-alive ping ok".
+ *
+ * Now that `idleTimeoutMillis` has been raised to 10 minutes and the pool
+ * keeps a `min` of warm connections open (see prisma.ts), this only needs to
+ * run often enough to stop those warm connections from ever going idle long
+ * enough to be evicted — every 30 seconds comfortably beats the new 10-minute
+ * idle timeout with a lot of safety margin, while still being cheap (a
+ * `SELECT 1` on an already-warm connection is a single fast round trip, not
+ * a fresh handshake).
  *
  * NOTE: this reduces cold starts but does not eliminate them entirely
- * (e.g. overnight low-traffic windows, or if the interval is later widened).
- * For a fully-eliminated cold start, upgrade the Neon plan to disable
- * auto-suspend on the production branch — see Phase 1 of the performance
- * audit for details.
+ * (e.g. overnight low-traffic windows, or if the interval is later widened
+ * past idleTimeoutMillis again). For a fully-eliminated cold start, disable
+ * auto-suspend on the Neon production branch — see Phase 0 of the
+ * performance audit for details.
  */
-cron.schedule("*/2 * * * *", async () => {
+cron.schedule("*/30 * * * * *", async () => {
     try {
         await prisma.$queryRaw`SELECT 1`;
     } catch (err) {

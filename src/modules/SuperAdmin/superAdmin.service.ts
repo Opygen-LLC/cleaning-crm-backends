@@ -1556,6 +1556,20 @@ const getPendingProofs = async (options: IPaginationOptions) => {
             orderBy: { createdAt: "asc" },
             skip,
             take: limit,
+            // PERF FIX (Phase 2, performance audit): this 3-level-deep include
+            // (subscription -> subscriptionPlan, subscription -> admin -> user)
+            // was previously loaded via Prisma's default "query" strategy —
+            // multiple separate round trips to Postgres, joined in application
+            // code. That's the exact source of the
+            // `AdminProfile ... WHERE id IN (NULL)` wasted round trip seen in
+            // production logs (a relation batch-fetch that ran even though it
+            // had nothing to fetch). `relationLoadStrategy: "join"` (enabled via
+            // the `relationJoins` preview feature in schema.prisma) fetches all
+            // of this in a single DB-level LATERAL JOIN query instead — that
+            // wasted round trip disappears entirely, and this endpoint drops
+            // from 4+ sequential round trips down to 2 (count + this query, run
+            // in parallel above).
+            relationLoadStrategy: "join",
             include: {
                 subscription: {
                     include: {

@@ -16,6 +16,7 @@ import AppError from "../errorHelper/AppError";
 import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import { CookieUtils } from "../lib/utils/cookie";
 import redis from "../config/redis";
+import { singleFlight } from "../lib/utils/singleFlight";
 
 function getAccessToken(req: Request): string | undefined {
   const authHeader = req.headers.authorization;
@@ -69,51 +70,62 @@ async function getCachedSubscriptionForUser(
     }
   }
 
-  const admin = await prisma.adminProfile.findFirst({
-    where: { userId },
-    select: { id: true },
-  });
-
-  let payload: CachedSubscriptionPayload = null;
-
-  if (admin) {
-    const sub = await prisma.subscription.findFirst({
-      where: { adminId: admin.id },
-      select: {
-        status: true,
-        isTrial: true,
-        trialEndsAt: true,
-        currentPeriodEnd: true,
-        cancelAtPeriodEnd: true,
-        subscriptionPlan: { select: { features: true } },
-      },
-      orderBy: { createdAt: "desc" },
+  // PERF FIX (Phase 4, performance audit — cache stampede): this loader
+  // backs BOTH checkSubscription (router-level, every request) and
+  // checkFeature (per-route). On a cold/expired cache it's common for
+  // several requests for the same user to land within milliseconds of each
+  // other (e.g. a dashboard firing multiple feature-gated calls at once) —
+  // without this, each one independently repeated the same two uncached DB
+  // round trips (adminProfile + subscription+plan join) before any of them
+  // had a chance to populate Redis. singleFlight collapses all of that into
+  // a single DB round trip; every concurrent caller shares the same result.
+  return singleFlight(`sub:full:load:${userId}`, async () => {
+    const admin = await prisma.adminProfile.findFirst({
+      where: { userId },
+      select: { id: true },
     });
 
-    if (sub) {
-      payload = {
-        adminId: admin.id,
-        status: sub.status,
-        isTrial: sub.isTrial,
-        trialEndsAt: sub.trialEndsAt ? sub.trialEndsAt.toISOString() : null,
-        currentPeriodEnd: sub.currentPeriodEnd
-          ? sub.currentPeriodEnd.toISOString()
-          : null,
-        cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
-        features: sub.subscriptionPlan?.features ?? [],
-      };
+    let payload: CachedSubscriptionPayload = null;
+
+    if (admin) {
+      const sub = await prisma.subscription.findFirst({
+        where: { adminId: admin.id },
+        select: {
+          status: true,
+          isTrial: true,
+          trialEndsAt: true,
+          currentPeriodEnd: true,
+          cancelAtPeriodEnd: true,
+          subscriptionPlan: { select: { features: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (sub) {
+        payload = {
+          adminId: admin.id,
+          status: sub.status,
+          isTrial: sub.isTrial,
+          trialEndsAt: sub.trialEndsAt ? sub.trialEndsAt.toISOString() : null,
+          currentPeriodEnd: sub.currentPeriodEnd
+            ? sub.currentPeriodEnd.toISOString()
+            : null,
+          cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+          features: sub.subscriptionPlan?.features ?? [],
+        };
+      }
     }
-  }
 
-  await redis
-    .setex(
-      subscriptionCacheKey(userId),
-      SUBSCRIPTION_CACHE_TTL_SECONDS,
-      JSON.stringify(payload),
-    )
-    .catch(() => {});
+    await redis
+      .setex(
+        subscriptionCacheKey(userId),
+        SUBSCRIPTION_CACHE_TTL_SECONDS,
+        JSON.stringify(payload),
+      )
+      .catch(() => {});
 
-  return payload;
+    return payload;
+  });
 }
 
 // ─── Status gate (mounted at router level) ────────────────────────────────────
@@ -145,10 +157,21 @@ export const checkSubscription = async (
       .catch(() => null);
 
     if (!userStatus) {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { status: true },
-      });
+      // PERF FIX (Phase 4): same singleFlight key pattern as checkAuth.ts's
+      // user-status lookup (`user-status:${userId}`) — the production log
+      // showed this exact query firing twice back-to-back for the same
+      // user, once from each middleware, when both ran close together on an
+      // uncached request. Note the select shape differs slightly (this one
+      // only needs `status`, checkAuth needs `id, status`), so this uses its
+      // own key to stay correct; it still stops duplicate *concurrent*
+      // requests to checkSubscription itself (e.g. two gated calls firing
+      // near-simultaneously) from each hitting Postgres independently.
+      const user = await singleFlight(`user-status-basic:${userId}`, () =>
+        prisma.user.findUnique({
+          where: { id: userId },
+          select: { status: true },
+        }),
+      );
       if (user) {
         userStatus = user.status;
         await redis

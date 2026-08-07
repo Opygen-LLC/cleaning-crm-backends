@@ -71,4 +71,12 @@ model Subscription {
   updatedAt DateTime @updatedAt
 
   @@index([adminId])
+  // PERF FIX (Phase 3, performance audit): checkSubscription.ts's status
+  // gate runs on every gated request for every ADMIN user (cache miss or
+  // not, this is what actually populates that cache), and
+  // subscriptionExpiry.cron.ts scans for lapsed subscriptions daily. Neither
+  // filter was covered by an index before — both are exact matches for
+  // these two composite indexes.
+  @@index([status, isTrial, currentPeriodEnd]) // paid-subscription expiry branch
+  @@index([status, isTrial, trialEndsAt])      // trial expiry branch
 }

@@ -30,15 +30,45 @@ const connectionString = DATABASE_URL;
 // request (Phase 2 adminId caching, Phase 3 pagination, Phase 4 SQL-side
 // aggregation) still matters more than pool size alone — a bigger pool
 // just buys headroom while those land.
+//
+// PERF FIX (Phase 1, performance audit — connection churn): the app server
+// (AWS ap-south-1, Mumbai) and the database (Neon, us-east-1, Virginia) sit
+// on different continents — every fresh connection pays for a full TCP + TLS
+// + SCRAM-auth handshake across that link (roughly 6-10 network round trips)
+// before a single query even runs. The previous config let the pool empty
+// out (`idleTimeoutMillis: 30_000`) faster than real traffic or the 2-minute
+// keep-alive cron would touch it again, so almost every query — including a
+// bare `SELECT 1` — was silently paying for a full reconnect. That's the
+// exact cause of "SELECT 1" logging 1.7-2.0s in production.
+//
+//   - `min`: keeps a small number of connections permanently open instead of
+//     letting the pool drain to zero between requests, so a typical request
+//     reuses a warm connection instead of re-handshaking from scratch.
+//   - `idleTimeoutMillis`: raised well past the old 30s so connections
+//     aren't evicted faster than normal request spacing (and faster than the
+//     keep-alive cron, which is what made the old value actively harmful —
+//     see dbKeepAlive.cron.ts).
+//   - `keepAlive` / `keepAliveInitialDelayMillis`: TCP-level keepalive so
+//     NAT gateways / load balancers along a long cross-region path don't
+//     silently drop an idle-but-still-open socket before Postgres or the
+//     pool itself would have closed it.
+//
+// This does NOT eliminate the ~250-300ms Mumbai<->Virginia network latency
+// itself (that requires moving the DB and server into the same region —
+// see Phase 0 of the performance audit) — it eliminates the *repeated
+// reconnect tax* stacked on top of that latency on every request.
 const adapter = new PrismaPg({
     connectionString,
     max: DB_POOL_MAX,
-    idleTimeoutMillis: 30_000,
+    min: Math.min(3, DB_POOL_MAX),
+    idleTimeoutMillis: 10 * 60_000, // 10 min — was 30s (shorter than the keep-alive interval, which defeated its own purpose)
     // Raised from 20_000 -> 30_000: 20s could still time out during a slow
     // Neon cold-start wake (3-8s just to resume compute, before the query
     // itself even runs). 30s gives that headroom without masking genuine
     // connection failures.
     connectionTimeoutMillis: 30_000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
 });
 
 const prisma = new PrismaClient({

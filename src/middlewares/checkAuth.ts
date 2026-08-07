@@ -6,6 +6,7 @@ import { CookieUtils } from "../lib/utils/cookie";
 import { prisma } from "../lib/prisma/prisma";
 import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import redis from "../config/redis";
+import { singleFlight } from "../lib/utils/singleFlight";
 
 // ─── Cross-domain auth note ──────────────────────────────────────────────────
 
@@ -61,10 +62,19 @@ export const checkAuth =
                 .catch(() => null);
 
             if (!userStatus) {
-                const user = await prisma.user.findUnique({
-                    where: { id: tokenData.userId as string },
-                    select: { id: true, status: true },
-                });
+                // PERF FIX (Phase 4): singleFlight collapses concurrent
+                // cache-miss requests for the same userId into one Postgres
+                // call instead of each firing its own — see
+                // src/lib/utils/singleFlight.ts for the full explanation and
+                // the production log evidence that motivated this.
+                const user = await singleFlight(
+                    `user-status:${tokenData.userId}`,
+                    () =>
+                        prisma.user.findUnique({
+                            where: { id: tokenData.userId as string },
+                            select: { id: true, status: true },
+                        }),
+                );
 
                 if (!user) {
                     throw new AppError(
@@ -116,10 +126,18 @@ export const checkAuth =
                     // every request for that (rare/invalid) case either.
                     adminId = cachedAdminId === "__none__" ? null : cachedAdminId;
                 } else {
-                    const admin = await prisma.adminProfile.findUnique({
-                        where: { userId: tokenData.userId as string },
-                        select: { id: true },
-                    });
+                    // PERF FIX (Phase 4): same stampede fix as the
+                    // user-status lookup above — concurrent requests for the
+                    // same user's uncached adminId share one query instead
+                    // of each firing their own.
+                    const admin = await singleFlight(
+                        `admin-id:${tokenData.userId}`,
+                        () =>
+                            prisma.adminProfile.findUnique({
+                                where: { userId: tokenData.userId as string },
+                                select: { id: true },
+                            }),
+                    );
                     adminId = admin?.id ?? null;
                     await redis
                         .setex(adminIdCacheKey, 300, adminId ?? "__none__")

@@ -12,5 +12,21 @@ model BillingHistory {
   createdAt      DateTime      @default(now())
   subscriptionId String
   subscription   Subscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  // PERF FIX (Phase 3, performance audit): this model previously had zero
+  // indexes beyond the primary key, so every query hitting it (including
+  // SuperAdmin's getPendingProofs — the exact endpoint in the production
+  // slow-query log — and the general billing-history list/filter endpoints)
+  // forced a full sequential scan. Small today, gets worse every month as
+  // billing history accumulates.
+  //   - [status, createdAt] covers getPendingProofs' exact filter+sort
+  //     (WHERE status = PENDING AND paymentProofUrl IS NOT NULL ORDER BY
+  //     createdAt) and the general "billing history by status" list views.
+  //   - [subscriptionId] — Postgres does NOT auto-index foreign key columns
+  //     (unlike some other databases), so lookups/joins keyed off this FK
+  //     (e.g. loading a subscription's billing history) were also an
+  //     unindexed scan until now.
+  @@index([status, createdAt])
+  @@index([subscriptionId])
 }
 
