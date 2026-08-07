@@ -34,7 +34,11 @@ const adapter = new PrismaPg({
     connectionString,
     max: DB_POOL_MAX,
     idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 20_000,
+    // Raised from 20_000 -> 30_000: 20s could still time out during a slow
+    // Neon cold-start wake (3-8s just to resume compute, before the query
+    // itself even runs). 30s gives that headroom without masking genuine
+    // connection failures.
+    connectionTimeoutMillis: 30_000,
 });
 
 const prisma = new PrismaClient({

@@ -50,6 +50,7 @@ import { emitToAdmin, emitToStaff } from "../../config/socketio";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
 import { geocodeAddressSafely } from "../../lib/utils/geocoding";
+import redis from "../../config/redis";
 
 /**
  * PERF FIX (Phase 5.2): geocoding calls an external HTTP API (Google/Mapbox)
@@ -510,6 +511,26 @@ const updateJobStatus = async (
   // receive the status update and can reflect it without a manual refresh.
   for (const assignment of completedJob.staffAssignments) {
     emitToStaff(assignment.staffId, "job:statusUpdated", socketPayload);
+  }
+
+  // PERF FIX (audit #10): getStaffDashboard() caches under
+  // `dashboard:staff:{userId}` for 5 minutes, but nothing was invalidating
+  // that key when a job's status changed — staff saw stale statuses for up
+  // to 5 minutes after an admin (or another staff member) updated a job.
+  // Cache key is keyed by User id, not StaffProfile id, so resolve that
+  // first. Best-effort: never fail the status update over a cache miss.
+  try {
+    const affectedStaff = await prisma.staffProfile.findMany({
+      where: { id: { in: completedJob.staffAssignments.map((a) => a.staffId) } },
+      select: { userId: true },
+    });
+    await Promise.all(
+      affectedStaff.map((s) =>
+        redis.del(`dashboard:staff:${s.userId}`).catch(() => {}),
+      ),
+    );
+  } catch {
+    // best-effort cache invalidation only
   }
 
   // ── Persist notification ─────────────────────────────────────────────────

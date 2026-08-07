@@ -69,15 +69,25 @@ const server = http.createServer(app);
 // Initialize Socket.IO
 setUpSocketIO(server);
 
-async function main() {
+function main() {
   try {
-    // Seed data
-    await seedSuperAdmin();
-    await seedSubscriptionPlans();
-
-    // Start server with IP binding
+    // PERF FIX (Phase 1.3 / audit #3): seeds used to be awaited before
+    // server.listen(), so every boot (deploy, restart, crash recovery)
+    // paid for two DB round-trips before the server could accept any
+    // traffic. On Neon that round-trip could land inside the cold-start
+    // window, delaying the very first real request even further. The
+    // seed functions already short-circuit when their data exists, so
+    // there's no correctness reason to block boot on them — start
+    // listening immediately and let the seeds run in the background.
     server.listen(Number(port), backendIp, () => {
       console.log(`Server is running at http://${backendIp}:${port}`);
+
+      seedSuperAdmin().catch((error) => {
+        console.error("Error seeding super admin:", error);
+      });
+      seedSubscriptionPlans().catch((error) => {
+        console.error("Error seeding subscription plans:", error);
+      });
     });
   } catch (error) {
     console.error("Error starting the server:", error);

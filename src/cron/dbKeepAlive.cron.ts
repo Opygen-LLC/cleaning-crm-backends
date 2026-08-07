@@ -18,8 +18,10 @@ import { log, fail } from "./index.cron";
  *
  * Fix: run a trivial, cheap query on a fixed interval short enough to keep
  * Neon's compute from ever suspending during normal operating hours. This
- * runs every 4 minutes — comfortably inside typical serverless-Postgres
- * auto-suspend windows (commonly ~5 minutes) — and does nothing else.
+ * runs every 2 minutes — a wider safety margin inside typical
+ * serverless-Postgres auto-suspend windows (commonly ~5 minutes) — so a
+ * missed tick (slow event loop, deployment restart, cold cron boot) still
+ * leaves room before the next real request would pay the cold-start cost.
  *
  * NOTE: this reduces cold starts but does not eliminate them entirely
  * (e.g. overnight low-traffic windows, or if the interval is later widened).
@@ -27,7 +29,7 @@ import { log, fail } from "./index.cron";
  * auto-suspend on the production branch — see Phase 1 of the performance
  * audit for details.
  */
-cron.schedule("*/4 * * * *", async () => {
+cron.schedule("*/2 * * * *", async () => {
     try {
         await prisma.$queryRaw`SELECT 1`;
     } catch (err) {

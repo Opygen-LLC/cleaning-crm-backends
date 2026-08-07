@@ -14,6 +14,11 @@ model User {
   accounts           Account[]
   sessions           Session[]
 
+  // PERF FIX (audit #14): seedSuperAdmin() runs
+  // prisma.user.findFirst({ where: { role: UserRole.SUPER_ADMIN } }) on
+  // every server boot to check whether a super admin already exists.
+  // Without an index on `role`, that's a full table scan at every boot.
+  @@index([role])
   @@map("user")
 }
 
