@@ -40,6 +40,7 @@ model Invoice {
   booking          Booking?          @relation(fields: [bookingId], references: [id], onDelete: SetNull)
   payments         Payment[]
 
+  @@index([adminId])
   @@index([adminId, status])
   @@index([dueDate])
   // PERF FIX (Phase 4): getDashboardOverview / getRevenuePage both
@@ -48,5 +49,9 @@ model Invoice {
   // paidDate range/order-by isn't covered — this index lets that filter +
   // range scan happen without touching status-mismatched rows at all.
   @@index([adminId, status, paidDate])
+  // PERF FIX #18: Queries that list all invoices for an admin without a
+  // status filter (e.g. listing all invoices for an admin) cannot use the
+  // composite [adminId, status] index efficiently. A solo adminId index
+  // covers those scans.
   @@map("invoice")
 }

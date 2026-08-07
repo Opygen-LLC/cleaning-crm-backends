@@ -928,9 +928,18 @@ const getStaffDashboard = async (userId: string) => {
         },
       },
     }),
-    // Unread notifications
+    // Unread notifications scoped to this staff member's adminId.
+    // PERF FIX #13 (partial): The Notification model currently has no
+    // per-recipient field — it only tracks adminId. Until a `recipientId`
+    // column is added via migration (see prisma/schema/admin.prisma), we
+    // filter by adminId AND limit to a small recent window to avoid a full
+    // table scan on busy accounts.
     prisma.notification.count({
-      where: { adminId: staffProfile.adminId, isRead: false },
+      where: {
+        adminId: staffProfile.adminId,
+        isRead: false,
+        createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+      },
     }),
     // Avg review rating this week
     prisma.review.aggregate({
