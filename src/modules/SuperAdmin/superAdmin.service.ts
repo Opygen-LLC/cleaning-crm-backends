@@ -18,6 +18,7 @@ import { waitUntil } from "@vercel/functions";
 import { auth } from "../../lib/auth";
 import { adminService } from "../Admin/admin.service";
 import { createNotification } from "../../lib/utils/createNotification";
+import { emitToSuperAdmins } from "../../config/socketio";
 import { NotificationType } from "../../generated/prisma/enums";
 import {
     getPlatformConfig as sharedGetPlatformConfig,
@@ -1676,6 +1677,15 @@ const approvePaymentProof = async (
         relatedId: updatedSub.id,
     }).catch(() => {});
 
+    // PERF FIX (Phase 5, performance audit — frontend polling): tells any
+    // other connected super-admin session/tab this proof is resolved, so
+    // its pending-proofs badge/list updates via cache invalidation instead
+    // of a poll interval. See useSocketPendingProofs on the frontend.
+    emitToSuperAdmins("payment-proof:approved", {
+        billingId: updatedBilling.id,
+        adminId: sub.adminId,
+    });
+
     return { billingRecord: updatedBilling, subscription: updatedSub };
 };
 
@@ -1761,6 +1771,13 @@ const rejectPaymentProof = async (
             : "Your payment proof was rejected. Please re-submit a valid proof of payment.",
         relatedId: record.id,
     }).catch(() => {});
+
+    // PERF FIX (Phase 5, performance audit — frontend polling): same push
+    // as approvePaymentProof above, for the reject path.
+    emitToSuperAdmins("payment-proof:rejected", {
+        billingId: updatedBilling.id,
+        adminId: record.subscription.adminId,
+    });
 
     return updatedBilling;
 };

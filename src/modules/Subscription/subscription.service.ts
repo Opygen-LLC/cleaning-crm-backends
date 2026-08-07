@@ -10,6 +10,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { Decimal } from "@prisma/client/runtime/client";
 import { getPlatformConfig } from "../../lib/utils/platformConfig";
+import { emitToSuperAdmins } from "../../config/socketio";
 
 // Fallback only — the real value is read from platform config
 // (super-admin → Settings → Platform Configuration → "Default trial days")
@@ -416,6 +417,22 @@ const submitPaymentProof = async (
             data: { status: "PENDING_PAYMENT" },
         }),
     ]);
+
+    // PERF FIX (Phase 5, performance audit — frontend polling): push this
+    // straight to every connected super-admin instead of relying on them to
+    // poll `pending-proofs` to notice it. See emitToSuperAdmins in
+    // config/socketio.ts — the frontend's useSocketPendingProofs hook
+    // invalidates the "subscriptions" RTK Query tag on this event, which
+    // refetches the badge count / list without any polling interval.
+    // Fire-and-forget: never let a socket hiccup break the actual
+    // submission, which has already succeeded above.
+    emitToSuperAdmins("payment-proof:submitted", {
+        billingId: billingRecord.id,
+        subscriptionId: sub.id,
+        adminId,
+        amount: Number(billingRecord.amount),
+        submittedAt: billingRecord.createdAt.toISOString(),
+    });
 
     return billingRecord;
 };

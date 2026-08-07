@@ -85,6 +85,64 @@ const setUpSocketIO = (server: Server): SocketIOServer => {
         );
 
         /**
+         * PERF FIX (Phase 5, performance audit — frontend polling): the
+         * SuperAdmin sidebar badge (`SuperAdminLayoutClient.tsx`) was polling
+         * `GET /super-admin/billing-history/pending-proofs` every 60s on
+         * *every* super-admin route to keep the "pending proofs" count fresh
+         * — exactly the pattern flagged in the production log
+         * (`pending-proofs` hit repeatedly across an extended session).
+         *
+         * `joinSuperAdminRoom` lets a super-admin's socket join a shared
+         * `super-admins` room (validated the same way as joinAdminRoom /
+         * joinStaffRoom — the session token must belong to a user whose role
+         * is SUPER_ADMIN and whose id matches the claimed id) so the server
+         * can push `payment-proof:submitted` / `payment-proof:approved` /
+         * `payment-proof:rejected` events instead of the client polling for
+         * them. See emitToSuperAdmins below and its call sites in
+         * subscription.service.ts (submitPaymentProof) and
+         * superAdmin.service.ts (approvePaymentProof / rejectPaymentProof).
+         */
+        socket.on(
+            "joinSuperAdminRoom",
+            async (userId: string, sessionToken: string) => {
+                if (!userId || !sessionToken) {
+                    logger.warn(
+                        "[Socket.IO] joinSuperAdminRoom rejected: missing userId or sessionToken",
+                    );
+                    return;
+                }
+
+                try {
+                    const session = await prisma.session.findFirst({
+                        where: {
+                            token: sessionToken,
+                            expiresAt: { gt: new Date() },
+                        },
+                        include: { user: true },
+                    });
+
+                    if (
+                        session?.user?.id === userId &&
+                        session.user.role === "SUPER_ADMIN"
+                    ) {
+                        socket.join("super-admins");
+                        logger.debug(
+                            "[Socket.IO] Socket joined super-admins room",
+                        );
+                    } else {
+                        logger.warn(
+                            "[Socket.IO] joinSuperAdminRoom rejected: token does not match a SUPER_ADMIN user",
+                        );
+                    }
+                } catch (err) {
+                    logger.error(
+                        `[Socket.IO] joinSuperAdminRoom error: ${String(err)}`,
+                    );
+                }
+            },
+        );
+
+        /**
          * Staff equivalent of joinAdminRoom — required so that staff members
          * receive real-time events scoped to *them* (e.g. "you've been
          * assigned a new job") rather than only the admin who dispatched it.
@@ -192,6 +250,21 @@ export const emitToAll = (event: string, payload: unknown): void => {
         return;
     }
     io.emit(event, payload);
+};
+
+/**
+ * Emit a real-time event to every connected super-admin (see the
+ * joinSuperAdminRoom handler above). Used to replace the pending-proofs
+ * polling flagged in Phase 5 of the performance audit with a push model.
+ */
+export const emitToSuperAdmins = (event: string, payload: unknown): void => {
+    if (!io) {
+        logger.warn(
+            "[Socket.IO] emitToSuperAdmins called before io is initialised",
+        );
+        return;
+    }
+    io.to("super-admins").emit(event, payload);
 };
 
 export default setUpSocketIO;
