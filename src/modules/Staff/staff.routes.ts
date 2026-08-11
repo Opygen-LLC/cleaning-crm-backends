@@ -44,6 +44,7 @@ import {
 } from "../../middlewares/validations/zodValidation.middleware";
 import { staffValidation } from "./staff.validation";
 import { multerMemory } from "../../config/multerMemory";
+import { convertHeicToPng } from "../../middlewares/convertHeicToPngMiddleware";
 
 const router = Router();
 
@@ -65,14 +66,16 @@ router.patch("/me", checkAuth(UserRole.STAFF), staffController.updateMyProfile);
 
 /**
  * POST /staff/me/avatar
- * Multipart upload (field: "avatar") → Cloudinary → user.image updated.
+ * Multipart upload (field: "avatar") → HEIC conversion → Cloudinary → user.image updated.
  * Returns { avatarUrl: string } pointing to the Cloudinary secure URL.
  * File size limit: 10 MB (set by multerMemory config).
+ * convertHeicToPng is a no-op for jpeg/png so it is always safe to include.
  */
 router.post(
     "/me/avatar",
     checkAuth(UserRole.STAFF),
     multerMemory.single("avatar"),
+    convertHeicToPng,
     staffController.uploadMyAvatar,
 );
 

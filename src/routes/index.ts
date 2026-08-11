@@ -27,6 +27,7 @@ import { dashboardRoutes } from "../modules/Dashboard/dashboard.routes";
 import { checklistRoutes } from "../modules/Checklist/checklist.routes";
 import { staffLeaveRoutes } from "../modules/StaffLeave/staffLeave.routes";
 import { couponRoutes } from "../modules/Coupon/coupon.routes";
+import { paymentRoutes } from "../modules/Payment/payment.routes";
 import { checkSubscription } from "../middlewares/checkSubscription";
 import express from "express";
 
@@ -34,14 +35,14 @@ const router = Router();
 
 // ─── Public / auth routes (no subscription gate) ─────────────────────────────
 const openRoutes: { path: string; route: Router }[] = [
-    { path: "/auth", route: authRoutes },
-    { path: "/user", route: userRoutes },
-    { path: "/session", route: sessionRoutes },
-    { path: "/subscription", route: subscriptionRoutes },
+    { path: "/auth",            route: authRoutes },
+    { path: "/user",            route: userRoutes },
+    { path: "/session",         route: sessionRoutes },
+    { path: "/subscription",    route: subscriptionRoutes },
     { path: "/subscription-plan", route: subscriptionPlanRoutes },
-    { path: "/booking-form", route: bookingFormRoutes },
-    { path: "/estimate-form", route: estimateFormRoutes },
-    { path: "/super-admin", route: superAdminRoutes },
+    { path: "/booking-form",    route: bookingFormRoutes },
+    { path: "/estimate-form",   route: estimateFormRoutes },
+    { path: "/super-admin",     route: superAdminRoutes },
 ];
 
 // ─── Gated routes (subscription required) ────────────────────────────────────
@@ -58,30 +59,31 @@ const openRoutes: { path: string; route: Router }[] = [
 //   GET    /staff/leave/all        → staffLeaveRoutes /leave/all
 //   PATCH  /staff/leave/:id/review → staffLeaveRoutes /leave/:id/review
 const gatedRoutes: { path: string; route: Router }[] = [
-    { path: "/admin", route: adminRoutes },
+    { path: "/admin",             route: adminRoutes },
     // staffRoutes contains /me, /me/avatar, /:id, /:id/availability etc.
-    { path: "/staff", route: staffRoutes },
+    { path: "/staff",             route: staffRoutes },
     // staffLeaveRoutes contains /leave, /leave/all, /leave/:id, /leave/:id/review
     // Mounted at "/staff" so final paths are /staff/leave/* as the frontend expects.
-    { path: "/staff", route: staffLeaveRoutes },
-    { path: "/client", route: clientRoutes },
-    { path: "/service-catalog", route: serviceCatalogRoutes },
-    { path: "/invoice", route: invoiceRoutes },
-    { path: "/expense", route: expenseRoutes },
-    { path: "/booking", route: bookingRoutes },
-    { path: "/lead", route: leadRoutes },
-    { path: "/dashboard", route: dashboardRoutes },
-    { path: "/notification", route: notificationRoutes },
-    { path: "/job", route: jobRoutes },
-    { path: "/quote", route: quoteRoutes },
-    { path: "/estimate", route: estimateRoutes },
-    { path: "/review", route: reviewRoutes },
-    { path: "/reports", route: reportsRoutes },
-    { path: "/checklist", route: checklistRoutes },
+    { path: "/staff",             route: staffLeaveRoutes },
+    { path: "/client",            route: clientRoutes },
+    { path: "/service-catalog",   route: serviceCatalogRoutes },
+    { path: "/invoice",           route: invoiceRoutes },
+    { path: "/expense",           route: expenseRoutes },
+    { path: "/booking",           route: bookingRoutes },
+    { path: "/lead",              route: leadRoutes },
+    { path: "/dashboard",         route: dashboardRoutes },
+    { path: "/notification",      route: notificationRoutes },
+    { path: "/job",               route: jobRoutes },
+    { path: "/quote",             route: quoteRoutes },
+    { path: "/estimate",          route: estimateRoutes },
+    { path: "/review",            route: reviewRoutes },
+    { path: "/reports",           route: reportsRoutes },
+    { path: "/checklist",         route: checklistRoutes },
     { path: "/recurring-booking", route: recurringBookingRoutes },
-    { path: "/pricing-rules", route: pricingRulesRoutes },
-    // "/staff-leave" entry removed — staffLeaveRoutes is now under "/staff" above
-    { path: "/coupon", route: couponRoutes },
+    { path: "/pricing-rules",     route: pricingRulesRoutes },
+    { path: "/coupon",            route: couponRoutes },
+    // Payment module — manual cash/bank/cheque payment recording
+    { path: "/payment",           route: paymentRoutes },
 ];
 
 openRoutes.forEach(({ path, route }) => {
