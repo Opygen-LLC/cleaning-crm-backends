@@ -10,6 +10,7 @@ import {
     IQuoteUpdate,
     IQuoteLineItemInput,
     IQuoteConvertToBooking,
+    IQuoteConvertToJob,
 } from "./quote.interface";
 import { quoteSearchableFields, quoteFilterableFields } from "./quote.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
@@ -831,6 +832,114 @@ const recordTemplateUsage = async (templateId: string) => {
         });
 };
 
+// ─── Convert accepted quote → job ─────────────────────────────────────────────
+
+/**
+ * Creates a Job directly from an ACCEPTED Quote.
+ * The job inherits client, address, service type, and notes from the quote.
+ * A unique jobRef is generated; geocoding fires in the background.
+ */
+const convertQuoteToJob = async (
+    id: string,
+    payload: IQuoteConvertToJob,
+    user: IRequestUser,
+) => {
+    const adminId = await getAdminId(user);
+
+    const quote = await prisma.quote.findFirst({
+        where: { id, adminId },
+        include: { lineItems: true, client: { select: { id: true } } },
+    });
+    if (!quote) throw new AppError(status.NOT_FOUND, "Quote not found");
+
+    if (quote.status !== QuoteStatus.ACCEPTED) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Only ACCEPTED quotes can be converted to jobs. Current status: ${quote.status}`,
+        );
+    }
+
+    if (payload.staffIds?.length) {
+        const staffCount = await prisma.staffProfile.count({
+            where: { id: { in: payload.staffIds }, adminId },
+        });
+        if (staffCount !== payload.staffIds.length) {
+            throw new AppError(
+                status.BAD_REQUEST,
+                "One or more staff members not found",
+            );
+        }
+    }
+
+    // Generate job ref
+    const lastJob = await prisma.job.findFirst({
+        where: { adminId },
+        orderBy: { createdAt: "desc" },
+        select: { jobRef: true },
+    });
+    let nextNum = 1;
+    if (lastJob?.jobRef) {
+        const parts = lastJob.jobRef.split("-");
+        const num = parseInt(parts[parts.length - 1]);
+        if (!isNaN(num)) nextNum = num + 1;
+    }
+    const jobRef = `#OP-JB-${nextNum.toString().padStart(4, "0")}`;
+
+    // Map quote serviceType (free text) to nearest ServiceType enum value
+    const { ServiceType } = await import("../../generated/prisma/enums");
+    const serviceTypeMap: Record<string, string> = {
+        "Residential Clean":  ServiceType.RESIDENTIAL_CLEAN,
+        "Deep Clean":         ServiceType.DEEP_CLEAN,
+        "Office Clean":       ServiceType.OFFICE_CLEAN,
+        "End of Tenancy":     ServiceType.END_OF_TENANCY,
+        "Carpet Clean":       ServiceType.CARPET_CLEAN,
+        "Window Clean":       ServiceType.WINDOW_CLEAN,
+        "Move-In/Out Clean":  ServiceType.MOVE_IN_OUT_CLEAN,
+    };
+    const resolvedServiceType =
+        (serviceTypeMap[quote.serviceType] as any) ??
+        ServiceType.RESIDENTIAL_CLEAN;
+
+    const job = await prisma.$transaction(async (tx) => {
+        const created = await tx.job.create({
+            data: {
+                jobRef,
+                adminId,
+                clientId: quote.clientId,
+                serviceType: resolvedServiceType,
+                address: quote.address,
+                scheduledDate: new Date(payload.scheduledDate),
+                durationMins: payload.durationMins,
+                total: quote.total,
+                notes: payload.notes ?? quote.notes ?? undefined,
+                quoteId: quote.id,
+                ...(payload.staffIds?.length && {
+                    staffAssignments: {
+                        createMany: {
+                            data: payload.staffIds.map((staffId) => ({ staffId })),
+                        },
+                    },
+                }),
+            },
+            include: {
+                client: { select: { id: true, name: true, email: true, phone: true } },
+                staffAssignments: {
+                    include: {
+                        staff: {
+                            include: {
+                                user: { select: { id: true, name: true, email: true } },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        return created;
+    });
+
+    return job;
+};
+
 // ─── Export ───────────────────────────────────────────────────────────────────
 
 export const quoteService = {
@@ -841,6 +950,7 @@ export const quoteService = {
     updateQuoteStatus,
     deleteQuote,
     convertQuoteToBooking,
+    convertQuoteToJob,
     getPublicQuote,
     publicQuoteAction,
     sendQuoteEmail,

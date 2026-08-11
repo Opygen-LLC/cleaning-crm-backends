@@ -107,4 +107,13 @@ router.post(
     quoteController.convertQuoteToBooking,
 );
 
+// ── Convert to Job ────────────────────────────────────────────────────────────
+
+router.post(
+    "/:id/convert-to-job",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(quoteValidation.convertToJob, ValidationProperty.BODY),
+    quoteController.convertQuoteToJob,
+);
+
 export const quoteRoutes = router;

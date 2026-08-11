@@ -70,6 +70,19 @@ const convertToBookingSchema = z
     })
     .strict();
 
+// ── Convert to Job ─────────────────────────────────────────────────────────────
+
+const convertToJobSchema = z
+    .object({
+        scheduledDate: z
+            .string()
+            .datetime({ message: "Invalid ISO date string" }),
+        durationMins: z.number().int().positive("Duration must be positive"),
+        staffIds: z.array(z.string().uuid("Invalid staff ID")).optional(),
+        notes: z.string().optional(),
+    })
+    .strict();
+
 // ── Public action (unauthenticated) ───────────────────────────────────────────
 
 const publicQuoteActionSchema = z
@@ -120,6 +133,7 @@ export const quoteValidation = {
     updateQuote: updateQuoteSchema,
     updateStatus: updateStatusSchema,
     convertToBooking: convertToBookingSchema,
+    convertToJob: convertToJobSchema,
     publicQuoteAction: publicQuoteActionSchema,
     createTemplate: createTemplateSchema,
     updateTemplate: updateTemplateSchema,

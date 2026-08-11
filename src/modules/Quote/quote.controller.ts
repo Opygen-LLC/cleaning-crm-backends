@@ -196,6 +196,21 @@ const deleteQuoteTemplate = catchAsync(async (req, res) => {
     });
 });
 
+const convertQuoteToJob = catchAsync(async (req, res) => {
+    const result = await quoteService.convertQuoteToJob(
+        req.params.id as string,
+        req.body,
+        req.user,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.CREATED,
+        success: true,
+        message: "Quote converted to job successfully",
+        data: result,
+    });
+});
+
 // ── Export ────────────────────────────────────────────────────────────────────
 
 export const quoteController = {
@@ -206,6 +221,7 @@ export const quoteController = {
     updateQuoteStatus,
     deleteQuote,
     convertQuoteToBooking,
+    convertQuoteToJob,
     getPublicQuote,
     publicQuoteAction,
     sendQuoteEmail,

@@ -47,6 +47,15 @@ export interface IQuoteConvertToBooking {
     notes?: string;
 }
 
+// ── Convert to Job ─────────────────────────────────────────────────────────────
+
+export interface IQuoteConvertToJob {
+    scheduledDate: string; // ISO date string
+    durationMins: number;
+    staffIds?: string[];
+    notes?: string;
+}
+
 // ── Public acceptance (unauthenticated) ───────────────────────────────────────
 
 export interface IPublicQuoteAction {

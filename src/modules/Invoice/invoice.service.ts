@@ -634,21 +634,39 @@ const recordPayment = async (
             },
         });
 
-        // Mark invoice as PAID
+        // Sum all PAID payments for this invoice (including the one just created)
+        const aggregate = await tx.payment.aggregate({
+            where: { invoiceId: invoice.id, status: PaymentStatus.PAID },
+            _sum: { amount: true },
+        });
+        const totalPaid = Number(aggregate._sum.amount ?? 0);
+        const invoiceTotal = Number(invoice.total);
+        const shouldMarkPaid = totalPaid >= invoiceTotal;
+
+        // Mark invoice as PAID only when fully covered
         const updatedInvoice = await tx.invoice.update({
             where: { id: invoiceId },
-            data: { status: InvoiceStatus.PAID, paidDate: paidAt },
+            data: {
+                ...(shouldMarkPaid
+                    ? { status: InvoiceStatus.PAID, paidDate: paidAt }
+                    : { status: InvoiceStatus.SENT }),
+            },
         });
 
         return { payment, invoice: updatedInvoice };
     });
 
-    // Notify admin of the manual payment record
+    // Notify admin — different message depending on whether invoice is now fully paid
+    const isNowPaid = result.invoice.status === InvoiceStatus.PAID;
     createNotification({
         adminId: admin.id,
         type: NotificationType.PAYMENT,
-        title: `Invoice ${invoice.invoiceRef} paid`,
-        message: `${payload.method} payment of $${Number(payload.amount).toFixed(2)} recorded`,
+        title: isNowPaid
+            ? `Invoice ${invoice.invoiceRef} fully paid`
+            : `Payment recorded on ${invoice.invoiceRef}`,
+        message: isNowPaid
+            ? `All payments received — invoice marked as PAID`
+            : `${payload.method} payment of £${Number(payload.amount).toFixed(2)} recorded (partial)`,
         relatedId: invoice.id,
     }).catch(() => {});
 

@@ -71,13 +71,36 @@ const createPayment = async (payload: IPaymentCreate, user: any) => {
       },
     });
 
-    // Auto-mark invoice as PAID when a payment covers it
+    // Auto-mark invoice PAID only when cumulative PAID payments >= invoice total
     let updatedInvoice = null;
     if (payload.invoiceId) {
-      updatedInvoice = await tx.invoice.update({
+      const invoice = await tx.invoice.findUnique({
         where: { id: payload.invoiceId },
-        data: { status: InvoiceStatus.PAID, paidDate: paidAt },
+        select: { total: true, status: true },
       });
+
+      if (invoice && invoice.status !== InvoiceStatus.PAID) {
+        // Sum all previously recorded PAID payments for this invoice
+        // (the new payment is already in the DB at this point because
+        //  the create above ran in the same transaction)
+        const aggregate = await tx.payment.aggregate({
+          where: {
+            invoiceId: payload.invoiceId,
+            status: PaymentStatus.PAID,
+          },
+          _sum: { amount: true },
+        });
+
+        const totalPaid = Number(aggregate._sum.amount ?? 0);
+        const invoiceTotal = Number(invoice.total);
+
+        if (totalPaid >= invoiceTotal) {
+          updatedInvoice = await tx.invoice.update({
+            where: { id: payload.invoiceId },
+            data: { status: InvoiceStatus.PAID, paidDate: paidAt },
+          });
+        }
+      }
     }
 
     return { payment, invoice: updatedInvoice };
@@ -85,11 +108,30 @@ const createPayment = async (payload: IPaymentCreate, user: any) => {
 
   // Notifications (non-blocking)
   if (payload.invoiceId && result.invoice) {
+    // Invoice just flipped to PAID — emit socket event to admin dashboard
+    try {
+      const { emitToAdmin } = await import("../../config/socketio");
+      emitToAdmin(adminId, "invoice:paid", {
+        invoiceId: payload.invoiceId,
+        paymentRef,
+        amount: Number(payload.amount),
+      });
+    } catch { /* socket not yet initialised — non-fatal */ }
+
+    createNotification({
+      adminId,
+      type: NotificationType.PAYMENT,
+      title: `Invoice marked as PAID`,
+      message: `All payments for this invoice have been received (total £${Number(result.invoice.total ?? 0).toFixed(2)})`,
+      relatedId: result.payment.id,
+    }).catch(() => {});
+  } else if (payload.invoiceId) {
+    // Payment recorded but invoice not yet fully covered
     createNotification({
       adminId,
       type: NotificationType.PAYMENT,
       title: `Payment recorded`,
-      message: `${payload.method} payment of ${Number(payload.amount).toFixed(2)} recorded`,
+      message: `${payload.method} payment of £${Number(payload.amount).toFixed(2)} recorded`,
       relatedId: result.payment.id,
     }).catch(() => {});
   }
