@@ -1,5 +1,6 @@
 import redis from "../../config/redis";
 import logger from "../logger";
+import { invalidatePrivateResponseCache } from "../../middlewares/privateResponseCache";
 
 /**
  * Removes derived dashboard/report entries after a write. It intentionally
@@ -7,6 +8,9 @@ import logger from "../logger";
  * cache outage must never turn a successful database write into an error.
  */
 export const invalidateAnalyticsCache = (adminId: string): void => {
+  // Synchronous L1 invalidation makes the very next request fresh even when
+  // Redis is unavailable. Shared Redis entries are removed below.
+  invalidatePrivateResponseCache(adminId);
   void (async () => {
     const patterns = [
       `dashboard:overview:${adminId}:*`,

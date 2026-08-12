@@ -3,10 +3,13 @@ import AppError from "../errorHelper/AppError";
 import status from "http-status";
 import { AccountStatus, UserRole } from "../generated/prisma/enums";
 import { CookieUtils } from "../lib/utils/cookie";
-import { prisma } from "../lib/prisma/prisma";
 import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
-import redis from "../config/redis";
-import { singleFlight } from "../lib/utils/singleFlight";
+import {
+    getRuntimeSessionValidity,
+    getRuntimeTenantId,
+    getRuntimeUserStatus,
+} from "../lib/cache/authRuntimeCache";
+import { privateResponseCache } from "./privateResponseCache";
 
 // ─── Cross-domain auth note ──────────────────────────────────────────────────
 
@@ -56,37 +59,18 @@ export const checkAuth =
                 throw new AppError(status.FORBIDDEN, "Forbidden access.");
             }
 
-            // ── Account status check (Redis cached with 60s TTL) ────────────
-            let userStatus: string | null = await redis
-                .get(`auth:status:${tokenData.userId}`)
-                .catch(() => null);
+            // checkSubscription runs before route-level auth on gated routes.
+            // Reuse its request-local result; otherwise use the bounded L1 ->
+            // Redis -> Postgres loader. Warm requests do no network I/O here.
+            const userStatus =
+                req.authRuntime?.userStatus ??
+                (await getRuntimeUserStatus(tokenData.userId as string));
 
             if (!userStatus) {
-                // PERF FIX (Phase 4): singleFlight collapses concurrent
-                // cache-miss requests for the same userId into one Postgres
-                // call instead of each firing its own — see
-                // src/lib/utils/singleFlight.ts for the full explanation and
-                // the production log evidence that motivated this.
-                const user = await singleFlight(
-                    `user-status:${tokenData.userId}`,
-                    () =>
-                        prisma.user.findUnique({
-                            where: { id: tokenData.userId as string },
-                            select: { id: true, status: true },
-                        }),
+                throw new AppError(
+                    status.UNAUTHORIZED,
+                    "Account not found. Please log in again.",
                 );
-
-                if (!user) {
-                    throw new AppError(
-                        status.UNAUTHORIZED,
-                        "Account not found. Please log in again.",
-                    );
-                }
-
-                userStatus = user.status;
-                await redis
-                    .setex(`auth:status:${tokenData.userId}`, 60, user.status)
-                    .catch(() => {});
             }
 
             if (userStatus === AccountStatus.SUSPENDED) {
@@ -103,47 +87,14 @@ export const checkAuth =
                 );
             }
 
-            // ── adminId resolution (Redis cached, 5 min TTL) ─────────────────
-            // PERF FIX (Phase 2): resolves userId -> AdminProfile.id once per
-            // request here, instead of leaving it for every individual
-            // service function to re-query Postgres for (the old
-            // `resolveAdminId()` pattern, duplicated 107 times across
-            // Booking/Client/Job/Quote/Estimate/Checklist/etc.). Only ADMIN
-            // accounts have an AdminProfile, so this is skipped for
-            // STAFF/SUPER_ADMIN. See src/lib/utils/resolveAdminId.ts for the
-            // shared helper that reads req.user.adminId set below.
-            let adminId: string | null = null;
-            if (tokenData.role === UserRole.ADMIN) {
-                const adminIdCacheKey = `adminId:${tokenData.userId}`;
-                const cachedAdminId = await redis
-                    .get(adminIdCacheKey)
-                    .catch(() => null);
-
-                if (cachedAdminId) {
-                    // Redis has no native "null" value; a cache miss on a
-                    // user who genuinely has no AdminProfile is stored as
-                    // the sentinel string below so we don't re-query on
-                    // every request for that (rare/invalid) case either.
-                    adminId = cachedAdminId === "__none__" ? null : cachedAdminId;
-                } else {
-                    // PERF FIX (Phase 4): same stampede fix as the
-                    // user-status lookup above — concurrent requests for the
-                    // same user's uncached adminId share one query instead
-                    // of each firing their own.
-                    const admin = await singleFlight(
-                        `admin-id:${tokenData.userId}`,
-                        () =>
-                            prisma.adminProfile.findUnique({
-                                where: { userId: tokenData.userId as string },
-                                select: { id: true },
-                            }),
-                    );
-                    adminId = admin?.id ?? null;
-                    await redis
-                        .setex(adminIdCacheKey, 300, adminId ?? "__none__")
-                        .catch(() => {});
-                }
-            }
+            // Resolve both ADMIN and STAFF to the owning tenant. Besides
+            // removing repeated service queries, this gives the response
+            // cache a tenant namespace that mutations can invalidate safely.
+            const role = tokenData.role as UserRole;
+            const adminId =
+                req.authRuntime?.adminId !== undefined
+                    ? req.authRuntime.adminId
+                    : await getRuntimeTenantId(tokenData.userId as string, role);
 
             // ── Optional session bookkeeping ────────────────────────────────
             // If the better-auth session cookie is present (same-origin / local
@@ -154,24 +105,8 @@ export const checkAuth =
                 "better-auth.session_token",
             );
             if (sessionToken) {
-                const cacheKey = `session:${sessionToken}`;
-                let isSessionValid: boolean | null = await redis
-                    .get(cacheKey)
-                    .then((v) => (v !== null ? v === "true" : null))
-                    .catch(() => null);
-
-                if (isSessionValid === null) {
-                    const sessionExists = await prisma.session.findFirst({
-                        where: {
-                            token: sessionToken,
-                            expiresAt: { gt: new Date() },
-                        },
-                    });
-                    isSessionValid = !!sessionExists;
-                    await redis
-                        .setex(cacheKey, 60, isSessionValid ? "true" : "false")
-                        .catch(() => {});
-                }
+                const isSessionValid =
+                    await getRuntimeSessionValidity(sessionToken);
 
                 if (!isSessionValid) {
                     throw new AppError(
@@ -188,7 +123,7 @@ export const checkAuth =
                 adminId,
             };
 
-            next();
+            await privateResponseCache(req, res, next);
         } catch (error) {
             next(error);
         }

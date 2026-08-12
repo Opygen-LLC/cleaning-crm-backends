@@ -17,6 +17,11 @@ import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import { CookieUtils } from "../lib/utils/cookie";
 import redis from "../config/redis";
 import { singleFlight } from "../lib/utils/singleFlight";
+import { BoundedTtlCache } from "../lib/cache/boundedTtlCache";
+import {
+  getRuntimeTenantId,
+  getRuntimeUserStatus,
+} from "../lib/cache/authRuntimeCache";
 
 function getAccessToken(req: Request): string | undefined {
   const authHeader = req.headers.authorization;
@@ -54,17 +59,32 @@ type CachedSubscriptionPayload = {
 // manually invalidates this key via redis.del(subscriptionCacheKey(userId)).
 const SUBSCRIPTION_CACHE_TTL_SECONDS = 300;
 const subscriptionCacheKey = (userId: string) => `sub:full:user:${userId}`;
+const subscriptionL1 = new BoundedTtlCache<CachedSubscriptionPayload>({
+  maxEntries: 10_000,
+});
+const subscriptionL1Enabled = process.env.NODE_ENV !== "test";
 
 async function getCachedSubscriptionForUser(
   userId: string,
 ): Promise<CachedSubscriptionPayload> {
+  const local = subscriptionL1Enabled ? subscriptionL1.get(userId) : undefined;
+  if (local !== undefined) return local;
+
   const cached = await redis
     .get(subscriptionCacheKey(userId))
     .catch(() => null);
 
   if (cached !== null) {
     try {
-      return JSON.parse(cached) as CachedSubscriptionPayload;
+      const parsed = JSON.parse(cached) as CachedSubscriptionPayload;
+      if (subscriptionL1Enabled) {
+        subscriptionL1.set(
+          userId,
+          parsed,
+          SUBSCRIPTION_CACHE_TTL_SECONDS * 1_000,
+        );
+      }
+      return parsed;
     } catch {
       // fall through and reload from DB on a corrupt cache entry
     }
@@ -80,16 +100,13 @@ async function getCachedSubscriptionForUser(
   // had a chance to populate Redis. singleFlight collapses all of that into
   // a single DB round trip; every concurrent caller shares the same result.
   return singleFlight(`sub:full:load:${userId}`, async () => {
-    const admin = await prisma.adminProfile.findFirst({
-      where: { userId },
-      select: { id: true },
-    });
+    const adminId = await getRuntimeTenantId(userId, UserRole.ADMIN);
 
     let payload: CachedSubscriptionPayload = null;
 
-    if (admin) {
+    if (adminId) {
       const sub = await prisma.subscription.findFirst({
-        where: { adminId: admin.id },
+        where: { adminId },
         select: {
           status: true,
           isTrial: true,
@@ -103,7 +120,7 @@ async function getCachedSubscriptionForUser(
 
       if (sub) {
         payload = {
-          adminId: admin.id,
+          adminId,
           status: sub.status,
           isTrial: sub.isTrial,
           trialEndsAt: sub.trialEndsAt ? sub.trialEndsAt.toISOString() : null,
@@ -123,6 +140,14 @@ async function getCachedSubscriptionForUser(
         JSON.stringify(payload),
       )
       .catch(() => {});
+
+    if (subscriptionL1Enabled) {
+      subscriptionL1.set(
+        userId,
+        payload,
+        SUBSCRIPTION_CACHE_TTL_SECONDS * 1_000,
+      );
+    }
 
     return payload;
   });
@@ -152,33 +177,11 @@ export const checkSubscription = async (
     };
     if (role !== UserRole.ADMIN) return next();
 
-    let userStatus: string | null = await redis
-      .get(`auth:status:${userId}`)
-      .catch(() => null);
-
-    if (!userStatus) {
-      // PERF FIX (Phase 4): same singleFlight key pattern as checkAuth.ts's
-      // user-status lookup (`user-status:${userId}`) — the production log
-      // showed this exact query firing twice back-to-back for the same
-      // user, once from each middleware, when both ran close together on an
-      // uncached request. Note the select shape differs slightly (this one
-      // only needs `status`, checkAuth needs `id, status`), so this uses its
-      // own key to stay correct; it still stops duplicate *concurrent*
-      // requests to checkSubscription itself (e.g. two gated calls firing
-      // near-simultaneously) from each hitting Postgres independently.
-      const user = await singleFlight(`user-status-basic:${userId}`, () =>
-        prisma.user.findUnique({
-          where: { id: userId },
-          select: { status: true },
-        }),
-      );
-      if (user) {
-        userStatus = user.status;
-        await redis
-          .setex(`auth:status:${userId}`, 60, user.status)
-          .catch(() => {});
-      }
-    }
+    // Resolve status first so suspended/deleted accounts never trigger any
+    // subscription or tenant query. On the normal warm path this is an L1
+    // Map read, not a Redis round trip.
+    const userStatus = await getRuntimeUserStatus(userId);
+    req.authRuntime = { userStatus };
 
     if (userStatus === AccountStatus.SUSPENDED)
       throw new AppError(
@@ -188,8 +191,10 @@ export const checkSubscription = async (
     if (userStatus === AccountStatus.DELETED)
       throw new AppError(status.FORBIDDEN, "This account has been deleted.");
 
-    // ── Subscription lookup (shared Redis-cached loader, 60s TTL) ────────
     const sub = await getCachedSubscriptionForUser(userId);
+    req.authRuntime.adminId = sub?.adminId;
+
+    // ── Subscription lookup ──────────────────────────────────────────────
     if (!sub) return next();
 
     const now = new Date();

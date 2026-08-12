@@ -25,9 +25,9 @@ dotenv.config();
  *     so a missing REDIS_HOST/REDIS_PORT produced `host: undefined` /
  *     `port: NaN` instead of failing predictably.
  *
- * `lazyConnect` + a small `maxRetriesPerRequest` mean: if Redis is
- * unreachable, an individual `redis.get()`/`redis.set()` call fails fast
- * (rejects) instead of retrying for a long time or hanging the request —
+ * An eager background connection plus strict command/connect timeouts mean
+ * the first request does not pay setup cost and, if Redis is unreachable,
+ * an individual command fails fast instead of hanging the request —
  * `getCached`/`setCache` in reports.service.ts already treat that rejection
  * as a cache miss, so Reports simply falls back to querying Postgres
  * directly. `retryStrategy` keeps a background reconnect loop going (capped
@@ -40,9 +40,14 @@ const redis = new Redis({
     port: Number(process.env.REDIS_PORT) || 6379,
     password: process.env.REDIS_PASSWORD || undefined,
     db: Number(process.env.REDIS_DB) || 0,
-    lazyConnect: true, // don't open a socket (or log a connection attempt) until the first command actually runs
+    // Connect during process startup so the first user request never pays
+    // the Redis TCP/TLS handshake. Errors remain non-fatal via the listener.
+    lazyConnect: false,
     enableOfflineQueue: false, // reject commands immediately if Redis is not connected instead of queuing/hanging
     maxRetriesPerRequest: 1, // fail a pending command fast instead of queueing/retrying it repeatedly
+    connectTimeout: 2_000,
+    commandTimeout: 100,
+    keepAlive: 10_000,
     retryStrategy(times) {
         return Math.min(times * 500, 10_000);
     },

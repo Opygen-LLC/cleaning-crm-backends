@@ -1,8 +1,7 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import { IRequestUser } from "../../types/requestUser.interface";
-import { prisma } from "../prisma/prisma";
-import { UserRole } from "../../generated/prisma/enums";
+import { getRuntimeTenantId } from "../cache/authRuntimeCache";
 
 /**
  * getAdminId — PERF FIX (Phase 2)
@@ -28,22 +27,9 @@ import { UserRole } from "../../generated/prisma/enums";
 export const getAdminId = async (user: IRequestUser): Promise<string> => {
     if (user.adminId) return user.adminId;
 
-    if (user.role === UserRole.STAFF) {
-        const staff = await prisma.staffProfile.findUnique({
-            where: { userId: user.id },
-            select: { adminId: true },
-        });
-        if (staff) return staff.adminId;
-    }
-
-    const admin = await prisma.adminProfile.findUnique({
-        where: { userId: user.id },
-        select: { id: true },
-    });
-
-    if (!admin) {
+    const adminId = await getRuntimeTenantId(user.id, user.role);
+    if (!adminId) {
         throw new AppError(status.NOT_FOUND, "Admin profile not found");
     }
-
-    return admin.id;
+    return adminId;
 };

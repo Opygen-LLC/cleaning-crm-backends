@@ -18,6 +18,12 @@ declare global {
             // checkFeature only verify it once per request. See
             // src/lib/utils/verifiedRequestToken.ts.
             verifiedAccessToken?: VerifiedTokenResult;
+            // Populated by the subscription gate and reused by checkAuth so
+            // the same request never repeats remote status/tenant lookups.
+            authRuntime?: {
+                userStatus?: string | null;
+                adminId?: string | null;
+            };
             // Set by checkPortalAuth.ts (resolvePortalClient /
             // checkAuthOrPortalClient) when the request is authenticated via
             // a client portal access token rather than an admin/staff
