@@ -33,6 +33,9 @@ export interface ISimpleDocumentPdfParams {
     taxAmount: number | string;
     total: number | string;
     notes?: string | null;
+    businessName?: string;
+    businessEmail?: string | null;
+    brandColor?: string | null;
 }
 
 const fmt2dp = (n: unknown) => `£${Number(n).toFixed(2)}`;
@@ -52,13 +55,17 @@ const COLORS = {
 export const generateSimpleDocumentPDFBuffer = (
     params: ISimpleDocumentPdfParams,
 ): Promise<Buffer> => {
+    const brandColor = /^#[0-9a-f]{6}$/i.test(params.brandColor ?? "")
+        ? params.brandColor!
+        : COLORS.headerBg;
+    const businessName = params.businessName || "CleanCRM";
     return new Promise<Buffer>((resolve, reject) => {
         const doc = new PDFDocument({
             size: "A4",
             margins: { top: 0, bottom: 0, left: 0, right: 0 },
             info: {
                 Title: `${params.docTypeLabel === "QUOTE" ? "Quote" : "Estimate"} ${params.ref}`,
-                Author: "CleanCRM",
+                Author: businessName,
                 Subject: `${params.docTypeLabel} for ${params.clientName}`,
                 Creator: "CleanCRM PDF Service",
             },
@@ -74,8 +81,8 @@ export const generateSimpleDocumentPDFBuffer = (
         const CONTENT = W - MARGIN * 2;
 
         // ── Header band ──────────────────────────────────────────────────────
-        doc.rect(0, 0, W, 100).fill(COLORS.headerBg);
-        doc.font("Helvetica-Bold").fontSize(20).fillColor("#FFFFFF").text("CleanCRM", MARGIN, 28);
+        doc.rect(0, 0, W, 100).fill(brandColor);
+        doc.font("Helvetica-Bold").fontSize(20).fillColor("#FFFFFF").text(businessName, MARGIN, 28);
         doc.font("Helvetica").fontSize(9).fillColor("#94A3B8").text("PROFESSIONAL CLEANING SERVICES", MARGIN, 53);
         doc.font("Helvetica-Bold").fontSize(16).fillColor("#FFFFFF").text(params.ref, 0, 28, {
             align: "right",
@@ -125,7 +132,7 @@ export const generateSimpleDocumentPDFBuffer = (
             total: MARGIN + CONTENT * 0.85,
         };
 
-        doc.rect(MARGIN, TABLE_Y, CONTENT, 28).fill(COLORS.headerBg);
+        doc.rect(MARGIN, TABLE_Y, CONTENT, 28).fill(brandColor);
         [
             { text: "DESCRIPTION", x: COL.desc + 8 },
             { text: "QTY", x: COL.qty + 8 },
@@ -173,7 +180,7 @@ export const generateSimpleDocumentPDFBuffer = (
         }
 
         totY += 4;
-        doc.rect(TOT_X, totY, TOT_W, 38).fill(COLORS.accent);
+        doc.rect(TOT_X, totY, TOT_W, 38).fill(brandColor);
         doc.font("Helvetica-Bold").fontSize(11).fillColor("#94A3B8")
             .text(params.docTypeLabel === "QUOTE" ? "TOTAL" : "ESTIMATED TOTAL", TOT_X + 12, totY + 13, { width: TOT_W * 0.5 });
         doc.font("Helvetica-Bold").fontSize(18).fillColor(COLORS.accentText)
@@ -202,7 +209,7 @@ export const generateSimpleDocumentPDFBuffer = (
                 MARGIN,
                 FOOTER_Y + 14,
             );
-        doc.font("Helvetica").fontSize(9).fillColor(COLORS.muted).text("Questions? accounts@cleancrm.co.uk", MARGIN, FOOTER_Y + 30);
+        doc.font("Helvetica").fontSize(9).fillColor(COLORS.muted).text(`Questions? ${params.businessEmail ?? "Contact us"}`, MARGIN, FOOTER_Y + 30);
         doc.font("Helvetica").fontSize(9).fillColor(COLORS.light).text(params.ref, 0, FOOTER_Y + 22, {
             align: "right",
             width: W - MARGIN,

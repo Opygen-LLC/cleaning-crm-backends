@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
 import status from "http-status";
 import { BookingStatus, UserRole } from "../../generated/prisma/enums";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
@@ -21,6 +22,7 @@ import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
 import { notificationService } from "../Settings/notification.service";
+import logger from "../../lib/logger";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -138,7 +140,7 @@ const sendBookingEmail = async (
     prefKey,
   );
   if (!allowed) {
-    console.log(
+    logger.info(
       `[EMAIL NOTICE] Skipping ${eventType} email for booking ${booking.bookingRef} per admin preference.`,
     );
     return;
@@ -163,6 +165,7 @@ const sendBookingEmail = async (
   };
 
   await sendEmailSafely({
+    adminId: booking.adminId,
     to: clientEmail,
     subject: subjectMap[eventType],
     templateName: "booking-confirmation",
@@ -266,6 +269,7 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
     message: `${booking.client.name} booked ${booking.serviceType.replace(/_/g, " ")}`,
     relatedId: booking.id,
   }).catch(() => {});
+  invalidateAnalyticsCache(adminId);
 
   return booking;
 };
@@ -324,11 +328,13 @@ const updateBooking = async (
     data.scheduledDate = new Date(payload.scheduledDate);
   }
 
-  return prisma.booking.update({
+  const updated = await prisma.booking.update({
     where: { id },
     data,
     include: bookingInclude,
   });
+  invalidateAnalyticsCache(adminId);
+  return updated;
 };
 
 const updateBookingStatus = async (
@@ -374,6 +380,7 @@ const updateBookingStatus = async (
   } else if (newStatus === BookingStatus.CANCELLED) {
     sendBookingEmail(updated, "cancelled").catch(() => {});
   }
+  invalidateAnalyticsCache(adminId);
 
   return updated;
 };
@@ -391,7 +398,7 @@ const deleteBooking = async (id: string, user: any) => {
     );
   }
 
-  return prisma.$transaction(async (tx) => {
+  const deleted = await prisma.$transaction(async (tx) => {
     await tx.booking.delete({ where: { id } });
 
     // Roll back client booking count
@@ -400,6 +407,8 @@ const deleteBooking = async (id: string, user: any) => {
       data: { totalBookings: { decrement: 1 } },
     });
   });
+  invalidateAnalyticsCache(adminId);
+  return deleted;
 };
 
 // ─── Staff Assignment ─────────────────────────────────────────────────────────

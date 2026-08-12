@@ -19,3 +19,9 @@ export interface UpdateNotificationPrefsPayload {
   reminderHoursBefore?: number;
   digestTime?: string;
 }
+
+export interface UpsertNotificationTemplatePayload {
+  subject?: string;
+  body: string;
+  channel?: "EMAIL";
+}

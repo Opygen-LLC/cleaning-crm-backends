@@ -36,7 +36,7 @@ const getAllInvoices = catchAsync(async (req, res) => {
 
 const getInvoiceById = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const result = await invoiceService.getInvoiceById(id as string);
+    const result = await invoiceService.getInvoiceById(id as string, req.user);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -48,7 +48,7 @@ const getInvoiceById = catchAsync(async (req, res) => {
 
 const updateInvoice = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const result = await invoiceService.updateInvoice(id as string, req.body);
+    const result = await invoiceService.updateInvoice(id as string, req.body, req.user);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -64,6 +64,7 @@ const updateInvoiceStatus = catchAsync(async (req, res) => {
     const result = await invoiceService.updateInvoiceStatus(
         id as string,
         invoiceStatus,
+        req.user,
     );
 
     sendResponse(res, {
@@ -76,7 +77,7 @@ const updateInvoiceStatus = catchAsync(async (req, res) => {
 
 const deleteInvoice = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const result = await invoiceService.deleteInvoice(id as string);
+    const result = await invoiceService.deleteInvoice(id as string, req.user);
 
     sendResponse(res, {
         httpStatusCode: status.OK,

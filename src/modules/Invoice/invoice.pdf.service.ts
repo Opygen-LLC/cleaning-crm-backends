@@ -62,11 +62,18 @@ const NOTES_FALLBACK = 80; // conservative reserve when notes are present but no
 
 export const generateInvoicePDFBuffer = async (
     invoiceId: string,
-): Promise<Buffer> => {
+): Promise<{ buffer: Buffer; invoiceRef: string }> => {
     const invoice = await prisma.invoice.findUnique({
         where: { id: invoiceId },
         include: {
             serviceCatalog: { select: { serviceName: true } },
+            admin: {
+                select: {
+                    businessName: true,
+                    businessEmail: true,
+                    brandColor: true,
+                },
+            },
         },
     });
 
@@ -77,8 +84,11 @@ export const generateInvoicePDFBuffer = async (
     const lineItems: LineItem[] = Array.isArray(invoice.lineItems)
         ? (invoice.lineItems as unknown as LineItem[])
         : [];
+    const brandColor = /^#[0-9a-f]{6}$/i.test(invoice.admin.brandColor ?? "")
+        ? invoice.admin.brandColor!
+        : COLORS.headerBg;
 
-    return new Promise<Buffer>((resolve, reject) => {
+    return new Promise<{ buffer: Buffer; invoiceRef: string }>((resolve, reject) => {
         const doc = new PDFDocument({
             size: "A4",
             margins: { top: 0, bottom: 0, left: 0, right: 0 },
@@ -86,7 +96,7 @@ export const generateInvoicePDFBuffer = async (
             // them if needed. Omitted here — we only need a linear stream.
             info: {
                 Title: `Invoice ${invoice.invoiceRef}`,
-                Author: "CleanCRM",
+                Author: invoice.admin.businessName,
                 Subject: `Invoice for ${invoice.clientName}`,
                 Creator: "CleanCRM PDF Service",
             },
@@ -94,7 +104,7 @@ export const generateInvoicePDFBuffer = async (
 
         const chunks: Buffer[] = [];
         doc.on("data", (chunk: Buffer) => chunks.push(chunk));
-        doc.on("end", () => resolve(Buffer.concat(chunks)));
+        doc.on("end", () => resolve({ buffer: Buffer.concat(chunks), invoiceRef: invoice.invoiceRef }));
         doc.on("error", reject);
 
         const W = doc.page.width; // 595.28 pt  (A4)
@@ -103,12 +113,12 @@ export const generateInvoicePDFBuffer = async (
         const CONTENT = W - MARGIN * 2;
 
         // ── 1. Header band ────────────────────────────────────────────────────
-        doc.rect(0, 0, W, 100).fill(COLORS.headerBg);
+        doc.rect(0, 0, W, 100).fill(brandColor);
 
         doc.font("Helvetica-Bold")
             .fontSize(20)
             .fillColor("#FFFFFF")
-            .text("CleanCRM", MARGIN, 28);
+            .text(invoice.admin.businessName, MARGIN, 28);
 
         doc.font("Helvetica")
             .fontSize(9)
@@ -232,8 +242,8 @@ export const generateInvoicePDFBuffer = async (
             BODY_Y,
             halfW,
             "FROM",
-            "CleanCRM Ltd.",
-            ["Professional Cleaning Services", "accounts@cleancrm.co.uk"],
+            invoice.admin.businessName,
+            ["Professional Cleaning Services", invoice.admin.businessEmail ?? ""],
         );
 
         // ── 4. Line-items table ────────────────────────────────────────────────
@@ -245,7 +255,7 @@ export const generateInvoicePDFBuffer = async (
             total: MARGIN + CONTENT * 0.85,
         };
 
-        doc.rect(MARGIN, TABLE_Y, CONTENT, 28).fill(COLORS.headerBg);
+        doc.rect(MARGIN, TABLE_Y, CONTENT, 28).fill(brandColor);
         const headers = [
             { text: "DESCRIPTION", x: COL.desc + 8 },
             { text: "QTY", x: COL.qty + 8 },
@@ -366,7 +376,7 @@ export const generateInvoicePDFBuffer = async (
         }
 
         totY += 4;
-        doc.rect(TOT_X, totY, TOT_W, 38).fill(COLORS.accent);
+        doc.rect(TOT_X, totY, TOT_W, 38).fill(brandColor);
         doc.font("Helvetica-Bold")
             .fontSize(11)
             .fillColor("#94A3B8")
@@ -411,7 +421,7 @@ export const generateInvoicePDFBuffer = async (
         doc.font("Helvetica")
             .fontSize(9)
             .fillColor(COLORS.muted)
-            .text("Questions? accounts@cleancrm.co.uk", MARGIN, FOOTER_Y + 30);
+            .text(`Questions? ${invoice.admin.businessEmail ?? invoice.clientEmail}`, MARGIN, FOOTER_Y + 30);
 
         doc.font("Helvetica")
             .fontSize(9)

@@ -1,7 +1,28 @@
 import { prisma } from "../../lib/prisma/prisma";
-import type { UpdateNotificationPrefsPayload } from "./notification.interface";
+import type {
+    UpdateNotificationPrefsPayload,
+    UpsertNotificationTemplatePayload,
+} from "./notification.interface";
 import redis from "../../config/redis";
 import { getAdminId as resolveAdminId } from "../../lib/utils/resolveAdminId";
+import AppError from "../../errorHelper/AppError";
+import status from "http-status";
+import logger from "../../lib/logger";
+
+export const CUSTOMISABLE_TEMPLATE_KEYS = [
+    "booking-confirmation",
+    "reminder-24h",
+    "staff-assigned",
+    "quote-sent",
+    "invoice-due",
+    "review-request",
+] as const;
+
+const assertTemplateKey = (key: string) => {
+    if (!CUSTOMISABLE_TEMPLATE_KEYS.includes(key as (typeof CUSTOMISABLE_TEMPLATE_KEYS)[number])) {
+        throw new AppError(status.BAD_REQUEST, "Unsupported notification template key");
+    }
+};
 
 const getNotificationPrefs = async (userId: string) => {
     const admin = await prisma.adminProfile.findUnique({
@@ -37,6 +58,45 @@ const updateNotificationPrefs = async (
         update: payload,
         create: { adminId: admin.id, ...payload },
     });
+};
+
+const getTemplates = async (userId: string) => {
+    const adminId = await resolveAdminId({ id: userId } as any);
+    return prisma.notificationTemplate.findMany({
+        where: { adminId },
+        orderBy: { key: "asc" },
+    });
+};
+
+const upsertTemplate = async (
+    userId: string,
+    key: string,
+    payload: UpsertNotificationTemplatePayload,
+) => {
+    assertTemplateKey(key);
+    const adminId = await resolveAdminId({ id: userId } as any);
+    return prisma.notificationTemplate.upsert({
+        where: { adminId_key: { adminId, key } },
+        create: {
+            adminId,
+            key,
+            channel: "EMAIL",
+            subject: payload.subject?.trim() || null,
+            body: payload.body.trim(),
+        },
+        update: {
+            channel: "EMAIL",
+            subject: payload.subject?.trim() || null,
+            body: payload.body.trim(),
+        },
+    });
+};
+
+const deleteTemplate = async (userId: string, key: string) => {
+    assertTemplateKey(key);
+    const adminId = await resolveAdminId({ id: userId } as any);
+    await prisma.notificationTemplate.deleteMany({ where: { adminId, key } });
+    return { reset: true };
 };
 
 
@@ -117,7 +177,7 @@ const shouldSendEmail = async (
         const val = prefs[preferenceKey];
         return typeof val === "boolean" ? val : true;
     } catch (err) {
-        console.warn(`[NOTIFICATION SERVICE] Failed to fetch preferences for admin ${adminId}, defaulting to true:`, err);
+        logger.warn(`[NOTIFICATION SERVICE] Failed to fetch preferences for admin ${adminId}, defaulting to true: ${String(err)}`);
         return true;
     }
 };
@@ -131,5 +191,7 @@ export const notificationService = {
     getInbox,
     markRead,
     markAllRead,
+    getTemplates,
+    upsertTemplate,
+    deleteTemplate,
 };
-

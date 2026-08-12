@@ -19,6 +19,7 @@ import { ValidationProperty, zodValidate } from "../../middlewares/validations/z
 import { jobValidation } from "./job.validation";
 import { jobNotesValidation } from "./job.notes.validation";
 import { multerMemory } from "../../config/multerMemory";
+import { convertHeicToPng } from "../../middlewares/convertHeicToPngMiddleware";
 
 const router = Router();
 
@@ -86,13 +87,13 @@ router.post("/:id/dispatch", checkAuth(UserRole.ADMIN), checkFeature("auto-dispa
 // ── Job Notes ─────────────────────────────────────────────────────────────────
 router.get(
     "/:id/notes",
-    checkAuth(UserRole.ADMIN),
+    checkAuth(UserRole.ADMIN, UserRole.STAFF),
     zodValidate(jobNotesValidation.getNotesQuery, ValidationProperty.QUERY),
     jobNotesController.getNotes,
 );
 router.post(
     "/:id/notes",
-    checkAuth(UserRole.ADMIN),
+    checkAuth(UserRole.ADMIN, UserRole.STAFF),
     zodValidate(jobNotesValidation.createNote, ValidationProperty.BODY),
     jobNotesController.createNote,
 );
@@ -114,6 +115,7 @@ router.post(
     "/:id/attachments",
     checkAuth(UserRole.ADMIN, UserRole.STAFF),
     multerMemory.single("file"),
+    convertHeicToPng,
     jobNotesController.uploadAttachment,
 );
 router.delete("/:id/attachments/:attachId", checkAuth(UserRole.ADMIN), jobNotesController.deleteAttachment);

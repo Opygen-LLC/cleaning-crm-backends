@@ -1,6 +1,7 @@
 import { prisma } from "../prisma/prisma";
 import { emitToAdmin } from "../../config/socketio";
 import { NotificationType } from "../../generated/prisma/enums";
+import logger from "../logger";
 
 interface CreateNotificationPayload {
     adminId: string;
@@ -37,6 +38,6 @@ export async function createNotification(
         });
     } catch (err) {
         // Never let a notification failure bubble up and break the main flow
-        console.error("[createNotification] Failed:", err);
+        logger.error("[createNotification] Failed", err);
     }
 }

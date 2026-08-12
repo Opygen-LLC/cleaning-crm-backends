@@ -48,7 +48,7 @@ const createNote = catchAsync(async (req, res) => {
             type:       req.body.type       as NoteType | undefined,
             pinned:     req.body.pinned,
             // Fall back to the authenticated user's name if authorName not provided
-            authorName: req.body.authorName ?? (req.user as any)?.name ?? "Admin",
+            authorName: req.body.authorName ?? req.user.email ?? (req.user.role === "STAFF" ? "Staff" : "Admin"),
         },
         req.user,
     );

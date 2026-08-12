@@ -17,6 +17,7 @@ import {
 } from "../../middlewares/validations/zodValidation.middleware";
 import { invoiceValidation } from "./invoice.validation";
 import { multerMemory } from "../../config/multerMemory";
+import { convertHeicToPng } from "../../middlewares/convertHeicToPngMiddleware";
 
 const router = Router();
 
@@ -101,6 +102,7 @@ router.post(
     "/:id/payments/:paymentId/proof",
     checkAuthOrPortalClient(UserRole.ADMIN, UserRole.SUPER_ADMIN),
     multerMemory.single("proof"),
+    convertHeicToPng,
     invoiceController.submitPaymentProof,
 );
 

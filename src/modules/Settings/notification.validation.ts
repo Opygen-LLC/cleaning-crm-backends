@@ -24,6 +24,13 @@ const updateNotificationPrefsSchema = z
     })
     .strict();
 
+const upsertTemplateSchema = z.object({
+    subject: z.string().trim().max(250).optional(),
+    body: z.string().trim().min(1).max(10_000),
+    channel: z.literal("EMAIL").optional(),
+}).strict();
+
 export const notificationValidation = {
     updatePrefs: updateNotificationPrefsSchema,
+    upsertTemplate: upsertTemplateSchema,
 };

@@ -51,6 +51,9 @@ import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
 import { geocodeAddressSafely } from "../../lib/utils/geocoding";
 import redis from "../../config/redis";
+import logger from "../../lib/logger";
+import { sendPushToUsers } from "../Push/push.service";
+import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
 
 /**
  * PERF FIX (Phase 5.2): geocoding calls an external HTTP API (Google/Mapbox)
@@ -94,7 +97,7 @@ const geocodeJobAddressInBackground = (
     } catch (err) {
       // Best-effort — the job itself already saved successfully without
       // coordinates, so this is a log-and-move-on, not a caller-facing error.
-      console.error(`[Job] Background geocoding failed for job ${jobId}:`, err);
+      logger.error(`[Job] Background geocoding failed for job ${jobId}`, err);
     }
   })();
 };
@@ -236,6 +239,7 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
   });
 
   geocodeJobAddressInBackground(job.id, adminId, payload.address);
+  invalidateAnalyticsCache(adminId);
 
   return job;
 };
@@ -350,6 +354,7 @@ const updateJob = async (
   if (addressChanged) {
     geocodeJobAddressInBackground(id, adminId, payload.address);
   }
+  invalidateAnalyticsCache(adminId);
 
   return updated;
 };
@@ -548,6 +553,7 @@ const updateJobStatus = async (
     message: `Status changed to ${statusLabel[newStatus] ?? newStatus}`,
     relatedId: completedJob.id,
   });
+  invalidateAnalyticsCache(completedJob.adminId);
 
   // ── Review-request email on COMPLETED ────────────────────────────────────
   if (newStatus === JobStatus.COMPLETED && completedJob) {
@@ -569,6 +575,7 @@ const updateJobStatus = async (
           );
 
           sendEmailSafely({
+            adminId: completedJob.adminId,
             to: clientRecord.email,
             subject: `How did we do? — ${completedJob.jobRef}`,
             templateName: "review-request",
@@ -588,12 +595,12 @@ const updateJobStatus = async (
               reviewUrl: `${FRONTEND_URL}/review/${reviewToken.token}`,
             },
           }).catch((err) => {
-            console.error("[REVIEW EMAIL] Failed to send review request:", err);
+            logger.error("[REVIEW EMAIL] Failed to send review request", err);
           });
         }
       }
     } catch (err) {
-      console.error("[REVIEW EMAIL] Failed to send review request:", err);
+      logger.error("[REVIEW EMAIL] Failed to send review request", err);
     }
   }
 
@@ -611,7 +618,9 @@ const deleteJob = async (id: string, user: IRequestUser) => {
       "Cannot delete a job that is in progress",
     );
   }
-  return prisma.job.delete({ where: { id } });
+  const deleted = await prisma.job.delete({ where: { id } });
+  invalidateAnalyticsCache(adminId);
+  return deleted;
 };
 
 const convertBookingToJob = async (bookingId: string, user: IRequestUser) => {
@@ -729,7 +738,7 @@ const assignStaff = async (
       if (payload.staffIds.length && updatedJob) {
         const staffList = await prisma.staffProfile.findMany({
           where: { id: { in: payload.staffIds } },
-          include: { user: { select: { name: true, email: true } } },
+          include: { user: { select: { id: true, name: true, email: true } } },
         });
         const client = await prisma.client.findUnique({
           where: { id: updatedJob.clientId },
@@ -767,9 +776,20 @@ const assignStaff = async (
           });
         }
 
+        void sendPushToUsers(
+          staffList.map((staff) => staff.user.id),
+          {
+            title: `New job: ${updatedJob.jobRef}`,
+            body: `${friendlyServiceType} for ${clientName} on ${scheduledDate} at ${scheduledTime}`,
+            url: `/staff/dashboard/jobs/${updatedJob.id}`,
+            tag: `job-assigned-${updatedJob.id}`,
+          },
+        );
+
         Promise.all(
           staffList.map((staff) =>
             sendEmailSafely({
+              adminId,
               to: staff.user.email,
               subject: `You've been assigned to job ${updatedJob.jobRef}`,
               templateName: "staff-job-dispatch",
@@ -787,7 +807,7 @@ const assignStaff = async (
             }),
           ),
         ).catch((err) => {
-          console.error(
+          logger.error(
             `[STAFF DISPATCH EMAIL] Failed to send dispatch emails for job ${updatedJob.jobRef}:`,
             err,
           );

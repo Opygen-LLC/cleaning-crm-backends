@@ -63,10 +63,50 @@ const markAllRead = catchAsync(async (req, res) => {
     });
 });
 
+const getTemplates = catchAsync(async (req, res) => {
+    const result = await notificationService.getTemplates(req.user.id as string);
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Notification templates fetched successfully",
+        data: result,
+    });
+});
+
+const upsertTemplate = catchAsync(async (req, res) => {
+    const result = await notificationService.upsertTemplate(
+        req.user.id as string,
+        req.params.key as string,
+        req.body,
+    );
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Notification template saved successfully",
+        data: result,
+    });
+});
+
+const deleteTemplate = catchAsync(async (req, res) => {
+    const result = await notificationService.deleteTemplate(
+        req.user.id as string,
+        req.params.key as string,
+    );
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Notification template reset successfully",
+        data: result,
+    });
+});
+
 export const notificationController = {
     getPrefs,
     updatePrefs,
     getInbox,
     markRead,
     markAllRead,
+    getTemplates,
+    upsertTemplate,
+    deleteTemplate,
 };

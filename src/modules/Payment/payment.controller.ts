@@ -19,6 +19,8 @@ const createPayment = catchAsync(async (req, res) => {
 
 const getAllPayments = catchAsync(async (req, res) => {
   const filters: IPaymentFilters = {
+    page:       req.query.page ? Number(req.query.page) : 1,
+    limit:      req.query.limit ? Number(req.query.limit) : 10,
     searchTerm: req.query.searchTerm as string,
     method:     req.query.method    as PaymentMethod,
     status:     req.query.status    as PaymentStatus,
@@ -38,7 +40,7 @@ const getAllPayments = catchAsync(async (req, res) => {
 });
 
 const getPaymentById = catchAsync(async (req, res) => {
-  const result = await paymentService.getPaymentById(req.params.id, req.user);
+  const result = await paymentService.getPaymentById(req.params.id as string, req.user);
 
   sendResponse(res, {
     httpStatusCode: httpStatus.OK,
@@ -50,7 +52,7 @@ const getPaymentById = catchAsync(async (req, res) => {
 
 const updatePayment = catchAsync(async (req, res) => {
   const result = await paymentService.updatePayment(
-    req.params.id,
+    req.params.id as string,
     req.body,
     req.user,
   );
@@ -64,7 +66,7 @@ const updatePayment = catchAsync(async (req, res) => {
 });
 
 const deletePayment = catchAsync(async (req, res) => {
-  const result = await paymentService.deletePayment(req.params.id, req.user);
+  const result = await paymentService.deletePayment(req.params.id as string, req.user);
 
   sendResponse(res, {
     httpStatusCode: httpStatus.OK,
@@ -80,7 +82,7 @@ const uploadReceipt = catchAsync(async (req, res) => {
   }
 
   const result = await paymentService.uploadReceipt(
-    req.params.id,
+    req.params.id as string,
     req.file,
     req.user,
   );

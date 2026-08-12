@@ -1,6 +1,6 @@
-import chalk from "chalk";
+import logger from "../lib/logger";
 
-export const log = (msg: string) => console.log(chalk.green(`[CRON] ${msg}`));
+export const log = (msg: string) => logger.info(`[CRON] ${msg}`);
 
 export const fail = (job: string, err: unknown) =>
-    console.error(chalk.red(`[CRON][${job}] Failed:`, err));
+    logger.error(`[CRON][${job}] Failed`, err);

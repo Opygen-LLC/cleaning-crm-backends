@@ -19,6 +19,8 @@ export interface IPaymentUpdate {
 }
 
 export interface IPaymentFilters {
+  page?: number;
+  limit?: number;
   searchTerm?: string;
   method?: PaymentMethod;
   status?: PaymentStatus;

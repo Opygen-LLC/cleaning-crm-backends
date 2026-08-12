@@ -69,16 +69,22 @@ const resolveAdminIdForJob = async (
     jobId: string,
 ): Promise<{ adminId: string; uploaderRole: string }> => {
     if (user.role === "STAFF") {
-        // Staff → look up which job this is and get its adminId
-        const job = await prisma.job.findUnique({
-            where: { id: jobId },
-            select: { adminId: true },
+        const staff = await prisma.staffProfile.findUnique({
+            where: { userId: user.id },
+            select: { id: true, adminId: true },
         });
-        if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
-        return { adminId: job.adminId, uploaderRole: "STAFF" };
+        if (!staff) throw new AppError(status.NOT_FOUND, "Staff profile not found");
+
+        const assignment = await prisma.jobStaffAssignment.findFirst({
+            where: { jobId, staffId: staff.id },
+            select: { jobId: true },
+        });
+        if (!assignment) {
+            throw new AppError(status.FORBIDDEN, "You are not assigned to this job");
+        }
+        return { adminId: staff.adminId, uploaderRole: "STAFF" };
     }
-    const adminId = await getAdminId(user);
-    return { adminId, uploaderRole: "ADMIN" };
+    return { adminId: await getAdminId(user), uploaderRole: "ADMIN" };
 };
 
 /**
@@ -110,7 +116,7 @@ const getNotes = async (
     user: IRequestUser,
     options: IGetNotesOptions = {},
 ) => {
-    const adminId = await getAdminId(user);
+    const { adminId } = await resolveAdminIdForJob(user, jobId);
     await assertJobOwnership(jobId, adminId);
 
     const { page = 1, limit = 10 } = options;
@@ -157,9 +163,9 @@ const createNote = async (
         data: {
             jobId,
             adminId,
-            type: payload.type ?? NoteType.GENERAL,
+            type: user.role === "STAFF" ? NoteType.STAFF : (payload.type ?? NoteType.GENERAL),
             body: payload.body.trim(),
-            pinned: payload.pinned ?? false,
+            pinned: user.role === "STAFF" ? false : (payload.pinned ?? false),
             authorName: payload.authorName,
         },
     });

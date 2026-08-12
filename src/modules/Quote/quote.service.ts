@@ -654,6 +654,7 @@ const sendQuoteEmail = async (id: string, user: IRequestUser) => {
         : null;
 
     await sendEmailSafely({
+        adminId,
         to: quote.client.email,
         subject: `Quote ${quote.quoteRef} from Opygen — valid until ${fmt(quote.validUntil)}`,
         templateName: "quote-send",
@@ -910,7 +911,6 @@ const convertQuoteToJob = async (
                 address: quote.address,
                 scheduledDate: new Date(payload.scheduledDate),
                 durationMins: payload.durationMins,
-                total: quote.total,
                 notes: payload.notes ?? quote.notes ?? undefined,
                 quoteId: quote.id,
                 ...(payload.staffIds?.length && {

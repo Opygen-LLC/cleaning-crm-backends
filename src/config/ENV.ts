@@ -57,6 +57,9 @@ export const SMTP_HOST: string = process.env.SMTP_HOST as string;
 export const SMTP_PORT: string = process.env.SMTP_PORT as string;
 export const SMTP_SECURE: string | undefined = process.env.SMTP_SECURE;
 export const SMTP_FROM: string | undefined = process.env.SMTP_FROM;
+export const VAPID_PUBLIC_KEY: string | undefined = process.env.VAPID_PUBLIC_KEY;
+export const VAPID_PRIVATE_KEY: string | undefined = process.env.VAPID_PRIVATE_KEY;
+export const VAPID_SUBJECT: string = process.env.VAPID_SUBJECT || "mailto:support@opygen.com";
 
 // ─── Geocoding (Phase 2 — location-aware dispatch) ─────────────────────────────
 // Provider is chosen explicitly rather than inferred from which key is set,
@@ -70,5 +73,4 @@ export const GOOGLE_MAPS_API_KEY: string | undefined =
     process.env.GOOGLE_MAPS_API_KEY;
 export const MAPBOX_ACCESS_TOKEN: string | undefined =
     process.env.MAPBOX_ACCESS_TOKEN;
-
 

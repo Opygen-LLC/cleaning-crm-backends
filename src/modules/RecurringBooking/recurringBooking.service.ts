@@ -103,8 +103,18 @@ export const advanceNextRunAt = (
     // Keep the same time and day-of-week — it should already land correctly
     // for WEEKLY/BIWEEKLY.  For MONTHLY we do a calendar-month advance instead.
     if (frequency === RecurringFrequency.MONTHLY) {
-        next.setTime(current.getTime()); // reset
-        next.setUTCMonth(next.getUTCMonth() + 1);
+        const targetYear = current.getUTCFullYear();
+        const targetMonth = current.getUTCMonth() + 1;
+        const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+        next.setTime(Date.UTC(
+            targetYear,
+            targetMonth,
+            Math.min(current.getUTCDate(), lastDay),
+            timeHour,
+            timeMinute,
+            0,
+            0,
+        ));
     }
     next.setUTCHours(timeHour, timeMinute, 0, 0);
     return next;

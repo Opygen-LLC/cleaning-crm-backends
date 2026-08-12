@@ -16,12 +16,12 @@
  *     this.
  */
 
-import chalk from "chalk";
 import {
     GEOCODING_PROVIDER,
     GOOGLE_MAPS_API_KEY,
     MAPBOX_ACCESS_TOKEN,
 } from "../../config/ENV";
+import logger from "../logger";
 
 export interface GeocodeResult {
     latitude: number;
@@ -142,10 +142,8 @@ export const geocodeAddressSafely = async (
         }
         return null;
     } catch (err) {
-        console.error(
-            chalk.yellow(
-                `[GEOCODING] Failed to geocode "${trimmed}" via ${GEOCODING_PROVIDER}:`,
-            ),
+        logger.warn(
+            `[GEOCODING] Failed to geocode "${trimmed}" via ${GEOCODING_PROVIDER}`,
             err,
         );
         return null;

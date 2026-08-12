@@ -7,6 +7,11 @@ import {
 import authValidator from "./auth.validation";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { UserRole } from "../../generated/prisma/enums";
+import {
+    loginRateLimit,
+    otpRateLimit,
+    passwordResetRateLimit,
+} from "../../middlewares/authRateLimit";
 
 const router = Router();
 
@@ -19,6 +24,7 @@ router.post(
 
 router.post(
     "/login",
+    loginRateLimit,
     zodValidate(authValidator.loginValidation, ValidationProperty.BODY),
     authController.login,
 );
@@ -32,11 +38,13 @@ router.get(
 router.post("/refresh-token", authController.getNewToken);
 router.post(
     "/verify-email",
+    otpRateLimit,
     zodValidate(authValidator.verifyEmailValidation, ValidationProperty.BODY),
     authController.verifyEmail,
 );
 router.post(
     "/resend-otp",
+    otpRateLimit,
     zodValidate(
         authValidator.forgotPasswordValidation,
         ValidationProperty.BODY,
@@ -45,6 +53,7 @@ router.post(
 );
 router.post(
     "/forgot-password",
+    passwordResetRateLimit,
     zodValidate(
         authValidator.forgotPasswordValidation,
         ValidationProperty.BODY,
@@ -53,6 +62,7 @@ router.post(
 );
 router.post(
     "/reset-password",
+    passwordResetRateLimit,
     zodValidate(authValidator.resetPasswordValidation, ValidationProperty.BODY),
     authController.resetPassword,
 );

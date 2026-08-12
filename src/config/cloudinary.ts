@@ -6,6 +6,7 @@ import {
     CLOUDINARY_API_SECRET,
     CLOUDINARY_CLOUD_NAME,
 } from "./ENV";
+import logger from "../lib/logger";
 
 cloudinary.config({
     cloud_name: CLOUDINARY_CLOUD_NAME,
@@ -75,7 +76,7 @@ export const deleteFileFromCloudinary = async (url: string): Promise<void> => {
         const match = url.match(regex);
 
         if (!match?.[1]) {
-            console.warn("[Cloudinary] Could not extract public_id from URL:", url);
+            logger.warn(`[Cloudinary] Could not extract public_id from URL: ${url}`);
             return;
         }
 
@@ -99,9 +100,9 @@ export const deleteFileFromCloudinary = async (url: string): Promise<void> => {
             });
         }
 
-        console.log(`[Cloudinary] Deleted asset: ${publicId} (${primaryType})`);
+        logger.info(`[Cloudinary] Deleted asset: ${publicId} (${primaryType})`);
     } catch (error) {
-        console.error("[Cloudinary] Error deleting file:", error);
+        logger.error("[Cloudinary] Error deleting file", error);
         throw new AppError(
             status.INTERNAL_SERVER_ERROR,
             "Failed to delete file from Cloudinary",

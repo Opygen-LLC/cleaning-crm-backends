@@ -54,6 +54,7 @@ model AdminProfile {
   serviceCatalogs       ServiceCatalog[]
   activityLogs          ActivityLog[]
   notifications         Notification[]
+  notificationTemplates NotificationTemplate[]
   // Added to satisfy BookingChangeRequest.admin's back-relation —
   // rename to match whatever `BookingChangeRequest` calls this
   // relation on your side if it differs.
@@ -135,4 +136,20 @@ model Notification {
   @@index([adminId, isRead])
   @@index([adminId, createdAt])
   @@map("notification")
+}
+
+model NotificationTemplate {
+  id        String       @id @default(uuid())
+  adminId   String
+  key       String
+  channel   String       @default("EMAIL")
+  subject   String?
+  body      String
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  admin     AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@unique([adminId, key])
+  @@index([adminId])
+  @@map("notification_template")
 }

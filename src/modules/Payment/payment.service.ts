@@ -11,17 +11,10 @@ import { uploadFileToCloudinary } from "../../config/cloudinary";
 import { logActivity } from "../../lib/utils/logActivity";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const resolveAdminId = async (user: any): Promise<string> => {
-  const admin = await prisma.adminProfile.findUnique({
-    where: { userId: user.id },
-    select: { id: true },
-  });
-  if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-  return admin.id;
-};
 
 const generatePaymentRef = async (): Promise<string> => {
   const last = await prisma.payment.findFirst({
@@ -40,7 +33,7 @@ const generatePaymentRef = async (): Promise<string> => {
 // ─── Create Payment — POST /payment ──────────────────────────────────────────
 
 const createPayment = async (payload: IPaymentCreate, user: any) => {
-  const adminId = await resolveAdminId(user);
+  const adminId = await getAdminId(user);
 
   // If linked to an invoice, validate ownership
   if (payload.invoiceId) {
@@ -143,6 +136,7 @@ const createPayment = async (payload: IPaymentCreate, user: any) => {
     entityId: result.payment.id,
     description: `Created payment ${paymentRef} — ${payload.method} £${Number(payload.amount).toFixed(2)}`,
   });
+  invalidateAnalyticsCache(adminId);
 
   return result;
 };
@@ -152,7 +146,7 @@ const createPayment = async (payload: IPaymentCreate, user: any) => {
 const getAllPayments = async (filters: IPaymentFilters, user: any) => {
   const adminId = user.role === UserRole.SUPER_ADMIN
     ? undefined
-    : await resolveAdminId(user);
+    : await getAdminId(user);
 
   const where: any = {};
   if (adminId) where.adminId = adminId;
@@ -183,10 +177,19 @@ const getAllPayments = async (filters: IPaymentFilters, user: any) => {
     ];
   }
 
-  const [payments, total] = await Promise.all([
+  const safePage = Math.max(1, Number(filters.page) || 1);
+  const safeLimit = Math.min(100, Math.max(1, Number(filters.limit) || 10));
+  const skip = (safePage - 1) * safeLimit;
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const paidWhere = { ...where, status: PaymentStatus.PAID };
+
+  const [payments, total, paidAggregate, thisMonthAggregate, byMethodRows] = await Promise.all([
     prisma.payment.findMany({
       where,
       orderBy: { createdAt: "desc" },
+      skip,
+      take: safeLimit,
       include: {
         invoice: {
           select: {
@@ -197,34 +200,30 @@ const getAllPayments = async (filters: IPaymentFilters, user: any) => {
       },
     }),
     prisma.payment.count({ where }),
+    prisma.payment.aggregate({
+      where: paidWhere,
+      _sum: { amount: true },
+      _avg: { amount: true },
+    }),
+    prisma.payment.aggregate({
+      where: { ...paidWhere, paidAt: { gte: startOfMonth } },
+      _sum: { amount: true },
+    }),
+    prisma.payment.groupBy({
+      by: ["method"],
+      where: paidWhere,
+      _sum: { amount: true },
+      _count: { _all: true },
+    }),
   ]);
 
-  // Compute stats
-  const totalCollected = payments
-    .filter((p) => p.status === PaymentStatus.PAID)
-    .reduce((sum, p) => sum + Number(p.amount), 0);
-
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const thisMonthPayments = payments.filter(
-    (p) => p.paidAt && new Date(p.paidAt) >= startOfMonth && p.status === PaymentStatus.PAID,
-  );
-  const thisMonth = thisMonthPayments.reduce((s, p) => s + Number(p.amount), 0);
-  const avgPayment = payments.length ? totalCollected / payments.length : 0;
-
-  // Group by method
-  const methodMap = new Map<string, { amount: number; count: number }>();
-  payments.forEach((p) => {
-    const key = p.method as string;
-    const existing = methodMap.get(key) ?? { amount: 0, count: 0 };
-    methodMap.set(key, {
-      amount: existing.amount + Number(p.amount),
-      count: existing.count + 1,
-    });
-  });
-  const byMethod = [...methodMap.entries()].map(([method, data]) => ({
-    method,
-    ...data,
+  const totalCollected = Number(paidAggregate._sum.amount ?? 0);
+  const thisMonth = Number(thisMonthAggregate._sum.amount ?? 0);
+  const avgPayment = Number(paidAggregate._avg.amount ?? 0);
+  const byMethod = byMethodRows.map((row) => ({
+    method: row.method,
+    amount: Number(row._sum.amount ?? 0),
+    count: row._count._all,
   }));
 
   return {
@@ -243,6 +242,11 @@ const getAllPayments = async (filters: IPaymentFilters, user: any) => {
       invoiceId:      p.invoiceId,
     })),
     total,
+    meta: {
+      page: safePage,
+      limit: safeLimit,
+      totalPages: Math.ceil(total / safeLimit),
+    },
     stats: { totalCollected, thisMonth, avgPayment, byMethod },
   };
 };
@@ -252,7 +256,7 @@ const getAllPayments = async (filters: IPaymentFilters, user: any) => {
 const getPaymentById = async (id: string, user: any) => {
   const adminId = user.role === UserRole.SUPER_ADMIN
     ? undefined
-    : await resolveAdminId(user);
+    : await getAdminId(user);
 
   const where: any = { id };
   if (adminId) where.adminId = adminId;
@@ -273,7 +277,7 @@ const getPaymentById = async (id: string, user: any) => {
 // ─── Update Payment — PATCH /payment/:id ─────────────────────────────────────
 
 const updatePayment = async (id: string, payload: IPaymentUpdate, user: any) => {
-  const adminId = await resolveAdminId(user);
+  const adminId = await getAdminId(user);
 
   const existing = await prisma.payment.findFirst({ where: { id, adminId } });
   if (!existing) throw new AppError(status.NOT_FOUND, "Payment not found");
@@ -297,6 +301,7 @@ const updatePayment = async (id: string, payload: IPaymentUpdate, user: any) => 
     entityId: id,
     description: `Updated payment ${existing.paymentRef}`,
   });
+  invalidateAnalyticsCache(adminId);
 
   return updated;
 };
@@ -304,7 +309,7 @@ const updatePayment = async (id: string, payload: IPaymentUpdate, user: any) => 
 // ─── Delete Payment — DELETE /payment/:id ────────────────────────────────────
 
 const deletePayment = async (id: string, user: any) => {
-  const adminId = await resolveAdminId(user);
+  const adminId = await getAdminId(user);
 
   const existing = await prisma.payment.findFirst({ where: { id, adminId } });
   if (!existing) throw new AppError(status.NOT_FOUND, "Payment not found");
@@ -318,6 +323,7 @@ const deletePayment = async (id: string, user: any) => {
     entityId: id,
     description: `Deleted payment ${existing.paymentRef}`,
   });
+  invalidateAnalyticsCache(adminId);
 
   return { success: true };
 };
@@ -329,7 +335,7 @@ const uploadReceipt = async (
   file: Express.Multer.File,
   user: any,
 ) => {
-  const adminId = await resolveAdminId(user);
+  const adminId = await getAdminId(user);
 
   const existing = await prisma.payment.findFirst({ where: { id, adminId } });
   if (!existing) throw new AppError(status.NOT_FOUND, "Payment not found");

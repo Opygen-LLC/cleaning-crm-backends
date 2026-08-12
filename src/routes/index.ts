@@ -28,6 +28,7 @@ import { checklistRoutes } from "../modules/Checklist/checklist.routes";
 import { staffLeaveRoutes } from "../modules/StaffLeave/staffLeave.routes";
 import { couponRoutes } from "../modules/Coupon/coupon.routes";
 import { paymentRoutes } from "../modules/Payment/payment.routes";
+import { pushRoutes } from "../modules/Push/push.routes";
 import { checkSubscription } from "../middlewares/checkSubscription";
 import express from "express";
 
@@ -84,6 +85,7 @@ const gatedRoutes: { path: string; route: Router }[] = [
     { path: "/coupon",            route: couponRoutes },
     // Payment module — manual cash/bank/cheque payment recording
     { path: "/payment",           route: paymentRoutes },
+    { path: "/push",              route: pushRoutes },
 ];
 
 openRoutes.forEach(({ path, route }) => {

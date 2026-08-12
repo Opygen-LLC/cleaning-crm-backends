@@ -23,6 +23,25 @@ router.patch(
     notificationController.updatePrefs,
 );
 
+router.get(
+    "/templates",
+    checkAuth(UserRole.ADMIN),
+    notificationController.getTemplates,
+);
+
+router.put(
+    "/templates/:key",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(notificationValidation.upsertTemplate, ValidationProperty.BODY),
+    notificationController.upsertTemplate,
+);
+
+router.delete(
+    "/templates/:key",
+    checkAuth(UserRole.ADMIN),
+    notificationController.deleteTemplate,
+);
+
 // ─── Item 18: In-app notification inbox endpoints ─────────────────────────────
 // GET  /api/v1/notification/inbox          — fetch latest 50 notifications
 // PATCH /api/v1/notification/:id/read      — mark one as read

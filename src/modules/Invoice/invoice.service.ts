@@ -18,6 +18,9 @@ import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
 import { FRONTEND_URL } from "../../config/ENV";
 import { logActivity } from "../../lib/utils/logActivity";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { IRequestUser } from "../../types/requestUser.interface";
+import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
 
 /**
  * Generates a unique invoice reference in the format #OP-INV-0001
@@ -44,14 +47,8 @@ const generateInvoiceRef = async () => {
     return `#OP-INV-${formattedNumber}`;
 };
 
-const createInvoice = async (payload: IInvoiceCreate, user: any) => {
-    const adminProfile = await prisma.adminProfile.findUnique({
-        where: { userId: user.id },
-    });
-
-    if (!adminProfile) {
-        throw new AppError(status.NOT_FOUND, "Admin profile not found");
-    }
+const createInvoice = async (payload: IInvoiceCreate, user: IRequestUser) => {
+    const adminId = await getAdminId(user);
 
     const serviceCatalog = await prisma.serviceCatalog.findUnique({
         where: { id: payload.serviceCatalogId },
@@ -69,7 +66,7 @@ const createInvoice = async (payload: IInvoiceCreate, user: any) => {
         data: {
             ...invoiceData,
             invoiceRef,
-            adminId: adminProfile.id,
+            adminId,
             clientName: clientDetails.clientName,
             clientEmail: clientDetails.email,
             serviceAddress: clientDetails.serviceAddress,
@@ -85,17 +82,18 @@ const createInvoice = async (payload: IInvoiceCreate, user: any) => {
     });
 
     logActivity({
-        adminId: adminProfile.id,
+        adminId,
         action: "CREATE_INVOICE",
         entityType: "Invoice",
         entityId: invoice.id,
         description: `Created invoice ${invoice.invoiceRef} for ${invoice.clientName} (${invoice.total})`,
     });
+    invalidateAnalyticsCache(adminId);
 
     return invoice;
 };
 
-const getAllInvoices = async (filters: IInvoiceFilters, user: any) => {
+const getAllInvoices = async (filters: IInvoiceFilters, user: IRequestUser) => {
     const { searchTerm, status: invoiceStatus, adminId } = filters;
     const andConditions: any[] = [];
 
@@ -113,15 +111,10 @@ const getAllInvoices = async (filters: IInvoiceFilters, user: any) => {
         andConditions.push({ status: invoiceStatus });
     }
 
-    if (adminId) {
-        andConditions.push({ adminId });
-    } else if (user.role === UserRole.ADMIN) {
-        const adminProfile = await prisma.adminProfile.findUnique({
-            where: { userId: user.id },
-        });
-        if (adminProfile) {
-            andConditions.push({ adminId: adminProfile.id });
-        }
+    if (user.role === UserRole.SUPER_ADMIN) {
+        if (adminId) andConditions.push({ adminId });
+    } else {
+        andConditions.push({ adminId: await getAdminId(user) });
     }
 
     const whereConditions =
@@ -143,14 +136,34 @@ const getAllInvoices = async (filters: IInvoiceFilters, user: any) => {
     });
 };
 
-const getInvoiceById = async (id: string) => {
-    const invoice = await prisma.invoice.findUnique({
-        where: { id },
+const invoiceTenantWhere = async (id: string, user: IRequestUser) =>
+    user.role === UserRole.SUPER_ADMIN
+        ? { id }
+        : { id, adminId: await getAdminId(user) };
+
+const getInvoiceById = async (id: string, user: IRequestUser) => {
+    const invoice = await prisma.invoice.findFirst({
+        where: await invoiceTenantWhere(id, user),
         include: {
             serviceCatalog: {
                 select: {
                     id: true,
                     serviceName: true,
+                },
+            },
+            payments: {
+                orderBy: { createdAt: "desc" },
+                select: {
+                    id: true,
+                    paymentRef: true,
+                    amount: true,
+                    method: true,
+                    status: true,
+                    note: true,
+                    paidAt: true,
+                    paymentProofUrl: true,
+                    rejectionReason: true,
+                    createdAt: true,
                 },
             },
         },
@@ -163,8 +176,10 @@ const getInvoiceById = async (id: string) => {
     return invoice;
 };
 
-const updateInvoice = async (id: string, payload: IInvoiceUpdate) => {
-    const invoice = await prisma.invoice.findUnique({ where: { id } });
+const updateInvoice = async (id: string, payload: IInvoiceUpdate, user: IRequestUser) => {
+    const invoice = await prisma.invoice.findFirst({
+        where: await invoiceTenantWhere(id, user),
+    });
 
     if (!invoice) {
         throw new AppError(status.NOT_FOUND, "Invoice not found");
@@ -200,17 +215,22 @@ const updateInvoice = async (id: string, payload: IInvoiceUpdate) => {
         data.lineItems = payload.lineItems as any;
     }
 
-    return await prisma.invoice.update({
+    const updated = await prisma.invoice.update({
         where: { id },
         data,
     });
+    invalidateAnalyticsCache(invoice.adminId);
+    return updated;
 };
 
 const updateInvoiceStatus = async (
     id: string,
     invoiceStatus: InvoiceStatus,
+    user: IRequestUser,
 ) => {
-    const invoice = await prisma.invoice.findUnique({ where: { id } });
+    const invoice = await prisma.invoice.findFirst({
+        where: await invoiceTenantWhere(id, user),
+    });
 
     if (!invoice) {
         throw new AppError(status.NOT_FOUND, "Invoice not found");
@@ -246,12 +266,15 @@ const updateInvoiceStatus = async (
         entityId: updated.id,
         description: `Invoice ${updated.invoiceRef} status changed to ${invoiceStatus}`,
     });
+    invalidateAnalyticsCache(updated.adminId);
 
     return updated;
 };
 
-const deleteInvoice = async (id: string) => {
-    const invoice = await prisma.invoice.findUnique({ where: { id } });
+const deleteInvoice = async (id: string, user: IRequestUser) => {
+    const invoice = await prisma.invoice.findFirst({
+        where: await invoiceTenantWhere(id, user),
+    });
 
     if (!invoice) {
         throw new AppError(status.NOT_FOUND, "Invoice not found");
@@ -268,6 +291,7 @@ const deleteInvoice = async (id: string) => {
         entityId: invoice.id,
         description: `Deleted invoice ${invoice.invoiceRef}`,
     });
+    invalidateAnalyticsCache(invoice.adminId);
 
     return deleted;
 };
@@ -531,6 +555,7 @@ const sendInvoice = async (id: string, user: any) => {
         : null;
 
     await sendEmailSafely({
+        adminId: admin.id,
         to: invoice.clientEmail,
         subject: `Invoice ${invoice.invoiceRef} — Payment due ${fmt(invoice.dueDate)}`,
         templateName: "invoice-send",
@@ -677,6 +702,7 @@ const recordPayment = async (
         entityId: invoice.id,
         description: `Recorded ${payload.method} payment of ${payload.amount} on invoice ${invoice.invoiceRef}`,
     });
+    invalidateAnalyticsCache(admin.id);
 
     return result;
 };

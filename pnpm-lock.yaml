@@ -25,7 +25,7 @@ importers:
         version: 1.6.11(@prisma/client@7.8.0(prisma@7.8.0(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@5.9.3))(typescript@5.9.3))(mysql2@3.15.3)(pg@8.21.0)(prisma@7.8.0(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@5.9.3))(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(vitest@4.1.9(@edge-runtime/vm@3.2.0)(@types/node@24.12.4)(vite@8.1.3(@types/node@24.12.4)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.22.1)))
       body-parser:
         specifier: ^2.2.0
-        version: 2.2.2
+        version: 2.2.2(supports-color@5.5.0)
       chalk:
         specifier: ^5.6.2
         version: 5.6.2
@@ -34,7 +34,7 @@ importers:
         version: 2.10.0
       compression:
         specifier: ^1.8.1
-        version: 1.8.1
+        version: 1.8.1(supports-color@5.5.0)
       cookie-parser:
         specifier: ^1.4.7
         version: 1.4.7
@@ -55,7 +55,10 @@ importers:
         version: 5.0.2
       express:
         specifier: ^5.1.0
-        version: 5.2.1
+        version: 5.2.1(supports-color@5.5.0)
+      express-rate-limit:
+        specifier: 8.6.2
+        version: 8.6.2(express@5.2.1(supports-color@5.5.0))(supports-color@5.5.0)
       heic-convert:
         specifier: ^2.1.0
         version: 2.1.0
@@ -64,7 +67,7 @@ importers:
         version: 2.1.0
       ioredis:
         specifier: ^5.8.2
-        version: 5.10.1
+        version: 5.10.1(supports-color@5.5.0)
       jsonwebtoken:
         specifier: ^9.0.2
         version: 9.0.3
@@ -85,10 +88,10 @@ importers:
         version: 0.19.1
       socket.io:
         specifier: ^4.8.3
-        version: 4.8.3
+        version: 4.8.3(supports-color@5.5.0)
       tsup:
         specifier: ^8.5.1
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.16)(tsx@4.22.1)(typescript@5.9.3)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.16)(supports-color@5.5.0)(tsx@4.22.1)(typescript@5.9.3)
       tsx:
         specifier: ^4.21.0
         version: 4.22.1
@@ -97,7 +100,10 @@ importers:
         version: 13.15.35
       vercel:
         specifier: ^51.7.0
-        version: 51.8.0(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(typescript@5.9.3)
+        version: 51.8.0(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(supports-color@5.5.0)(typescript@5.9.3)
+      web-push:
+        specifier: 3.6.7
+        version: 3.6.7(supports-color@5.5.0)
       winston:
         specifier: ^3.18.3
         version: 3.19.0
@@ -150,6 +156,9 @@ importers:
       '@types/validator':
         specifier: ^13.15.3
         version: 13.15.10
+      '@types/web-push':
+        specifier: 3.6.4
+        version: 3.6.4
       nodemon:
         specifier: ^3.1.10
         version: 3.1.14
@@ -1603,6 +1612,9 @@ packages:
   '@types/validator@13.15.10':
     resolution: {integrity: sha512-T8L6i7wCuyoK8A/ZeLYt1+q0ty3Zb9+qbSSvrIVitzT3YjZqkTZ40IbRsPanlB4h1QB3JVL1SYCdR6ngtFYcuA==}
 
+  '@types/web-push@3.6.4':
+    resolution: {integrity: sha512-GnJmSr40H3RAnj0s34FNTcJi1hmWFV5KXugE0mYWnYhgTAHLJ/dJKAwDmvPJYMke0RplY2XE9LnM4hqSqKIjhQ==}
+
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
@@ -1817,6 +1829,9 @@ packages:
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
 
+  asn1.js@5.4.1:
+    resolution: {integrity: sha512-+I//4cYPccV8LdmBLiX8CYvf9Sp3vQsrqu2QNXRcrbiWvcx/UdlFiqUJJzxRQxgsZmvhXhn4cSKeSmoFjVdupA==}
+
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
@@ -1973,6 +1988,9 @@ packages:
 
   bindings@1.5.0:
     resolution: {integrity: sha512-p2q/t/mhvuOj/UeLlV6566GD/guowlr0hHxClI0W9m7MWYkL1F0hLo+0Aexs9HSPCtR1SXQ0TD3MMKrXZajbiQ==}
+
+  bn.js@4.12.5:
+    resolution: {integrity: sha512-3aRg6/JxfffFD+OlOjOFR3Vo79l39ooBTFucxx+MT3dhCtzn3EmiUPQo+6/OZuI2jbXi3YKgmiTFBgChQMwIRQ==}
 
   body-parser@2.2.2:
     resolution: {integrity: sha512-oP5VkATKlNwcgvxi0vM0p/D3n2C3EReYVX+DNYs5TjZFn/oQt2j+4sVJtSMr18pdRr8wjTcBl6LoV+FUwzPmNA==}
@@ -2419,6 +2437,12 @@ packages:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
 
+  express-rate-limit@8.6.2:
+    resolution: {integrity: sha512-YH4ru+eOJxQABscKFfRCy9R7x9QFGdezclVMwwgFFndzS2Xnm0uo6B0ABZsLhcpeptGv2qvuJVWlQr9gQZoC3A==}
+    engines: {node: '>= 16'}
+    peerDependencies:
+      express: '>= 4.11'
+
   express@5.2.1:
     resolution: {integrity: sha512-hIS4idWWai69NezIdRt2xFVofaF4j+6INOpJlVOLDO8zXGpUVEVzIYk12UUi2JzjEzWL3IOAxcTubgz9Po0yXw==}
     engines: {node: '>= 18'}
@@ -2620,6 +2644,10 @@ packages:
   http-status@2.1.0:
     resolution: {integrity: sha512-O5kPr7AW7wYd/BBiOezTwnVAnmSNFY+J7hlZD2X5IOxVBetjcHAiTXhzj0gMrnojQlwy+UT1/Y3H3vJ3UlmvLA==}
     engines: {node: '>= 0.4.0'}
+
+  http_ece@1.2.0:
+    resolution: {integrity: sha512-JrF8SSLVmcvc5NducxgyOrKXe3EsyHMgBFgSaIUGmArKe+rwr0uphRkRXvwiom3I+fpIfoItveHrfudL8/rxuA==}
+    engines: {node: '>=16'}
 
   https-proxy-agent@7.0.6:
     resolution: {integrity: sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==}
@@ -2959,6 +2987,9 @@ packages:
     resolution: {integrity: sha512-OqbOk5oEQeAZ8WXWydlu9HJjz9WVdEIvamMCcXmuqUYjTknH/sqsWvhQ3vgwKFRR1HpjvNBKQ37nbJgYzGqGcg==}
     engines: {node: '>=6'}
 
+  minimalistic-assert@1.0.1:
+    resolution: {integrity: sha512-UtJcAD4yEaGtjPezWuO9wC4nwUnVH/8/Im3yEHQP4b67cXlD/Qr9hdITCU1xDbSEXg2XKNaP8jsReV7vQd00/A==}
+
   minimatch@10.1.1:
     resolution: {integrity: sha512-enIvLvRAFZYXJzkCYG5RKmPfrFArdLv+R+lbQ53BmIMLIry74bjKzX6iHAm8WYamJkhSSEabrWN5D97XnKObjQ==}
     engines: {node: 20 || >=22}
@@ -2969,6 +3000,9 @@ packages:
 
   minimatch@3.1.5:
     resolution: {integrity: sha512-VgjWUsnnT6n+NUk6eZq77zeFdpW2LWDzP6zFGrCbHXiYNul5Dzqk2HHQ5uFH2DNW5Xbp8+jVzaeNt94ssEEl4w==}
+
+  minimist@1.2.8:
+    resolution: {integrity: sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==}
 
   minipass@7.1.3:
     resolution: {integrity: sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A==}
@@ -4001,6 +4035,11 @@ packages:
       jsdom:
         optional: true
 
+  web-push@3.6.7:
+    resolution: {integrity: sha512-OpiIUe8cuGjrj3mMBFWY+e4MMIkW3SVT+7vEIjvD9kejGUypv8GPDf84JdPWskK8zMRIJ6xYGm+Kxr8YkPyA0A==}
+    engines: {node: '>= 16'}
+    hasBin: true
+
   web-vitals@0.2.4:
     resolution: {integrity: sha512-6BjspCO9VriYy12z356nL6JBS0GYeEcA457YyRzD+dD6XYCQ75NKhcOHUMHentOE7OcVCIXXDvOm0jKFfQG2Gg==}
 
@@ -4476,11 +4515,11 @@ snapshots:
 
   '@kurkle/color@0.3.4': {}
 
-  '@mapbox/node-pre-gyp@2.0.3':
+  '@mapbox/node-pre-gyp@2.0.3(supports-color@5.5.0)':
     dependencies:
       consola: 3.4.2
       detect-libc: 2.1.2
-      https-proxy-agent: 7.0.6
+      https-proxy-agent: 7.0.6(supports-color@5.5.0)
       node-fetch: 2.7.0
       nopt: 8.1.0
       semver: 7.8.0
@@ -5081,14 +5120,18 @@ snapshots:
 
   '@types/validator@13.15.10': {}
 
+  '@types/web-push@3.6.4':
+    dependencies:
+      '@types/node': 24.12.4
+
   '@types/ws@8.18.1':
     dependencies:
       '@types/node': 24.12.4
 
-  '@vercel/backends@0.1.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(typescript@5.9.3)':
+  '@vercel/backends@0.1.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(supports-color@5.5.0)(typescript@5.9.3)':
     dependencies:
       '@vercel/build-utils': 13.19.1
-      '@vercel/nft': 1.5.0(rollup@4.60.4)
+      '@vercel/nft': 1.5.0(rollup@4.60.4)(supports-color@5.5.0)
       '@yarnpkg/parsers': 3.0.3
       execa: 3.2.0
       fs-extra: 11.1.0
@@ -5122,9 +5165,9 @@ snapshots:
       cjs-module-lexer: 1.2.3
       es-module-lexer: 1.5.0
 
-  '@vercel/cervel@0.0.54(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(typescript@5.9.3)':
+  '@vercel/cervel@0.0.54(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(supports-color@5.5.0)(typescript@5.9.3)':
     dependencies:
-      '@vercel/backends': 0.1.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(typescript@5.9.3)
+      '@vercel/backends': 0.1.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(supports-color@5.5.0)(typescript@5.9.3)
       typescript: 5.9.3
     transitivePeerDependencies:
       - '@emnapi/core'
@@ -5135,9 +5178,9 @@ snapshots:
 
   '@vercel/detect-agent@1.2.3': {}
 
-  '@vercel/elysia@0.1.70(rollup@4.60.4)':
+  '@vercel/elysia@0.1.70(rollup@4.60.4)(supports-color@5.5.0)':
     dependencies:
-      '@vercel/node': 5.7.12(rollup@4.60.4)
+      '@vercel/node': 5.7.12(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/static-config': 3.2.0
     transitivePeerDependencies:
       - encoding
@@ -5146,11 +5189,11 @@ snapshots:
 
   '@vercel/error-utils@2.0.3': {}
 
-  '@vercel/express@0.1.80(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(typescript@5.9.3)':
+  '@vercel/express@0.1.80(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(supports-color@5.5.0)(typescript@5.9.3)':
     dependencies:
-      '@vercel/cervel': 0.0.54(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(typescript@5.9.3)
-      '@vercel/nft': 1.5.0(rollup@4.60.4)
-      '@vercel/node': 5.7.12(rollup@4.60.4)
+      '@vercel/cervel': 0.0.54(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(supports-color@5.5.0)(typescript@5.9.3)
+      '@vercel/nft': 1.5.0(rollup@4.60.4)(supports-color@5.5.0)
+      '@vercel/node': 5.7.12(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/static-config': 3.2.0
       fs-extra: 11.1.0
       path-to-regexp: 8.3.0
@@ -5164,20 +5207,20 @@ snapshots:
       - supports-color
       - typescript
 
-  '@vercel/fastify@0.1.73(rollup@4.60.4)':
+  '@vercel/fastify@0.1.73(rollup@4.60.4)(supports-color@5.5.0)':
     dependencies:
-      '@vercel/node': 5.7.12(rollup@4.60.4)
+      '@vercel/node': 5.7.12(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/static-config': 3.2.0
     transitivePeerDependencies:
       - encoding
       - rollup
       - supports-color
 
-  '@vercel/fun@1.3.0':
+  '@vercel/fun@1.3.0(supports-color@5.5.0)':
     dependencies:
       '@tootallnate/once': 2.0.0
       async-listen: 1.2.0
-      debug: 4.3.4
+      debug: 4.3.4(supports-color@5.5.0)
       generic-pool: 3.4.2
       micro: 9.3.5-canary.3
       ms: 2.1.1
@@ -5215,19 +5258,19 @@ snapshots:
 
   '@vercel/go@3.5.0': {}
 
-  '@vercel/h3@0.1.79(rollup@4.60.4)':
+  '@vercel/h3@0.1.79(rollup@4.60.4)(supports-color@5.5.0)':
     dependencies:
-      '@vercel/node': 5.7.12(rollup@4.60.4)
+      '@vercel/node': 5.7.12(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/static-config': 3.2.0
     transitivePeerDependencies:
       - encoding
       - rollup
       - supports-color
 
-  '@vercel/hono@0.2.73(rollup@4.60.4)':
+  '@vercel/hono@0.2.73(rollup@4.60.4)(supports-color@5.5.0)':
     dependencies:
-      '@vercel/nft': 1.5.0(rollup@4.60.4)
-      '@vercel/node': 5.7.12(rollup@4.60.4)
+      '@vercel/nft': 1.5.0(rollup@4.60.4)(supports-color@5.5.0)
+      '@vercel/node': 5.7.12(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/static-config': 3.2.0
       fs-extra: 11.1.0
       path-to-regexp: 8.3.0
@@ -5243,35 +5286,35 @@ snapshots:
       '@vercel/static-config': 3.2.0
       ts-morph: 12.0.0
 
-  '@vercel/koa@0.1.53(rollup@4.60.4)':
+  '@vercel/koa@0.1.53(rollup@4.60.4)(supports-color@5.5.0)':
     dependencies:
-      '@vercel/node': 5.7.12(rollup@4.60.4)
+      '@vercel/node': 5.7.12(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/static-config': 3.2.0
     transitivePeerDependencies:
       - encoding
       - rollup
       - supports-color
 
-  '@vercel/nestjs@0.2.74(rollup@4.60.4)':
+  '@vercel/nestjs@0.2.74(rollup@4.60.4)(supports-color@5.5.0)':
     dependencies:
-      '@vercel/node': 5.7.12(rollup@4.60.4)
+      '@vercel/node': 5.7.12(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/static-config': 3.2.0
     transitivePeerDependencies:
       - encoding
       - rollup
       - supports-color
 
-  '@vercel/next@4.16.8(rollup@4.60.4)':
+  '@vercel/next@4.16.8(rollup@4.60.4)(supports-color@5.5.0)':
     dependencies:
-      '@vercel/nft': 1.5.0(rollup@4.60.4)
+      '@vercel/nft': 1.5.0(rollup@4.60.4)(supports-color@5.5.0)
     transitivePeerDependencies:
       - encoding
       - rollup
       - supports-color
 
-  '@vercel/nft@1.5.0(rollup@4.60.4)':
+  '@vercel/nft@1.5.0(rollup@4.60.4)(supports-color@5.5.0)':
     dependencies:
-      '@mapbox/node-pre-gyp': 2.0.3
+      '@mapbox/node-pre-gyp': 2.0.3(supports-color@5.5.0)
       '@rollup/pluginutils': 5.3.0(rollup@4.60.4)
       acorn: 8.16.0
       acorn-import-attributes: 1.9.5(acorn@8.16.0)
@@ -5288,7 +5331,7 @@ snapshots:
       - rollup
       - supports-color
 
-  '@vercel/node@5.7.12(rollup@4.60.4)':
+  '@vercel/node@5.7.12(rollup@4.60.4)(supports-color@5.5.0)':
     dependencies:
       '@edge-runtime/node-utils': 2.3.0
       '@edge-runtime/primitives': 4.1.0
@@ -5296,7 +5339,7 @@ snapshots:
       '@types/node': 20.11.0
       '@vercel/build-utils': 13.19.1
       '@vercel/error-utils': 2.0.3
-      '@vercel/nft': 1.5.0(rollup@4.60.4)
+      '@vercel/nft': 1.5.0(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/static-config': 3.2.0
       async-listen: 3.0.0
       cjs-module-lexer: 1.2.3
@@ -5337,9 +5380,9 @@ snapshots:
     dependencies:
       '@vercel/python-analysis': 0.11.0
 
-  '@vercel/redwood@2.4.12(rollup@4.60.4)':
+  '@vercel/redwood@2.4.12(rollup@4.60.4)(supports-color@5.5.0)':
     dependencies:
-      '@vercel/nft': 1.5.0(rollup@4.60.4)
+      '@vercel/nft': 1.5.0(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/static-config': 3.2.0
       semver: 6.3.1
       ts-morph: 12.0.0
@@ -5348,10 +5391,10 @@ snapshots:
       - rollup
       - supports-color
 
-  '@vercel/remix-builder@5.7.2(rollup@4.60.4)':
+  '@vercel/remix-builder@5.7.2(rollup@4.60.4)(supports-color@5.5.0)':
     dependencies:
       '@vercel/error-utils': 2.0.3
-      '@vercel/nft': 1.5.0(rollup@4.60.4)
+      '@vercel/nft': 1.5.0(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/static-config': 3.2.0
       path-to-regexp: 6.1.0
       path-to-regexp-updated: path-to-regexp@6.3.0
@@ -5499,6 +5542,13 @@ snapshots:
 
   argparse@2.0.1: {}
 
+  asn1.js@5.4.1:
+    dependencies:
+      bn.js: 4.12.5
+      inherits: 2.0.4
+      minimalistic-assert: 1.0.1
+      safer-buffer: 2.1.2
+
   assertion-error@2.0.1: {}
 
   ast-types@0.13.4:
@@ -5589,7 +5639,9 @@ snapshots:
     dependencies:
       file-uri-to-path: 1.0.0
 
-  body-parser@2.2.2:
+  bn.js@4.12.5: {}
+
+  body-parser@2.2.2(supports-color@5.5.0):
     dependencies:
       bytes: 3.1.2
       content-type: 1.0.5
@@ -5741,11 +5793,11 @@ snapshots:
     dependencies:
       mime-db: 1.54.0
 
-  compression@1.8.1:
+  compression@1.8.1(supports-color@5.5.0):
     dependencies:
       bytes: 3.1.2
       compressible: 2.0.18
-      debug: 2.6.9
+      debug: 2.6.9(supports-color@5.5.0)
       negotiator: 0.6.4
       on-headers: 1.1.0
       safe-buffer: 5.2.1
@@ -5814,13 +5866,17 @@ snapshots:
 
   date-fns@4.2.1: {}
 
-  debug@2.6.9:
+  debug@2.6.9(supports-color@5.5.0):
     dependencies:
       ms: 2.0.0
+    optionalDependencies:
+      supports-color: 5.5.0
 
-  debug@4.3.4:
+  debug@4.3.4(supports-color@5.5.0):
     dependencies:
       ms: 2.1.2
+    optionalDependencies:
+      supports-color: 5.5.0
 
   debug@4.4.3(supports-color@5.5.0):
     dependencies:
@@ -5903,7 +5959,7 @@ snapshots:
 
   engine.io-parser@5.2.3: {}
 
-  engine.io@6.6.7:
+  engine.io@6.6.7(supports-color@5.5.0):
     dependencies:
       '@types/cors': 2.8.19
       '@types/node': 24.12.4
@@ -6089,10 +6145,18 @@ snapshots:
 
   expect-type@1.4.0: {}
 
-  express@5.2.1:
+  express-rate-limit@8.6.2(express@5.2.1(supports-color@5.5.0))(supports-color@5.5.0):
+    dependencies:
+      debug: 4.4.3(supports-color@5.5.0)
+      express: 5.2.1(supports-color@5.5.0)
+      ip-address: 10.2.0
+    transitivePeerDependencies:
+      - supports-color
+
+  express@5.2.1(supports-color@5.5.0):
     dependencies:
       accepts: 2.0.0
-      body-parser: 2.2.2
+      body-parser: 2.2.2(supports-color@5.5.0)
       content-disposition: 1.1.0
       content-type: 1.0.5
       cookie: 0.7.2
@@ -6102,7 +6166,7 @@ snapshots:
       encodeurl: 2.0.0
       escape-html: 1.0.3
       etag: 1.8.1
-      finalhandler: 2.1.1
+      finalhandler: 2.1.1(supports-color@5.5.0)
       fresh: 2.0.0
       http-errors: 2.0.1
       merge-descriptors: 2.0.0
@@ -6113,9 +6177,9 @@ snapshots:
       proxy-addr: 2.0.7
       qs: 6.15.2
       range-parser: 1.2.1
-      router: 2.2.0
-      send: 1.2.1
-      serve-static: 2.2.1
+      router: 2.2.0(supports-color@5.5.0)
+      send: 1.2.1(supports-color@5.5.0)
+      serve-static: 2.2.1(supports-color@5.5.0)
       statuses: 2.0.2
       type-is: 2.1.0
       vary: 1.1.2
@@ -6166,7 +6230,7 @@ snapshots:
     dependencies:
       to-regex-range: 5.0.1
 
-  finalhandler@2.1.1:
+  finalhandler@2.1.1(supports-color@5.5.0):
     dependencies:
       debug: 4.4.3(supports-color@5.5.0)
       encodeurl: 2.0.0
@@ -6267,7 +6331,7 @@ snapshots:
     dependencies:
       resolve-pkg-maps: 1.0.0
 
-  get-uri@6.0.5:
+  get-uri@6.0.5(supports-color@5.5.0):
     dependencies:
       basic-ftp: 5.3.1
       data-uri-to-buffer: 6.0.2
@@ -6335,7 +6399,7 @@ snapshots:
       statuses: 2.0.2
       toidentifier: 1.0.1
 
-  http-proxy-agent@7.0.2:
+  http-proxy-agent@7.0.2(supports-color@5.5.0):
     dependencies:
       agent-base: 7.1.4
       debug: 4.4.3(supports-color@5.5.0)
@@ -6346,7 +6410,9 @@ snapshots:
 
   http-status@2.1.0: {}
 
-  https-proxy-agent@7.0.6:
+  http_ece@1.2.0: {}
+
+  https-proxy-agent@7.0.6(supports-color@5.5.0):
     dependencies:
       agent-base: 7.1.4
       debug: 4.4.3(supports-color@5.5.0)
@@ -6369,7 +6435,7 @@ snapshots:
 
   inherits@2.0.4: {}
 
-  ioredis@5.10.1:
+  ioredis@5.10.1(supports-color@5.5.0):
     dependencies:
       '@ioredis/commands': 1.5.1
       cluster-key-slot: 1.1.2
@@ -6623,6 +6689,8 @@ snapshots:
 
   mimic-fn@2.1.0: {}
 
+  minimalistic-assert@1.0.1: {}
+
   minimatch@10.1.1:
     dependencies:
       '@isaacs/brace-expansion': 5.0.1
@@ -6634,6 +6702,8 @@ snapshots:
   minimatch@3.1.5:
     dependencies:
       brace-expansion: 1.1.14
+
+  minimist@1.2.8: {}
 
   minipass@7.1.3: {}
 
@@ -6806,16 +6876,16 @@ snapshots:
 
   p-finally@2.0.1: {}
 
-  pac-proxy-agent@7.2.0:
+  pac-proxy-agent@7.2.0(supports-color@5.5.0):
     dependencies:
       '@tootallnate/quickjs-emscripten': 0.23.0
       agent-base: 7.1.4
       debug: 4.4.3(supports-color@5.5.0)
-      get-uri: 6.0.5
-      http-proxy-agent: 7.0.2
-      https-proxy-agent: 7.0.6
+      get-uri: 6.0.5(supports-color@5.5.0)
+      http-proxy-agent: 7.0.2(supports-color@5.5.0)
+      https-proxy-agent: 7.0.6(supports-color@5.5.0)
       pac-resolver: 7.0.1
-      socks-proxy-agent: 8.0.5
+      socks-proxy-agent: 8.0.5(supports-color@5.5.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -6991,16 +7061,16 @@ snapshots:
       forwarded: 0.2.0
       ipaddr.js: 1.9.1
 
-  proxy-agent@6.4.0:
+  proxy-agent@6.4.0(supports-color@5.5.0):
     dependencies:
       agent-base: 7.1.4
       debug: 4.4.3(supports-color@5.5.0)
-      http-proxy-agent: 7.0.2
-      https-proxy-agent: 7.0.6
+      http-proxy-agent: 7.0.2(supports-color@5.5.0)
+      https-proxy-agent: 7.0.6(supports-color@5.5.0)
       lru-cache: 7.18.3
-      pac-proxy-agent: 7.2.0
+      pac-proxy-agent: 7.2.0(supports-color@5.5.0)
       proxy-from-env: 1.1.0
-      socks-proxy-agent: 8.0.5
+      socks-proxy-agent: 8.0.5(supports-color@5.5.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -7165,7 +7235,7 @@ snapshots:
 
   rou3@0.7.12: {}
 
-  router@2.2.0:
+  router@2.2.0(supports-color@5.5.0):
     dependencies:
       debug: 4.4.3(supports-color@5.5.0)
       depd: 2.0.0
@@ -7185,7 +7255,7 @@ snapshots:
 
   safer-buffer@2.1.2: {}
 
-  sandbox@2.5.6:
+  sandbox@2.5.6(supports-color@5.5.0):
     dependencies:
       '@vercel/sandbox': 1.9.0
       debug: 4.4.3(supports-color@5.5.0)
@@ -7205,7 +7275,7 @@ snapshots:
 
   semver@7.8.0: {}
 
-  send@1.2.1:
+  send@1.2.1(supports-color@5.5.0):
     dependencies:
       debug: 4.4.3(supports-color@5.5.0)
       encodeurl: 2.0.0
@@ -7223,12 +7293,12 @@ snapshots:
 
   seq-queue@0.0.5: {}
 
-  serve-static@2.2.1:
+  serve-static@2.2.1(supports-color@5.5.0):
     dependencies:
       encodeurl: 2.0.0
       escape-html: 1.0.3
       parseurl: 1.3.3
-      send: 1.2.1
+      send: 1.2.1(supports-color@5.5.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -7288,7 +7358,7 @@ snapshots:
 
   smol-toml@1.5.2: {}
 
-  socket.io-adapter@2.5.6:
+  socket.io-adapter@2.5.6(supports-color@5.5.0):
     dependencies:
       debug: 4.4.3(supports-color@5.5.0)
       ws: 8.18.3
@@ -7297,28 +7367,28 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  socket.io-parser@4.2.6:
+  socket.io-parser@4.2.6(supports-color@5.5.0):
     dependencies:
       '@socket.io/component-emitter': 3.1.2
       debug: 4.4.3(supports-color@5.5.0)
     transitivePeerDependencies:
       - supports-color
 
-  socket.io@4.8.3:
+  socket.io@4.8.3(supports-color@5.5.0):
     dependencies:
       accepts: 1.3.8
       base64id: 2.0.0
       cors: 2.8.6
       debug: 4.4.3(supports-color@5.5.0)
-      engine.io: 6.6.7
-      socket.io-adapter: 2.5.6
-      socket.io-parser: 4.2.6
+      engine.io: 6.6.7(supports-color@5.5.0)
+      socket.io-adapter: 2.5.6(supports-color@5.5.0)
+      socket.io-parser: 4.2.6(supports-color@5.5.0)
     transitivePeerDependencies:
       - bufferutil
       - supports-color
       - utf-8-validate
 
-  socks-proxy-agent@8.0.5:
+  socks-proxy-agent@8.0.5(supports-color@5.5.0):
     dependencies:
       agent-base: 7.1.4
       debug: 4.4.3(supports-color@5.5.0)
@@ -7517,7 +7587,7 @@ snapshots:
 
   tslib@2.8.1: {}
 
-  tsup@8.5.1(jiti@2.7.0)(postcss@8.5.16)(tsx@4.22.1)(typescript@5.9.3):
+  tsup@8.5.1(jiti@2.7.0)(postcss@8.5.16)(supports-color@5.5.0)(tsx@4.22.1)(typescript@5.9.3):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.27.7)
       cac: 6.7.14
@@ -7621,28 +7691,28 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vercel@51.8.0(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(typescript@5.9.3):
+  vercel@51.8.0(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(supports-color@5.5.0)(typescript@5.9.3):
     dependencies:
-      '@vercel/backends': 0.1.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(typescript@5.9.3)
+      '@vercel/backends': 0.1.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(supports-color@5.5.0)(typescript@5.9.3)
       '@vercel/blob': 2.3.0
       '@vercel/build-utils': 13.19.1
       '@vercel/detect-agent': 1.2.3
-      '@vercel/elysia': 0.1.70(rollup@4.60.4)
-      '@vercel/express': 0.1.80(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(typescript@5.9.3)
-      '@vercel/fastify': 0.1.73(rollup@4.60.4)
-      '@vercel/fun': 1.3.0
+      '@vercel/elysia': 0.1.70(rollup@4.60.4)(supports-color@5.5.0)
+      '@vercel/express': 0.1.80(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(rollup@4.60.4)(supports-color@5.5.0)(typescript@5.9.3)
+      '@vercel/fastify': 0.1.73(rollup@4.60.4)(supports-color@5.5.0)
+      '@vercel/fun': 1.3.0(supports-color@5.5.0)
       '@vercel/go': 3.5.0
-      '@vercel/h3': 0.1.79(rollup@4.60.4)
-      '@vercel/hono': 0.2.73(rollup@4.60.4)
+      '@vercel/h3': 0.1.79(rollup@4.60.4)(supports-color@5.5.0)
+      '@vercel/hono': 0.2.73(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/hydrogen': 1.3.6
-      '@vercel/koa': 0.1.53(rollup@4.60.4)
-      '@vercel/nestjs': 0.2.74(rollup@4.60.4)
-      '@vercel/next': 4.16.8(rollup@4.60.4)
-      '@vercel/node': 5.7.12(rollup@4.60.4)
+      '@vercel/koa': 0.1.53(rollup@4.60.4)(supports-color@5.5.0)
+      '@vercel/nestjs': 0.2.74(rollup@4.60.4)(supports-color@5.5.0)
+      '@vercel/next': 4.16.8(rollup@4.60.4)(supports-color@5.5.0)
+      '@vercel/node': 5.7.12(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/prepare-flags-definitions': 0.2.1
       '@vercel/python': 6.35.0
-      '@vercel/redwood': 2.4.12(rollup@4.60.4)
-      '@vercel/remix-builder': 5.7.2(rollup@4.60.4)
+      '@vercel/redwood': 2.4.12(rollup@4.60.4)(supports-color@5.5.0)
+      '@vercel/remix-builder': 5.7.2(rollup@4.60.4)(supports-color@5.5.0)
       '@vercel/ruby': 2.3.2
       '@vercel/rust': 1.1.1
       '@vercel/static-build': 2.9.20
@@ -7651,8 +7721,8 @@ snapshots:
       form-data: 4.0.5
       jose: 5.9.6
       luxon: 3.7.2
-      proxy-agent: 6.4.0
-      sandbox: 2.5.6
+      proxy-agent: 6.4.0(supports-color@5.5.0)
+      sandbox: 2.5.6(supports-color@5.5.0)
       smol-toml: 1.5.2
     transitivePeerDependencies:
       - '@emnapi/core'
@@ -7705,6 +7775,16 @@ snapshots:
       '@types/node': 24.12.4
     transitivePeerDependencies:
       - msw
+
+  web-push@3.6.7(supports-color@5.5.0):
+    dependencies:
+      asn1.js: 5.4.1
+      http_ece: 1.2.0
+      https-proxy-agent: 7.0.6(supports-color@5.5.0)
+      jws: 4.0.1
+      minimist: 1.2.8
+    transitivePeerDependencies:
+      - supports-color
 
   web-vitals@0.2.4: {}
 

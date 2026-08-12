@@ -6,7 +6,11 @@ import { generateSimpleDocumentPDFBuffer } from "../../shared/pdf/simpleDocument
 export const generateQuotePDFBuffer = async (quoteId: string): Promise<Buffer> => {
     const quote = await prisma.quote.findUnique({
         where: { id: quoteId },
-        include: { client: true, lineItems: true },
+        include: {
+            client: true,
+            lineItems: true,
+            admin: { select: { businessName: true, businessEmail: true, brandColor: true } },
+        },
     });
 
     if (!quote) {
@@ -34,5 +38,8 @@ export const generateQuotePDFBuffer = async (quoteId: string): Promise<Buffer> =
         taxAmount: quote.tax.toString(),
         total: quote.total.toString(),
         notes: quote.notes,
+        businessName: quote.admin.businessName,
+        businessEmail: quote.admin.businessEmail,
+        brandColor: quote.admin.brandColor,
     });
 };

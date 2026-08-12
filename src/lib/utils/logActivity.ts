@@ -1,5 +1,6 @@
 import { prisma } from "../prisma/prisma";
 import { Prisma } from "../../generated/prisma/client";
+import logger from "../logger";
 
 // ─── Activity log ──────────────────────────────────────────────────────────────
 //
@@ -59,6 +60,6 @@ export async function logActivity(payload: LogActivityPayload): Promise<void> {
         });
     } catch (err) {
         // Never let a logging failure break the action it's documenting.
-        console.error("[logActivity] Failed:", err);
+        logger.error("[logActivity] Failed", err);
     }
 }

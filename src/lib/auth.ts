@@ -4,10 +4,10 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "./prisma/prisma";
 import { AccountStatus, UserRole } from "../generated/prisma/enums";
 import { bearer, emailOTP } from "better-auth/plugins";
-import chalk from "chalk";
 import { sendEmail } from "./email";
 import { waitUntil } from "@vercel/functions";
 import { sendEmailSafely } from "./utils/sendEmailSafely";
+import logger from "./logger";
 
 export const auth = betterAuth({
     baseURL: BETTER_AUTH_URL,
@@ -86,11 +86,7 @@ export const auth = betterAuth({
                     });
 
                     if (user && (user.role === UserRole.SUPER_ADMIN || user.role === UserRole.STAFF)) {
-                        console.log(
-                            chalk.green(
-                                `Skipping sending verification OTP.`,
-                            ),
-                        );
+                        logger.info("Skipping verification OTP for trusted role");
                         return;
                     }
 

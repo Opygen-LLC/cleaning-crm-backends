@@ -18,6 +18,7 @@ import { adminValidation } from "./admin.validation";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { UserRole } from "../../generated/prisma/enums";
 import { multerMemory } from "../../config/multerMemory";
+import { convertHeicToPng } from "../../middlewares/convertHeicToPngMiddleware";
 
 const router = Router();
 
@@ -27,6 +28,7 @@ router.patch(
   "/profile",
   checkAuth(UserRole.ADMIN),
   multerMemory.single("businessLogo"),
+  convertHeicToPng,
   zodValidate(adminValidation.updateAdmin, ValidationProperty.BODY),
   adminController.updateAdmin,
 );

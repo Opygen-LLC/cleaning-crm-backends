@@ -4,6 +4,7 @@ import { seedSubscriptionPlans } from "./lib/utils/seedSubscriptionPlan";
 import { seedSuperAdmin } from "./lib/utils/seedSuperAdmin";
 import app from "./server";
 import http from "http";
+import logger from "./lib/logger";
 
 const backendIp = process.env.BACKEND_IP || "0.0.0.0";
 const port = process.env.PORT || PORT || 5000;
@@ -20,17 +21,17 @@ function main() {
     // request on two DB round-trips during cold-start (especially on Neon).
     // Both seed functions short-circuit when data already exists.
     server.listen(Number(port), backendIp, () => {
-      console.log(`Server is running at http://${backendIp}:${port}`);
+      logger.info(`Server is running at http://${backendIp}:${port}`);
 
       seedSuperAdmin().catch((error) => {
-        console.error("Error seeding super admin:", error);
+        logger.error("Error seeding super admin", error);
       });
       seedSubscriptionPlans().catch((error) => {
-        console.error("Error seeding subscription plans:", error);
+        logger.error("Error seeding subscription plans", error);
       });
     });
   } catch (error) {
-    console.error("Error starting the server:", error);
+    logger.error("Error starting the server", error);
   }
 }
 

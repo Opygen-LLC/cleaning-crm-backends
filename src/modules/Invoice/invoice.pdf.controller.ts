@@ -14,6 +14,8 @@ import { catchAsync } from "../../shared/catchAsync";
 import AppError from "../../errorHelper/AppError";
 import { prisma } from "../../lib/prisma/prisma";
 import { generateInvoicePDFBuffer } from "./invoice.pdf.service";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { UserRole } from "../../generated/prisma/enums";
 
 export const downloadInvoicePDF = catchAsync(async (req: Request, res: Response) => {
     const { id } = req.params;
@@ -34,15 +36,24 @@ export const downloadInvoicePDF = catchAsync(async (req: Request, res: Response)
         if (!owned) {
             throw new AppError(status.NOT_FOUND, "Invoice not found");
         }
+    } else if (req.user?.role !== UserRole.SUPER_ADMIN) {
+        if (!req.user) throw new AppError(status.UNAUTHORIZED, "Unauthorized");
+        const adminId = await getAdminId(req.user);
+        const owned = await prisma.invoice.findFirst({
+            where: { id: id as string, adminId },
+            select: { id: true },
+        });
+        if (!owned) throw new AppError(status.NOT_FOUND, "Invoice not found");
     }
 
-    const pdfBuffer = await generateInvoicePDFBuffer(id as string);
+    const { buffer: pdfBuffer, invoiceRef } = await generateInvoicePDFBuffer(id as string);
+    const safeRef = invoiceRef.replace(/[^a-zA-Z0-9_-]/g, "");
 
     res.set({
         "Content-Type":        "application/pdf",
         // `attachment` triggers the browser's Save dialog.
         // Swap to `inline` if you want the PDF to open in the browser tab.
-        "Content-Disposition": `attachment; filename="invoice-${id}.pdf"`,
+        "Content-Disposition": `attachment; filename="invoice-${safeRef}.pdf"`,
         "Content-Length":      pdfBuffer.length.toString(),
         // Prevent CDN/reverse-proxy from caching personally-identifiable PDFs.
         "Cache-Control":       "no-store, no-cache, must-revalidate, private",

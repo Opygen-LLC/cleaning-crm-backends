@@ -433,6 +433,7 @@ const generateTokenForJob = async (jobId: string, _user: any) => {
             (a: any) => a.staff.user.name,
         );
         await sendEmailSafely({
+            adminId: job.adminId,
             to: client.email,
             subject: `How did we do? — ${job.jobRef}`,
             templateName: "review-request",

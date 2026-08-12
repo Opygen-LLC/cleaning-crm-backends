@@ -23,14 +23,14 @@ router.post(
 // GET /payment — list all payments with filters
 router.get(
   "/",
-  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.STAFF),
+  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
   paymentController.getAllPayments,
 );
 
 // GET /payment/:id — single payment
 router.get(
   "/:id",
-  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.STAFF),
+  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
   paymentController.getPaymentById,
 );
 

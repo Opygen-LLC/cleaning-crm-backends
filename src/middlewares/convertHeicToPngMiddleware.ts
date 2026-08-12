@@ -81,7 +81,7 @@ export const convertHeicToPng = async (
 
       // Convert HEIC → PNG
       const pngBuffer = await heicConvert({
-        buffer: file.buffer as ArrayBuffer,
+        buffer: Uint8Array.from(file.buffer).buffer,
         format: "PNG",
         quality: 1, // lossless for PNG (ignored but required by typings)
       });

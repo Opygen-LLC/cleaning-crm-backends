@@ -7,6 +7,7 @@ import { handleZodError } from "../errorHelper/handleZodError";
 import { Prisma } from "../generated/prisma/client";
 import { NODE_ENV } from "../config/ENV";
 import { handlePrismaClientKnownRequestError, handlePrismaClientUnknownError, handlePrismaClientValidationError, handlerPrismaClientInitializationError, handlerPrismaClientRustPanicError } from "../errorHelper/handlePrismaError";
+import logger from "../lib/logger";
 
 
 export const globalErrorHandler = async (
@@ -16,7 +17,7 @@ export const globalErrorHandler = async (
     next: NextFunction,
 ) => {
     if (NODE_ENV === "development") {
-        console.log("Error from Global Error Handler", err);
+        logger.error("Error from Global Error Handler", err);
     }
 
     // if(req.file){

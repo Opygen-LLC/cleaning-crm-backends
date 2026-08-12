@@ -4,6 +4,7 @@ import {
     SubscriptionPlanInterval,
 } from "../../generated/prisma/enums";
 import { prisma } from "../prisma/prisma";
+import logger from "../logger";
 
 /**
  * Feature label strings must stay in sync with the `featureLabel` /
@@ -269,7 +270,7 @@ export async function seedSubscriptionPlans() {
                 },
             });
         } catch (err) {
-            console.error(
+            logger.error(
                 `❌ Failed to upsert SubscriptionPlan: ${sub.name}`,
                 err,
             );
@@ -309,7 +310,7 @@ export async function seedSubscriptionPlans() {
                     },
                 });
             } catch (err) {
-                console.error(
+                logger.error(
                     `  ❌ Failed to upsert Plan: ${sub.name} (${plan.interval})`,
                     err,
                 );
@@ -317,5 +318,5 @@ export async function seedSubscriptionPlans() {
         }
     }
 
-    console.log("🎉 Subscription plans seeded successfully!");
+    logger.info("Subscription plans seeded successfully");
 }

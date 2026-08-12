@@ -8,6 +8,7 @@ import {
 } from "../../middlewares/validations/zodValidation.middleware";
 import { userValidation } from "./user.validation";
 import { multerMemory } from "../../config/multerMemory";
+import { convertHeicToPng } from "../../middlewares/convertHeicToPngMiddleware";
 
 const router = Router();
 
@@ -28,6 +29,7 @@ router.post(
     "/me/avatar",
     checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
     multerMemory.single("avatar"),
+    convertHeicToPng,
     userController.uploadMyAvatar,
 );
 
@@ -45,6 +47,7 @@ router.patch(
     "/:id",
     checkAuth(UserRole.ADMIN, UserRole.STAFF, UserRole.SUPER_ADMIN),
     multerMemory.single("image"),
+    convertHeicToPng,
     zodValidate(userValidation.updateUser, ValidationProperty.BODY),
     userController.updateUser,
 );
