@@ -17,7 +17,6 @@ import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import { CookieUtils } from "../lib/utils/cookie";
 import redis from "../config/redis";
 import { singleFlight } from "../lib/utils/singleFlight";
-import { BoundedTtlCache } from "../lib/cache/boundedTtlCache";
 import {
   getRuntimeTenantId,
   getRuntimeUserStatus,
@@ -59,32 +58,17 @@ type CachedSubscriptionPayload = {
 // manually invalidates this key via redis.del(subscriptionCacheKey(userId)).
 const SUBSCRIPTION_CACHE_TTL_SECONDS = 300;
 const subscriptionCacheKey = (userId: string) => `sub:full:user:${userId}`;
-const subscriptionL1 = new BoundedTtlCache<CachedSubscriptionPayload>({
-  maxEntries: 10_000,
-});
-const subscriptionL1Enabled = process.env.NODE_ENV !== "test";
 
 async function getCachedSubscriptionForUser(
   userId: string,
 ): Promise<CachedSubscriptionPayload> {
-  const local = subscriptionL1Enabled ? subscriptionL1.get(userId) : undefined;
-  if (local !== undefined) return local;
-
   const cached = await redis
     .get(subscriptionCacheKey(userId))
     .catch(() => null);
 
   if (cached !== null) {
     try {
-      const parsed = JSON.parse(cached) as CachedSubscriptionPayload;
-      if (subscriptionL1Enabled) {
-        subscriptionL1.set(
-          userId,
-          parsed,
-          SUBSCRIPTION_CACHE_TTL_SECONDS * 1_000,
-        );
-      }
-      return parsed;
+      return JSON.parse(cached) as CachedSubscriptionPayload;
     } catch {
       // fall through and reload from DB on a corrupt cache entry
     }
@@ -141,14 +125,6 @@ async function getCachedSubscriptionForUser(
       )
       .catch(() => {});
 
-    if (subscriptionL1Enabled) {
-      subscriptionL1.set(
-        userId,
-        payload,
-        SUBSCRIPTION_CACHE_TTL_SECONDS * 1_000,
-      );
-    }
-
     return payload;
   });
 }
@@ -178,8 +154,8 @@ export const checkSubscription = async (
     if (role !== UserRole.ADMIN) return next();
 
     // Resolve status first so suspended/deleted accounts never trigger any
-    // subscription or tenant query. On the normal warm path this is an L1
-    // Map read, not a Redis round trip.
+    // subscription or tenant query. On the normal warm path this is a Redis
+    // lookup against the shared Docker cache.
     const userStatus = await getRuntimeUserStatus(userId);
     req.authRuntime = { userStatus };
 

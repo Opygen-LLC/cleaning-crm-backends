@@ -8,8 +8,7 @@ import { invalidatePrivateResponseCache } from "../../middlewares/privateRespons
  * cache outage must never turn a successful database write into an error.
  */
 export const invalidateAnalyticsCache = (adminId: string): void => {
-  // Synchronous L1 invalidation makes the very next request fresh even when
-  // Redis is unavailable. Shared Redis entries are removed below.
+  // Remove HTTP response entries from the shared Redis tenant namespace.
   invalidatePrivateResponseCache(adminId);
   void (async () => {
     const patterns = [

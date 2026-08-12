@@ -1,21 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NextFunction, Request, Response } from "express";
 
-const { redisMock } = vi.hoisted(() => ({
-  redisMock: {
-    get: vi.fn().mockResolvedValue(null),
-    setex: vi.fn().mockResolvedValue("OK"),
-    scan: vi.fn().mockResolvedValue(["0", []]),
-    unlink: vi.fn().mockResolvedValue(0),
-  },
-}));
+const { redisMock, redisStore } = vi.hoisted(() => {
+  const redisStore = new Map<string, string>();
+  return {
+    redisStore,
+    redisMock: {
+      get: vi.fn(async (key: string) => redisStore.get(key) ?? null),
+      setex: vi.fn(async (key: string, _ttl: number, value: string) => {
+        redisStore.set(key, value);
+        return "OK";
+      }),
+      scan: vi.fn().mockResolvedValue(["0", []]),
+      unlink: vi.fn().mockResolvedValue(0),
+    },
+  };
+});
 
 vi.mock("../config/redis", () => ({ default: redisMock }));
 
-import {
-  privateResponseCache,
-  responseCacheTesting,
-} from "./privateResponseCache";
+import { privateResponseCache } from "./privateResponseCache";
 
 function makeRequest(method = "GET") {
   return {
@@ -66,12 +70,11 @@ function makeResponse() {
 
 describe("privateResponseCache", () => {
   beforeEach(() => {
-    responseCacheTesting.clear();
+    redisStore.clear();
     vi.clearAllMocks();
-    redisMock.get.mockResolvedValue(null);
   });
 
-  it("serves the second tenant-scoped GET from L1 without Redis or controller work", async () => {
+  it("serves the second tenant-scoped GET from Redis without controller work", async () => {
     const first = makeResponse();
     const payload = JSON.stringify({ success: true, data: { revenue: 123 } });
     const firstNext: NextFunction = vi.fn(() => {
@@ -81,7 +84,8 @@ describe("privateResponseCache", () => {
 
     await privateResponseCache(makeRequest(), first.response, firstNext);
     expect(firstNext).toHaveBeenCalledOnce();
-    expect(responseCacheTesting.size()).toBe(1);
+    expect(redisMock.setex).toHaveBeenCalledOnce();
+    expect(redisStore.size).toBe(1);
 
     redisMock.get.mockClear();
     const second = makeResponse();
@@ -91,9 +95,9 @@ describe("privateResponseCache", () => {
     const duration = performance.now() - started;
 
     expect(secondNext).not.toHaveBeenCalled();
-    expect(redisMock.get).not.toHaveBeenCalled();
+    expect(redisMock.get).toHaveBeenCalledOnce();
     expect(second.result.body).toBe(payload);
-    expect(second.headers.get("x-response-cache")).toBe("HIT-L1");
+    expect(second.headers.get("x-response-cache")).toBe("HIT-REDIS");
     expect(duration).toBeLessThan(50);
   });
 
@@ -104,6 +108,7 @@ describe("privateResponseCache", () => {
       output.response.send("binary");
     });
     await privateResponseCache(makeRequest(), output.response, next);
-    expect(responseCacheTesting.size()).toBe(0);
+    expect(redisMock.setex).not.toHaveBeenCalled();
+    expect(redisStore.size).toBe(0);
   });
 });

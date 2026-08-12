@@ -5,7 +5,8 @@ import logger from "../lib/logger";
 dotenv.config();
 
 /**
- * Redis — Reports caching only (see reports.service.ts getCached/setCache).
+ * Redis — the shared cache for authenticated responses, runtime auth data,
+ * subscriptions, dashboard analytics, reports, sessions, and Socket.IO.
  *
  * This is a pure cache layer, never a source of truth, so Redis being slow,
  * misconfigured, or completely absent must NEVER crash the app or hang a
@@ -29,10 +30,9 @@ dotenv.config();
  * the first request does not pay setup cost and, if Redis is unreachable,
  * an individual command fails fast instead of hanging the request —
  * `getCached`/`setCache` in reports.service.ts already treat that rejection
- * as a cache miss, so Reports simply falls back to querying Postgres
- * directly. `retryStrategy` keeps a background reconnect loop going (capped
- * backoff) so Redis coming back online is picked up automatically without a
- * restart.
+ * as a cache miss, so requests fall back to querying Postgres directly.
+ * `retryStrategy` keeps a background reconnect loop going (capped backoff) so
+ * Redis coming back online is picked up automatically without a restart.
  */
 
 const redis = new Redis({
@@ -59,7 +59,7 @@ let hasLoggedOutage = false;
 redis.on("error", (err) => {
     if (!hasLoggedOutage) {
         logger.warn(
-            `Redis unavailable — Reports caching disabled, falling back to live queries until it recovers. (${err.message})`,
+            `Redis unavailable — shared caching disabled, falling back to live queries until it recovers. (${err.message})`,
         );
         hasLoggedOutage = true;
     }

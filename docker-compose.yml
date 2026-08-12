@@ -43,6 +43,10 @@ services:
     container_name: cleaning_crm_redis
     restart: always
     command: redis-server --appendonly yes --save 60 1
+    # Makes REDIS_HOST=localhost work when the API runs directly on the host.
+    # Loopback binding keeps Redis unavailable to the public network.
+    ports:
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:

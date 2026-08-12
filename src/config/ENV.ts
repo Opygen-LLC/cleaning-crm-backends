@@ -23,14 +23,6 @@ export const API_RESPONSE_CACHE_TTL_SECONDS: number = Math.max(
     5,
     Number(process.env.API_RESPONSE_CACHE_TTL_SECONDS) || 300,
 );
-export const API_RESPONSE_CACHE_MAX_ENTRIES: number = Math.max(
-    100,
-    Number(process.env.API_RESPONSE_CACHE_MAX_ENTRIES) || 2_000,
-);
-export const API_RESPONSE_CACHE_MAX_BYTES: number = Math.max(
-    8 * 1024 * 1024,
-    Number(process.env.API_RESPONSE_CACHE_MAX_MB || 64) * 1024 * 1024,
-);
 export const REQUEST_LOG_SAMPLE_RATE: number = Math.min(
     1,
     Math.max(0, Number(process.env.REQUEST_LOG_SAMPLE_RATE ?? 0.01)),

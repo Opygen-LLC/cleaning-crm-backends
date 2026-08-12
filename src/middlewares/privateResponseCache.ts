@@ -1,13 +1,8 @@
 import { createHash } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import redis from "../config/redis";
-import {
-  API_RESPONSE_CACHE_MAX_BYTES,
-  API_RESPONSE_CACHE_MAX_ENTRIES,
-  API_RESPONSE_CACHE_TTL_SECONDS,
-} from "../config/ENV";
+import { API_RESPONSE_CACHE_TTL_SECONDS } from "../config/ENV";
 import logger from "../lib/logger";
-import { BoundedTtlCache } from "../lib/cache/boundedTtlCache";
 
 interface CachedResponse {
   body: string;
@@ -15,11 +10,6 @@ interface CachedResponse {
   etag: string;
   statusCode: number;
 }
-
-const l1 = new BoundedTtlCache<CachedResponse>({
-  maxEntries: API_RESPONSE_CACHE_MAX_ENTRIES,
-  maxBytes: API_RESPONSE_CACHE_MAX_BYTES,
-});
 
 const MAX_CACHEABLE_BODY_BYTES = 2 * 1024 * 1024;
 
@@ -64,9 +54,8 @@ const sendHit = (
   req: Request,
   res: Response,
   entry: CachedResponse,
-  layer: "L1" | "REDIS",
 ): void => {
-  res.setHeader("X-Response-Cache", `HIT-${layer}`);
+  res.setHeader("X-Response-Cache", "HIT-REDIS");
   res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
   res.setHeader("ETag", entry.etag);
   res.type(entry.contentType);
@@ -95,7 +84,6 @@ async function deleteRedisPattern(pattern: string): Promise<void> {
 
 export function invalidatePrivateResponseCache(tenantId: string): void {
   const prefix = scopePrefix(tenantId);
-  l1.deleteByPrefix(prefix);
   void deleteRedisPattern(`${prefix}*`).catch((error) => {
     logger.warn(
       `[CACHE] Shared response cache invalidation skipped: ${error instanceof Error ? error.message : String(error)}`,
@@ -104,10 +92,9 @@ export function invalidatePrivateResponseCache(tenantId: string): void {
 }
 
 /**
- * Per-user HTTP microcache. It runs after authorization, so cached data can
- * never cross users or tenants. Mutations invalidate the tenant namespace.
- * A warm L1 hit avoids Redis and Postgres completely and typically completes
- * in single-digit milliseconds.
+ * Per-user Redis response cache. It runs after authorization, so cached data
+ * can never cross users or tenants. Mutations invalidate the shared tenant
+ * namespace across every API replica.
  */
 export async function privateResponseCache(
   req: Request,
@@ -130,17 +117,10 @@ export async function privateResponseCache(
 
   const key = cacheKey(req);
   const ttlSeconds = ttlFor(req);
-  const local = l1.get(key);
-  if (local) {
-    sendHit(req, res, local, "L1");
-    return;
-  }
-
   const sharedRaw = await redis.get(key).catch(() => null);
   const shared = sharedRaw ? parseSharedEntry(sharedRaw) : null;
   if (shared) {
-    l1.set(key, shared, ttlSeconds * 1_000, Buffer.byteLength(shared.body));
-    sendHit(req, res, shared, "REDIS");
+    sendHit(req, res, shared);
     return;
   }
 
@@ -173,7 +153,6 @@ export async function privateResponseCache(
         statusCode: res.statusCode,
       };
       res.setHeader("ETag", etag);
-      l1.set(key, entry, ttlSeconds * 1_000, bytes);
       void redis
         .setex(key, ttlSeconds, JSON.stringify(entry))
         .catch(() => {});
@@ -184,8 +163,3 @@ export async function privateResponseCache(
 
   next();
 }
-
-export const responseCacheTesting = {
-  clear: () => l1.clear(),
-  size: () => l1.size,
-};

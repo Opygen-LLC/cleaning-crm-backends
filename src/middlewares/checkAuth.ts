@@ -60,8 +60,8 @@ export const checkAuth =
             }
 
             // checkSubscription runs before route-level auth on gated routes.
-            // Reuse its request-local result; otherwise use the bounded L1 ->
-            // Redis -> Postgres loader. Warm requests do no network I/O here.
+            // Reuse its request-local result; otherwise use the shared Redis
+            // cache and fall back to Postgres on a miss.
             const userStatus =
                 req.authRuntime?.userStatus ??
                 (await getRuntimeUserStatus(tokenData.userId as string));
