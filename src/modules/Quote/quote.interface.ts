@@ -1,4 +1,4 @@
-import { QuoteStatus } from "../../generated/prisma/enums";
+import { QuoteStatus, ServiceType } from "../../generated/prisma/enums";
 
 // ── Create ─────────────────────────────────────────────────────────────────────
 
@@ -41,6 +41,7 @@ export interface IQuoteStatusUpdate {
 // ── Convert to Booking ─────────────────────────────────────────────────────────
 
 export interface IQuoteConvertToBooking {
+    serviceType: ServiceType;
     scheduledDate: string; // ISO date string
     durationMins: number;
     staffIds?: string[];
@@ -60,4 +61,5 @@ export interface IQuoteConvertToJob {
 
 export interface IPublicQuoteAction {
     action: "accept" | "decline";
+    note?: string;
 }

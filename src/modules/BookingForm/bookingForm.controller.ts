@@ -2,7 +2,6 @@ import status from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { bookingFormService } from "./bookingForm.service";
-import AppError from "../../errorHelper/AppError";
 
 const getParam = (value: string | string[]) => Array.isArray(value) ? value[0] : value;
 
@@ -133,9 +132,6 @@ const getPublicBookingForm = catchAsync(async (req, res) => {
 const getPublicSlotAvailability = catchAsync(async (req, res) => {
     const slug = getParam(req.params.slug);
     const date = req.query.date as string;
-    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        throw new AppError(status.BAD_REQUEST, "Query param 'date' is required in YYYY-MM-DD format");
-    }
     const result = await bookingFormService.getPublicSlotAvailability(slug, date);
     sendResponse(res, {
         httpStatusCode: status.OK,

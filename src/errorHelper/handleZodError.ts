@@ -1,23 +1,21 @@
 import status from "http-status";
 import z from "zod";
 import { TErrorResponse, TErrorSources } from "../interface/error.interface";
+import { buildFieldErrors } from "./errorContract";
 
 export const handleZodError = (err: z.ZodError): TErrorResponse => {
-    const statusCode = status.BAD_REQUEST;
-    const message = "Zod Validation Error";
-    const errorSources: TErrorSources[] = [];
-
-    err.issues.forEach((issue) => {
-        errorSources.push({
-            path: issue.path.join(" => "),
-            message: issue.message,
-        });
-    });
+    const errorSources: TErrorSources[] = err.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message: issue.message,
+    }));
 
     return {
         success: false,
-        message,
+        statusCode: status.BAD_REQUEST,
+        code: "VALIDATION_ERROR",
+        message: "Please check the highlighted fields and try again.",
         errorSources,
-        statusCode,
+        fieldErrors: buildFieldErrors(errorSources),
+        retryable: false,
     };
 };

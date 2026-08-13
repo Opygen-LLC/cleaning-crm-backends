@@ -106,7 +106,12 @@ const convertQuoteToBooking = catchAsync(async (req, res) => {
 // ── Public (unauthenticated) ──────────────────────────────────────────────────
 
 const getPublicQuote = catchAsync(async (req, res) => {
-    const result = await quoteService.getPublicQuote(req.params.ref as string);
+    const result = await quoteService.getPublicQuote(req.params.token as string);
+
+    // Public quote responses contain customer-specific commercial data and
+    // must never be stored by browsers/CDNs/shared proxies.
+    res.set("Cache-Control", "private, no-store, max-age=0");
+    res.set("Pragma", "no-cache");
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -118,9 +123,13 @@ const getPublicQuote = catchAsync(async (req, res) => {
 
 const publicQuoteAction = catchAsync(async (req, res) => {
     const result = await quoteService.publicQuoteAction(
-        req.params.ref as string,
+        req.params.token as string,
         req.body.action,
+        req.body.note,
     );
+
+    res.set("Cache-Control", "private, no-store, max-age=0");
+    res.set("Pragma", "no-cache");
 
     sendResponse(res, {
         httpStatusCode: status.OK,

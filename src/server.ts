@@ -37,10 +37,15 @@ import "../src/cron/dbKeepAlive.cron";
 // forever with full feature access. Import the function and invoke it.
 import { scheduleSubscriptionExpiryJob } from "../src/cron/subscriptionExpiry.cron";
 import logRequestResponse from "./middlewares/logger.middleware";
+import { requestContext } from "./middlewares/requestContext";
 
 scheduleSubscriptionExpiryJob();
 
 const app = express();
+
+// Assign a correlation ID before any parser/CORS/router work so even early
+// failures can be traced from the browser to server logs.
+app.use(requestContext);
 
 app.set("view engine", "ejs");
 app.set("views", path.resolve(process.cwd(), `src/lib/templates`));
@@ -81,7 +86,7 @@ app.use(
       "Origin",
     ],
     // Allow FE to read Content-Disposition header for CSV file downloads
-    exposedHeaders: ["Content-Disposition"],
+    exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Response-Time"],
   }),
 );
 

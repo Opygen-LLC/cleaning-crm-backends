@@ -103,6 +103,17 @@ const getOnboardingStatus = catchAsync(async (req, res) => {
   });
 });
 
+const finalizeOnboardingSetup = catchAsync(async (req, res) => {
+  const userId = req.user.id;
+  const result = await adminService.finalizeOnboardingSetup(userId);
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Account setup completed successfully",
+    data: result,
+  });
+});
+
 const skipOnboardingStep = catchAsync(async (req, res) => {
   const userId = req.user.id;
   const { step } = req.body;
@@ -133,6 +144,7 @@ export const adminController = {
   deleteWorkLocation,
   getAdminUsage,
   getOnboardingStatus,
+  finalizeOnboardingSetup,
   skipOnboardingStep,
   skipAllOnboarding,
 };

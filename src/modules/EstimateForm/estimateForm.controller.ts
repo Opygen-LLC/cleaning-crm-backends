@@ -141,6 +141,19 @@ const getPublicEstimateForm = catchAsync(async (req, res) => {
     });
 });
 
+const calculatePublicEstimate = catchAsync(async (req, res) => {
+    const result = await estimateFormService.calculatePublicEstimate(
+        getParam(req.params.slug),
+        req.body,
+    );
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Estimate calculated successfully",
+        data: result,
+    });
+});
+
 const submitPublicEstimateForm = catchAsync(async (req, res) => {
     const result = await estimateFormService.submitPublicEstimateForm(
         getParam(req.params.slug),
@@ -167,5 +180,6 @@ export const estimateFormController = {
     getFormSubmissions,
     updateSubmissionStatus,
     getPublicEstimateForm,
+    calculatePublicEstimate,
     submitPublicEstimateForm,
 };

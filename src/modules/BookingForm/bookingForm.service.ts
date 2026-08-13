@@ -1,10 +1,12 @@
+import { randomBytes } from "crypto";
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
-import { FormSubmissionStatus } from "../../generated/prisma/enums";
+import { FormFieldType, FormSubmissionStatus } from "../../generated/prisma/enums";
+import { Prisma } from "../../generated/prisma/client";
 import { IRequestUser } from "../../types/requestUser.interface";
-import { IBookingFormCreate } from "./bookingForm.interface";
+import { IBookingFormCreate, IPublicBookingSubmission } from "./bookingForm.interface";
 
 // ─── Slot-generation helpers (mirrors frontend logic exactly) ─────────────────
 
@@ -73,18 +75,99 @@ function getDayName(dateStr: string): string {
 
 // ─── Other helpers ────────────────────────────────────────────────────────────
 
-const generateSubmissionRef = async (): Promise<string> => {
-    const last = await prisma.bookingFormSubmission.findFirst({
-        orderBy: { createdAt: "desc" },
-        select: { ref: true },
-    });
-    let next = 1;
-    if (last?.ref) {
-        const parts = last.ref.split("-");
-        const num = parseInt(parts[parts.length - 1]);
-        if (!isNaN(num)) next = num + 1;
+const generateSubmissionRef = (): string => {
+    const datePart = new Date().toISOString().slice(2, 10).replace(/-/g, "");
+    // 64 bits of cryptographic randomness avoids the race/collision risk of
+    // reading the latest sequential ref before insert. Existing refs remain
+    // valid; only new submissions use this concurrency-safe format.
+    return `#BK-${datePart}-${randomBytes(8).toString("hex").toUpperCase()}`;
+};
+
+const isBlockedDate = (blockedDates: string[], date: string): boolean =>
+    blockedDates.some((entry) => entry.split("|")[0] === date);
+
+const isCoreBookingField = (field: { type: FormFieldType; label: string }): boolean => {
+    const label = field.label.trim().toLowerCase();
+    if (field.type === FormFieldType.EMAIL && label.includes("email")) return true;
+    if (field.type === FormFieldType.PHONE && label.includes("phone")) return true;
+    if (field.type === FormFieldType.ADDRESS && label.includes("address")) return true;
+    return field.type === FormFieldType.TEXT && /(^|\s)(full\s+name|your\s+name|customer\s+name|name)(\s|$)/.test(label);
+};
+
+type PublicAnswerField = {
+    id: string;
+    type: FormFieldType;
+    label: string;
+    required: boolean;
+    options: string[];
+};
+
+type StoredBookingAnswer = {
+    fieldId: string;
+    label: string;
+    type: FormFieldType;
+    value: string;
+};
+
+const validateAndSnapshotCustomAnswers = (
+    fields: PublicAnswerField[],
+    answers: Record<string, string> | undefined,
+): StoredBookingAnswer[] => {
+    const fieldErrors: Record<string, string> = {};
+    const stored: StoredBookingAnswer[] = [];
+
+    for (const field of fields) {
+        if (isCoreBookingField(field)) continue;
+
+        const value = (answers?.[field.id] ?? "").trim();
+        const path = `answers.${field.id}`;
+
+        if (!value) {
+            if (field.required) fieldErrors[path] = `${field.label} is required`;
+            continue;
+        }
+
+        if (field.type === FormFieldType.SELECT && field.options.length > 0 && !field.options.includes(value)) {
+            fieldErrors[path] = `Choose a valid option for ${field.label}`;
+            continue;
+        }
+        if (field.type === FormFieldType.EMAIL && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+            fieldErrors[path] = `Enter a valid email address for ${field.label}`;
+            continue;
+        }
+        if (field.type === FormFieldType.PHONE && value.replace(/\D/g, "").length < 6) {
+            fieldErrors[path] = `Enter a valid phone number for ${field.label}`;
+            continue;
+        }
+        if (field.type === FormFieldType.NUMBER && !Number.isFinite(Number(value))) {
+            fieldErrors[path] = `Enter a valid number for ${field.label}`;
+            continue;
+        }
+        if (field.type === FormFieldType.DATE) {
+            const parsed = new Date(`${value}T00:00:00.000Z`);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+                fieldErrors[path] = `Enter a valid date for ${field.label}`;
+                continue;
+            }
+        }
+
+        stored.push({
+            fieldId: field.id,
+            label: field.label,
+            type: field.type,
+            value,
+        });
     }
-    return `#BK-SUB-${next.toString().padStart(4, "0")}`;
+
+    if (Object.keys(fieldErrors).length > 0) {
+        throw new AppError(
+            status.UNPROCESSABLE_ENTITY,
+            "Please check the highlighted fields and try again.",
+            { code: "VALIDATION_ERROR", retryable: false, fieldErrors },
+        );
+    }
+
+    return stored;
 };
 
 const generateSlug = (headline: string, adminId: string): string => {
@@ -346,11 +429,55 @@ const updateSubmissionStatus = async (
 
     const submission = await prisma.bookingFormSubmission.findFirst({
         where: {
-            id:   submissionId,
+            id: submissionId,
             form: { adminId },
+        },
+        include: {
+            form: {
+                select: { headline: true, maxBookingsPerSlot: true },
+            },
         },
     });
     if (!submission) throw new AppError(status.NOT_FOUND, "Submission not found");
+
+    // A declined request no longer consumes capacity. If an admin restores it,
+    // reserve capacity under the same database lock used by public checkout so
+    // reactivation cannot silently overbook a slot.
+    if (
+        submission.status === FormSubmissionStatus.DECLINED &&
+        newStatus !== FormSubmissionStatus.DECLINED
+    ) {
+        const date = submission.date.toISOString().slice(0, 10);
+        const dateStart = new Date(`${date}T00:00:00.000Z`);
+        const dateEnd = new Date(`${date}T23:59:59.999Z`);
+        const slotLockKey = `booking-slot:${submission.formId}:${date}:${submission.timeSlot}`;
+
+        return prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${slotLockKey}, 0::bigint))`;
+            const occupied = await tx.bookingFormSubmission.count({
+                where: {
+                    formId: submission.formId,
+                    date: { gte: dateStart, lte: dateEnd },
+                    timeSlot: submission.timeSlot,
+                    status: { not: FormSubmissionStatus.DECLINED },
+                },
+            });
+
+            if (occupied >= submission.form.maxBookingsPerSlot) {
+                throw new AppError(
+                    status.CONFLICT,
+                    "This time slot is already at capacity. Keep this request declined or move it to another slot.",
+                    { code: "BOOKING_SLOT_FULL", retryable: false },
+                );
+            }
+
+            return tx.bookingFormSubmission.update({
+                where: { id: submissionId },
+                data: { status: newStatus },
+                include: { form: { select: { headline: true } } },
+            });
+        });
+    }
 
     return prisma.bookingFormSubmission.update({
         where: { id: submissionId },
@@ -368,35 +495,51 @@ const getPublicBookingForm = async (slug: string) => {
             fields:   { where: { enabled: true }, orderBy: { sortOrder: "asc" } },
             services: { where: { enabled: true } },
             admin: {
-                include: {
-                    user: { select: { name: true } },
+                select: {
+                    businessName: true,
+                    businessLogo: true,
+                    mobileNumber: true,
+                    businessEmail: true,
+                    user: { select: { name: true, email: true } },
                 },
             },
         },
     });
 
     if (!form || !form.published) {
-        throw new AppError(status.NOT_FOUND, "Booking form not found or not published");
+        throw new AppError(status.NOT_FOUND, "This booking page is not available.", {
+            code: "BOOKING_FORM_UNAVAILABLE",
+            retryable: false,
+        });
+    }
+
+    let reviewSummary: { rating: number; count: number } | null = null;
+    if (form.showReviews) {
+        const aggregate = await prisma.review.aggregate({
+            where: {
+                adminId: form.adminId,
+                staffId: null,
+                isPublished: true,
+            },
+            _avg: { rating: true },
+            _count: { rating: true },
+        });
+        if (aggregate._count.rating > 0 && aggregate._avg.rating != null) {
+            reviewSummary = {
+                rating: Number(aggregate._avg.rating.toFixed(1)),
+                count: aggregate._count.rating,
+            };
+        }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { adminId, ...safeForm } = form;
-    return safeForm;
+    return { ...safeForm, reviewSummary };
 };
 
 /**
- * Returns slot availability for a specific date.
- *
- * Uses the admin-configured slot duration and buffer time to generate the exact
- * same time slots the frontend previews. Only returns slots for the matching
- * weekday (e.g. a Monday date only looks at Monday time windows).
- *
- * Response shape:
- * {
- *   slotDurationMinutes: number,
- *   maxBookingsPerSlot:  number,
- *   slots: { time: string; booked: number; available: boolean }[]
- * }
+ * Returns authoritative slot availability for a specific date. Only the server
+ * decides whether a date/time is selectable; the browser preview is advisory.
  */
 const getPublicSlotAvailability = async (slug: string, date: string) => {
     const form = await prisma.bookingForm.findUnique({
@@ -414,41 +557,34 @@ const getPublicSlotAvailability = async (slug: string, date: string) => {
     });
 
     if (!form || !form.published) {
-        throw new AppError(status.NOT_FOUND, "Booking form not found or not published");
+        throw new AppError(status.NOT_FOUND, "This booking page is not available.", {
+            code: "BOOKING_FORM_UNAVAILABLE",
+            retryable: false,
+        });
     }
 
-    // Return empty if this date is blocked
-    const isBlocked = form.blockedDates.some((d) => d.startsWith(date));
-    if (isBlocked) {
-        return {
-            slotDurationMinutes: form.slotDurationMinutes,
-            maxBookingsPerSlot:  form.maxBookingsPerSlot,
-            slots: [],
-        };
+    const empty = {
+        slotDurationMinutes: form.slotDurationMinutes,
+        maxBookingsPerSlot: form.maxBookingsPerSlot,
+        slots: [] as { time: string; booked: number; available: boolean }[],
+    };
+
+    // Never expose selectable capacity for past/blocked/closed dates.
+    if (date < new Date().toISOString().slice(0, 10) || isBlockedDate(form.blockedDates, date)) {
+        return empty;
     }
 
-    // Determine the weekday name for this date (e.g. "Monday", "Tuesday", …)
     const dayName = getDayName(date);
+    if (!form.availableDays.includes(dayName)) return empty;
 
-    // Filter the stored windows to only those for this weekday
     const dayWindows = form.timeSlots.filter((ts) => ts.startsWith(`${dayName}|`));
-
-    // Generate actual slot start-times using the admin's slot duration + buffer
     const slotTimes = generateSlotsFromWindows(
         dayWindows,
         form.slotDurationMinutes,
         form.bufferTimeMinutes,
     );
+    if (slotTimes.length === 0) return empty;
 
-    if (slotTimes.length === 0) {
-        return {
-            slotDurationMinutes: form.slotDurationMinutes,
-            maxBookingsPerSlot:  form.maxBookingsPerSlot,
-            slots: [],
-        };
-    }
-
-    // Count existing (non-declined) bookings for each slot on this date
     const dateStart = new Date(`${date}T00:00:00.000Z`);
     const dateEnd   = new Date(`${date}T23:59:59.999Z`);
 
@@ -462,118 +598,154 @@ const getPublicSlotAvailability = async (slug: string, date: string) => {
         _count: { id: true },
     });
 
-    const countMap: Record<string, number> = {};
-    for (const row of counts) {
-        countMap[row.timeSlot] = row._count.id;
-    }
-
-    const slots = slotTimes.map((time) => {
-        const booked = countMap[time] ?? 0;
-        return {
-            time,
-            booked,
-            available: booked < form.maxBookingsPerSlot,
-        };
-    });
-
+    const countMap = Object.fromEntries(counts.map((row) => [row.timeSlot, row._count.id]));
     return {
         slotDurationMinutes: form.slotDurationMinutes,
-        maxBookingsPerSlot:  form.maxBookingsPerSlot,
-        slots,
+        maxBookingsPerSlot: form.maxBookingsPerSlot,
+        slots: slotTimes.map((time) => {
+            const booked = countMap[time] ?? 0;
+            return { time, booked, available: booked < form.maxBookingsPerSlot };
+        }),
     };
 };
 
 const submitPublicBookingForm = async (
     slug: string,
-    payload: {
-        serviceType: string;
-        date:        string;
-        timeSlot:    string;
-        name:        string;
-        email:       string;
-        phone:       string;
-        address:     string;
-        notes?:      string;
-    },
+    payload: IPublicBookingSubmission,
 ) => {
     const form = await prisma.bookingForm.findUnique({
-        where:  { slug },
+        where: { slug },
         select: {
-            id:                   true,
-            published:            true,
-            blockedDates:         true,
-            timeSlots:            true,
-            availableDays:        true,
-            maxBookingsPerSlot:   true,
-            slotDurationMinutes:  true,
-            bufferTimeMinutes:    true,
+            id: true,
+            published: true,
+            blockedDates: true,
+            timeSlots: true,
+            availableDays: true,
+            maxBookingsPerSlot: true,
+            slotDurationMinutes: true,
+            bufferTimeMinutes: true,
+            services: {
+                where: { enabled: true },
+                select: { serviceType: true },
+            },
+            fields: {
+                where: { enabled: true },
+                orderBy: { sortOrder: "asc" },
+                select: {
+                    id: true,
+                    type: true,
+                    label: true,
+                    required: true,
+                    options: true,
+                },
+            },
         },
     });
 
     if (!form || !form.published) {
-        throw new AppError(status.NOT_FOUND, "Booking form not found or not published");
+        throw new AppError(status.NOT_FOUND, "This booking page is not available.", {
+            code: "BOOKING_FORM_UNAVAILABLE",
+            retryable: false,
+        });
     }
 
-    // blockedDates are stored as "YYYY-MM-DD|Reason" strings.
-    const isBlocked = form.blockedDates.some((d) => d.startsWith(payload.date));
-    if (isBlocked) {
-        throw new AppError(status.UNPROCESSABLE_ENTITY, "The selected date is not available");
+    const today = new Date().toISOString().slice(0, 10);
+    if (payload.date < today) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "Please choose a future date.", {
+            code: "BOOKING_DATE_UNAVAILABLE",
+            retryable: false,
+            fieldErrors: { date: "Please choose today or a future date." },
+        });
     }
 
-    // Validate the time slot exists for this weekday using the slot generation logic
-    if (form.timeSlots.length > 0) {
-        const dayName    = getDayName(payload.date);
-        const dayWindows = form.timeSlots.filter((ts) => ts.startsWith(`${dayName}|`));
-        const validSlots = generateSlotsFromWindows(
-            dayWindows,
-            form.slotDurationMinutes,
-            form.bufferTimeMinutes,
-        );
-
-        if (validSlots.length > 0 && !validSlots.includes(payload.timeSlot)) {
-            throw new AppError(
-                status.UNPROCESSABLE_ENTITY,
-                "The selected time slot is not available for this date",
-            );
-        }
+    if (isBlockedDate(form.blockedDates, payload.date)) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "That date is no longer available.", {
+            code: "BOOKING_DATE_UNAVAILABLE",
+            retryable: false,
+            fieldErrors: { date: "Please choose another available date." },
+        });
     }
 
-    // ── Slot capacity enforcement ──────────────────────────────────────────────
+    const dayName = getDayName(payload.date);
+    if (!form.availableDays.includes(dayName)) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "We are not taking online bookings on that day.", {
+            code: "BOOKING_DATE_UNAVAILABLE",
+            retryable: false,
+            fieldErrors: { date: "Please choose one of the available days." },
+        });
+    }
+
+    const serviceEnabled = form.services.some((service) => service.serviceType === payload.serviceType);
+    if (!serviceEnabled) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "That service is no longer available for online booking.", {
+            code: "BOOKING_SERVICE_UNAVAILABLE",
+            retryable: false,
+            fieldErrors: { serviceType: "Please choose another service." },
+        });
+    }
+
+    const dayWindows = form.timeSlots.filter((ts) => ts.startsWith(`${dayName}|`));
+    const validSlots = generateSlotsFromWindows(
+        dayWindows,
+        form.slotDurationMinutes,
+        form.bufferTimeMinutes,
+    );
+    if (!validSlots.includes(payload.timeSlot)) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "That time is no longer available.", {
+            code: "BOOKING_TIME_UNAVAILABLE",
+            retryable: false,
+            fieldErrors: { timeSlot: "Please choose another available time." },
+        });
+    }
+
+    const customAnswers = validateAndSnapshotCustomAnswers(form.fields, payload.answers);
     const dateStart = new Date(`${payload.date}T00:00:00.000Z`);
     const dateEnd   = new Date(`${payload.date}T23:59:59.999Z`);
+    const slotLockKey = `booking-slot:${form.id}:${payload.date}:${payload.timeSlot}`;
 
-    const existingCount = await prisma.bookingFormSubmission.count({
-        where: {
-            formId:   form.id,
-            date:     { gte: dateStart, lte: dateEnd },
-            timeSlot: payload.timeSlot,
-            status:   { not: FormSubmissionStatus.DECLINED },
-        },
-    });
+    // PostgreSQL advisory transaction locks make the count+insert capacity check
+    // atomic across every Node process/container. Two customers racing for the
+    // final place serialize on the same slot key; the second sees the committed
+    // first booking and receives BOOKING_SLOT_FULL instead of overbooking.
+    return prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${slotLockKey}, 0::bigint))`;
 
-    if (existingCount >= form.maxBookingsPerSlot) {
-        throw new AppError(
-            status.CONFLICT,
-            `This time slot is fully booked (${form.maxBookingsPerSlot} booking${form.maxBookingsPerSlot > 1 ? "s" : ""} max). Please choose another time.`,
-        );
-    }
-    // ── End capacity enforcement ───────────────────────────────────────────────
+        const existingCount = await tx.bookingFormSubmission.count({
+            where: {
+                formId: form.id,
+                date: { gte: dateStart, lte: dateEnd },
+                timeSlot: payload.timeSlot,
+                status: { not: FormSubmissionStatus.DECLINED },
+            },
+        });
 
-    const ref = await generateSubmissionRef();
+        if (existingCount >= form.maxBookingsPerSlot) {
+            throw new AppError(
+                status.CONFLICT,
+                "That time was just booked. Please choose another available time.",
+                {
+                    code: "BOOKING_SLOT_FULL",
+                    retryable: false,
+                    fieldErrors: { timeSlot: "This time is now fully booked." },
+                },
+            );
+        }
 
-    return prisma.bookingFormSubmission.create({
-        data: {
-            ref,
-            formId:      form.id,
-            serviceType: payload.serviceType as never,
-            date:        new Date(payload.date),
-            timeSlot:    payload.timeSlot,
-            name:        payload.name,
-            email:       payload.email,
-            phone:       payload.phone,
-            address:     payload.address,
-            notes:       payload.notes,
-        },
+        return tx.bookingFormSubmission.create({
+            data: {
+                ref: generateSubmissionRef(),
+                formId: form.id,
+                serviceType: payload.serviceType,
+                date: dateStart,
+                timeSlot: payload.timeSlot,
+                name: payload.name,
+                email: payload.email,
+                phone: payload.phone,
+                address: payload.address,
+                notes: payload.notes || undefined,
+                answers: customAnswers as Prisma.InputJsonValue,
+            },
+        });
     });
 };
 

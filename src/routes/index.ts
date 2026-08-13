@@ -15,6 +15,7 @@ import { bookingRoutes } from "../modules/Booking/booking.routes";
 import { leadRoutes } from "../modules/Lead/lead.routes";
 import { jobRoutes } from "../modules/Job/job.routes";
 import { quoteRoutes } from "../modules/Quote/quote.routes";
+import { quotePublicRoutes } from "../modules/Quote/quote.public.routes";
 import { estimateRoutes } from "../modules/Estimate/estimate.routes";
 import { estimateFormRoutes } from "../modules/EstimateForm/estimateForm.routes";
 import { reviewRoutes } from "../modules/Review/review.routes";
@@ -43,6 +44,7 @@ const openRoutes: { path: string; route: Router }[] = [
     { path: "/subscription-plan", route: subscriptionPlanRoutes },
     { path: "/booking-form",    route: bookingFormRoutes },
     { path: "/estimate-form",   route: estimateFormRoutes },
+    { path: "/quote/public",    route: quotePublicRoutes },
     { path: "/super-admin",     route: superAdminRoutes },
 ];
 

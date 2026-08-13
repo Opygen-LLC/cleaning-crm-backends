@@ -15,15 +15,12 @@ model AdminProfile {
   businessEmail         String?
   businessType          String?
   website               String?
-  /// Set once the guided setup wizard's steps are all satisfied. Persisted so
-  /// completion never regresses if the admin later deletes the data that
-  /// originally satisfied a step (e.g. their only client).
+  /// Set once the required three-step account setup (business details, first
+  /// service and service area) is satisfied. Optional Getting Started items
+  /// are derived from live CRM data and do not affect this timestamp.
   onboardingCompletedAt DateTime?
-  /// Onboarding steps the admin explicitly chose to skip (only ever "team",
-  /// "client", "booking" — the mandatory steps 1-3 can never appear here,
-  /// enforced server-side in adminService.skipOnboardingStep). Lets the
-  /// wizard distinguish "not done yet" from "chose to do later" instead of
-  /// inferring everything purely from whether records exist.
+  /// Legacy compatibility for the previous six-step onboarding flow. New
+  /// clients do not write or read this field for setup/checklist progress.
   skippedSteps          String[]                @default([])
   user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   couponUsage           CouponUsage[]

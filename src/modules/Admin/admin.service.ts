@@ -2,10 +2,16 @@ import { startOfMonth } from "date-fns";
 import status from "http-status";
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
-import { resolveCountryEnum } from "../../lib/constants/countryIsoMap";
-import { ONBOARDING_STEPS, SKIPPABLE_ONBOARDING_STEPS } from "./admin.constant";
+import { countryEnumToIso, resolveCountryEnum } from "../../lib/constants/countryIsoMap";
+import {
+  GETTING_STARTED_STEPS,
+  ONBOARDING_STEPS,
+  SKIPPABLE_ONBOARDING_STEPS,
+} from "./admin.constant";
 import redis from "../../config/redis";
 import type {
+  GettingStartedStepKey,
+  LegacySkippableOnboardingStepKey,
   OnboardingStepKey,
   OnboardingStepStatus,
   UpdateAdminPayload,
@@ -100,6 +106,7 @@ const getAdmin = async (userId: string) => {
     role: user.role,
     avatar: user.image ?? undefined,
     ...profileFields,
+    countryIso: countryEnumToIso(profileFields.country),
     workLocations,
   };
 
@@ -302,7 +309,7 @@ const getAdminUsage = async (userId: string): Promise<AdminUsageResponse> => {
   };
 };
 
-// ─── Guided setup wizard ──────────────────────────────────────────────────────
+// ─── Three-step account setup + Getting Started checklist ─────────────────────
 
 interface OnboardingStepResult {
   key: OnboardingStepKey;
@@ -311,15 +318,54 @@ interface OnboardingStepResult {
   completed: boolean;
 }
 
-interface OnboardingStatusResult {
-  isComplete: boolean;
-  skippedCount: number;
-  steps: OnboardingStepResult[];
+interface GettingStartedStepResult {
+  key: GettingStartedStepKey;
+  label: string;
+  completed: boolean;
 }
 
-const isSkippable = (step: OnboardingStepKey): boolean =>
+interface GettingStartedResult {
+  isComplete: boolean;
+  completedCount: number;
+  totalCount: number;
+  steps: GettingStartedStepResult[];
+}
+
+interface OnboardingStatusResult {
+  isComplete: boolean;
+  completedCount: number;
+  totalCount: number;
+  /** Kept as zero for backwards compatibility with Phase 1 clients. */
+  skippedCount: number;
+  steps: OnboardingStepResult[];
+  gettingStarted: GettingStartedResult;
+}
+
+interface SetupCompletionFlags {
+  business_profile: boolean;
+  service: boolean;
+  service_area: boolean;
+  team: boolean;
+  client: boolean;
+  booking: boolean;
+  online_booking: boolean;
+}
+
+const isLegacySkippable = (
+  step: string,
+): step is LegacySkippableOnboardingStepKey =>
   (SKIPPABLE_ONBOARDING_STEPS as readonly string[]).includes(step);
 
+/**
+ * Return one compact source of truth for both:
+ *  - the required three-step account setup, and
+ *  - the optional Getting Started checklist shown inside the dashboard.
+ *
+ * Once onboardingCompletedAt has been stamped, the first three flags are
+ * trusted as complete so dashboard loads only need the four optional count
+ * queries. This avoids re-counting services/locations forever while still
+ * keeping the optional checklist based on real CRM data.
+ */
 const getOnboardingStatus = async (
   userId: string,
 ): Promise<OnboardingStatusResult> => {
@@ -327,127 +373,210 @@ const getOnboardingStatus = async (
     where: { userId },
     select: {
       id: true,
-      skippedSteps: true,
       onboardingCompletedAt: true,
-      address: true,
+      businessName: true,
       city: true,
+      country: true,
       mobileNumber: true,
       businessType: true,
     },
   });
 
   if (!admin) {
-    throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    throw new AppError(status.NOT_FOUND, "Admin profile not found", {
+      code: "ADMIN_PROFILE_NOT_FOUND",
+      retryable: false,
+    });
   }
 
-  // Onboarding completion is persisted once reached so it never regresses
-  // (e.g. if the admin later deletes their only client). Once set, derive
-  // every step's status purely from skippedSteps — no need to re-run five
-  // count queries on every dashboard load.
-  if (admin.onboardingCompletedAt) {
-    const steps: OnboardingStepResult[] = ONBOARDING_STEPS.map((s) => {
-      const skipped = admin.skippedSteps.includes(s.key);
-      const stepStatus: OnboardingStepStatus = skipped ? "skipped" : "completed";
-      return {
-        key: s.key,
-        label: s.label,
-        status: stepStatus,
-        completed: stepStatus === "completed",
-      };
-    });
+  let flags: SetupCompletionFlags;
 
-    return {
-      isComplete: true,
-      skippedCount: admin.skippedSteps.length,
-      steps,
+  if (admin.onboardingCompletedAt) {
+    const [teamCount, clientCount, bookingCount, publishedBookingFormCount] =
+      await Promise.all([
+        prisma.staffProfile.count({
+          where: { adminId: admin.id, status: "ACTIVE" },
+        }),
+        prisma.client.count({
+          where: { adminId: admin.id, status: "ACTIVE" },
+        }),
+        prisma.booking.count({ where: { adminId: admin.id } }),
+        prisma.bookingForm.count({
+          where: { adminId: admin.id, published: true },
+        }),
+      ]);
+
+    flags = {
+      business_profile: true,
+      service: true,
+      service_area: true,
+      team: teamCount > 0,
+      client: clientCount > 0,
+      booking: bookingCount > 0,
+      online_booking: publishedBookingFormCount > 0,
+    };
+  } else {
+    // Business name is collected during registration. The setup step only
+    // requires the operational details needed by the rest of the CRM; street
+    // address and postcode are deliberately optional to keep first-run setup
+    // quick for mobile/service-area businesses.
+    const businessProfileComplete = Boolean(
+      admin.businessName?.trim() &&
+        admin.businessType?.trim() &&
+        admin.mobileNumber?.trim() &&
+        admin.city?.trim() &&
+        admin.country,
+    );
+
+    const [
+      serviceCount,
+      serviceAreaCount,
+      teamCount,
+      clientCount,
+      bookingCount,
+      publishedBookingFormCount,
+    ] = await Promise.all([
+      prisma.serviceCatalog.count({ where: { adminId: admin.id } }),
+      prisma.workLocation.count({ where: { adminId: admin.id } }),
+      prisma.staffProfile.count({
+        where: { adminId: admin.id, status: "ACTIVE" },
+      }),
+      prisma.client.count({
+        where: { adminId: admin.id, status: "ACTIVE" },
+      }),
+      prisma.booking.count({ where: { adminId: admin.id } }),
+      prisma.bookingForm.count({
+        where: { adminId: admin.id, published: true },
+      }),
+    ]);
+
+    flags = {
+      business_profile: businessProfileComplete,
+      service: serviceCount > 0,
+      service_area: serviceAreaCount > 0,
+      team: teamCount > 0,
+      client: clientCount > 0,
+      booking: bookingCount > 0,
+      online_booking: publishedBookingFormCount > 0,
     };
   }
 
-  const businessProfileComplete = Boolean(
-    admin.address && admin.city && admin.mobileNumber && admin.businessType,
-  );
-
-  const [serviceCount, serviceAreaCount, teamCount, clientCount, bookingCount] =
-    await Promise.all([
-      prisma.serviceCatalog.count({ where: { adminId: admin.id } }),
-      prisma.workLocation.count({ where: { adminId: admin.id } }),
-      prisma.staffProfile.count({ where: { adminId: admin.id, status: "ACTIVE" } }),
-      prisma.client.count({ where: { adminId: admin.id, status: "ACTIVE" } }),
-      prisma.booking.count({ where: { adminId: admin.id } }),
-    ]);
-
-  const completionByKey: Record<OnboardingStepKey, boolean> = {
-    business_profile: businessProfileComplete,
-    service: serviceCount > 0,
-    service_area: serviceAreaCount > 0,
-    team: teamCount > 0,
-    client: clientCount > 0,
-    booking: bookingCount > 0,
-  };
-
-  const steps: OnboardingStepResult[] = ONBOARDING_STEPS.map((s) => {
-    const completed = completionByKey[s.key];
-
-    let stepStatus: OnboardingStepStatus;
-    if (completed) {
-      stepStatus = "completed";
-    } else if (isSkippable(s.key) && admin.skippedSteps.includes(s.key)) {
-      // Real data always outranks a stale skip choice, but if there's no
-      // data yet the earlier skip decision still stands.
-      stepStatus = "skipped";
-    } else {
-      stepStatus = "pending";
-    }
-
-    return { key: s.key, label: s.label, status: stepStatus, completed };
+  const steps: OnboardingStepResult[] = ONBOARDING_STEPS.map((step) => {
+    const completed = flags[step.key];
+    return {
+      key: step.key,
+      label: step.label,
+      status: completed ? "completed" : "pending",
+      completed,
+    };
   });
 
-  const skippedCount = steps.filter((s) => s.status === "skipped").length;
-  const isComplete = steps.every(
-    (s) => s.status === "completed" || s.status === "skipped",
-  );
+  const completedCount = steps.filter((step) => step.completed).length;
+  const isComplete = completedCount === steps.length;
 
-  if (isComplete) {
+  // Stamp once, when all three required setup steps exist for real. This is
+  // the only persisted setup state needed; optional checklist items remain
+  // live and may naturally change over time.
+  if (isComplete && !admin.onboardingCompletedAt) {
     await prisma.adminProfile.update({
       where: { id: admin.id },
       data: { onboardingCompletedAt: new Date() },
     });
   }
 
-  return { isComplete, skippedCount, steps };
+  const gettingStartedSteps: GettingStartedStepResult[] =
+    GETTING_STARTED_STEPS.map((step) => ({
+      key: step.key,
+      label: step.label,
+      completed: flags[step.key],
+    }));
+
+  const gettingStartedCompletedCount = gettingStartedSteps.filter(
+    (step) => step.completed,
+  ).length;
+
+  return {
+    isComplete,
+    completedCount,
+    totalCount: steps.length,
+    skippedCount: 0,
+    steps,
+    gettingStarted: {
+      isComplete: gettingStartedCompletedCount === gettingStartedSteps.length,
+      completedCount: gettingStartedCompletedCount,
+      totalCount: gettingStartedSteps.length,
+      steps: gettingStartedSteps,
+    },
+  };
 };
 
-const skipOnboardingStep = async (userId: string, step: OnboardingStepKey) => {
-  // Mandatory steps 1-3 can never be skipped, including by hitting the API
-  // directly — this is the real enforcement point, not just the Zod schema.
-  // Checked before any DB access so an invalid request never touches prisma.
-  if (!isSkippable(step)) {
+/**
+ * Called once after the third setup screen is saved. It re-validates setup
+ * from database state and gives the client a deterministic finish action
+ * without requiring a status refetch after every individual setup step.
+ */
+const finalizeOnboardingSetup = async (
+  userId: string,
+): Promise<OnboardingStatusResult> => {
+  const result = await getOnboardingStatus(userId);
+
+  if (!result.isComplete) {
+    const fieldErrors: Record<string, string> = {};
+    for (const step of result.steps) {
+      if (!step.completed) {
+        fieldErrors[step.key] = `${step.label} is not complete`;
+      }
+    }
+
     throw new AppError(
-      status.BAD_REQUEST,
-      `"${step}" is a required step and cannot be skipped`,
+      status.CONFLICT,
+      "Complete the three required setup steps before entering the dashboard.",
+      {
+        code: "ACCOUNT_SETUP_INCOMPLETE",
+        retryable: false,
+        fieldErrors,
+      },
     );
+  }
+
+  return result;
+};
+
+// ─── Legacy skip endpoints ───────────────────────────────────────────────────
+// Kept temporarily so an older deployed frontend does not crash while clients
+// roll forward. Skip choices no longer affect the three-step setup or the new
+// Getting Started checklist, which is always derived from real data.
+const skipOnboardingStep = async (
+  userId: string,
+  step: LegacySkippableOnboardingStepKey,
+) => {
+  if (!isLegacySkippable(step)) {
+    throw new AppError(status.BAD_REQUEST, "This setup step cannot be skipped", {
+      code: "SETUP_STEP_REQUIRED",
+      retryable: false,
+    });
   }
 
   const admin = await prisma.adminProfile.findUnique({
     where: { userId },
-    select: { id: true, skippedSteps: true, onboardingCompletedAt: true },
+    select: { id: true, skippedSteps: true },
   });
 
   if (!admin) {
-    throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    throw new AppError(status.NOT_FOUND, "Admin profile not found", {
+      code: "ADMIN_PROFILE_NOT_FOUND",
+      retryable: false,
+    });
   }
 
-  // Idempotent no-op: already skipped, or onboarding is already fully done.
-  if (admin.onboardingCompletedAt || admin.skippedSteps.includes(step)) {
-    return { step, skipped: true };
+  if (!admin.skippedSteps.includes(step)) {
+    await prisma.adminProfile.update({
+      where: { id: admin.id },
+      data: { skippedSteps: { push: step } },
+    });
   }
 
-  await prisma.adminProfile.update({
-    where: { id: admin.id },
-    data: { skippedSteps: { push: step } },
-  });
-
-  return { step, skipped: true };
+  return { step, skipped: true, deprecated: true };
 };
 
 const skipAllOnboarding = async (
@@ -455,28 +584,27 @@ const skipAllOnboarding = async (
 ): Promise<OnboardingStatusResult> => {
   const admin = await prisma.adminProfile.findUnique({
     where: { userId },
-    select: { id: true, skippedSteps: true, onboardingCompletedAt: true },
+    select: { id: true, skippedSteps: true },
   });
 
   if (!admin) {
-    throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    throw new AppError(status.NOT_FOUND, "Admin profile not found", {
+      code: "ADMIN_PROFILE_NOT_FOUND",
+      retryable: false,
+    });
   }
 
-  if (!admin.onboardingCompletedAt) {
-    const newlySkipped = SKIPPABLE_ONBOARDING_STEPS.filter(
-      (step) => !admin.skippedSteps.includes(step),
-    );
+  const newlySkipped = SKIPPABLE_ONBOARDING_STEPS.filter(
+    (step) => !admin.skippedSteps.includes(step),
+  );
 
-    if (newlySkipped.length > 0) {
-      await prisma.adminProfile.update({
-        where: { id: admin.id },
-        data: { skippedSteps: { push: newlySkipped } },
-      });
-    }
+  if (newlySkipped.length > 0) {
+    await prisma.adminProfile.update({
+      where: { id: admin.id },
+      data: { skippedSteps: { push: [...newlySkipped] } },
+    });
   }
 
-  // Re-derive status from the DB so `isComplete` reflects whether the
-  // mandatory (non-skippable) steps were already satisfied for real.
   return getOnboardingStatus(userId);
 };
 
@@ -488,6 +616,7 @@ export const adminService = {
   createAdmin,
   getAdminUsage,
   getOnboardingStatus,
+  finalizeOnboardingSetup,
   skipOnboardingStep,
   skipAllOnboarding,
 };

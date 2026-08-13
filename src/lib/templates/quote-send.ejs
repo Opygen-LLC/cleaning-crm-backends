@@ -62,7 +62,7 @@
                 <!-- Greeting -->
                 <p style="margin:0 0 6px;font-size:22px;font-weight:700;color:#0a0a0a;letter-spacing:-0.4px;">Hi <%= clientName %>,</p>
                 <p style="margin:0 0 28px;font-size:15px;color:#6b6b6b;line-height:1.6;">
-                  Thank you for your interest. Please find your quote below — you can accept or decline it directly from this email. It's valid until <strong style="color:#0a0a0a;"><%= validUntil %></strong>.
+                  Thank you for your interest in <strong style="color:#0a0a0a;"><%= businessName %></strong>. Please find your quote below — use the secure link to review, accept or decline it. It's valid until <strong style="color:#0a0a0a;"><%= validUntil %></strong>.
                 </p>
 
                 <!-- Quote summary card -->
@@ -172,7 +172,7 @@
                   <tr>
                     <td style="border-top:1px solid #f0f0f0;padding-top:24px;">
                       <p style="margin:0 0 6px;font-size:11px;color:#aaa;line-height:1.7;">
-                        You received this quote via <strong style="color:#6b6b6b;">Opygen CleanCRM</strong>.
+                        You received this quote from <strong style="color:#6b6b6b;"><%= businessName %></strong> via Opygen CleanCRM.
                         If you weren't expecting this, please ignore it.
                       </p>
                       <p style="margin:0;font-size:11px;color:#ccc;">© <%= new Date().getFullYear() %> Opygen · Cleaning CRM</p>

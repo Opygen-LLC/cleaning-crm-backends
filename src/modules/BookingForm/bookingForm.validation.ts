@@ -1,51 +1,88 @@
 import { z } from "zod";
 import { FormFieldType, FormSubmissionStatus, ServiceType } from "../../generated/prisma/enums";
 
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+const isoDateSchema = z
+    .string()
+    .regex(ISO_DATE_RE, "Date must be in YYYY-MM-DD format")
+    .refine((value) => {
+        const parsed = new Date(`${value}T00:00:00.000Z`);
+        return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    }, "Date is invalid");
+
 // ── Sub-schemas ────────────────────────────────────────────────────────────────
 
 const serviceSchema = z.object({
     serviceType: z.enum(ServiceType),
     enabled:     z.boolean().optional(),
-    priceLabel:  z.string().optional(),
-    duration:    z.string().optional(),
+    priceLabel:  z.string().max(120).optional(),
+    duration:    z.string().max(120).optional(),
 }).strict();
 
 const fieldSchema = z.object({
     type:        z.enum(FormFieldType),
-    label:       z.string().min(1),
-    placeholder: z.string().optional(),
+    label:       z.string().trim().min(1).max(120),
+    placeholder: z.string().max(250).optional(),
     required:    z.boolean().optional(),
     enabled:     z.boolean().optional(),
-    options:     z.array(z.string()).optional(),
+    options:     z.array(z.string().trim().min(1).max(250)).max(100).optional(),
     sortOrder:   z.number().int().min(0).optional(),
 }).strict();
 
 // ── Create / Update ────────────────────────────────────────────────────────────
 
 export const createBookingFormSchema = z.object({
-    headline:            z.string().min(1, "Headline is required"),
-    subheading:          z.string().optional(),
+    headline:            z.string().trim().min(1, "Headline is required").max(180),
+    subheading:          z.string().max(500).optional(),
     accentColor:         z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
     showReviews:         z.boolean().optional(),
-    ctaLabel:            z.string().optional(),
-    confirmationMessage: z.string().optional(),
-    availableDays:       z.array(z.string()).optional(),
-    blockedDates:        z.array(z.string()).optional(),
-    timeSlots:           z.array(z.string()).optional(),
+    ctaLabel:            z.string().max(80).optional(),
+    confirmationMessage: z.string().max(1000).optional(),
+    availableDays:       z.array(z.string()).max(7).optional(),
+    blockedDates:        z.array(z.string()).max(1000).optional(),
+    timeSlots:           z.array(z.string()).max(200).optional(),
     maxBookingsPerSlot:  z.number().int().min(1).max(50).optional(),
     slotDurationMinutes: z.number().int().min(15).max(480).optional(),
     bufferTimeMinutes:   z.number().int().min(0).max(120).optional(),
-    services:            z.array(serviceSchema).optional(),
-    fields:              z.array(fieldSchema).optional(),
+    services:            z.array(serviceSchema).max(50).optional(),
+    fields:              z.array(fieldSchema).max(100).optional(),
 }).strict();
 
 export const updateBookingFormSchema = createBookingFormSchema
     .omit({ headline: true })
     .extend({
-        headline:  z.string().min(1).optional(),
+        headline:  z.string().trim().min(1).max(180).optional(),
         published: z.boolean().optional(),
     })
     .partial();
+
+// ── Public booking ─────────────────────────────────────────────────────────────
+
+const publicAnswersSchema = z
+    .record(z.string().min(1), z.string().trim().max(5000))
+    .refine((answers) => Object.keys(answers).length <= 50, {
+        message: "Too many custom field answers",
+    });
+
+export const publicBookingSubmissionSchema = z.object({
+    serviceType: z.enum(ServiceType),
+    date:        isoDateSchema,
+    timeSlot:    z.string().regex(TIME_RE, "Time must be in HH:MM format"),
+    name:        z.string().trim().min(1, "Full name is required").max(120),
+    email:       z.string().trim().email("Enter a valid email address").max(254),
+    phone:       z.string().trim().min(6, "Enter a valid phone number").max(40),
+    address:     z.string().trim().min(3, "Service address is required").max(500),
+    notes:       z.string().trim().max(2000).optional(),
+    answers:     publicAnswersSchema.optional(),
+}).strict();
+
+export const publicSlotAvailabilityQuerySchema = z.object({
+    date: isoDateSchema,
+}).passthrough();
 
 // ── Submission status update ───────────────────────────────────────────────────
 
@@ -56,5 +93,7 @@ export const updateSubmissionStatusSchema = z.object({
 export const bookingFormValidation = {
     createBookingFormSchema,
     updateBookingFormSchema,
+    publicBookingSubmissionSchema,
+    publicSlotAvailabilityQuerySchema,
     updateSubmissionStatusSchema,
 };

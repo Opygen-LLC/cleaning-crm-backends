@@ -33,3 +33,15 @@ export interface IBookingFormCreate {
 export interface IBookingFormUpdate extends Partial<IBookingFormCreate> {
     published?: boolean;
 }
+
+export interface IPublicBookingSubmission {
+    serviceType: ServiceType;
+    date: string;
+    timeSlot: string;
+    name: string;
+    email: string;
+    phone: string;
+    address: string;
+    notes?: string;
+    answers?: Record<string, string>;
+}

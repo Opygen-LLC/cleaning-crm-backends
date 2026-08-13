@@ -254,3 +254,8 @@ export const resolveCountryEnum = (input: string): Country | undefined => {
 
     return undefined;
 };
+/** Convert a stored Prisma Country enum back to its ISO-3166-1 alpha-2 code. */
+export const countryEnumToIso = (country: Country | null | undefined): string | undefined => {
+    if (!country) return undefined;
+    return Object.entries(ISO_TO_COUNTRY_ENUM).find(([, value]) => value === country)?.[0];
+};

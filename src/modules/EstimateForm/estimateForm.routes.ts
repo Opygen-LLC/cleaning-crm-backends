@@ -27,6 +27,12 @@ router.get(
 );
 
 router.post(
+    "/public/:slug/calculate",
+    zodValidate(estimateFormValidation.publicCalculation, ValidationProperty.BODY),
+    estimateFormController.calculatePublicEstimate,
+);
+
+router.post(
     "/public/:slug/submit",
     zodValidate(estimateFormValidation.publicSubmission, ValidationProperty.BODY),
     estimateFormController.submitPublicEstimateForm,

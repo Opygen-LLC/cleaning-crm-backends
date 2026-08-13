@@ -67,6 +67,7 @@ model BookingFormSubmission {
   phone       String
   address     String
   notes       String?
+  answers     Json?
   formId      String
   createdAt   DateTime             @default(now())
   form        BookingForm          @relation(fields: [formId], references: [id], onDelete: Cascade)
@@ -149,12 +150,17 @@ model EstimateFormSubmission {
   bedrooms    Int
   bathrooms   Int
   addOnIds    String[]
-  postcode    String
-  name        String
-  email       String
-  phone       String
-  notes       String?
-  formId      String
+  postcode        String
+  city            String?
+  name            String
+  email           String
+  phone           String
+  notes           String?
+  answers         Json?
+  estimatedMin    Decimal?                 @db.Decimal(10, 2)
+  estimatedMax    Decimal?                 @db.Decimal(10, 2)
+  pricingSnapshot Json?
+  formId          String
   createdAt   DateTime                 @default(now())
   form        EstimateForm             @relation(fields: [formId], references: [id], onDelete: Cascade)
 

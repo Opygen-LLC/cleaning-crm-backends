@@ -70,6 +70,12 @@ router.get(
 );
 
 router.post(
+  "/onboarding-status/complete",
+  checkAuth(UserRole.ADMIN),
+  adminController.finalizeOnboardingSetup,
+);
+
+router.post(
   "/onboarding-status/skip",
   checkAuth(UserRole.ADMIN),
   zodValidate(adminValidation.skipOnboardingStep, ValidationProperty.BODY),

@@ -60,18 +60,27 @@ const updateSubmissionStatusSchema = z.object({
     status: z.enum(EstimateSubmissionStatus),
 }).strict();
 
-// ── Public submission ─────────────────────────────────────────────────────────
+// ── Public calculation / submission ──────────────────────────────────────────
 
-const publicSubmissionSchema = z.object({
+const publicCalculationSchema = z.object({
     serviceType: z.enum(ServiceType),
-    bedrooms:    z.number().int().min(0),
-    bathrooms:   z.number().int().min(0),
-    addOnIds:    z.array(z.string()).default([]),
-    postcode:    z.string().min(1, "Postcode is required"),
-    name:        z.string().min(1, "Name is required"),
-    email:       z.string().email("Invalid email"),
-    phone:       z.string().min(1, "Phone is required"),
-    notes:       z.string().optional(),
+    bedrooms:    z.number().int().min(0).max(50),
+    bathrooms:   z.number().int().min(0).max(50),
+    addOnIds:    z.array(z.string().min(1)).max(50).default([]),
+    postcode:    z.string().trim().max(32).optional(),
+    city:        z.string().trim().max(120).optional(),
+}).strict();
+
+const publicSubmissionSchema = publicCalculationSchema.extend({
+    postcode: z.string().trim().min(1, "Postcode is required").max(32),
+    city:     z.string().trim().max(120).optional(),
+    // Legacy contact fields remain accepted during the rollout; the server
+    // derives canonical contact data from semantic form answers when present.
+    name:     z.string().trim().max(200).optional(),
+    email:    z.string().trim().email("Invalid email").max(320).optional(),
+    phone:    z.string().trim().max(80).optional(),
+    notes:    z.string().trim().max(5000).optional(),
+    answers:  z.record(z.string(), z.string().max(5000)).optional(),
 }).strict();
 
 // ── Export ─────────────────────────────────────────────────────────────────────
@@ -80,5 +89,6 @@ export const estimateFormValidation = {
     createEstimateForm:      createEstimateFormSchema,
     updateEstimateForm:      updateEstimateFormSchema,
     updateSubmissionStatus:  updateSubmissionStatusSchema,
+    publicCalculation:       publicCalculationSchema,
     publicSubmission:        publicSubmissionSchema,
 };

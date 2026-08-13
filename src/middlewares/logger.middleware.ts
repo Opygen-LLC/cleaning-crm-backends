@@ -26,7 +26,9 @@ const logRequestResponse = (
       Math.random() < REQUEST_LOG_SAMPLE_RATE;
     if (shouldLog) {
       const level = duration >= SLOW_REQUEST_THRESHOLD_MS ? "warn" : "info";
-      logger[level](`${req.method} ${req.originalUrl} - ${rounded}ms`);
+      const requestId =
+        typeof res.locals.requestId === "string" ? res.locals.requestId : "no-request-id";
+      logger[level](`[${requestId}] ${req.method} ${req.path} - ${rounded}ms`);
     }
     res.send = originalSend;
     return res.send(body);

@@ -12,17 +12,6 @@ import { quoteValidation } from "./quote.validation";
 
 const router = Router();
 
-// ── Public routes (no auth) ───────────────────────────────────────────────────
-// Must be declared before the /:id routes to avoid collision
-
-router.get("/public/:ref", quoteController.getPublicQuote);
-
-router.post(
-    "/public/:ref/action",
-    zodValidate(quoteValidation.publicQuoteAction, ValidationProperty.BODY),
-    quoteController.publicQuoteAction,
-);
-
 // ── Quote Templates ───────────────────────────────────────────────────────────
 
 router.get(

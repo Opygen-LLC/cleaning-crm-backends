@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { QuoteStatus } from "../../generated/prisma/enums";
+import { QuoteStatus, ServiceType } from "../../generated/prisma/enums";
 
 // ── Shared sub-schemas ─────────────────────────────────────────────────────────
 
@@ -61,6 +61,7 @@ const updateStatusSchema = z
 
 const convertToBookingSchema = z
     .object({
+        serviceType: z.enum(ServiceType),
         scheduledDate: z
             .string()
             .datetime({ message: "Invalid ISO date string" }),
@@ -88,6 +89,11 @@ const convertToJobSchema = z
 const publicQuoteActionSchema = z
     .object({
         action: z.enum(["accept", "decline"]),
+        note: z
+            .string()
+            .trim()
+            .max(1000, "Response note cannot exceed 1000 characters")
+            .optional(),
     })
     .strict();
 

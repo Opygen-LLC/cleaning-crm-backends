@@ -1,6 +1,10 @@
 model Quote {
   id            String          @id @default(uuid())
   quoteRef      String          @unique
+  /// High-entropy capability token used by the unauthenticated client quote
+  /// page. The human-readable quoteRef must never be used as public access
+  /// authorization because it is predictable.
+  publicToken   String?         @unique @db.VarChar(64)
   status        QuoteStatus     @default(DRAFT)
   serviceType   String
   address       String
@@ -12,6 +16,8 @@ model Quote {
   notes         String?
   internalNotes String?
   sentAt        DateTime?
+  respondedAt   DateTime?
+  responseNote  String?         @db.Text
   adminId       String
   clientId      String
   createdAt     DateTime        @default(now())

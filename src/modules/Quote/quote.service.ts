@@ -2,7 +2,10 @@ import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
-import { QuoteStatus } from "../../generated/prisma/enums";
+import {
+    NotificationType,
+    QuoteStatus,
+} from "../../generated/prisma/enums";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
 import { IQueryParams } from "../../interface/query.interface";
 import {
@@ -14,8 +17,64 @@ import {
 } from "./quote.interface";
 import { quoteSearchableFields, quoteFilterableFields } from "./quote.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
+import { randomBytes } from "node:crypto";
+import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
+import { FRONTEND_URL } from "../../config/ENV";
+import { createNotification } from "../../lib/utils/createNotification";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const PUBLIC_QUOTE_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * 32 bytes of cryptographically secure entropy encoded as URL-safe base64.
+ * 32 bytes => 256 bits and a 43-character base64url token without padding.
+ */
+const generatePublicQuoteToken = (): string =>
+    randomBytes(32).toString("base64url");
+
+const ensurePublicQuoteToken = async (
+    quoteId: string,
+    existingToken?: string | null,
+): Promise<string> => {
+    if (existingToken) return existingToken;
+
+    // A collision is astronomically unlikely, but retrying keeps the helper
+    // correct even if the unique index rejects a generated value.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const publicToken = generatePublicQuoteToken();
+        try {
+            const updated = await prisma.quote.updateMany({
+                where: { id: quoteId, publicToken: null },
+                data: { publicToken },
+            });
+            if (updated.count === 1) return publicToken;
+
+            // Another request may have generated the token at the same time.
+            // Reuse that value instead of overwriting it and invalidating a
+            // secure link already returned to another admin tab.
+            const current = await prisma.quote.findUnique({
+                where: { id: quoteId },
+                select: { publicToken: true },
+            });
+            if (current?.publicToken) return current.publicToken;
+            throw new AppError(status.NOT_FOUND, "Quote not found");
+        } catch (error) {
+            const prismaCode =
+                typeof error === "object" && error !== null && "code" in error
+                    ? String((error as { code?: unknown }).code ?? "")
+                    : "";
+            if (prismaCode === "P2002") continue;
+            throw error;
+        }
+    }
+
+    throw new AppError(
+        status.INTERNAL_SERVER_ERROR,
+        "Could not create a secure quote link. Please try again.",
+        { code: "QUOTE_TOKEN_GENERATION_FAILED", retryable: true },
+    );
+};
 
 /**
  * Generates a unique quote reference: #OP-QT-0001
@@ -114,6 +173,7 @@ const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
     const quote = await prisma.quote.create({
         data: {
             quoteRef,
+            publicToken: generatePublicQuoteToken(),
             adminId,
             clientId: payload.clientId,
             serviceType: payload.serviceType,
@@ -174,6 +234,14 @@ const getQuoteById = async (id: string, user: IRequestUser) => {
     });
 
     if (!quote) throw new AppError(status.NOT_FOUND, "Quote not found");
+
+    // Existing quotes created before Phase 5 do not have a token yet. Generate
+    // one lazily when an authenticated admin opens the detail page so the
+    // secure share link is immediately available without a weak DB backfill.
+    if (!quote.publicToken) {
+        const publicToken = await ensurePublicQuoteToken(quote.id);
+        return { ...quote, publicToken };
+    }
 
     return quote;
 };
@@ -322,7 +390,10 @@ const convertQuoteToBooking = async (
 
     const quote = await prisma.quote.findFirst({
         where: { id, adminId },
-        include: { lineItems: true },
+        include: {
+            lineItems: true,
+            bookings: { select: { id: true, bookingRef: true } },
+        },
     });
     if (!quote) throw new AppError(status.NOT_FOUND, "Quote not found");
 
@@ -330,6 +401,14 @@ const convertQuoteToBooking = async (
         throw new AppError(
             status.BAD_REQUEST,
             `Only ACCEPTED quotes can be converted to bookings. Current status: ${quote.status}`,
+        );
+    }
+
+    if (quote.bookings.length > 0) {
+        throw new AppError(
+            status.CONFLICT,
+            `This quote is already linked to booking ${quote.bookings[0].bookingRef}.`,
+            { code: "QUOTE_ALREADY_CONVERTED_TO_BOOKING", retryable: false },
         );
     }
 
@@ -365,9 +444,9 @@ const convertQuoteToBooking = async (
                 bookingRef,
                 adminId,
                 clientId: quote.clientId,
-                // Quote serviceType is a free-text field; cast or default to RESIDENTIAL_CLEAN
-                // The frontend should confirm service type when converting
-                serviceType: "RESIDENTIAL_CLEAN" as any,
+                // Quote serviceType is free text, so the admin explicitly
+                // confirms the Booking ServiceType during conversion.
+                serviceType: payload.serviceType,
                 address: quote.address,
                 scheduledDate: new Date(payload.scheduledDate),
                 durationMins: payload.durationMins,
@@ -421,194 +500,208 @@ const convertQuoteToBooking = async (
 
 // ─── Public unauthenticated endpoint ─────────────────────────────────────────
 
-/**
- * Allows a client to accept or decline a quote via a public URL reference.
- * The quoteRef is the human-readable ref (e.g. #OP-QT-0001), not the UUID.
- * The frontend at /quote/[ref] calls this endpoint.
- */
-const getPublicQuote = async (quoteRef: string) => {
-    const quote = await prisma.quote.findUnique({
-        where: { quoteRef },
-        include: {
-            lineItems: true,
-            admin: {
-                include: {
-                    user: { select: { name: true, email: true } },
-                },
-            },
+const publicQuoteSelect = {
+    id: true,
+    quoteRef: true,
+    status: true,
+    serviceType: true,
+    address: true,
+    subtotal: true,
+    taxRate: true,
+    tax: true,
+    total: true,
+    validUntil: true,
+    notes: true,
+    sentAt: true,
+    respondedAt: true,
+    responseNote: true,
+    createdAt: true,
+    lineItems: {
+        select: {
+            id: true,
+            description: true,
+            quantity: true,
+            unitPrice: true,
+            total: true,
         },
+    },
+    admin: {
+        select: {
+            businessName: true,
+            businessEmail: true,
+            businessLogo: true,
+            brandColor: true,
+        },
+    },
+} as const;
+
+const publicQuoteNotFound = () =>
+    new AppError(status.NOT_FOUND, "Quote not found", {
+        code: "QUOTE_NOT_FOUND",
+        retryable: false,
     });
 
-    if (!quote) throw new AppError(status.NOT_FOUND, "Quote not found");
+const quoteExpiredError = () =>
+    new AppError(
+        status.GONE,
+        "This quote has expired and can no longer be accepted.",
+        { code: "QUOTE_EXPIRED", retryable: false },
+    );
 
-    // Do not expose internal notes or admin IDs to the public
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { internalNotes, adminId, ...safeQuote } = quote;
+const getPublicQuote = async (publicToken: string) => {
+    // Reject obviously invalid values before hitting the database. Return 404
+    // rather than validation details so the endpoint does not reveal token
+    // format or quote existence information.
+    if (!PUBLIC_QUOTE_TOKEN_RE.test(publicToken)) {
+        throw publicQuoteNotFound();
+    }
 
-    return safeQuote;
+    let quote = await prisma.quote.findUnique({
+        where: { publicToken },
+        select: publicQuoteSelect,
+    });
+
+    // Draft quotes have never been intentionally shared with a client.
+    if (!quote || quote.status === QuoteStatus.DRAFT) {
+        throw publicQuoteNotFound();
+    }
+
+    // Expire stale SENT quotes on read so the public page renders the correct
+    // terminal state even if a background expiry job has not run yet.
+    if (quote.status === QuoteStatus.SENT && new Date() > quote.validUntil) {
+        await prisma.quote.updateMany({
+            where: { id: quote.id, status: QuoteStatus.SENT },
+            data: { status: QuoteStatus.EXPIRED },
+        });
+        quote = { ...quote, status: QuoteStatus.EXPIRED };
+    }
+
+    return quote;
 };
 
 const publicQuoteAction = async (
-    quoteRef: string,
+    publicToken: string,
     action: "accept" | "decline",
+    note?: string,
 ) => {
-    const quote = await prisma.quote.findUnique({ where: { quoteRef } });
-    if (!quote) throw new AppError(status.NOT_FOUND, "Quote not found");
-
-    if (quote.status !== QuoteStatus.SENT) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            `This quote cannot be actioned. Current status: ${quote.status}`,
-        );
+    if (!PUBLIC_QUOTE_TOKEN_RE.test(publicToken)) {
+        throw publicQuoteNotFound();
     }
 
-    // Check validity
-    if (new Date() > quote.validUntil) {
-        // Auto-expire and reject the action
-        await prisma.quote.update({
-            where: { quoteRef },
-            data: { status: QuoteStatus.EXPIRED },
-        });
-        throw new AppError(
-            status.GONE,
-            "This quote has expired and can no longer be accepted.",
-        );
+    const quote = await prisma.quote.findUnique({
+        where: { publicToken },
+        select: {
+            id: true,
+            quoteRef: true,
+            adminId: true,
+            status: true,
+            validUntil: true,
+        },
+    });
+
+    if (!quote || quote.status === QuoteStatus.DRAFT) {
+        throw publicQuoteNotFound();
     }
 
     const newStatus =
         action === "accept" ? QuoteStatus.ACCEPTED : QuoteStatus.DECLINED;
 
-    // ── If the client is accepting, auto-create a draft booking ───────────────
-    // This removes the need for the admin to manually click "Convert to booking"
-    // after a client accepts. The booking is created in SCHEDULED status with
-    // the quote's total; the admin sets the date and assigns staff later.
-    if (action === "accept") {
-        const existingBooking = await prisma.booking.findFirst({
-            where: { quoteId: quote.id },
-        });
-
-        if (!existingBooking) {
-            // Generate booking ref
-            const lastBooking = await prisma.booking.findFirst({
-                orderBy: { createdAt: "desc" },
-                select: { bookingRef: true },
-            });
-            let nextBk = 1;
-            if (lastBooking?.bookingRef) {
-                const parts = lastBooking.bookingRef.split("-");
-                const num = parseInt(parts[parts.length - 1]);
-                if (!isNaN(num)) nextBk = num + 1;
-            }
-            const bookingRef = `#OP-BK-${nextBk.toString().padStart(4, "0")}`;
-
-            await prisma.$transaction(async (tx) => {
-                // Update quote status first
-                await tx.quote.update({
-                    where: { quoteRef },
-                    data: { status: QuoteStatus.ACCEPTED },
-                });
-
-                // Create the booking linked to this quote
-                await tx.booking.create({
-                    data: {
-                        bookingRef,
-                        adminId: quote.adminId,
-                        clientId: quote.clientId,
-                        serviceType: "RESIDENTIAL_CLEAN" as any, // Admin can update later
-                        address: quote.address,
-                        // scheduledDate defaults to 7 days from now as a placeholder
-                        // Admin will update this when they confirm with the client
-                        scheduledDate: new Date(
-                            Date.now() + 7 * 24 * 60 * 60 * 1000,
-                        ),
-                        durationMins: 120,
-                        total: quote.total,
-                        notes: quote.notes,
-                        quoteId: quote.id,
-                    },
-                });
-
-                // Update client booking aggregate
-                await tx.client.update({
-                    where: { id: quote.clientId },
-                    data: { totalBookings: { increment: 1 } },
-                });
-            });
-
-            // Persist notification for ACCEPTED quote
-            createNotification({
-                adminId: quote.adminId,
-                type: NotificationType.QUOTE,
-                title: `Quote ${quote.quoteRef} accepted`,
-                message:
-                    "Client accepted the quote — a draft booking has been created",
-                relatedId: quote.id,
-            }).catch(() => {});
-
-            // Return the updated quote with the new booking included
-            const withBooking = await prisma.quote.findUnique({
-                where: { quoteRef },
-                include: {
-                    lineItems: true,
-                    bookings: {
-                        select: {
-                            id: true,
-                            bookingRef: true,
-                            status: true,
-                            scheduledDate: true,
-                        },
-                    },
-                },
-            });
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const {
-                internalNotes: _n,
-                adminId: _a,
-                ...safeWithBooking
-            } = withBooking!;
-            return safeWithBooking;
-        }
+    // Idempotency: retries/double-clicks of the same action return the current
+    // quote instead of surfacing a false error or creating duplicate work.
+    if (quote.status === newStatus) {
+        return getPublicQuote(publicToken);
     }
 
-    const updated = await prisma.quote.update({
-        where: { quoteRef },
-        data: { status: newStatus },
-        include: {
-            lineItems: true,
-            bookings: {
-                select: {
-                    id: true,
-                    bookingRef: true,
-                    status: true,
-                    scheduledDate: true,
-                },
-            },
+    if (
+        quote.status === QuoteStatus.ACCEPTED ||
+        quote.status === QuoteStatus.DECLINED
+    ) {
+        throw new AppError(
+            status.CONFLICT,
+            `This quote has already been ${quote.status.toLowerCase()}.`,
+            { code: "QUOTE_ALREADY_RESPONDED", retryable: false },
+        );
+    }
+
+    const now = new Date();
+    if (quote.status === QuoteStatus.EXPIRED || now > quote.validUntil) {
+        if (quote.status === QuoteStatus.SENT) {
+            await prisma.quote.updateMany({
+                where: { id: quote.id, status: QuoteStatus.SENT },
+                data: { status: QuoteStatus.EXPIRED },
+            });
+        }
+        throw quoteExpiredError();
+    }
+
+    if (quote.status !== QuoteStatus.SENT) {
+        throw new AppError(
+            status.CONFLICT,
+            "This quote is no longer awaiting a client response.",
+            { code: "QUOTE_NOT_ACTIONABLE", retryable: false },
+        );
+    }
+
+    const cleanNote = note?.trim() || null;
+
+    // Atomic compare-and-set. If accept and decline are submitted at the same
+    // time, exactly one transition from SENT can win. The loser reads the final
+    // state below and receives either idempotent success or a clear conflict.
+    const transition = await prisma.quote.updateMany({
+        where: {
+            id: quote.id,
+            status: QuoteStatus.SENT,
+            validUntil: { gte: now },
+        },
+        data: {
+            status: newStatus,
+            respondedAt: now,
+            responseNote: action === "decline" ? cleanNote : null,
         },
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { internalNotes, adminId, ...safeQuote } = updated;
+    if (transition.count === 0) {
+        const current = await prisma.quote.findUnique({
+            where: { id: quote.id },
+            select: { status: true, validUntil: true },
+        });
 
-    // Notify admin when client declines
-    if (newStatus === QuoteStatus.DECLINED) {
-        createNotification({
-            adminId: quote.adminId,
-            type: NotificationType.QUOTE,
-            title: `Quote ${quote.quoteRef} declined`,
-            message: "Client declined the quote",
-            relatedId: quote.id,
-        }).catch(() => {});
+        if (!current) throw publicQuoteNotFound();
+        if (current.status === newStatus) return getPublicQuote(publicToken);
+        if (
+            current.status === QuoteStatus.EXPIRED ||
+            now > current.validUntil
+        ) {
+            throw quoteExpiredError();
+        }
+
+        throw new AppError(
+            status.CONFLICT,
+            `This quote has already been ${current.status.toLowerCase()}.`,
+            { code: "QUOTE_ALREADY_RESPONDED", retryable: false },
+        );
     }
 
-    return safeQuote;
+    // Accepting a quote deliberately DOES NOT create a placeholder booking.
+    // Scheduling requires a real service type, date and duration chosen by the
+    // admin. The accepted quote is the pending work item until that happens.
+    createNotification({
+        adminId: quote.adminId,
+        type: NotificationType.QUOTE,
+        title: `Quote ${quote.quoteRef} ${action === "accept" ? "accepted" : "declined"}`,
+        message:
+            action === "accept"
+                ? "Client accepted the quote — schedule the booking when the date and time are confirmed"
+                : cleanNote
+                  ? `Client declined the quote: ${cleanNote}`
+                  : "Client declined the quote",
+        relatedId: quote.id,
+    }).catch(() => {});
+
+    return getPublicQuote(publicToken);
 };
 
 // ─── Send quote email ─────────────────────────────────────────────────────────
-
-import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
-import { FRONTEND_URL } from "../../config/ENV";
-import { createNotification } from "../../lib/utils/createNotification";
-import { NotificationType } from "../../generated/prisma/enums";
 
 const sendQuoteEmail = async (id: string, user: IRequestUser) => {
     const adminId = await getAdminId(user);
@@ -618,6 +711,9 @@ const sendQuoteEmail = async (id: string, user: IRequestUser) => {
         include: {
             client: {
                 select: { id: true, name: true, email: true, phone: true },
+            },
+            admin: {
+                select: { businessName: true, businessEmail: true },
             },
             lineItems: true,
         },
@@ -633,11 +729,12 @@ const sendQuoteEmail = async (id: string, user: IRequestUser) => {
 
     if (
         quote.status === QuoteStatus.ACCEPTED ||
-        quote.status === QuoteStatus.DECLINED
+        quote.status === QuoteStatus.DECLINED ||
+        quote.status === QuoteStatus.EXPIRED
     ) {
         throw new AppError(
             status.BAD_REQUEST,
-            `Cannot send a quote that is already ${quote.status.toLowerCase()}`,
+            `Cannot send a quote that is ${quote.status.toLowerCase()}`,
         );
     }
 
@@ -649,17 +746,23 @@ const sendQuoteEmail = async (id: string, user: IRequestUser) => {
         });
     const fmt2dp = (n: unknown) => Number(n).toFixed(2);
 
+    const publicToken = await ensurePublicQuoteToken(
+        quote.id,
+        quote.publicToken,
+    );
+
     const quoteViewUrl = FRONTEND_URL
-        ? `${FRONTEND_URL}/quote/${encodeURIComponent(quote.quoteRef)}`
+        ? `${FRONTEND_URL}/quote/${encodeURIComponent(publicToken)}`
         : null;
 
     await sendEmailSafely({
         adminId,
         to: quote.client.email,
-        subject: `Quote ${quote.quoteRef} from Opygen — valid until ${fmt(quote.validUntil)}`,
+        subject: `Quote ${quote.quoteRef} from ${quote.admin.businessName} — valid until ${fmt(quote.validUntil)}`,
         templateName: "quote-send",
         templateData: {
             quoteRef: quote.quoteRef,
+            businessName: quote.admin.businessName,
             clientName: quote.client.name,
             serviceType: quote.serviceType,
             address: quote.address,
