@@ -6,7 +6,13 @@ import {
     zodValidate,
     ValidationProperty,
 } from "../../middlewares/validations/zodValidation.middleware";
-import { createAdminAccountSchema } from "./superAdmin.validation";
+import {
+    createAdminAccountSchema,
+    createSubscriptionPlanSchema,
+    toggleSubscriptionPlanStatusSchema,
+    updatePricingTierSchema,
+    updateSubscriptionPlanSchema,
+} from "./superAdmin.validation";
 
 const router = Router();
 
@@ -83,18 +89,30 @@ router.post(
 );
 
 // ─── Subscription Plan CRUD ───────────────────────────────────────────────────
-// POST   /api/v1/super-admin/subscription-plans
-// Body: { name, description, currency, features[], plans[{interval, price, ...}] }
+router.get(
+    "/subscription-plans",
+    isSuperAdmin,
+    superAdminController.getSubscriptionPlans,
+);
+router.get(
+    "/subscription-plans/:planId",
+    isSuperAdmin,
+    superAdminController.getSubscriptionPlanById,
+);
+// The database has four fixed enum tiers. POST is retained for disaster recovery
+// if one fixed tier is missing, but the normal editor only edits/reactivates tiers.
 router.post(
     "/subscription-plans",
     isSuperAdmin,
+    zodValidate(createSubscriptionPlanSchema, ValidationProperty.BODY),
     superAdminController.createSubscriptionPlan,
 );
 
-// PATCH  /api/v1/super-admin/subscription-plans/:planId
+// One atomic write for metadata, feature states and monthly/yearly pricing.
 router.patch(
     "/subscription-plans/:planId",
     isSuperAdmin,
+    zodValidate(updateSubscriptionPlanSchema, ValidationProperty.BODY),
     superAdminController.updateSubscriptionPlan,
 );
 
@@ -110,6 +128,7 @@ router.delete(
 router.patch(
     "/subscription-plans/:planId/toggle-status",
     isSuperAdmin,
+    zodValidate(toggleSubscriptionPlanStatusSchema, ValidationProperty.BODY),
     superAdminController.toggleSubscriptionPlanStatus,
 );
 
@@ -117,6 +136,7 @@ router.patch(
 router.patch(
     "/pricing-tiers/:tierId",
     isSuperAdmin,
+    zodValidate(updatePricingTierSchema, ValidationProperty.BODY),
     superAdminController.updatePricingTier,
 );
 

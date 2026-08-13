@@ -8,9 +8,9 @@
 //
 // WHY THIS EXISTS
 // ────────────────
-// SubscriptionPlan.features is a raw string[] with no DB-level constraint.
-// The super-admin plan editor UI now renders a checkbox for every canonical
-// gate (so a typo there is no longer possible) plus a free-text field for
+// SubscriptionPlan.features is canonical JSON ({ label, included, limit? }).
+// The super-admin plan editor renders a checkbox for every canonical gate
+// (so a typo there is no longer possible) plus a free-text field for
 // custom/marketing-only labels (e.g. "Priority support") that don't gate any
 // specific page. That free-text field, and any direct API call bypassing the
 // UI, can still introduce a near-miss typo of a canonical string (e.g.

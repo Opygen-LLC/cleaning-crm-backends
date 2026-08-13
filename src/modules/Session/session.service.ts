@@ -63,7 +63,40 @@ const deleteMySession = async (user: IRequestUser, sessionId: string) => {
     });
 };
 
+
+/**
+ * POST /session/my-session/revoke-others
+ * Revokes every session owned by the caller except the explicitly retained
+ * current session. One database statement replaces the previous frontend
+ * N-request loop, which also avoids repeated cache invalidations/refetches.
+ */
+const revokeOtherSessions = async (user: IRequestUser, keepSessionId: string) => {
+    const keepId = keepSessionId?.trim();
+    if (!keepId) {
+        throw new AppError(status.BAD_REQUEST, "Current session is required");
+    }
+
+    const current = await prisma.session.findFirst({
+        where: { id: keepId, userId: user.id },
+        select: { id: true },
+    });
+
+    if (!current) {
+        throw new AppError(status.NOT_FOUND, "Current session not found");
+    }
+
+    const result = await prisma.session.deleteMany({
+        where: {
+            userId: user.id,
+            id: { not: keepId },
+        },
+    });
+
+    return { revokedCount: result.count };
+};
+
 export const sessionService = {
     getMySessions,
     deleteMySession,
+    revokeOtherSessions,
 };

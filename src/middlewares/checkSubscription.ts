@@ -18,6 +18,10 @@ import { CookieUtils } from "../lib/utils/cookie";
 import redis from "../config/redis";
 import { singleFlight } from "../lib/utils/singleFlight";
 import {
+  normalizeSubscriptionPlanFeatures,
+  type SubscriptionPlanFeature,
+} from "../lib/utils/subscriptionPlanFeatures";
+import {
   getRuntimeTenantId,
   getRuntimeUserStatus,
 } from "../lib/cache/authRuntimeCache";
@@ -50,7 +54,7 @@ type CachedSubscriptionPayload = {
   trialEndsAt: string | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean | null;
-  features: string[];
+  features: SubscriptionPlanFeature[];
 } | null; // null = admin has no subscription/profile at all → both gates just call next()
 
 // PERF FIX: Increased from 60s to 300s — subscription status changes rarely.
@@ -58,6 +62,11 @@ type CachedSubscriptionPayload = {
 // manually invalidates this key via redis.del(subscriptionCacheKey(userId)).
 const SUBSCRIPTION_CACHE_TTL_SECONDS = 300;
 const subscriptionCacheKey = (userId: string) => `sub:full:user:${userId}`;
+
+/** Clear the status/feature snapshot after an approved/cancelled plan mutation. */
+export async function invalidateSubscriptionAccessCache(userId: string) {
+  await redis.del(subscriptionCacheKey(userId)).catch(() => {});
+}
 
 async function getCachedSubscriptionForUser(
   userId: string,
@@ -112,7 +121,9 @@ async function getCachedSubscriptionForUser(
             ? sub.currentPeriodEnd.toISOString()
             : null,
           cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
-          features: sub.subscriptionPlan?.features ?? [],
+          features: normalizeSubscriptionPlanFeatures(
+            sub.subscriptionPlan?.features ?? [],
+          ),
         };
       }
     }
@@ -276,17 +287,7 @@ export function checkFeature(featureKey: string) {
       const sub = await getCachedSubscriptionForUser(userId);
       if (!sub) return next();
 
-      const includedRaw = sub.features ?? [];
-      const included = includedRaw.map((f) => {
-        try {
-          return JSON.parse(f) as {
-            label: string;
-            included: boolean;
-          };
-        } catch {
-          return { label: f, included: true };
-        }
-      });
+      const included = normalizeSubscriptionPlanFeatures(sub.features ?? []);
       const hasFeature = included.some(
         (f) =>
           f.included &&

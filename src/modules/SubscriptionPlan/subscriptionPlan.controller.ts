@@ -14,6 +14,20 @@ const getAllSubscriptionPlans = catchAsync(async (req, res) => {
     });
 });
 
+const getSubscriptionPlanById = catchAsync(async (req, res) => {
+    const result = await subscriptionPlanService.getSubscriptionPlanById(
+        req.params.id as string,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Subscription plan retrieved successfully",
+        data: result,
+    });
+});
+
 export const subscriptionPlanController = {
     getAllSubscriptionPlans,
+    getSubscriptionPlanById,
 };

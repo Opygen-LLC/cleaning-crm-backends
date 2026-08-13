@@ -418,6 +418,14 @@ enum SubscriptionStatus {
   PENDING_PAYMENT
 }
 
+enum PendingPlanChangeStatus {
+  AWAITING_PAYMENT
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
 enum NotificationType {
   BOOKING
   QUOTE

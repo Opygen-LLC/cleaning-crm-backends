@@ -11,6 +11,13 @@ router.get(
     sessionController.getMySessions,
 );
 
+
+router.post(
+    "/my-session/revoke-others",
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    sessionController.revokeOtherSessions,
+);
+
 router.delete(
     "/my-session/:id",
     checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),

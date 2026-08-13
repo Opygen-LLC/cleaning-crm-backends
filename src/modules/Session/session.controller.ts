@@ -24,6 +24,22 @@ const getMySessions = catchAsync(async (req, res) => {
 });
 
 
+
+
+const revokeOtherSessions = catchAsync(async (req, res) => {
+    const result = await sessionService.revokeOtherSessions(
+        req.user,
+        String(req.body?.keepSessionId ?? ""),
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Other sessions revoked successfully",
+        data: result,
+    });
+});
+
 const deleteMySession = catchAsync(async (req, res) => {
     const result = await sessionService.deleteMySession(
         req.user,
@@ -41,4 +57,5 @@ const deleteMySession = catchAsync(async (req, res) => {
 export const sessionController = {
     getMySessions,
     deleteMySession,
+    revokeOtherSessions,
 };

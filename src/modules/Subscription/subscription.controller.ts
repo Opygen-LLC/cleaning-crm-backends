@@ -18,7 +18,18 @@ const changePlan = catchAsync(async (req, res) => {
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
-    message: "Subscription plan changed successfully",
+    message: "Plan checkout created. Your current subscription stays unchanged until payment is approved.",
+    data: result,
+  });
+});
+
+
+const cancelPendingPlanChange = catchAsync(async (req, res) => {
+  const result = await subscriptionService.cancelPendingPlanChange(req.user);
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Pending plan change cancelled",
     data: result,
   });
 });
@@ -69,7 +80,7 @@ const submitPaymentProof = catchAsync(async (req, res) => {
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
-    message: "Payment proof submitted. Your subscription will be activated after review.",
+    message: "Payment proof submitted for review. Your current access remains unchanged until approval.",
     data: result,
   });
 });
@@ -77,6 +88,7 @@ const submitPaymentProof = catchAsync(async (req, res) => {
 export const subscriptionController = {
   getMySubscription,
   changePlan,
+  cancelPendingPlanChange,
   cancelAtPeriodEnd,
   resumeSubscription,
   getMyBillingHistory,

@@ -17,7 +17,8 @@ model Plan {
   subscriptionPlanId String
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Cascade)
 
-  subscriptions Subscription[]
+  subscriptions       Subscription[]
+  pendingPlanChanges  PendingPlanChange[]
 
   @@unique([subscriptionPlanId, interval])
 }
@@ -27,13 +28,18 @@ model SubscriptionPlan {
   name        SubscriptionName @unique @default(GROWTH)
   description String?
   currency    Currency         @default(USD)
-  features    String[]
+  /// Canonical plan feature objects: [{ label, included, limit? }].
+  /// JSON keeps editor display metadata and feature-gate state in one source of truth.
+  features    Json             @default("[]")
   /// Whether this plan is visible and selectable by tenants.
   /// Defaults to true so existing rows remain active after migration.
   isActive    Boolean          @default(true)
 
   plans         Plan[]
   subscriptions Subscription[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Subscription {
@@ -65,7 +71,8 @@ model Subscription {
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onDelete: Cascade)
 
   couponUsage    CouponUsage[]
-  billingHistory BillingHistory[]
+  billingHistory     BillingHistory[]
+  pendingPlanChanges PendingPlanChange[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -79,4 +86,39 @@ model Subscription {
   // these two composite indexes.
   @@index([status, isTrial, currentPeriodEnd]) // paid-subscription expiry branch
   @@index([status, isTrial, trialEndsAt])      // trial expiry branch
+}
+
+
+/// A checkout request for changing or renewing a tenant subscription.
+/// The live Subscription is intentionally left untouched while this record is
+/// AWAITING_PAYMENT / UNDER_REVIEW so paying tenants retain their current access
+/// until the new plan is actually approved.
+model PendingPlanChange {
+  id             String                  @id @default(uuid())
+  status         PendingPlanChangeStatus @default(AWAITING_PAYMENT)
+  quotedAmount   Decimal                 @db.Decimal(10, 2)
+  currency       Currency                @default(USD)
+  submittedAt     DateTime?
+  reviewedAt      DateTime?
+  rejectionReason String?
+  expiresAt       DateTime
+
+  subscriptionId String
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  targetPlanId String
+  targetPlan   Plan @relation(fields: [targetPlanId], references: [id])
+
+  couponId String?
+  coupon   Coupon? @relation(fields: [couponId], references: [id], onDelete: SetNull)
+
+  billingHistory BillingHistory[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([subscriptionId, status, createdAt])
+  @@index([status, expiresAt])
+  @@index([status, createdAt])
+  @@index([couponId, status])
 }

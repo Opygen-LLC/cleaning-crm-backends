@@ -2,52 +2,41 @@ import { Router } from "express";
 import { subscriptionController } from "./subscription.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { UserRole } from "../../generated/prisma/enums";
+import {
+    zodValidate,
+    ValidationProperty,
+} from "../../middlewares/validations/zodValidation.middleware";
+import { subscriptionValidation } from "./subscription.validation";
 
 const router = Router();
 
-// GET  /api/v1/subscription/me  — get current admin's subscription
-router.get(
-    "/me",
-    checkAuth(UserRole.ADMIN),
-    subscriptionController.getMySubscription,
-);
+router.use(checkAuth(UserRole.ADMIN));
 
-// GET  /api/v1/subscription/me/billing-history
-router.get(
-    "/me/billing-history",
-    checkAuth(UserRole.ADMIN),
-    subscriptionController.getMyBillingHistory,
-);
+// Subscription routes intentionally live outside checkSubscription so expired
+// accounts can still inspect plans, create a checkout and submit payment proof.
+router.get("/me", subscriptionController.getMySubscription);
+router.get("/me/billing-history", subscriptionController.getMyBillingHistory);
 
-// PATCH /api/v1/subscription/me/change-plan
-// Body: { planId: string, couponCode?: string }
 router.patch(
     "/me/change-plan",
-    checkAuth(UserRole.ADMIN),
+    zodValidate(subscriptionValidation.changePlanSchema, ValidationProperty.BODY),
     subscriptionController.changePlan,
 );
 
-// PATCH /api/v1/subscription/me/cancel
 router.patch(
-    "/me/cancel",
-    checkAuth(UserRole.ADMIN),
-    subscriptionController.cancelAtPeriodEnd,
+    "/me/pending-plan-change/cancel",
+    subscriptionController.cancelPendingPlanChange,
 );
 
-// PATCH /api/v1/subscription/me/resume
-router.patch(
-    "/me/resume",
-    checkAuth(UserRole.ADMIN),
-    subscriptionController.resumeSubscription,
-);
+router.patch("/me/cancel", subscriptionController.cancelAtPeriodEnd);
+router.patch("/me/resume", subscriptionController.resumeSubscription);
 
-// PATCH /api/v1/subscription/me/submit-proof  ← NEW (item 6)
-// Body: { paymentProofUrl: string, amount: number, method: string, note?, transactionId? }
-// Tenant uploads proof image to Cloudinary first, then sends the URL here.
-// Sets subscription status=PENDING_PAYMENT and creates a BillingHistory(PENDING) record.
 router.patch(
     "/me/submit-proof",
-    checkAuth(UserRole.ADMIN),
+    zodValidate(
+        subscriptionValidation.submitPaymentProofSchema,
+        ValidationProperty.BODY,
+    ),
     subscriptionController.submitPaymentProof,
 );
 

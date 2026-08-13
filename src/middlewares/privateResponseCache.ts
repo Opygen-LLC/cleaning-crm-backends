@@ -12,10 +12,12 @@ interface CachedResponse {
 }
 
 const MAX_CACHEABLE_BODY_BYTES = 2 * 1024 * 1024;
+const MIN_INDEX_TTL_SECONDS = 60 * 60;
 
 const tenantScope = (req: Request) => req.user.adminId ?? req.user.id;
 const userScope = (req: Request) => req.user.id;
 const scopePrefix = (tenantId: string) => `http-response:${tenantId}:`;
+const cacheIndexKey = (tenantId: string) => `http-response-index:${tenantId}`;
 
 const cacheKey = (req: Request): string => {
   const routeHash = createHash("sha256")
@@ -67,26 +69,57 @@ const sendHit = (
   res.status(entry.statusCode).send(entry.body);
 };
 
-async function deleteRedisPattern(pattern: string): Promise<void> {
+/**
+ * Cache keys are indexed per tenant at write time. Invalidating a tenant now
+ * scans only that tenant's tiny Redis set instead of issuing SCAN against the
+ * entire Redis keyspace after every successful mutation. Cached response keys
+ * still expire normally; stale set members are harmless and disappear on the
+ * next invalidation or when the index itself expires.
+ */
+async function deleteIndexedTenantResponses(tenantId: string): Promise<void> {
+  const indexKey = cacheIndexKey(tenantId);
   let cursor = "0";
+
   do {
-    const [next, keys] = await redis.scan(
+    const [next, keys] = await redis.sscan(
+      indexKey,
       cursor,
-      "MATCH",
-      pattern,
       "COUNT",
       100,
     );
     cursor = next;
     if (keys.length) await redis.unlink(...keys);
   } while (cursor !== "0");
+
+  await redis.del(indexKey);
 }
 
 export function invalidatePrivateResponseCache(tenantId: string): void {
-  const prefix = scopePrefix(tenantId);
-  void deleteRedisPattern(`${prefix}*`).catch((error) => {
+  void deleteIndexedTenantResponses(tenantId).catch((error) => {
     logger.warn(
       `[CACHE] Shared response cache invalidation skipped: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+}
+
+function persistCacheEntry(
+  tenantId: string,
+  key: string,
+  ttlSeconds: number,
+  entry: CachedResponse,
+): void {
+  const indexKey = cacheIndexKey(tenantId);
+  const indexTtl = Math.max(MIN_INDEX_TTL_SECONDS, ttlSeconds * 2);
+
+  // Best-effort cache write. These commands are independent of request
+  // correctness, so Redis trouble must never fail an otherwise valid API call.
+  void Promise.all([
+    redis.setex(key, ttlSeconds, JSON.stringify(entry)),
+    redis.sadd(indexKey, key),
+    redis.expire(indexKey, indexTtl),
+  ]).catch((error) => {
+    logger.warn(
+      `[CACHE] Shared response cache write skipped: ${error instanceof Error ? error.message : String(error)}`,
     );
   });
 }
@@ -153,9 +186,7 @@ export async function privateResponseCache(
         statusCode: res.statusCode,
       };
       res.setHeader("ETag", etag);
-      void redis
-        .setex(key, ttlSeconds, JSON.stringify(entry))
-        .catch(() => {});
+      persistCacheEntry(tenantId, key, ttlSeconds, entry);
     }
 
     return originalSend(body);

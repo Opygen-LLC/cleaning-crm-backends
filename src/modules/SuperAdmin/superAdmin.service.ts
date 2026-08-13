@@ -2,6 +2,8 @@ import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import {
     AccountStatus,
+    PendingPlanChangeStatus,
+    SubscriptionPlanInterval,
     SubscriptionStatus,
     UserRole,
 } from "../../generated/prisma/enums";
@@ -25,6 +27,15 @@ import {
     updatePlatformConfig as sharedUpdatePlatformConfig,
 } from "../../lib/utils/platformConfig";
 import { findNearMissFeatureLabels } from "../../lib/constants/featureGateLabels";
+import {
+    normalizeSubscriptionPlanFeatures,
+    type SubscriptionPlanFeature,
+} from "../../lib/utils/subscriptionPlanFeatures";
+import type {
+    TCreateSubscriptionPlanPayload,
+    TUpdateSubscriptionPlanPayload,
+} from "./superAdmin.validation";
+import { invalidateSubscriptionAccessCache } from "../../middlewares/checkSubscription";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -224,6 +235,7 @@ const getPlatformRevenueDashboard = async (query: {
                 subscription: {
                     include: {
                         subscriptionPlan: { select: { name: true } },
+                        plan: { select: { interval: true } },
                         admin: {
                             select: {
                                 businessName: true,
@@ -679,161 +691,349 @@ const getPlatformStats = async () => {
     };
 };
 
-// ─── Subscription Plan CRUD (extend existing stub) ────────────────────────────
+// ─── Subscription Plan management ─────────────────────────────────────────────
 
-const createSubscriptionPlan = async (payload: {
-    name: string;
-    description?: string;
-    currency?: string;
-    features: string[];
-    plans: {
-        interval: string;
-        price: number;
-        baseCharge?: number;
-        pricePerStaff?: number;
-        pricePerClient?: number;
-        pricePerBooking?: number;
-        maxStaff?: number;
-        maxClient?: number;
-        maxBookingsPerMonth?: number;
-        discount?: number;
-        discountEndDate?: string;
-    }[];
-}) => {
-    const { plans, ...planData } = payload;
+const TIER_ORDER: Record<string, number> = {
+    STARTER: 0,
+    GROWTH: 1,
+    PRO: 2,
+    CUSTOM: 3,
+};
 
-    if (planData.features?.length) {
-        const nearMisses = findNearMissFeatureLabels(planData.features);
-        if (nearMisses.length > 0) {
-            throw new AppError(
-                status.BAD_REQUEST,
-                `Feature label(s) look like typos of a known gate string: ${nearMisses
-                    .map(
-                        (w) =>
-                            `"${w.submitted}" (did you mean "${w.closestCanonical}"?)`,
-                    )
-                    .join(
-                        "; ",
-                    )}. Use the exact canonical label, or pick it from the plan editor's checklist.`,
-            );
-        }
+function planFeatureJson(features: SubscriptionPlanFeature[]) {
+    return features as unknown as Prisma.InputJsonValue;
+}
+
+const getSuperAdminSubscriptionPlans = async () => {
+    const [rows, activeCounts, mrrRows] = await Promise.all([
+        prisma.subscriptionPlan.findMany({
+            include: {
+                plans: true,
+                _count: { select: { subscriptions: true } },
+            },
+        }),
+        prisma.subscription.groupBy({
+            by: ["subscriptionPlanId", "isTrial"],
+            where: { status: SubscriptionStatus.ACTIVE },
+            _count: { _all: true },
+        }),
+        prisma.$queryRaw<{ subscriptionPlanId: string; mrr: unknown }[]>(
+            Prisma.sql`
+                SELECT
+                    s."subscriptionPlanId" AS "subscriptionPlanId",
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN p."interval"::text = 'YEARLY' THEN s."totalCost" / 12
+                                ELSE s."totalCost"
+                            END
+                        ),
+                        0
+                    ) AS "mrr"
+                FROM "Subscription" s
+                INNER JOIN "Plan" p ON p."id" = s."planId"
+                WHERE s."status"::text = 'ACTIVE' AND s."isTrial" = false
+                GROUP BY s."subscriptionPlanId"
+            `,
+        ),
+    ]);
+
+    const countsByPlan = new Map<
+        string,
+        { activeSubscribers: number; paidSubscribers: number; trialSubscribers: number }
+    >();
+    for (const row of activeCounts) {
+        const current = countsByPlan.get(row.subscriptionPlanId) ?? {
+            activeSubscribers: 0,
+            paidSubscribers: 0,
+            trialSubscribers: 0,
+        };
+        const count = row._count._all;
+        current.activeSubscribers += count;
+        if (row.isTrial) current.trialSubscribers += count;
+        else current.paidSubscribers += count;
+        countsByPlan.set(row.subscriptionPlanId, current);
     }
 
-    return prisma.subscriptionPlan.create({
-        data: {
-            name: planData.name as import("../../generated/prisma/enums").SubscriptionName,
-            description: planData.description,
-            currency: planData.currency as
-                | import("../../generated/prisma/enums").Currency
-                | undefined,
-            features: planData.features,
-            plans: {
-                create: plans.map((p) => ({
-                    interval: p.interval as never,
-                    price: p.price,
-                    baseCharge: p.baseCharge ?? 0,
-                    pricePerStaff: p.pricePerStaff ?? 0,
-                    pricePerClient: p.pricePerClient ?? 0,
-                    pricePerBooking: p.pricePerBooking ?? 0,
-                    maxStaff: p.maxStaff,
-                    maxClient: p.maxClient,
-                    maxBookingsPerMonth: p.maxBookingsPerMonth,
-                    discount: p.discount ?? 0,
-                    discountEndDate: p.discountEndDate
-                        ? new Date(p.discountEndDate)
-                        : undefined,
-                })),
-            },
+    const mrrByPlan = new Map(
+        mrrRows.map((row) => [row.subscriptionPlanId, Number(row.mrr ?? 0)]),
+    );
+
+    const plans = rows
+        .map((row) => {
+            const counts = countsByPlan.get(row.id) ?? {
+                activeSubscribers: 0,
+                paidSubscribers: 0,
+                trialSubscribers: 0,
+            };
+            const { _count, ...plan } = row;
+            return {
+                ...plan,
+                features: normalizeSubscriptionPlanFeatures(plan.features),
+                ...counts,
+                subscriberCount: _count.subscriptions,
+                mrr: Number((mrrByPlan.get(row.id) ?? 0).toFixed(2)),
+            };
+        })
+        .sort(
+            (a, b) =>
+                (TIER_ORDER[a.name] ?? Number.MAX_SAFE_INTEGER) -
+                (TIER_ORDER[b.name] ?? Number.MAX_SAFE_INTEGER),
+        );
+
+    const currencies = new Set(plans.map((plan) => plan.currency));
+    const hasSingleCurrency = currencies.size === 1;
+    const totalMrr = hasSingleCurrency
+        ? Number(plans.reduce((sum, plan) => sum + plan.mrr, 0).toFixed(2))
+        : 0;
+
+    return {
+        plans,
+        stats: {
+            totalPlans: plans.length,
+            activePlans: plans.filter((plan) => plan.isActive).length,
+            totalSubscribers: plans.reduce(
+                (sum, plan) => sum + plan.activeSubscribers,
+                0,
+            ),
+            paidSubscribers: plans.reduce(
+                (sum, plan) => sum + plan.paidSubscribers,
+                0,
+            ),
+            trialSubscribers: plans.reduce(
+                (sum, plan) => sum + plan.trialSubscribers,
+                0,
+            ),
+            totalMrr,
+            currency: hasSingleCurrency ? [...currencies][0] : null,
         },
-        include: { plans: true },
+    };
+};
+
+const getSuperAdminSubscriptionPlanById = async (id: string) => {
+    const result = await getSuperAdminSubscriptionPlans();
+    const plan = result.plans.find((item) => item.id === id);
+    if (!plan) {
+        throw new AppError(status.NOT_FOUND, "Subscription plan not found.");
+    }
+    return plan;
+};
+
+function assertFeatureLabels(features: SubscriptionPlanFeature[]) {
+    const nearMisses = findNearMissFeatureLabels(
+        features.map((feature) => feature.label),
+    );
+    if (nearMisses.length > 0) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Feature label(s) look like typos of a known gate string: ${nearMisses
+                .map(
+                    (warning) =>
+                        `"${warning.submitted}" (did you mean "${warning.closestCanonical}"?)`,
+                )
+                .join("; ")}. Use the exact canonical label, or pick it from the plan editor's checklist.`,
+        );
+    }
+}
+
+const createSubscriptionPlan = async (payload: TCreateSubscriptionPlanPayload) => {
+    const features = normalizeSubscriptionPlanFeatures(payload.features);
+    assertFeatureLabels(features);
+
+    const existing = await prisma.subscriptionPlan.findUnique({
+        where: { name: payload.name },
+        select: { id: true },
     });
+    if (existing) {
+        throw new AppError(
+            status.CONFLICT,
+            `${payload.name} already exists. The platform uses four fixed plan tiers; edit or reactivate the existing tier instead.`,
+        );
+    }
+
+    const created = await prisma.$transaction(async (tx) => {
+        const subscriptionPlan = await tx.subscriptionPlan.create({
+            data: {
+                name: payload.name as import("../../generated/prisma/enums").SubscriptionName,
+                description: payload.description,
+                currency: payload.currency as import("../../generated/prisma/enums").Currency,
+                features: planFeatureJson(features),
+            },
+        });
+
+        await Promise.all(
+            payload.plans.map((tier) =>
+                tx.plan.create({
+                    data: {
+                        subscriptionPlanId: subscriptionPlan.id,
+                        interval: tier.interval as SubscriptionPlanInterval,
+                        price: tier.price,
+                        baseCharge: tier.baseCharge ?? 0,
+                        pricePerStaff: tier.pricePerStaff ?? 0,
+                        pricePerClient: tier.pricePerClient ?? 0,
+                        pricePerBooking: tier.pricePerBooking ?? 0,
+                        maxStaff: tier.maxStaff,
+                        maxClient: tier.maxClient,
+                        maxBookingsPerMonth: tier.maxBookingsPerMonth,
+                        discount: tier.discount ?? 0,
+                        discountEndDate: tier.discountEndDate
+                            ? new Date(tier.discountEndDate)
+                            : null,
+                    },
+                }),
+            ),
+        );
+
+        return tx.subscriptionPlan.findUniqueOrThrow({
+            where: { id: subscriptionPlan.id },
+            include: { plans: true },
+        });
+    });
+
+    return {
+        ...created,
+        features: normalizeSubscriptionPlanFeatures(created.features),
+        activeSubscribers: 0,
+        paidSubscribers: 0,
+        trialSubscribers: 0,
+        subscriberCount: 0,
+        mrr: 0,
+    };
 };
 
 const updateSubscriptionPlan = async (
     id: string,
-    payload: {
-        description?: string;
-        features?: string[];
-        currency?: string;
-    },
+    payload: TUpdateSubscriptionPlanPayload,
 ) => {
-    const plan = await prisma.subscriptionPlan.findUnique({ where: { id } });
-    if (!plan) {
+    const current = await prisma.subscriptionPlan.findUnique({
+        where: { id },
+        include: { plans: true },
+    });
+    if (!current) {
         throw new AppError(status.NOT_FOUND, "Subscription plan not found.");
     }
 
-    if (payload.features?.length) {
-        const nearMisses = findNearMissFeatureLabels(payload.features);
-        if (nearMisses.length > 0) {
-            throw new AppError(
-                status.BAD_REQUEST,
-                `Feature label(s) look like typos of a known gate string: ${nearMisses
-                    .map(
-                        (w) =>
-                            `"${w.submitted}" (did you mean "${w.closestCanonical}"?)`,
-                    )
-                    .join(
-                        "; ",
-                    )}. Use the exact canonical label, or pick it from the plan editor's checklist.`,
-            );
-        }
-    }
+    const nextFeatures =
+        payload.features === undefined
+            ? normalizeSubscriptionPlanFeatures(current.features)
+            : normalizeSubscriptionPlanFeatures(payload.features);
+    if (payload.features !== undefined) assertFeatureLabels(nextFeatures);
 
-    const updated = await prisma.subscriptionPlan.update({
-        where: { id },
-        data: {
-            description: payload.description,
-            features: payload.features,
-            currency: payload.currency as
-                | import("../../generated/prisma/enums").Currency
-                | undefined,
-        },
-        include: { plans: true },
-    });
-
-    // ── Live feature-gate sync ──────────────────────────────────────────────
-    // BUGFIX: EditPlanModal lets a super-admin add/remove feature strings on
-    // a plan that already has paying subscribers. This update was previously
-    // DB-only — nothing told the affected admins' browsers to refetch, so
-    // FeatureGate/useGateMap/useFeatureAccess kept serving the *old* feature
-    // list from the RTK Query cache until the admin logged out and back in.
-    // getMySubscription's "subscriptions" tag is only invalidated client-side
-    // by a socket "notification:new" event of type SUBSCRIPTION (see
-    // useSocketJobStatus.ts) or one of the per-admin flows below (payment
-    // approval, refund, suspend, reactivate, extend-trial, etc.) that already
-    // call createNotification(). A plan-level edit had no equivalent, so it
-    // never reached those rooms. Fan the notification out to every admin
-    // currently on this plan so their sidebar locks update live, matching the
-    // behaviour already engineered for every other subscription-changing flow.
-    //
-    // Only fire when the feature list actually changed — description/currency
-    // edits don't affect gating and shouldn't spam every subscriber's bell.
+    const previousFeatures = normalizeSubscriptionPlanFeatures(current.features);
     const featuresChanged =
         payload.features !== undefined &&
-        JSON.stringify([...payload.features].sort()) !==
-            JSON.stringify([...plan.features].sort());
+        JSON.stringify(previousFeatures) !== JSON.stringify(nextFeatures);
+
+    await prisma.$transaction(async (tx) => {
+        await tx.subscriptionPlan.update({
+            where: { id },
+            data: {
+                description: payload.description,
+                currency: payload.currency as
+                    | import("../../generated/prisma/enums").Currency
+                    | undefined,
+                isActive: payload.isActive,
+                features:
+                    payload.features === undefined
+                        ? undefined
+                        : planFeatureJson(nextFeatures),
+            },
+        });
+
+        for (const tier of payload.plans ?? []) {
+            const interval = tier.interval as SubscriptionPlanInterval;
+            const tierWhere = {
+                subscriptionPlanId_interval: {
+                    subscriptionPlanId: id,
+                    interval,
+                },
+            };
+            const existingTier = await tx.plan.findUnique({
+                where: tierWhere,
+                select: { id: true },
+            });
+
+            const tierData = {
+                price: tier.price,
+                baseCharge: tier.baseCharge,
+                pricePerStaff: tier.pricePerStaff,
+                pricePerClient: tier.pricePerClient,
+                pricePerBooking: tier.pricePerBooking,
+                maxStaff: tier.maxStaff,
+                maxClient: tier.maxClient,
+                maxBookingsPerMonth: tier.maxBookingsPerMonth,
+                discount: tier.discount,
+                discountEndDate:
+                    tier.discountEndDate === undefined
+                        ? undefined
+                        : tier.discountEndDate
+                          ? new Date(tier.discountEndDate)
+                          : null,
+            };
+
+            if (existingTier) {
+                await tx.plan.update({ where: { id: existingTier.id }, data: tierData });
+                continue;
+            }
+
+            if (tier.price === undefined) {
+                throw new AppError(
+                    status.BAD_REQUEST,
+                    `${tier.interval.toLowerCase()} pricing is missing a price and cannot be created.`,
+                );
+            }
+
+            await tx.plan.create({
+                data: {
+                    subscriptionPlanId: id,
+                    interval,
+                    price: tier.price,
+                    baseCharge: tier.baseCharge ?? 0,
+                    pricePerStaff: tier.pricePerStaff ?? 0,
+                    pricePerClient: tier.pricePerClient ?? 0,
+                    pricePerBooking: tier.pricePerBooking ?? 0,
+                    maxStaff: tier.maxStaff,
+                    maxClient: tier.maxClient,
+                    maxBookingsPerMonth: tier.maxBookingsPerMonth,
+                    discount: tier.discount ?? 0,
+                    discountEndDate: tier.discountEndDate
+                        ? new Date(tier.discountEndDate)
+                        : null,
+                },
+            });
+        }
+    });
 
     if (featuresChanged) {
         const affectedSubscriptions = await prisma.subscription.findMany({
-            where: { subscriptionPlanId: id },
-            select: { id: true, adminId: true },
+            where: { subscriptionPlanId: id, status: SubscriptionStatus.ACTIVE },
+            select: {
+                id: true,
+                adminId: true,
+                admin: { select: { userId: true } },
+            },
         });
 
-        for (const { id: subscriptionId, adminId } of affectedSubscriptions) {
-            createNotification({
-                adminId,
-                type: NotificationType.SUBSCRIPTION,
-                title: "Your plan's features were updated",
-                message:
-                    "The features included in your subscription plan have changed. Your sidebar has been refreshed to reflect the update.",
-                relatedId: subscriptionId,
-            }).catch(() => {});
-        }
+        await Promise.allSettled(
+            affectedSubscriptions.flatMap((subscription) => [
+                invalidateSubscriptionAccessCache(subscription.admin.userId),
+                createNotification({
+                    adminId: subscription.adminId,
+                    type: NotificationType.SUBSCRIPTION,
+                    title: "Your plan's features were updated",
+                    message:
+                        "The features included in your subscription plan have changed. Your access has been refreshed automatically.",
+                    relatedId: subscription.id,
+                }),
+            ]),
+        );
     }
 
-    return updated;
+    return getSuperAdminSubscriptionPlanById(id);
 };
 
+// Compatibility endpoint for older clients. The new editor sends pricing and
+// metadata in one PATCH /subscription-plans/:id transaction.
 const updatePricingTier = async (
     planId: string,
     payload: {
@@ -844,9 +1044,9 @@ const updatePricingTier = async (
         pricePerBooking?: number;
         discount?: number;
         discountEndDate?: string | null;
-        maxStaff?: number;
-        maxClient?: number;
-        maxBookingsPerMonth?: number;
+        maxStaff?: number | null;
+        maxClient?: number | null;
+        maxBookingsPerMonth?: number | null;
     },
 ) => {
     const plan = await prisma.plan.findUnique({ where: { id: planId } });
@@ -858,49 +1058,25 @@ const updatePricingTier = async (
         where: { id: planId },
         data: {
             ...payload,
-            discountEndDate: payload.discountEndDate
-                ? new Date(payload.discountEndDate)
-                : payload.discountEndDate === null
-                  ? null
-                  : undefined,
+            discountEndDate:
+                payload.discountEndDate === undefined
+                    ? undefined
+                    : payload.discountEndDate
+                      ? new Date(payload.discountEndDate)
+                      : null,
         },
     });
 };
 
-const deleteSubscriptionPlan = async (id: string) => {
-    const plan = await prisma.subscriptionPlan.findUnique({
-        where: { id },
-        include: { _count: { select: { subscriptions: true } } },
-    });
-    if (!plan) {
-        throw new AppError(status.NOT_FOUND, "Subscription plan not found.");
-    }
-    if (plan._count.subscriptions > 0) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "Cannot delete a plan that has active subscribers.",
-        );
-    }
-
-    return prisma.subscriptionPlan.delete({ where: { id } });
+const deleteSubscriptionPlan = async (_id: string) => {
+    throw new AppError(
+        status.BAD_REQUEST,
+        "The platform uses fixed STARTER, GROWTH, PRO and CUSTOM tiers. Deactivate a tier instead of deleting it.",
+    );
 };
 
-// ─── Toggle subscription plan active/inactive ─────────────────────────────────
-// `isActive` is a real Boolean column on SubscriptionPlan (added via migration
-// 20260623_subscription_plan_is_active).  The frontend maps it to the
-// "Active" / "Inactive" display status.
-const toggleSubscriptionPlanStatus = async (id: string, isActive: boolean) => {
-    const plan = await prisma.subscriptionPlan.findUnique({ where: { id } });
-    if (!plan) {
-        throw new AppError(status.NOT_FOUND, "Subscription plan not found.");
-    }
-
-    return prisma.subscriptionPlan.update({
-        where: { id },
-        data: { isActive },
-        include: { plans: true },
-    });
-};
+const toggleSubscriptionPlanStatus = async (id: string, isActive: boolean) =>
+    updateSubscriptionPlan(id, { isActive });
 
 // ─── Admin Subscription Management (super admin actions) ─────────────────────
 
@@ -1129,10 +1305,20 @@ const getBillingHistory = async (
                 subscription: {
                     include: {
                         subscriptionPlan: { select: { name: true } },
+                        plan: { select: { interval: true } },
                         admin: {
                             select: {
                                 businessName: true,
                                 user: { select: { name: true, email: true } },
+                            },
+                        },
+                    },
+                },
+                pendingPlanChange: {
+                    include: {
+                        targetPlan: {
+                            include: {
+                                subscriptionPlan: { select: { name: true } },
                             },
                         },
                     },
@@ -1470,6 +1656,7 @@ const refundBillingRecord = async (id: string) => {
                 subscription: {
                     include: {
                         subscriptionPlan: { select: { name: true } },
+                        plan: { select: { interval: true } },
                         admin: {
                             select: {
                                 businessName: true,
@@ -1575,10 +1762,20 @@ const getPendingProofs = async (options: IPaginationOptions) => {
                 subscription: {
                     include: {
                         subscriptionPlan: { select: { name: true } },
+                        plan: { select: { interval: true } },
                         admin: {
                             select: {
                                 businessName: true,
                                 user: { select: { name: true, email: true } },
+                            },
+                        },
+                    },
+                },
+                pendingPlanChange: {
+                    include: {
+                        targetPlan: {
+                            include: {
+                                subscriptionPlan: { select: { name: true } },
                             },
                         },
                     },
@@ -1595,12 +1792,9 @@ const getPendingProofs = async (options: IPaginationOptions) => {
 
 /**
  * PATCH /super-admin/billing-history/:id/approve-proof
- * Super admin has reviewed the proof and confirms payment.
- *
- * Actions:
- *   1. BillingHistory status → PAID, paidAt → now()
- *   2. Subscription status  → ACTIVE, period advanced by periodMonths (default 1)
- *   3. Subscription.isTrial → false
+ * Approves either a Phase-6 pending plan checkout or a legacy manual proof.
+ * For a plan checkout, billing + plan activation + coupon redemption are one
+ * atomic transaction; the existing subscription is never changed beforehand.
  */
 const approvePaymentProof = async (
     billingId: string,
@@ -1610,43 +1804,192 @@ const approvePaymentProof = async (
 
     const record = await prisma.billingHistory.findUnique({
         where: { id: billingId },
-        include: { subscription: true },
+        include: {
+            subscription: {
+                include: {
+                    admin: { select: { userId: true } },
+                },
+            },
+            pendingPlanChange: {
+                include: {
+                    targetPlan: { include: { subscriptionPlan: true } },
+                    coupon: true,
+                },
+            },
+        },
     });
-    if (!record) {
-        throw new AppError(status.NOT_FOUND, "Billing record not found.");
-    }
+    if (!record) throw new AppError(status.NOT_FOUND, "Billing record not found.");
     if (record.status !== "PENDING") {
         throw new AppError(
             status.BAD_REQUEST,
             `Cannot approve a proof with status "${record.status}". Only PENDING proofs can be approved.`,
+            { code: "PAYMENT_PROOF_NOT_PENDING", retryable: false },
         );
     }
     if (!record.paymentProofUrl) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "This billing record has no attached payment proof.",
-        );
+        throw new AppError(status.BAD_REQUEST, "This billing record has no attached payment proof.");
     }
 
     const sub = record.subscription;
+    const checkout = record.pendingPlanChange;
 
-    // Extend from today if the current period has already lapsed
+    if (checkout) {
+        if (
+            checkout.status !== PendingPlanChangeStatus.UNDER_REVIEW
+        ) {
+            throw new AppError(
+                status.CONFLICT,
+                "This plan checkout is no longer awaiting approval.",
+                { code: "PLAN_CHANGE_NOT_UNDER_REVIEW", retryable: false },
+            );
+        }
+
+        const now = new Date();
+        const nextPeriodEnd = new Date(now);
+        if (checkout.targetPlan.interval === SubscriptionPlanInterval.YEARLY) {
+            nextPeriodEnd.setFullYear(nextPeriodEnd.getFullYear() + 1);
+        } else {
+            nextPeriodEnd.setMonth(nextPeriodEnd.getMonth() + 1);
+        }
+
+        const lockKey = `subscription-checkout:${sub.id}`;
+        const result = await prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+            if (checkout.couponId) {
+                const couponLockKey = `subscription-coupon:${checkout.couponId}`;
+                await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${couponLockKey}, 0::bigint))`;
+            }
+
+            const freshBilling = await tx.billingHistory.findUnique({
+                where: { id: billingId },
+            });
+            const freshCheckout = await tx.pendingPlanChange.findUnique({
+                where: { id: checkout.id },
+            });
+            if (!freshBilling || freshBilling.status !== "PENDING") {
+                throw new AppError(status.CONFLICT, "This payment proof has already been reviewed.", {
+                    code: "PAYMENT_PROOF_ALREADY_REVIEWED",
+                    retryable: false,
+                });
+            }
+            if (
+                !freshCheckout ||
+                freshCheckout.status !== PendingPlanChangeStatus.UNDER_REVIEW
+            ) {
+                throw new AppError(status.CONFLICT, "This plan checkout has already been resolved.", {
+                    code: "PLAN_CHANGE_ALREADY_RESOLVED",
+                    retryable: false,
+                });
+            }
+
+            if (freshCheckout.couponId) {
+                const priorUsage = await tx.couponUsage.findUnique({
+                    where: {
+                        couponId_adminId: {
+                            couponId: freshCheckout.couponId,
+                            adminId: sub.adminId,
+                        },
+                    },
+                });
+                if (priorUsage) {
+                    throw new AppError(status.CONFLICT, "This coupon has already been used by this account.", {
+                        code: "COUPON_ALREADY_USED",
+                        retryable: false,
+                    });
+                }
+            }
+
+            const updatedBilling = await tx.billingHistory.update({
+                where: { id: billingId },
+                data: {
+                    status: "PAID",
+                    paidAt: now,
+                    note: note ?? freshBilling.note,
+                },
+            });
+
+            const updatedSub = await tx.subscription.update({
+                where: { id: sub.id },
+                data: {
+                    planId: checkout.targetPlanId,
+                    subscriptionPlanId: checkout.targetPlan.subscriptionPlanId,
+                    couponId: checkout.couponId,
+                    totalCost: checkout.quotedAmount,
+                    status: SubscriptionStatus.ACTIVE,
+                    isTrial: false,
+                    trialEndsAt: null,
+                    currentPeriodStart: now,
+                    currentPeriodEnd: nextPeriodEnd,
+                    cancelAtPeriodEnd: false,
+                    canceledAt: null,
+                },
+                include: { plan: true, subscriptionPlan: true, coupon: true },
+            });
+
+            await tx.pendingPlanChange.update({
+                where: { id: checkout.id },
+                data: {
+                    status: PendingPlanChangeStatus.APPROVED,
+                    reviewedAt: now,
+                    rejectionReason: null,
+                },
+            });
+
+            if (checkout.couponId) {
+                await tx.couponUsage.create({
+                    data: {
+                        couponId: checkout.couponId,
+                        adminId: sub.adminId,
+                        subscriptionId: sub.id,
+                    },
+                });
+                await tx.coupon.update({
+                    where: { id: checkout.couponId },
+                    data: { usedCount: { increment: 1 } },
+                });
+            }
+
+            return { updatedBilling, updatedSub };
+        });
+
+        await invalidateSubscriptionAccessCache(sub.admin.userId);
+
+        createNotification({
+            adminId: sub.adminId,
+            type: NotificationType.SUBSCRIPTION,
+            title: "Plan activated",
+            message: `Your ${checkout.targetPlan.subscriptionPlan.name} plan is now active through ${nextPeriodEnd.toLocaleDateString(
+                "en-GB",
+                { day: "numeric", month: "short", year: "numeric" },
+            )}.`,
+            relatedId: result.updatedSub.id,
+        }).catch(() => {});
+
+        emitToSuperAdmins("payment-proof:approved", {
+            billingId: result.updatedBilling.id,
+            planChangeId: checkout.id,
+            adminId: sub.adminId,
+        });
+
+        return {
+            billingRecord: result.updatedBilling,
+            subscription: result.updatedSub,
+            pendingPlanChange: { id: checkout.id, status: PendingPlanChangeStatus.APPROVED },
+        };
+    }
+
+    // Legacy proof path for PENDING_PAYMENT subscriptions created before Phase 6.
     const baseDate =
         sub.currentPeriodEnd && sub.currentPeriodEnd > new Date()
             ? new Date(sub.currentPeriodEnd)
             : new Date();
-
     const nextPeriodEnd = new Date(baseDate);
     nextPeriodEnd.setMonth(nextPeriodEnd.getMonth() + periodMonths);
 
     const [updatedBilling, updatedSub] = await prisma.$transaction([
         prisma.billingHistory.update({
             where: { id: billingId },
-            data: {
-                status: "PAID",
-                paidAt: new Date(),
-                note: note ?? record.note,
-            },
+            data: { status: "PAID", paidAt: new Date(), note: note ?? record.note },
         }),
         prisma.subscription.update({
             where: { id: sub.id },
@@ -1662,10 +2005,7 @@ const approvePaymentProof = async (
         }),
     ]);
 
-    // Notify the tenant admin in real time (persists + pushes over Socket.IO)
-    // so their subscription status / feature gates update without a re-login.
-    // The frontend's notification:new handler invalidates the "subscriptions"
-    // RTK Query tag whenever a SUBSCRIPTION-typed notification arrives.
+    await invalidateSubscriptionAccessCache(sub.admin.userId);
     createNotification({
         adminId: sub.adminId,
         type: NotificationType.SUBSCRIPTION,
@@ -1676,106 +2016,90 @@ const approvePaymentProof = async (
         )}.`,
         relatedId: updatedSub.id,
     }).catch(() => {});
-
-    // PERF FIX (Phase 5, performance audit — frontend polling): tells any
-    // other connected super-admin session/tab this proof is resolved, so
-    // its pending-proofs badge/list updates via cache invalidation instead
-    // of a poll interval. See useSocketPendingProofs on the frontend.
     emitToSuperAdmins("payment-proof:approved", {
         billingId: updatedBilling.id,
         adminId: sub.adminId,
     });
-
     return { billingRecord: updatedBilling, subscription: updatedSub };
 };
 
 /**
- * PATCH /super-admin/billing-history/:id/reject-proof
- * Super admin has reviewed the proof and found it invalid.
- *
- * Actions:
- *   1. BillingHistory status → FAILED
- *   2. Subscription status stays as-is (remains PENDING_PAYMENT so the
- *      tenant can re-submit or the admin can handle it manually).
- *   Optional body: { reason: string } — stored in the billing record note.
+ * Rejecting a Phase-6 checkout never modifies the tenant's live subscription.
+ * The rejected checkout remains available for re-submission so the tenant can
+ * correct the proof without rebuilding the cart.
  */
 const rejectPaymentProof = async (
     billingId: string,
     payload: { reason?: string },
 ) => {
-    const { reason } = payload;
-
+    const reason = payload.reason?.trim();
     const record = await prisma.billingHistory.findUnique({
         where: { id: billingId },
         include: {
-            subscription: {
-                include: {
-                    subscriptionPlan: { select: { name: true } },
-                    admin: {
-                        select: {
-                            businessName: true,
-                            user: { select: { name: true, email: true } },
-                        },
-                    },
-                },
-            },
+            subscription: true,
+            pendingPlanChange: true,
         },
     });
-    if (!record) {
-        throw new AppError(status.NOT_FOUND, "Billing record not found.");
-    }
+    if (!record) throw new AppError(status.NOT_FOUND, "Billing record not found.");
     if (record.status !== "PENDING") {
         throw new AppError(
             status.BAD_REQUEST,
             `Cannot reject a proof with status "${record.status}". Only PENDING proofs can be rejected.`,
+            { code: "PAYMENT_PROOF_NOT_PENDING", retryable: false },
         );
     }
     if (!record.paymentProofUrl) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "This billing record has no attached payment proof.",
-        );
+        throw new AppError(status.BAD_REQUEST, "This billing record has no attached payment proof.");
     }
 
-    const updatedBilling = await prisma.billingHistory.update({
-        where: { id: billingId },
-        data: {
-            status: "FAILED",
-            note: reason
-                ? `Rejected: ${reason}`
-                : (record.note ?? "Rejected by super admin"),
-        },
-        include: {
-            subscription: {
-                include: {
-                    subscriptionPlan: { select: { name: true } },
-                    admin: {
-                        select: {
-                            businessName: true,
-                            user: { select: { name: true, email: true } },
-                        },
-                    },
-                },
+    const now = new Date();
+    const checkoutRetryUntil = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const lockKey = `subscription-checkout:${record.subscriptionId}`;
+    const updatedBilling = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+        const freshBilling = await tx.billingHistory.findUnique({ where: { id: billingId } });
+        if (!freshBilling || freshBilling.status !== "PENDING") {
+            throw new AppError(status.CONFLICT, "This payment proof has already been reviewed.", {
+                code: "PAYMENT_PROOF_ALREADY_REVIEWED",
+                retryable: false,
+            });
+        }
+
+        const updated = await tx.billingHistory.update({
+            where: { id: billingId },
+            data: {
+                status: "FAILED",
+                note: reason ? `Rejected: ${reason}` : (record.note ?? "Rejected by super admin"),
             },
-        },
+        });
+
+        if (record.pendingPlanChange) {
+            await tx.pendingPlanChange.update({
+                where: { id: record.pendingPlanChange.id },
+                data: {
+                    status: PendingPlanChangeStatus.REJECTED,
+                    reviewedAt: now,
+                    rejectionReason: reason ?? "Payment proof could not be verified.",
+                    expiresAt: checkoutRetryUntil,
+                },
+            });
+        }
+        return updated;
     });
 
-    // Notify the tenant admin in real time so they can see the rejection
-    // reason and re-submit proof without needing to refresh/re-login.
     createNotification({
         adminId: record.subscription.adminId,
         type: NotificationType.SUBSCRIPTION,
         title: "Payment proof rejected",
         message: reason
             ? `Your payment proof was rejected: ${reason}`
-            : "Your payment proof was rejected. Please re-submit a valid proof of payment.",
-        relatedId: record.id,
+            : "Your payment proof was rejected. Please upload a clearer or corrected proof.",
+        relatedId: record.pendingPlanChange?.id ?? record.id,
     }).catch(() => {});
 
-    // PERF FIX (Phase 5, performance audit — frontend polling): same push
-    // as approvePaymentProof above, for the reject path.
     emitToSuperAdmins("payment-proof:rejected", {
         billingId: updatedBilling.id,
+        planChangeId: record.pendingPlanChange?.id ?? null,
         adminId: record.subscription.adminId,
     });
 
@@ -1797,6 +2121,8 @@ export const superAdminService = {
     activateAdminAccount,
     createAdminAccount,
     // Subscription plan CRUD
+    getSuperAdminSubscriptionPlans,
+    getSuperAdminSubscriptionPlanById,
     createSubscriptionPlan,
     updateSubscriptionPlan,
     updatePricingTier,

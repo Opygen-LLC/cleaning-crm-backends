@@ -11,7 +11,8 @@ model Coupon {
   isActive      Boolean        @default(true)
   createdAt     DateTime       @default(now())
   couponUsage   CouponUsage[]
-  subscriptions Subscription[]
+  subscriptions      Subscription[]
+  pendingPlanChanges PendingPlanChange[]
 }
 
 model CouponUsage {

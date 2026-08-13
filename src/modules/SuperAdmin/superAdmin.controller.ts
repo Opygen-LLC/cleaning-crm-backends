@@ -153,6 +153,28 @@ const createAdminAccount = catchAsync(async (req, res) => {
 
 // ─── Subscription Plan CRUD ───────────────────────────────────────────────────
 
+const getSubscriptionPlans = catchAsync(async (_req, res) => {
+    const result = await superAdminService.getSuperAdminSubscriptionPlans();
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Subscription plans retrieved successfully",
+        data: result,
+    });
+});
+
+const getSubscriptionPlanById = catchAsync(async (req, res) => {
+    const result = await superAdminService.getSuperAdminSubscriptionPlanById(
+        req.params.planId as string,
+    );
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Subscription plan retrieved successfully",
+        data: result,
+    });
+});
+
 const createSubscriptionPlan = catchAsync(async (req, res) => {
     const result = await superAdminService.createSubscriptionPlan(req.body);
     sendResponse(res, {
@@ -495,6 +517,8 @@ export const superAdminController = {
     suspendAdminAccount,
     activateAdminAccount,
     createAdminAccount,
+    getSubscriptionPlans,
+    getSubscriptionPlanById,
     createSubscriptionPlan,
     updateSubscriptionPlan,
     updatePricingTier,

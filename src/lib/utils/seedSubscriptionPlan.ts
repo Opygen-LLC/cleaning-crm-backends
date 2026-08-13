@@ -257,16 +257,14 @@ export async function seedSubscriptionPlans() {
         try {
             subscriptionPlan = await prisma.subscriptionPlan.upsert({
                 where: { name: sub.name },
-                update: {
-                    description: sub.description,
-                    currency: sub.currency,
-                    features: sub.features.map(f => JSON.stringify(f)),
-                },
+                // Production rule: startup seeding only creates missing fixed
+                // tiers. Super-admin edits must survive process restarts.
+                update: {},
                 create: {
                     name: sub.name,
                     description: sub.description,
                     currency: sub.currency,
-                    features: sub.features.map(f => JSON.stringify(f)),
+                    features: sub.features,
                 },
             });
         } catch (err) {
@@ -286,16 +284,9 @@ export async function seedSubscriptionPlans() {
                             interval: plan.interval,
                         },
                     },
-                    update: {
-                        price: plan.price,
-                        maxStaff: plan.maxStaff,
-                        maxClient: plan.maxClient,
-                        maxBookingsPerMonth: plan.maxBookingsPerMonth,
-                        baseCharge: plan.baseCharge ?? 0,
-                        pricePerStaff: plan.pricePerStaff ?? 0,
-                        pricePerClient: plan.pricePerClient ?? 0,
-                        pricePerBooking: plan.pricePerBooking ?? 0,
-                    },
+                    // Do not reset prices/limits configured by super-admin.
+                    // Upsert still makes concurrent startup seeding race-safe.
+                    update: {},
                     create: {
                         price: plan.price,
                         interval: plan.interval,

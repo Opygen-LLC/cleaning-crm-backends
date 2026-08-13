@@ -11,7 +11,13 @@ model BillingHistory {
   paidAt         DateTime?
   createdAt      DateTime      @default(now())
   subscriptionId String
-  subscription   Subscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  // Phase 6: multiple payment attempts can belong to the same plan checkout.
+  // Keeping the FK on BillingHistory preserves every rejected/retried proof as
+  // an immutable audit trail instead of detaching older attempts.
+  planChangeId      String?
+  pendingPlanChange PendingPlanChange? @relation(fields: [planChangeId], references: [id], onDelete: SetNull)
 
   // PERF FIX (Phase 3, performance audit): this model previously had zero
   // indexes beyond the primary key, so every query hitting it (including
@@ -28,5 +34,6 @@ model BillingHistory {
   //     unindexed scan until now.
   @@index([status, createdAt])
   @@index([subscriptionId])
+  @@index([planChangeId, createdAt])
 }
 

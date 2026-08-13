@@ -17,9 +17,10 @@
  *     approve endpoint on an already-approved (or already-rejected) record
  *     could re-extend a subscription's period repeatedly, or "launder" a
  *     rejected proof into an approval on a second call.
- *   - Rejecting a proof must NOT touch the subscription — it should stay
- *     exactly as it was (still PENDING_PAYMENT) so the tenant can re-submit,
- *     per the source file's own contract comment.
+ *   - Phase-6 plan changes keep the live subscription untouched until approval.
+ *     Rejection only marks the checkout as REJECTED so the tenant can submit a
+ *     corrected proof; approval activates the target plan atomically.
+ *   - Legacy pre-Phase-6 PENDING_PAYMENT proofs remain supported.
  *
  * Heavy/unrelated module-level dependencies of superAdmin.service.ts
  * (better-auth client construction, email sending, Vercel's waitUntil,
@@ -29,8 +30,8 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../../lib/prisma/prisma", () => ({
-    prisma: {
+vi.mock("../../lib/prisma/prisma", () => {
+    const prismaMock = {
         billingHistory: {
             findUnique: vi.fn(),
             update: vi.fn(),
@@ -38,9 +39,25 @@ vi.mock("../../lib/prisma/prisma", () => ({
         subscription: {
             update: vi.fn(),
         },
-        $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
-    },
-}));
+        pendingPlanChange: {
+            findUnique: vi.fn(),
+            update: vi.fn(),
+        },
+        couponUsage: {
+            findUnique: vi.fn(),
+            create: vi.fn(),
+        },
+        coupon: { update: vi.fn() },
+        $queryRaw: vi.fn().mockResolvedValue([]),
+        $transaction: vi.fn(),
+    };
+    prismaMock.$transaction.mockImplementation((work: unknown) =>
+        typeof work === "function"
+            ? (work as (tx: typeof prismaMock) => unknown)(prismaMock)
+            : Promise.all(work as Promise<unknown>[]),
+    );
+    return { prisma: prismaMock };
+});
 
 vi.mock("../../lib/utils/createNotification", () => ({
     createNotification: vi.fn().mockResolvedValue(undefined),
@@ -64,6 +81,9 @@ vi.mock("../../lib/utils/platformConfig", () => ({
 vi.mock("../../lib/constants/featureGateLabels", () => ({
     findNearMissFeatureLabels: vi.fn(() => []),
 }));
+vi.mock("../../middlewares/checkSubscription", () => ({
+    invalidateSubscriptionAccessCache: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { prisma } from "../../lib/prisma/prisma";
 import { createNotification } from "../../lib/utils/createNotification";
@@ -75,6 +95,16 @@ const mockPrisma = prisma as unknown as {
         update: ReturnType<typeof vi.fn>;
     };
     subscription: { update: ReturnType<typeof vi.fn> };
+    pendingPlanChange: {
+        findUnique: ReturnType<typeof vi.fn>;
+        update: ReturnType<typeof vi.fn>;
+    };
+    couponUsage: {
+        findUnique: ReturnType<typeof vi.fn>;
+        create: ReturnType<typeof vi.fn>;
+    };
+    coupon: { update: ReturnType<typeof vi.fn> };
+    $queryRaw: ReturnType<typeof vi.fn>;
     $transaction: ReturnType<typeof vi.fn>;
 };
 const mockCreateNotification = createNotification as ReturnType<typeof vi.fn>;
@@ -100,10 +130,12 @@ function pendingRecord(overrides: Partial<Record<string, unknown>> = {}) {
         status: "PENDING",
         paymentProofUrl: "https://cloudinary.com/proof.jpg",
         note: null,
+        pendingPlanChange: null,
         subscription: {
             id: SUB_ID,
             adminId: ADMIN_ID,
             currentPeriodEnd: daysFromNow(5),
+            admin: { userId: "user-1" },
             ...((subscriptionOverride as object) ?? {}),
         },
         ...rest,
@@ -112,7 +144,12 @@ function pendingRecord(overrides: Partial<Record<string, unknown>> = {}) {
 
 beforeEach(() => {
     vi.clearAllMocks();
-    mockPrisma.$transaction.mockImplementation((ops: unknown[]) => Promise.all(ops));
+    mockPrisma.$queryRaw.mockResolvedValue([]);
+    mockPrisma.$transaction.mockImplementation((work: unknown) =>
+        typeof work === "function"
+            ? (work as (tx: typeof mockPrisma) => unknown)(mockPrisma)
+            : Promise.all(work as Promise<unknown>[]),
+    );
 });
 
 describe("approvePaymentProof", () => {
@@ -242,6 +279,96 @@ describe("approvePaymentProof", () => {
     });
 });
 
+describe("Phase-6 pending plan checkout approval", () => {
+    it("activates the target yearly plan only when the proof is approved", async () => {
+        const checkout = {
+            id: "checkout-1",
+            status: "UNDER_REVIEW",
+            targetPlanId: "plan-yearly",
+            couponId: null,
+            quotedAmount: 499,
+            targetPlan: {
+                id: "plan-yearly",
+                interval: "YEARLY",
+                subscriptionPlanId: "growth-plan",
+                subscriptionPlan: { name: "GROWTH" },
+            },
+        };
+        const record = pendingRecord({
+            pendingPlanChange: checkout,
+            subscription: {
+                currentPeriodEnd: daysFromNow(20),
+                admin: { userId: "user-1" },
+            },
+        });
+        mockPrisma.billingHistory.findUnique.mockResolvedValue(record);
+        mockPrisma.pendingPlanChange.findUnique.mockResolvedValue(checkout);
+        mockPrisma.billingHistory.update.mockResolvedValue({ id: BILLING_ID, status: "PAID" });
+        mockPrisma.subscription.update.mockResolvedValue({
+            id: SUB_ID,
+            adminId: ADMIN_ID,
+            status: "ACTIVE",
+        });
+        mockPrisma.pendingPlanChange.update.mockResolvedValue({
+            ...checkout,
+            status: "APPROVED",
+        });
+
+        const before = new Date();
+        await superAdminService.approvePaymentProof(BILLING_ID, {});
+
+        expect(mockPrisma.subscription.update).toHaveBeenCalledTimes(1);
+        const update = mockPrisma.subscription.update.mock.calls[0][0];
+        expect(update.data).toEqual(
+            expect.objectContaining({
+                planId: "plan-yearly",
+                subscriptionPlanId: "growth-plan",
+                totalCost: 499,
+                status: "ACTIVE",
+                isTrial: false,
+            }),
+        );
+        const periodEnd = update.data.currentPeriodEnd as Date;
+        expect(periodEnd.getFullYear()).toBeGreaterThanOrEqual(before.getFullYear() + 1);
+        expect(mockPrisma.pendingPlanChange.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: { id: "checkout-1" },
+                data: expect.objectContaining({ status: "APPROVED" }),
+            }),
+        );
+    });
+
+    it("rejects a checkout proof without touching the live subscription", async () => {
+        const checkout = {
+            id: "checkout-1",
+            status: "UNDER_REVIEW",
+            targetPlanId: "plan-monthly",
+        };
+        const record = pendingRecord({ pendingPlanChange: checkout });
+        mockPrisma.billingHistory.findUnique.mockResolvedValue(record);
+        mockPrisma.billingHistory.update.mockResolvedValue({ id: BILLING_ID, status: "FAILED" });
+        mockPrisma.pendingPlanChange.update.mockResolvedValue({
+            ...checkout,
+            status: "REJECTED",
+        });
+
+        await superAdminService.rejectPaymentProof(BILLING_ID, {
+            reason: "Transaction reference is unreadable",
+        });
+
+        expect(mockPrisma.subscription.update).not.toHaveBeenCalled();
+        expect(mockPrisma.pendingPlanChange.update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: { id: "checkout-1" },
+                data: expect.objectContaining({
+                    status: "REJECTED",
+                    rejectionReason: "Transaction reference is unreadable",
+                }),
+            }),
+        );
+    });
+});
+
 describe("rejectPaymentProof", () => {
     function pendingRecordWithFullSubscription() {
         return {
@@ -249,6 +376,7 @@ describe("rejectPaymentProof", () => {
             status: "PENDING",
             paymentProofUrl: "https://cloudinary.com/proof.jpg",
             note: null,
+            pendingPlanChange: null,
             subscription: {
                 id: SUB_ID,
                 adminId: ADMIN_ID,
@@ -317,8 +445,7 @@ describe("rejectPaymentProof", () => {
                 }),
             }),
         );
-        // The whole point of rejection: the subscription is left exactly as-is
-        // (still PENDING_PAYMENT) so the tenant can re-submit a corrected proof.
+        // Legacy rejection still leaves the live subscription exactly as-is.
         expect(mockPrisma.subscription.update).not.toHaveBeenCalled();
 
         expect(mockCreateNotification).toHaveBeenCalledWith(
@@ -349,7 +476,7 @@ describe("rejectPaymentProof", () => {
         );
         expect(mockCreateNotification).toHaveBeenCalledWith(
             expect.objectContaining({
-                message: expect.stringMatching(/re-submit a valid proof/i),
+                message: expect.stringMatching(/clearer or corrected proof/i),
             }),
         );
     });
