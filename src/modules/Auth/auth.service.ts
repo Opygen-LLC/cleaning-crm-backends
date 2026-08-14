@@ -176,18 +176,12 @@ const me = async (user: IRequestUser) => {
     return isUserExist;
 };
 
-const getNewToken = async (refreshToken: string, sessionToken: string) => {
-    const isSessionTokenExists = await prisma.session.findFirst({
-        where: {
-            token: sessionToken,
-        },
-        include: {
-            user: true,
-        },
-    });
-
-    if (!isSessionTokenExists) {
-        throw new AppError(status.UNAUTHORIZED, "Invalid session token");
+const getNewToken = async (
+    refreshToken: string,
+    sessionToken?: string,
+) => {
+    if (!sessionToken) {
+        throw new AppError(status.UNAUTHORIZED, "Session token is missing");
     }
 
     const verifiedRefreshToken = jwtUtils.verifyToken(
@@ -195,14 +189,36 @@ const getNewToken = async (refreshToken: string, sessionToken: string) => {
         REFRESH_TOKEN_SECRET,
     );
 
-    if (!verifiedRefreshToken.success && verifiedRefreshToken.error) {
+    if (!verifiedRefreshToken.success || !verifiedRefreshToken.data) {
         throw new AppError(status.UNAUTHORIZED, "Invalid refresh token");
     }
 
     const data = verifiedRefreshToken.data as JwtPayload;
+    const refreshUserId = data.userId as string | undefined;
+    if (!refreshUserId) {
+        throw new AppError(status.UNAUTHORIZED, "Invalid refresh token");
+    }
+
+    // Bind the Better Auth session and refresh token to the same user. This is
+    // both safer and more deterministic than first looking up an arbitrary
+    // session and only verifying the refresh token afterwards.
+    const session = await prisma.session.findFirst({
+        where: {
+            token: sessionToken,
+            userId: refreshUserId,
+        },
+        select: {
+            id: true,
+            token: true,
+        },
+    });
+
+    if (!session) {
+        throw new AppError(status.UNAUTHORIZED, "Invalid session token");
+    }
 
     const newAccessToken = tokenUtils.getAccessToken({
-        userId: data.userId,
+        userId: refreshUserId,
         role: data.role,
         name: data.name,
         email: data.email,
@@ -212,7 +228,7 @@ const getNewToken = async (refreshToken: string, sessionToken: string) => {
     });
 
     const newRefreshToken = tokenUtils.getRefreshToken({
-        userId: data.userId,
+        userId: refreshUserId,
         role: data.role,
         name: data.name,
         email: data.email,
@@ -223,13 +239,13 @@ const getNewToken = async (refreshToken: string, sessionToken: string) => {
 
     const { token } = await prisma.session.update({
         where: {
-            id: isSessionTokenExists.id,
+            id: session.id,
         },
         data: {
-            token: sessionToken,
-            expiresAt: new Date(Date.now() + 60 * 60 * 60 * 24 * 1000),
+            expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
             updatedAt: new Date(),
         },
+        select: { token: true },
     });
 
     return {

@@ -21,14 +21,15 @@ const register = catchAsync(async (req, res) => {
 const login = catchAsync(async (req, res) => {
     const result = await authService.login(req.body);
 
-    // If user is not verified (no tokens returned)
+    // A login that cannot issue tokens is an authentication failure, not a
+    // successful HTTP 200 response. Returning 403 lets RTK Query surface the
+    // message instead of treating the response as success and failing silently
+    // while the UI tries to read a missing user/token payload.
     if (!result.accessToken || !result.refreshToken) {
-        return sendResponse(res, {
-            httpStatusCode: httpStatus.OK,
-            success: false,
-            message: "Email not verified. Please verify your email.",
-            data: result,
-        });
+        throw new AppError(
+            httpStatus.FORBIDDEN,
+            "Email not verified. Please verify your email.",
+        );
     }
 
     const { accessToken, refreshToken, token, ...rest } = result;
@@ -47,6 +48,7 @@ const login = catchAsync(async (req, res) => {
         message: "User Login Successful",
         data: {
             ...rest,
+            token,
             accessToken,
             refreshToken,
         },
@@ -73,7 +75,8 @@ const getNewToken = catchAsync(async (req, res) => {
     // in the request body (it stores the value it got back from /auth/login).
     // The cookie is still checked first for same-origin / local-dev setups.
     const refreshToken = req.cookies.refreshToken || req.body?.refreshToken;
-    const betterAuthSessionToken = req.cookies["better-auth.session_token"];
+    const betterAuthSessionToken =
+        req.cookies["better-auth.session_token"] || req.body?.sessionToken;
     if (!refreshToken) {
         throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token is missing");
     }
