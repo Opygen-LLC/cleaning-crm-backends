@@ -741,9 +741,15 @@ const publicFormSelect = {
     },
 } as const;
 
-const loadPublishedPublicForm = async (slug: string) => {
-    const form = await prisma.estimateForm.findUnique({
-        where: { slug },
+type PublicEstimateFormLocator =
+    | { kind: "slug"; slug: string }
+    | { kind: "id"; id: string; adminId: string };
+
+const loadPublishedPublicForm = async (locator: PublicEstimateFormLocator) => {
+    const form = await prisma.estimateForm.findFirst({
+        where: locator.kind === "slug"
+            ? { slug: locator.slug }
+            : { id: locator.id, adminId: locator.adminId },
         select: publicFormSelect,
     });
 
@@ -757,8 +763,8 @@ const loadPublishedPublicForm = async (slug: string) => {
     return form;
 };
 
-const getPublicEstimateForm = async (slug: string) => {
-    const form = await loadPublishedPublicForm(slug);
+const getPublicEstimateFormFor = async (locator: PublicEstimateFormLocator) => {
+    const form = await loadPublishedPublicForm(locator);
     const fields = buildPublicFields(form.fields);
 
     let reviewSummary: { rating: number; count: number } | null = null;
@@ -794,6 +800,12 @@ const getPublicEstimateForm = async (slug: string) => {
     return { ...safeForm, services: publicServices, fields, business: projectPublicBusiness(form.admin), reviewSummary };
 };
 
+const getPublicEstimateForm = async (slug: string) =>
+    getPublicEstimateFormFor({ kind: "slug", slug });
+
+const getPublicEstimateFormById = async (id: string, adminId: string) =>
+    getPublicEstimateFormFor({ kind: "id", id, adminId });
+
 type PublicCalculationPayload = {
     serviceCatalogId?: string;
     serviceType?: ServiceType;
@@ -804,8 +816,11 @@ type PublicCalculationPayload = {
     city?: string;
 };
 
-const calculatePublicEstimate = async (slug: string, payload: PublicCalculationPayload) => {
-    const form = await loadPublishedPublicForm(slug);
+const calculatePublicEstimateFor = async (
+    locator: PublicEstimateFormLocator,
+    payload: PublicCalculationPayload,
+) => {
+    const form = await loadPublishedPublicForm(locator);
 
     const service = form.services.find((candidate) =>
         payload.serviceCatalogId
@@ -870,8 +885,17 @@ const calculatePublicEstimate = async (slug: string, payload: PublicCalculationP
     };
 };
 
-const submitPublicEstimateForm = async (
-    slug: string,
+const calculatePublicEstimate = async (slug: string, payload: PublicCalculationPayload) =>
+    calculatePublicEstimateFor({ kind: "slug", slug }, payload);
+
+const calculatePublicEstimateById = async (
+    id: string,
+    adminId: string,
+    payload: PublicCalculationPayload,
+) => calculatePublicEstimateFor({ kind: "id", id, adminId }, payload);
+
+const submitPublicEstimateFormFor = async (
+    locator: PublicEstimateFormLocator,
     payload: PublicCalculationPayload & {
         postcode: string;
         city?: string;
@@ -886,7 +910,7 @@ const submitPublicEstimateForm = async (
     if (idempotencyKey && !/^[A-Za-z0-9:_-]{8,128}$/.test(idempotencyKey)) {
         throw new AppError(status.BAD_REQUEST, "Invalid Idempotency-Key header");
     }
-    const form = await loadPublishedPublicForm(slug);
+    const form = await loadPublishedPublicForm(locator);
     const publicFields = buildPublicFields(form.fields);
 
     const service = form.services.find((candidate) =>
@@ -989,6 +1013,35 @@ const submitPublicEstimateForm = async (
     };
 };
 
+const submitPublicEstimateForm = async (
+    slug: string,
+    payload: PublicCalculationPayload & {
+        postcode: string;
+        city?: string;
+        name?: string;
+        email?: string;
+        phone?: string;
+        notes?: string;
+        answers?: Record<string, string>;
+    },
+    idempotencyKey?: string,
+) => submitPublicEstimateFormFor({ kind: "slug", slug }, payload, idempotencyKey);
+
+const submitPublicEstimateFormById = async (
+    id: string,
+    adminId: string,
+    payload: PublicCalculationPayload & {
+        postcode: string;
+        city?: string;
+        name?: string;
+        email?: string;
+        phone?: string;
+        notes?: string;
+        answers?: Record<string, string>;
+    },
+    idempotencyKey?: string,
+) => submitPublicEstimateFormFor({ kind: "id", id, adminId }, payload, idempotencyKey);
+
 // ─── Export ───────────────────────────────────────────────────────────────────
 
 export const estimateFormService = {
@@ -1001,6 +1054,9 @@ export const estimateFormService = {
     getSubmissions,
     updateSubmissionStatus,
     getPublicEstimateForm,
+    getPublicEstimateFormById,
     calculatePublicEstimate,
+    calculatePublicEstimateById,
     submitPublicEstimateForm,
+    submitPublicEstimateFormById,
 };

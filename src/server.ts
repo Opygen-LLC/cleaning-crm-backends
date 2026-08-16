@@ -19,7 +19,8 @@ import cookieParser from "cookie-parser";
 import { notFound } from "./middlewares/notFound";
 import { maintenanceModeGate } from "./middlewares/maintenanceMode";
 import path from "path";
-import { BETTER_AUTH_URL, FRONTEND_URL } from "./config/ENV";
+import { BETTER_AUTH_URL, FRONTEND_URL, NODE_ENV, WEBSITE_BASE_DOMAIN } from "./config/ENV";
+import { WebsiteHostResolverService } from "./modules/Website/websiteHostResolver.service";
 
 import "../src/cron/staffStatus.cron";
 import "../src/cron/recurringBooking.cron";
@@ -56,8 +57,11 @@ app.use(cookieParser());
 app.use(express.urlencoded({ extended: true, limit: "64kb" }));
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
-// Add your production Next.js domain to FRONTEND_URL in the environment.
-// The static list below covers local dev and the known Vercel staging URL.
+// Authenticated CRM traffic is allowed only from the application origins below.
+// Public tenant websites are intentionally handled separately: they may call
+// only /api/v1/website/public/* and receive NON-credentialed CORS. This lets
+// free subdomains/custom domains submit booking/estimate/contact forms without
+// granting those origins browser access to authenticated CRM endpoints.
 const allowedOrigins = [
   FRONTEND_URL,
   BETTER_AUTH_URL,
@@ -68,28 +72,82 @@ const allowedOrigins = [
   "https://cleaningcrm.opygen.com",
 ].filter(Boolean) as string[];
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true); // server-to-server / curl
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      callback(new Error(`CORS: origin '${origin}' not allowed`));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "Cookie",
-      "X-Requested-With",
-      "Accept",
-      "Origin",
-      "Idempotency-Key",
-    ],
-    // Allow FE to read Content-Disposition header for CSV file downloads
-    exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Response-Time"],
-  }),
-);
+const corsCommon = {
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "Cookie",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+    "Idempotency-Key",
+  ],
+  exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Response-Time"],
+};
+
+const authenticatedCors = cors({
+  ...corsCommon,
+  origin: true,
+  credentials: true,
+});
+const publicWebsiteCors = cors({
+  ...corsCommon,
+  origin: true,
+  credentials: false,
+});
+
+const isWebsitePublicApiPath = (pathname: string) =>
+  pathname === "/api/v1/website/public" || pathname.startsWith("/api/v1/website/public/");
+
+const isAllowedPublicWebsiteOrigin = async (origin: string): Promise<boolean> => {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+  const secureProtocol = url.protocol === "https:" || (NODE_ENV !== "production" && url.protocol === "http:");
+  if (!secureProtocol || !hostname) return false;
+
+  // Free platform subdomains are controlled by this deployment. Require exactly
+  // one tenant label so nested/unrelated hostnames are never wildcard-trusted.
+  if (WEBSITE_BASE_DOMAIN) {
+    const suffix = `.${WEBSITE_BASE_DOMAIN}`;
+    if (hostname.endsWith(suffix)) {
+      const label = hostname.slice(0, -suffix.length);
+      if (label && !label.includes(".")) return true;
+    }
+  }
+
+  // Custom domains must already be VERIFIED in WebsiteDomain. The resolver is
+  // Redis-backed, so this check is cheap on the steady-state public path and
+  // fails closed if the hostname is not a live website domain.
+  try {
+    const resolved = await WebsiteHostResolverService.resolveHost(hostname);
+    return resolved.routeKind === "custom_domain";
+  } catch {
+    return false;
+  }
+};
+
+app.use(async (req, res, next) => {
+  const origin = req.get("Origin");
+  if (!origin) return authenticatedCors(req, res, next); // server-to-server / curl
+  if (allowedOrigins.includes(origin)) return authenticatedCors(req, res, next);
+
+  if (isWebsitePublicApiPath(req.path) && await isAllowedPublicWebsiteOrigin(origin)) {
+    return publicWebsiteCors(req, res, next);
+  }
+
+  return res.status(403).json({
+    success: false,
+    message: "Origin is not allowed",
+    error: { code: "CORS_ORIGIN_NOT_ALLOWED", retryable: false },
+  });
+});
 
 app.use(compression());
 app.use(logRequestResponse);

@@ -269,7 +269,7 @@ const getPublicWebsite = async (identifier: string) => {
 };
 
 
-const resolvePublicBookingIntegration = async (identifier: string) => {
+const loadPublishedIntegrationSource = async (identifier: string) => {
   const resolved = await resolveIdentifier(identifier);
   const website = await prisma.businessWebsite.findUnique({
     where: { id: resolved.websiteId },
@@ -279,6 +279,8 @@ const resolvePublicBookingIntegration = async (identifier: string) => {
       status: true,
       publishedSnapshot: true,
       primaryBookingFormId: true,
+      primaryEstimateFormId: true,
+      subdomain: true,
       pages: { select: { kind: true, isEnabled: true } },
       admin: { select: { user: { select: { status: true } } } },
     },
@@ -291,6 +293,12 @@ const resolvePublicBookingIntegration = async (identifier: string) => {
   if (website.status !== "PUBLISHED") {
     throw new AppError(status.NOT_FOUND, "Website not found");
   }
+
+  return website;
+};
+
+const resolvePublicBookingIntegration = async (identifier: string) => {
+  const website = await loadPublishedIntegrationSource(identifier);
 
   const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
   const formId = publishedSnapshot?.website.primaryBookingFormId ?? website.primaryBookingFormId;
@@ -312,6 +320,49 @@ const resolvePublicBookingIntegration = async (identifier: string) => {
   };
 };
 
+const resolvePublicEstimateIntegration = async (identifier: string) => {
+  const website = await loadPublishedIntegrationSource(identifier);
+  const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
+  const formId = publishedSnapshot?.website.primaryEstimateFormId ?? website.primaryEstimateFormId;
+  const estimatePageEnabled = publishedSnapshot
+    ? publishedSnapshot.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled)
+    : website.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled);
+
+  if (!formId || !estimatePageEnabled) {
+    throw new AppError(status.NOT_FOUND, "Online estimates are not available on this website.", {
+      code: "WEBSITE_ESTIMATE_UNAVAILABLE",
+      retryable: false,
+    });
+  }
+
+  return {
+    websiteId: website.id,
+    adminId: website.adminId,
+    formId,
+  };
+};
+
+const resolvePublicContactIntegration = async (identifier: string) => {
+  const website = await loadPublishedIntegrationSource(identifier);
+  const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
+  const contactPageEnabled = publishedSnapshot
+    ? publishedSnapshot.pages.some((page) => page.kind === "CONTACT" && page.isEnabled)
+    : website.pages.some((page) => page.kind === "CONTACT" && page.isEnabled);
+
+  if (!contactPageEnabled) {
+    throw new AppError(status.NOT_FOUND, "Contact is not available on this website.", {
+      code: "WEBSITE_CONTACT_UNAVAILABLE",
+      retryable: false,
+    });
+  }
+
+  return {
+    websiteId: website.id,
+    adminId: website.adminId,
+    subdomain: website.subdomain,
+  };
+};
+
 const getPreviewWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
@@ -328,5 +379,7 @@ export const PublicWebsiteService = {
   getPublicWebsiteById,
   getPublicWebsite,
   resolvePublicBookingIntegration,
+  resolvePublicEstimateIntegration,
+  resolvePublicContactIntegration,
   getPreviewWebsite,
 };

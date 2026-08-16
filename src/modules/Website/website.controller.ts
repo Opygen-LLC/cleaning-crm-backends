@@ -8,6 +8,8 @@ import { WebsiteService } from "./website.service";
 import { SubdomainService } from "./subdomain.service";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { bookingFormService } from "../BookingForm/bookingForm.service";
+import { estimateFormService } from "../EstimateForm/estimateForm.service";
+import { WebsiteAcquisitionService } from "./websiteAcquisition.service";
 
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
@@ -87,6 +89,52 @@ const submitPublicWebsiteBooking = catchAsync(async (req, res) => {
   });
 });
 
+const getPublicWebsiteEstimate = catchAsync(async (req, res) => {
+  const integration = await PublicWebsiteService.resolvePublicEstimateIntegration(req.params.identifier);
+  const data = await estimateFormService.getPublicEstimateFormById(integration.formId, integration.adminId);
+  res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
+  return ok(res, "Website estimate form retrieved successfully", data);
+});
+
+const calculatePublicWebsiteEstimate = catchAsync(async (req, res) => {
+  const integration = await PublicWebsiteService.resolvePublicEstimateIntegration(req.params.identifier);
+  const data = await estimateFormService.calculatePublicEstimateById(
+    integration.formId,
+    integration.adminId,
+    req.body,
+  );
+  res.setHeader("Cache-Control", "no-store");
+  return ok(res, "Website estimate calculated successfully", data);
+});
+
+const submitPublicWebsiteEstimate = catchAsync(async (req, res) => {
+  const integration = await PublicWebsiteService.resolvePublicEstimateIntegration(req.params.identifier);
+  const data = await estimateFormService.submitPublicEstimateFormById(
+    integration.formId,
+    integration.adminId,
+    req.body,
+    req.get("Idempotency-Key") ?? undefined,
+  );
+  res.setHeader("Cache-Control", "no-store");
+  return sendResponse(res, {
+    httpStatusCode: status.CREATED,
+    success: true,
+    message: "Estimate request submitted successfully. We'll be in touch shortly!",
+    data,
+  });
+});
+
+const submitPublicWebsiteContact = catchAsync(async (req, res) => {
+  const data = await WebsiteAcquisitionService.submitContact(req.params.identifier, req.body);
+  res.setHeader("Cache-Control", "no-store");
+  return sendResponse(res, {
+    httpStatusCode: status.CREATED,
+    success: true,
+    message: "Thanks — your message has been sent to the business.",
+    data,
+  });
+});
+
 const getPublicWebsite = catchAsync(async (req, res) => {
   const data = await PublicWebsiteService.getPublicWebsite(req.params.identifier);
   res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
@@ -120,5 +168,9 @@ export const websiteController = {
   getPublicWebsiteBooking,
   getPublicWebsiteBookingSlots,
   submitPublicWebsiteBooking,
+  getPublicWebsiteEstimate,
+  calculatePublicWebsiteEstimate,
+  submitPublicWebsiteEstimate,
+  submitPublicWebsiteContact,
   getPublicWebsite,
 };

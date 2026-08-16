@@ -64,5 +64,22 @@ const createAsset = z.object({
 
 const addDomain = z.object({ domain: z.string().trim().min(3).max(253) }).strict();
 const renameSubdomain = z.object({ subdomain: z.string().trim().min(3).max(63) }).strict();
+const publicContact = z.object({
+  name: z.string().trim().min(1, "Name is required").max(200),
+  email: z.string().trim().email("Invalid email address").max(320),
+  phone: z.string().trim().max(80).optional(),
+  message: z.string().trim().min(1, "Message is required").max(5000),
+  serviceCatalogId: z.string().uuid().optional(),
+  companyWebsite: z.string().trim().max(500).optional(),
+}).strict();
 
-export const websiteValidation = { createWebsite, updateWebsite, updatePage, saveDraft, createAsset, addDomain, renameSubdomain };
+export const websiteValidation = {
+  createWebsite,
+  updateWebsite,
+  updatePage,
+  saveDraft,
+  createAsset,
+  addDomain,
+  renameSubdomain,
+  publicContact,
+};

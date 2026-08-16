@@ -7,7 +7,9 @@ import {
 } from "../../middlewares/publicApiSecurity";
 import { ValidationProperty, zodValidate } from "../../middlewares/validations/zodValidation.middleware";
 import { bookingFormValidation } from "../BookingForm/bookingForm.validation";
+import { estimateFormValidation } from "../EstimateForm/estimateForm.validation";
 import { websiteController } from "./website.controller";
+import { websiteValidation } from "./website.validation";
 
 const router = Router();
 
@@ -41,6 +43,39 @@ router.post(
     ValidationProperty.BODY,
   ),
   websiteController.submitPublicWebsiteBooking,
+);
+
+// Website-scoped estimate integration. Like booking, the public tenant URL
+// resolves the published primaryEstimateFormId and then delegates to the
+// existing EstimateForm pricing/submission engine. Legacy slug URLs stay live.
+router.get(
+  "/:identifier/estimate",
+  publicReadRateLimit,
+  websiteController.getPublicWebsiteEstimate,
+);
+router.post(
+  "/:identifier/estimate/calculate",
+  publicMutationRateLimit,
+  publicResourceMutationRateLimit,
+  zodValidate(estimateFormValidation.publicCalculation, ValidationProperty.BODY),
+  websiteController.calculatePublicWebsiteEstimate,
+);
+router.post(
+  "/:identifier/estimate",
+  publicMutationRateLimit,
+  publicResourceMutationRateLimit,
+  zodValidate(estimateFormValidation.publicSubmission, ValidationProperty.BODY),
+  websiteController.submitPublicWebsiteEstimate,
+);
+
+// Public website acquisition. Contact enquiries enter the tenant's native CRM
+// Lead pipeline and are deduplicated by normalized email inside the service.
+router.post(
+  "/:identifier/contact",
+  publicMutationRateLimit,
+  publicResourceMutationRateLimit,
+  zodValidate(websiteValidation.publicContact, ValidationProperty.BODY),
+  websiteController.submitPublicWebsiteContact,
 );
 
 router.get("/:identifier", publicReadRateLimit, websiteController.getPublicWebsite);
