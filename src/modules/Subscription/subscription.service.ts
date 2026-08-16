@@ -101,16 +101,21 @@ const getMySubscription = async (user: IRequestUser) => {
 
 // ─── Existing: create trial subscription ─────────────────────────────────────
 
-const createTrialSubscription = async (adminId: string) => {
+const createTrialSubscription = async (
+    adminId: string,
+    options: { db?: any; trialDays?: number } = {},
+) => {
+    const db = options.db ?? prisma;
+
     const [plan, existing] = await Promise.all([
-        prisma.plan.findFirst({
+        db.plan.findFirst({
             where: {
                 subscriptionPlan: { name: SubscriptionName.GROWTH },
                 interval: SubscriptionPlanInterval.MONTHLY,
             },
             select: { id: true, subscriptionPlanId: true },
         }),
-        prisma.subscription.findFirst({
+        db.subscription.findFirst({
             where: { adminId, status: SubscriptionStatus.ACTIVE },
             select: { id: true },
         }),
@@ -127,15 +132,18 @@ const createTrialSubscription = async (adminId: string) => {
     }
 
     const now = new Date();
-    const platformConfig = await getPlatformConfig().catch(
-        () => null as null | { defaultTrialDays: number },
-    );
-    const trialDays = platformConfig?.defaultTrialDays ?? FALLBACK_TRIAL_DAYS;
+    let trialDays = options.trialDays;
+    if (trialDays == null) {
+        const platformConfig = await getPlatformConfig().catch(
+            () => null as null | { defaultTrialDays: number },
+        );
+        trialDays = platformConfig?.defaultTrialDays ?? FALLBACK_TRIAL_DAYS;
+    }
     const trialEndsAt = new Date(
         now.getTime() + trialDays * 24 * 60 * 60 * 1000,
     );
 
-    return prisma.subscription.create({
+    return db.subscription.create({
         data: {
             adminId,
             planId: plan.id,

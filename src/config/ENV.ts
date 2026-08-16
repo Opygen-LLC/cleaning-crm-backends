@@ -88,10 +88,10 @@ export const MAPBOX_ACCESS_TOKEN: string | undefined =
     process.env.MAPBOX_ACCESS_TOKEN;
 
 // ─── Business websites ──────────────────────────────────────────────────────
-// These are optional during Phase 1 because no registration flow provisions a
-// website yet. Phase 2/6 deployment should set WEBSITE_BASE_DOMAIN before
-// enabling automatic tenant subdomains; Phase 7 uses WEBSITE_CNAME_TARGET for
-// custom-domain DNS instructions.
+// Phase 2 stores/reserves only the tenant subdomain label, so registration and
+// the website backfill do not require host routing to be enabled yet. Set
+// WEBSITE_BASE_DOMAIN before Phase 6 exposes tenant hostnames publicly; Phase 7
+// uses WEBSITE_CNAME_TARGET for custom-domain DNS instructions.
 export const WEBSITE_BASE_DOMAIN: string | undefined = process.env.WEBSITE_BASE_DOMAIN
     ?.trim()
     .toLowerCase()

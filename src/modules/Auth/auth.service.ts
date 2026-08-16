@@ -17,9 +17,9 @@ import {
     StaffStatus,
     UserRole,
 } from "../../generated/prisma/enums";
-import { adminService } from "../Admin/admin.service";
-import { subscriptionService } from "../Subscription/subscription.service";
+import { AccountProvisioningService } from "./accountProvisioning.service";
 import { getPlatformConfig } from "../../lib/utils/platformConfig";
+import logger from "../../lib/logger";
 
 //? Max sessions per user
 const MAX_SESSIONS = 3;
@@ -53,28 +53,38 @@ const register = async ({
         throw new AppError(status.BAD_REQUEST, "Failed to register user.");
     }
 
-    // ✅ Create admin first — subscription depends on admin.id
-    const admin = await adminService
-        .createAdmin({ userId: data.user.id, businessName })
-        .catch(async () => {
-            await prisma.user.delete({ where: { id: data.user.id } }).catch(() => {});
-            throw new AppError(status.INTERNAL_SERVER_ERROR, "Registration failed. Please try again.");
+    try {
+        const provisioned = await AccountProvisioningService.provisionRegisteredAdmin({
+            userId: data.user.id,
+            businessName,
+            trialDays: platformConfig.defaultTrialDays,
         });
 
-    // ✅ Create trial subscription using admin.id
-    const subscription = await subscriptionService
-        .createTrialSubscription(admin.id)
-        .catch(async () => {
-            // Roll back admin + user if subscription fails
-            await prisma.user.delete({ where: { id: data.user.id } }).catch(() => {});
-            throw new AppError(status.INTERNAL_SERVER_ERROR, "Registration failed. Please try again.");
+        return {
+            user: data.user,
+            ...provisioned,
+        };
+    } catch (error) {
+        // Better Auth creates User/Account outside Prisma's tenant transaction.
+        // Compensate that external write if any tenant-owned provisioning step
+        // fails so the email is not left claimed by a partial registration.
+        await prisma.user.delete({ where: { id: data.user.id } }).catch((rollbackError) => {
+            logger.error("Failed to compensate Better Auth user after registration provisioning failure", {
+                userId: data.user.id,
+                rollbackError,
+            });
+        });
+        logger.error("Registration provisioning failed", {
+            userId: data.user.id,
+            email,
+            error,
         });
 
-    return {
-        user: data.user,
-        admin,
-        subscription,
-    };
+        throw new AppError(
+            status.INTERNAL_SERVER_ERROR,
+            "Registration failed. Please try again.",
+        );
+    }
 };
 
 const login = async ({ email, password }: ILoginUserPayload) => {

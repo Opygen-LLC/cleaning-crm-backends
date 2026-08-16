@@ -14,7 +14,9 @@
         "push": "prisma db push",
         "pull": "prisma db pull",
         "test": "vitest run",
-        "test:watch": "vitest"
+        "test:watch": "vitest",
+        "backfill:websites": "tsx src/scripts/backfillBusinessWebsites.ts",
+        "migrate:phase2-websites": "tsx src/scripts/backfillBusinessWebsites.ts"
     },
     "keywords": [],
     "author": "opygen",

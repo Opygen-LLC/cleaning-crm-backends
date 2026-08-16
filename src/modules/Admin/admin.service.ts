@@ -196,8 +196,11 @@ const deleteWorkLocation = async (userId: string, locationId: string) => {
 };
 
 // ── Create the AdminProfile row for a freshly-registered/created admin user ─
-const createAdmin = async (payload: { userId: string; businessName: string }) => {
-  return prisma.adminProfile.create({
+const createAdmin = async (
+  payload: { userId: string; businessName: string },
+  db: any = prisma,
+) => {
+  return db.adminProfile.create({
     data: {
       userId: payload.userId,
       businessName: payload.businessName,

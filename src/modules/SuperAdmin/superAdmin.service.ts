@@ -19,6 +19,7 @@ import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { waitUntil } from "@vercel/functions";
 import { auth } from "../../lib/auth";
 import { adminService } from "../Admin/admin.service";
+import { WebsiteProvisioningService } from "../Website/websiteProvisioning.service";
 import { createNotification } from "../../lib/utils/createNotification";
 import { emitToSuperAdmins } from "../../config/socketio";
 import { NotificationType } from "../../generated/prisma/enums";
@@ -549,28 +550,45 @@ const createAdminAccount = async (payload: {
     }
 
     try {
-        const user = await prisma.user.update({
-            where: {
-                id: data.user.id,
-            },
-            data: {
-                role: UserRole.ADMIN,
-                status: AccountStatus.ACTIVE,
-                emailVerified: true,
-            },
-            select: {
-                id: true,
-                name: true,
-                email: true,
-                role: true,
-                status: true,
-                createdAt: true,
-            },
-        });
+        const { user, admin, website } = await prisma.$transaction(async (tx: any) => {
+            const user = await tx.user.update({
+                where: {
+                    id: data.user.id,
+                },
+                data: {
+                    role: UserRole.ADMIN,
+                    status: AccountStatus.ACTIVE,
+                    emailVerified: true,
+                },
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    role: true,
+                    status: true,
+                    createdAt: true,
+                },
+            });
 
-        const admin = await adminService.createAdmin({
-            userId: data.user.id,
-            businessName,
+            const admin = await adminService.createAdmin(
+                {
+                    userId: data.user.id,
+                    businessName,
+                },
+                tx,
+            );
+
+            const { website } =
+                await WebsiteProvisioningService.provisionDefaultWebsiteForAdminTx(
+                    tx,
+                    {
+                        adminId: admin.id,
+                        businessName,
+                        createdByUserId: data.user.id,
+                    },
+                );
+
+            return { user, admin, website };
         });
 
         // Fire-and-forget welcome email with login credentials
@@ -594,6 +612,7 @@ const createAdminAccount = async (payload: {
         return {
             ...user,
             admin,
+            website,
         };
     } catch (error) {
         // Rollback

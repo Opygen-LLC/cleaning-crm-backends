@@ -3,28 +3,20 @@ import AppError from "../../errorHelper/AppError";
 import { prisma } from "../../lib/prisma/prisma";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
-import { DEFAULT_WEBSITE_PAGES } from "./website.constant";
 import type {
   WebsiteAssetCreateInput,
   WebsiteCreateInput,
   WebsitePageUpdateInput,
   WebsiteUpdateInput,
 } from "./website.interface";
-import { assertSafeHttpsUrl, normalizeSubdomain } from "./websiteIdentity";
+import { assertSafeHttpsUrl } from "./websiteIdentity";
 import { TemplateRegistry } from "./templateRegistry";
+import { WebsiteProvisioningService } from "./websiteProvisioning.service";
 
 const getWebsiteOrThrow = async (adminId: string, db: any = prisma) => {
   const website = await db.businessWebsite.findUnique({ where: { adminId } });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
   return website;
-};
-
-const assertSubdomainAvailable = async (subdomain: string, db: any = prisma) => {
-  const [website, alias] = await Promise.all([
-    db.businessWebsite.findUnique({ where: { subdomain }, select: { id: true } }),
-    db.websiteSubdomainAlias.findUnique({ where: { subdomain }, select: { id: true } }),
-  ]);
-  if (website || alias) throw new AppError(status.CONFLICT, "That subdomain is already in use");
 };
 
 const assertOwnedForm = async (
@@ -78,47 +70,24 @@ const createRevisionSnapshot = async (
   });
 };
 
-/**
- * Reusable Phase-2 provisioning primitive. It intentionally does not run from
- * registration yet; Phase 2 will call this helper transactionally from the
- * account-provisioning flow.
- */
 const createWebsiteForAdmin = async (
   adminId: string,
   payload: WebsiteCreateInput,
   createdByUserId: string | null = null,
 ) => {
-  const subdomain = normalizeSubdomain(payload.subdomain);
-  const template = TemplateRegistry.requireTemplate(payload.templateId ?? "clean-modern", payload.templateVersion);
-
   await Promise.all([
-    assertSubdomainAvailable(subdomain),
     assertOwnedForm(adminId, payload.primaryBookingFormId, "booking"),
     assertOwnedForm(adminId, payload.primaryEstimateFormId, "estimate"),
   ]);
 
-  return prisma.$transaction(async (tx: any) => {
-    const existing = await tx.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
-    if (existing) throw new AppError(status.CONFLICT, "This business already has a website");
-    await assertSubdomainAvailable(subdomain, tx);
-
-    const website = await tx.businessWebsite.create({
-      data: {
-        adminId,
-        subdomain,
-        templateId: template.id,
-        templateVersion: template.version,
-        schemaVersion: template.schemaVersion,
-        primaryBookingFormId: payload.primaryBookingFormId ?? null,
-        primaryEstimateFormId: payload.primaryEstimateFormId ?? null,
-        pages: {
-          create: DEFAULT_WEBSITE_PAGES.map((page) => ({ ...page, content: {} })) as any,
-        },
-      },
-    });
-    await createRevisionSnapshot(tx, website.id, createdByUserId, "Website provisioned");
-    return loadSnapshot(website.id, tx);
-  });
+  return prisma.$transaction((tx: any) =>
+    WebsiteProvisioningService.createWebsiteForAdminTx(
+      tx,
+      adminId,
+      payload,
+      createdByUserId,
+    ),
+  );
 };
 
 const createWebsite = async (payload: WebsiteCreateInput, user: IRequestUser) => {
