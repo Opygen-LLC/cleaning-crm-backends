@@ -24,7 +24,14 @@ const addDomain = catchAsync(async (req, res) => created(res, "Website domain ad
 const listDomains = catchAsync(async (req, res) => ok(res, "Website domains retrieved successfully", await DomainService.listDomains(req.user)));
 const removeDomain = catchAsync(async (req, res) => ok(res, "Website domain removed successfully", await DomainService.removeDomain(req.params.domainId, req.user)));
 const setPrimaryDomain = catchAsync(async (req, res) => ok(res, "Primary website domain updated successfully", await DomainService.setPrimaryDomain(req.params.domainId, req.user)));
-const getPublicWebsite = catchAsync(async (req, res) => ok(res, "Public website retrieved successfully", await PublicWebsiteService.getPublicWebsite(req.params.identifier)));
+const getPublicWebsite = catchAsync(async (req, res) => {
+  const data = await PublicWebsiteService.getPublicWebsite(req.params.identifier);
+  // Only successful public projections are cacheable. Error responses (most
+  // importantly 404 before publish and 503 while suspended/unavailable) must
+  // never inherit a public cache lifetime.
+  res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
+  return ok(res, "Public website retrieved successfully", data);
+});
 
 export const websiteController = {
   createWebsite, getWebsite, updateWebsite, listPages, updatePage, listRevisions, getRevision,

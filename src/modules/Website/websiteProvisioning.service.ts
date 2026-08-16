@@ -130,7 +130,10 @@ const createWebsiteRecordTx = async (
       primaryBookingFormId: payload.primaryBookingFormId ?? null,
       primaryEstimateFormId: payload.primaryEstimateFormId ?? null,
       pages: {
-        create: DEFAULT_WEBSITE_PAGES.map((page) => ({ ...page, content: {} })),
+        create: DEFAULT_WEBSITE_PAGES.map((page) => ({
+          ...page,
+          content: JSON.parse(JSON.stringify(page.content ?? {})),
+        })),
       },
     },
     select: { id: true },

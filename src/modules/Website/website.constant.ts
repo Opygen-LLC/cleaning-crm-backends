@@ -4,12 +4,95 @@ export const RESERVED_WEBSITE_SUBDOMAINS = new Set([
   "help", "docs", "blog", "portal", "site", "sites", "auth",
 ]);
 
+/**
+ * Default content is intentionally generic and contains no tenant data.
+ * The public runtime overlays dynamic CRM data (business profile, services,
+ * reviews and service areas) so a newly provisioned website is useful without
+ * duplicating those records into website JSON.
+ */
 export const DEFAULT_WEBSITE_PAGES = [
-  { kind: "HOME", slug: "/", title: "Home", showInNavigation: true, sortOrder: 0 },
-  { kind: "SERVICES", slug: "/services", title: "Services", showInNavigation: true, sortOrder: 10 },
-  { kind: "ABOUT", slug: "/about", title: "About", showInNavigation: true, sortOrder: 20 },
-  { kind: "REVIEWS", slug: "/reviews", title: "Reviews", showInNavigation: true, sortOrder: 30 },
-  { kind: "CONTACT", slug: "/contact", title: "Contact", showInNavigation: true, sortOrder: 40 },
-  { kind: "BOOK", slug: "/book", title: "Book", showInNavigation: true, sortOrder: 50 },
-  { kind: "ESTIMATE", slug: "/estimate", title: "Estimate", showInNavigation: false, sortOrder: 60 },
+  {
+    kind: "HOME",
+    slug: "/",
+    title: "Home",
+    showInNavigation: true,
+    sortOrder: 0,
+    content: {
+      eyebrow: "Professional cleaning services",
+      heroTitle: "A cleaner space, without the stress.",
+      heroSubtitle: "Reliable local cleaning with simple online booking and friendly support.",
+      primaryCtaLabel: "Book a clean",
+      secondaryCtaLabel: "Get an estimate",
+      servicesHeading: "Cleaning services built around your space",
+      aboutHeading: "Professional, dependable and easy to book",
+      aboutBody: "We focus on clear communication, dependable service and a consistently high standard of cleaning.",
+      reviewsHeading: "What customers say",
+      areasHeading: "Areas we cover",
+    },
+  },
+  {
+    kind: "SERVICES",
+    slug: "/services",
+    title: "Services",
+    showInNavigation: true,
+    sortOrder: 10,
+    content: {
+      eyebrow: "Our services",
+      heading: "Cleaning services for homes and businesses",
+      intro: "Choose the service that fits your space. Pricing and availability come directly from our live service catalog.",
+    },
+  },
+  {
+    kind: "ABOUT",
+    slug: "/about",
+    title: "About",
+    showInNavigation: true,
+    sortOrder: 20,
+    content: {
+      eyebrow: "About us",
+      heading: "Cleaning you can feel confident booking",
+      body: "We make professional cleaning straightforward: clear services, reliable scheduling and a team focused on doing the job properly.",
+      values: ["Reliable service", "Clear communication", "Attention to detail"],
+    },
+  },
+  {
+    kind: "REVIEWS",
+    slug: "/reviews",
+    title: "Reviews",
+    showInNavigation: true,
+    sortOrder: 30,
+    content: {
+      eyebrow: "Customer reviews",
+      heading: "Trusted by the people we clean for",
+      intro: "Published reviews shown here come directly from our customer feedback in the CRM.",
+    },
+  },
+  {
+    kind: "CONTACT",
+    slug: "/contact",
+    title: "Contact",
+    showInNavigation: true,
+    sortOrder: 40,
+    content: {
+      eyebrow: "Contact",
+      heading: "How can we help?",
+      intro: "Call or email us with a question, or use online booking when you are ready to arrange a clean.",
+    },
+  },
+  {
+    kind: "BOOK",
+    slug: "/book",
+    title: "Book",
+    showInNavigation: true,
+    sortOrder: 50,
+    content: {},
+  },
+  {
+    kind: "ESTIMATE",
+    slug: "/estimate",
+    title: "Estimate",
+    showInNavigation: false,
+    sortOrder: 60,
+    content: {},
+  },
 ] as const;

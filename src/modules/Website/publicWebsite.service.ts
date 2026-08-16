@@ -50,12 +50,22 @@ const resolveIdentifier = async (identifier: string): Promise<ResolvedWebsite> =
   return { websiteId: alias.websiteId, aliasRedirectSubdomain: alias.website.subdomain };
 };
 
+const getReviewSummary = (reviews: Array<{ rating: number }>) => {
+  if (reviews.length === 0) return { averageRating: null, count: 0 };
+  const total = reviews.reduce((sum, review) => sum + review.rating, 0);
+  return {
+    averageRating: Math.round((total / reviews.length) * 10) / 10,
+    count: reviews.length,
+  };
+};
+
 const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: string | null = null) => {
   const website = await prisma.businessWebsite.findUnique({
     where: { id: websiteId },
     include: {
       admin: {
         select: {
+          id: true,
           businessName: true,
           businessLogo: true,
           mobileNumber: true,
@@ -99,10 +109,10 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
         orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
       },
       primaryBookingForm: {
-        select: { id: true, slug: true, published: true, headline: true, subheading: true },
+        select: { id: true, adminId: true, slug: true, published: true, headline: true, subheading: true },
       },
       primaryEstimateForm: {
-        select: { id: true, slug: true, published: true, headline: true, subheading: true },
+        select: { id: true, adminId: true, slug: true, published: true, headline: true, subheading: true },
       },
     },
   });
@@ -122,6 +132,16 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
     : WEBSITE_BASE_DOMAIN
       ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}`
       : null;
+  // WebsiteService already validates ownership when forms are linked. Keep a
+  // defense-in-depth check here as well so malformed/manual database state can
+  // never expose another tenant's public form through this website.
+  const bookingEnabled = Boolean(
+    website.primaryBookingForm?.published && website.primaryBookingForm.adminId === website.admin.id,
+  );
+  const estimateEnabled = Boolean(
+    website.primaryEstimateForm?.published && website.primaryEstimateForm.adminId === website.admin.id,
+  );
+  const reviewSummary = getReviewSummary(website.admin.reviews);
 
   return {
     website: {
@@ -132,6 +152,7 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
         version: template.version,
         schemaVersion: website.schemaVersion,
         name: template.name,
+        capabilities: template.capabilities,
       },
       canonicalUrl,
       redirectToSubdomain: aliasRedirectSubdomain,
@@ -146,7 +167,12 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
       favicon: website.favicon,
     },
     navigation: website.pages
-      .filter((page) => page.showInNavigation)
+      .filter((page) => {
+        if (!page.showInNavigation) return false;
+        if (page.kind === "BOOK" && !bookingEnabled) return false;
+        if (page.kind === "ESTIMATE" && !estimateEnabled) return false;
+        return true;
+      })
       .map((page) => ({ title: page.title, path: page.slug, kind: page.kind })),
     pages: website.pages.map((page) => ({
       kind: page.kind,
@@ -164,11 +190,12 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
       adminReply: review.adminReply,
       createdAt: review.createdAt,
     })),
+    reviewSummary,
     serviceAreas: website.admin.workLocations.map((location) => ({
       city: location.city,
       postcode: location.postcode,
     })),
-    booking: website.primaryBookingForm?.published
+    booking: bookingEnabled && website.primaryBookingForm
       ? {
           formId: website.primaryBookingForm.id,
           legacySlug: website.primaryBookingForm.slug,
@@ -177,7 +204,7 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
           path: "/book",
         }
       : null,
-    estimate: website.primaryEstimateForm?.published
+    estimate: estimateEnabled && website.primaryEstimateForm
       ? {
           formId: website.primaryEstimateForm.id,
           legacySlug: website.primaryEstimateForm.slug,
