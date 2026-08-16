@@ -17,7 +17,7 @@ const getStatusCodeFromPrismaError = (errorCode: string): number => {
     }
 
     if (errorCode === "P5011") return status.TOO_MANY_REQUESTS;
-    if (errorCode === "P6009") return status.PAYLOAD_TOO_LARGE;
+    if (errorCode === "P6009") return status.REQUEST_ENTITY_TOO_LARGE;
 
     if (["P1008", "P2024", "P6004"].includes(errorCode)) {
         return status.GATEWAY_TIMEOUT;

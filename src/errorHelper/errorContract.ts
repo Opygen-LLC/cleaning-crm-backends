@@ -17,7 +17,7 @@ export const getErrorCodeFromStatus = (statusCode: number): string => {
             return "CONFLICT";
         case status.REQUEST_TIMEOUT:
             return "REQUEST_TIMEOUT";
-        case status.PAYLOAD_TOO_LARGE:
+        case status.REQUEST_ENTITY_TOO_LARGE:
             return "PAYLOAD_TOO_LARGE";
         case status.UNPROCESSABLE_ENTITY:
             return "VALIDATION_ERROR";
@@ -35,13 +35,15 @@ export const getErrorCodeFromStatus = (statusCode: number): string => {
 };
 
 export const isRetryableStatus = (statusCode: number): boolean =>
-    [
-        status.REQUEST_TIMEOUT,
-        status.TOO_MANY_REQUESTS,
-        status.BAD_GATEWAY,
-        status.SERVICE_UNAVAILABLE,
-        status.GATEWAY_TIMEOUT,
-    ].includes(statusCode) || statusCode >= 500;
+    (
+        [
+            status.REQUEST_TIMEOUT,
+            status.TOO_MANY_REQUESTS,
+            status.BAD_GATEWAY,
+            status.SERVICE_UNAVAILABLE,
+            status.GATEWAY_TIMEOUT,
+        ] as number[]
+    ).includes(statusCode) || statusCode >= 500;
 
 const normaliseFieldPath = (path: string): string =>
     path
