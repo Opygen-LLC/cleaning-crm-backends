@@ -30,6 +30,8 @@ import { staffLeaveRoutes } from "../modules/StaffLeave/staffLeave.routes";
 import { couponRoutes } from "../modules/Coupon/coupon.routes";
 import { paymentRoutes } from "../modules/Payment/payment.routes";
 import { pushRoutes } from "../modules/Push/push.routes";
+import { websiteRoutes } from "../modules/Website/website.routes";
+import { publicWebsiteRoutes } from "../modules/Website/publicWebsite.routes";
 import { checkSubscription } from "../middlewares/checkSubscription";
 import express from "express";
 
@@ -45,6 +47,7 @@ const openRoutes: { path: string; route: Router }[] = [
     { path: "/booking-form",    route: bookingFormRoutes },
     { path: "/estimate-form",   route: estimateFormRoutes },
     { path: "/quote/public",    route: quotePublicRoutes },
+    { path: "/website/public", route: publicWebsiteRoutes },
     { path: "/super-admin",     route: superAdminRoutes },
 ];
 
@@ -88,6 +91,7 @@ const gatedRoutes: { path: string; route: Router }[] = [
     // Payment module — manual cash/bank/cheque payment recording
     { path: "/payment",           route: paymentRoutes },
     { path: "/push",              route: pushRoutes },
+    { path: "/website",           route: websiteRoutes },
 ];
 
 openRoutes.forEach(({ path, route }) => {

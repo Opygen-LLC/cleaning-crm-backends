@@ -1,0 +1,28 @@
+import { Router } from "express";
+import { UserRole } from "../../generated/prisma/enums";
+import { checkAuth } from "../../middlewares/checkAuth";
+import { ValidationProperty, zodValidate } from "../../middlewares/validations/zodValidation.middleware";
+import { websiteController } from "./website.controller";
+import { websiteValidation } from "./website.validation";
+
+const router = Router();
+const isAdmin = checkAuth(UserRole.ADMIN);
+router.use(isAdmin);
+
+router.post("/", zodValidate(websiteValidation.createWebsite, ValidationProperty.BODY), websiteController.createWebsite);
+router.get("/me", websiteController.getWebsite);
+router.patch("/me", zodValidate(websiteValidation.updateWebsite, ValidationProperty.BODY), websiteController.updateWebsite);
+router.get("/pages", websiteController.listPages);
+router.patch("/pages/:pageId", zodValidate(websiteValidation.updatePage, ValidationProperty.BODY), websiteController.updatePage);
+router.get("/revisions", websiteController.listRevisions);
+router.get("/revisions/:revisionId", websiteController.getRevision);
+router.get("/templates", websiteController.listTemplates);
+router.get("/assets", websiteController.listAssets);
+router.post("/assets", zodValidate(websiteValidation.createAsset, ValidationProperty.BODY), websiteController.registerAsset);
+router.delete("/assets/:assetId", websiteController.deleteAsset);
+router.get("/domains", websiteController.listDomains);
+router.post("/domains", zodValidate(websiteValidation.addDomain, ValidationProperty.BODY), websiteController.addDomain);
+router.patch("/domains/:domainId/primary", websiteController.setPrimaryDomain);
+router.delete("/domains/:domainId", websiteController.removeDomain);
+
+export const websiteRoutes = router;

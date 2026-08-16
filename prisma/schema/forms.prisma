@@ -21,6 +21,7 @@ model BookingForm {
   fields              BookingFormField[]
   services            BookingFormService[]
   submissions         BookingFormSubmission[]
+  primaryForWebsites  BusinessWebsite[]         @relation("WebsitePrimaryBookingForm")
 
   @@index([adminId])
   @@map("booking_form")
@@ -111,6 +112,7 @@ model EstimateForm {
   fields              EstimateFormField[]
   services            EstimateFormService[]
   submissions         EstimateFormSubmission[]
+  primaryForWebsites  BusinessWebsite[]          @relation("WebsitePrimaryEstimateForm")
 
   @@index([adminId])
   @@map("estimate_form")

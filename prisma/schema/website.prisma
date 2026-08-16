@@ -1,0 +1,135 @@
+model BusinessWebsite {
+  id                    String        @id @default(uuid())
+  adminId               String        @unique
+  subdomain              String        @unique
+  status                 WebsiteStatus @default(PROVISIONED)
+
+  templateId             String        @default("clean-modern")
+  templateVersion        String        @default("1.0.0")
+  schemaVersion          Int           @default(1)
+
+  primaryColor           String        @default("#0F766E")
+  secondaryColor         String        @default("#0F172A")
+  accentColor            String        @default("#14B8A6")
+  font                    String?
+  logo                    String?
+  favicon                 String?
+
+  primaryBookingFormId   String?
+  primaryEstimateFormId  String?
+
+  metaTitle               String?
+  metaDescription         String?
+  socialImageUrl          String?
+  indexSite               Boolean       @default(true)
+
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+  publishedAt             DateTime?
+
+  admin                   AdminProfile  @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  primaryBookingForm      BookingForm?  @relation("WebsitePrimaryBookingForm", fields: [primaryBookingFormId], references: [id], onDelete: SetNull)
+  primaryEstimateForm     EstimateForm? @relation("WebsitePrimaryEstimateForm", fields: [primaryEstimateFormId], references: [id], onDelete: SetNull)
+  pages                   WebsitePage[]
+  revisions               WebsiteRevision[]
+  domains                 WebsiteDomain[]
+  subdomainAliases        WebsiteSubdomainAlias[]
+  assets                   WebsiteAsset[]
+
+  @@index([status])
+  @@index([templateId, templateVersion])
+  @@map("business_website")
+}
+
+model WebsitePage {
+  id                String          @id @default(uuid())
+  websiteId         String
+  kind              WebsitePageKind
+  slug              String
+  title             String
+  content           Json            @default("{}")
+  seoTitle          String?
+  seoDescription    String?
+  showInNavigation  Boolean         @default(true)
+  isEnabled         Boolean         @default(true)
+  sortOrder         Int             @default(0)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  website           BusinessWebsite @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@unique([websiteId, slug])
+  @@index([websiteId, sortOrder])
+  @@index([websiteId, kind])
+  @@map("website_page")
+}
+
+model WebsiteRevision {
+  id                String          @id @default(uuid())
+  websiteId         String
+  revisionNumber    Int
+  snapshot          Json
+  reason            String?
+  createdByUserId   String?
+  createdAt         DateTime        @default(now())
+
+  website           BusinessWebsite @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@unique([websiteId, revisionNumber])
+  @@index([websiteId, createdAt])
+  @@map("website_revision")
+}
+
+model WebsiteDomain {
+  id                 String              @id @default(uuid())
+  websiteId          String
+  domain             String              @unique
+  status             WebsiteDomainStatus @default(PENDING)
+  verificationToken  String              @unique
+  requiredDns        Json                @default("{}")
+  isPrimary          Boolean             @default(false)
+  lastCheckedAt      DateTime?
+  verifiedAt         DateTime?
+  failureReason      String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  website            BusinessWebsite     @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@index([websiteId, status])
+  @@map("website_domain")
+}
+
+model WebsiteSubdomainAlias {
+  id                 String          @id @default(uuid())
+  websiteId          String
+  subdomain          String          @unique
+  redirectCode       Int             @default(308)
+  createdAt          DateTime        @default(now())
+
+  website            BusinessWebsite @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@index([websiteId])
+  @@map("website_subdomain_alias")
+}
+
+model WebsiteAsset {
+  id                 String          @id @default(uuid())
+  websiteId          String
+  publicId           String
+  url                String
+  mimeType           String
+  width              Int?
+  height             Int?
+  bytes              Int?
+  altText            String?
+  folder             String
+  metadata           Json            @default("{}")
+  createdAt          DateTime        @default(now())
+
+  website            BusinessWebsite @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@unique([websiteId, publicId])
+  @@index([websiteId, folder, createdAt])
+  @@map("website_asset")
+}

@@ -86,3 +86,17 @@ export const GOOGLE_MAPS_API_KEY: string | undefined =
     process.env.GOOGLE_MAPS_API_KEY;
 export const MAPBOX_ACCESS_TOKEN: string | undefined =
     process.env.MAPBOX_ACCESS_TOKEN;
+
+// ─── Business websites ──────────────────────────────────────────────────────
+// These are optional during Phase 1 because no registration flow provisions a
+// website yet. Phase 2/6 deployment should set WEBSITE_BASE_DOMAIN before
+// enabling automatic tenant subdomains; Phase 7 uses WEBSITE_CNAME_TARGET for
+// custom-domain DNS instructions.
+export const WEBSITE_BASE_DOMAIN: string | undefined = process.env.WEBSITE_BASE_DOMAIN
+    ?.trim()
+    .toLowerCase()
+    .replace(/^\.+|\.+$/g, "");
+export const WEBSITE_CNAME_TARGET: string | undefined = process.env.WEBSITE_CNAME_TARGET
+    ?.trim()
+    .toLowerCase()
+    .replace(/^\.+|\.+$/g, "");

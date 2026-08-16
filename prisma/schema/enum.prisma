@@ -435,3 +435,27 @@ enum NotificationType {
   SUBSCRIPTION
   GENERAL
 }
+
+enum WebsiteStatus {
+  PROVISIONED
+  PUBLISHED
+  SUSPENDED
+}
+
+enum WebsitePageKind {
+  HOME
+  SERVICES
+  ABOUT
+  REVIEWS
+  CONTACT
+  BOOK
+  ESTIMATE
+  CUSTOM
+}
+
+enum WebsiteDomainStatus {
+  PENDING
+  VERIFYING
+  VERIFIED
+  FAILED
+}
