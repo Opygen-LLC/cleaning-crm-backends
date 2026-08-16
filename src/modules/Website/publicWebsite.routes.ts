@@ -4,12 +4,14 @@ import {
   publicReadRateLimit,
   publicHostResolveRateLimit,
   publicResourceMutationRateLimit,
+  publicTelemetryRateLimit,
 } from "../../middlewares/publicApiSecurity";
 import { ValidationProperty, zodValidate } from "../../middlewares/validations/zodValidation.middleware";
 import { bookingFormValidation } from "../BookingForm/bookingForm.validation";
 import { estimateFormValidation } from "../EstimateForm/estimateForm.validation";
 import { websiteController } from "./website.controller";
 import { websiteValidation } from "./website.validation";
+import { publicSpamGuard } from "../../middlewares/publicSpamProtection";
 
 const router = Router();
 
@@ -38,6 +40,7 @@ router.post(
   "/:identifier/booking",
   publicMutationRateLimit,
   publicResourceMutationRateLimit,
+  publicSpamGuard,
   zodValidate(
     bookingFormValidation.publicBookingSubmissionSchema,
     ValidationProperty.BODY,
@@ -64,6 +67,7 @@ router.post(
   "/:identifier/estimate",
   publicMutationRateLimit,
   publicResourceMutationRateLimit,
+  publicSpamGuard,
   zodValidate(estimateFormValidation.publicSubmission, ValidationProperty.BODY),
   websiteController.submitPublicWebsiteEstimate,
 );
@@ -74,8 +78,22 @@ router.post(
   "/:identifier/contact",
   publicMutationRateLimit,
   publicResourceMutationRateLimit,
+  publicSpamGuard,
   zodValidate(websiteValidation.publicContact, ValidationProperty.BODY),
   websiteController.submitPublicWebsiteContact,
+);
+
+router.post(
+  "/:identifier/analytics",
+  publicTelemetryRateLimit,
+  zodValidate(websiteValidation.publicAnalytics, ValidationProperty.BODY),
+  websiteController.trackPublicWebsiteAnalytics,
+);
+router.post(
+  "/:identifier/error",
+  publicTelemetryRateLimit,
+  zodValidate(websiteValidation.publicClientError, ValidationProperty.BODY),
+  websiteController.reportPublicWebsiteError,
 );
 
 router.get("/:identifier", publicReadRateLimit, websiteController.getPublicWebsite);

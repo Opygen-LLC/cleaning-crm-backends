@@ -8,6 +8,7 @@ import { Prisma } from "../../generated/prisma/client";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { IBookingFormCreate, IPublicBookingSubmission } from "./bookingForm.interface";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
+import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 
 // ─── Slot-generation helpers (mirrors frontend logic exactly) ─────────────────
 
@@ -295,7 +296,7 @@ const createBookingForm = async (
     const existing = await prisma.bookingForm.findUnique({ where: { slug } });
     const finalSlug = existing ? `${slug}-${Date.now().toString(36)}` : slug;
 
-    return prisma.bookingForm.create({
+    const created = await prisma.bookingForm.create({
         data: {
             slug:                finalSlug,
             adminId,
@@ -336,6 +337,8 @@ const createBookingForm = async (
         },
         include: formInclude,
     });
+    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+    return created;
 };
 
 const getAllBookingForms = async (user: IRequestUser) => {
@@ -410,7 +413,7 @@ const updateBookingForm = async (
     if (!existing) throw new AppError(status.NOT_FOUND, "Booking form not found");
     const resolvedServices = payload.services ? await resolveFormServices(adminId, payload.services) : undefined;
 
-    return prisma.$transaction(async (tx) => {
+    const updated = await prisma.$transaction(async (tx) => {
         // Replace services when provided
         if (payload.services) {
             await tx.bookingFormService.deleteMany({ where: { formId: id } });
@@ -456,6 +459,8 @@ const updateBookingForm = async (
             include: formInclude,
         });
     });
+    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+    return updated;
 };
 
 const deleteBookingForm = async (id: string, user: IRequestUser) => {
@@ -463,6 +468,7 @@ const deleteBookingForm = async (id: string, user: IRequestUser) => {
     const existing = await prisma.bookingForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Booking form not found");
     await prisma.bookingForm.delete({ where: { id } });
+    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
 };
 
 const togglePublished = async (id: string, user: IRequestUser) => {
@@ -470,11 +476,13 @@ const togglePublished = async (id: string, user: IRequestUser) => {
     const existing = await prisma.bookingForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Booking form not found");
 
-    return prisma.bookingForm.update({
+    const updated = await prisma.bookingForm.update({
         where: { id },
         data:  { published: !existing.published },
         include: formInclude,
     });
+    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+    return updated;
 };
 
 // ─── Submissions ───────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ import { normalizeDomain } from "./websiteIdentity";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { TemplateRegistry } from "./templateRegistry";
 import { buildPublishedSnapshot, parsePublishedSnapshot } from "./websiteSnapshot";
+import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 
 interface ResolvedWebsite {
   websiteId: string;
@@ -259,8 +260,27 @@ const projectWebsite = (
 };
 
 const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: string | null = null) => {
+  type PublicProjection = ReturnType<typeof projectWebsite>;
+  const cached = await WebsiteProjectionCacheService.get<PublicProjection>(websiteId);
+  if (cached) {
+    // Alias information belongs to the current request, not the canonical
+    // website projection. Keep one cache entry per website and overlay only
+    // the request-specific redirect hint.
+    return {
+      ...cached,
+      website: {
+        ...cached.website,
+        redirectToSubdomain: aliasRedirectSubdomain,
+      },
+    };
+  }
+
   const website = await loadProjectionSource(websiteId);
-  return projectWebsite(website, { mode: "public", aliasRedirectSubdomain });
+  const canonical = projectWebsite(website, { mode: "public", aliasRedirectSubdomain: null });
+  await WebsiteProjectionCacheService.set(websiteId, canonical);
+  return aliasRedirectSubdomain
+    ? { ...canonical, website: { ...canonical.website, redirectToSubdomain: aliasRedirectSubdomain } }
+    : canonical;
 };
 
 const getPublicWebsite = async (identifier: string) => {

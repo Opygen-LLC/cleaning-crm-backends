@@ -112,3 +112,11 @@ export const WEBSITE_DOMAIN_PROVIDER: "vercel" | "manual" =
 export const VERCEL_ACCESS_TOKEN: string | undefined = process.env.VERCEL_ACCESS_TOKEN?.trim();
 export const VERCEL_PROJECT_ID: string | undefined = process.env.VERCEL_PROJECT_ID?.trim();
 export const VERCEL_TEAM_ID: string | undefined = process.env.VERCEL_TEAM_ID?.trim();
+
+// ─── Phase 9 website reliability / observability ────────────────────────────
+export const ANALYTICS_HASH_SECRET: string | undefined = process.env.ANALYTICS_HASH_SECRET?.trim();
+export const TURNSTILE_SECRET_KEY: string | undefined = process.env.TURNSTILE_SECRET_KEY?.trim();
+export const ERROR_MONITOR_WEBHOOK_URL: string | undefined = process.env.ERROR_MONITOR_WEBHOOK_URL?.trim();
+export const ERROR_MONITOR_WEBHOOK_TOKEN: string | undefined = process.env.ERROR_MONITOR_WEBHOOK_TOKEN?.trim();
+export const ERROR_MONITOR_SERVICE_NAME: string = process.env.ERROR_MONITOR_SERVICE_NAME?.trim() || "cleaning-crm-api";
+export const WEBSITE_ANALYTICS_RETENTION_DAYS: number = Math.min(730, Math.max(30, Number(process.env.WEBSITE_ANALYTICS_RETENTION_DAYS) || 180));

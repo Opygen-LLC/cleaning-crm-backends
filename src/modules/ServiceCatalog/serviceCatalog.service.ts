@@ -9,6 +9,7 @@ import status from "http-status";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { inferLegacyServiceType } from "../../lib/utils/serviceIdentity";
+import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 
 const createServiceCatalog = async (
   payload: IServiceCatalogCreate,
@@ -19,7 +20,7 @@ const createServiceCatalog = async (
     ? inferLegacyServiceType(payload.serviceName)
     : payload.legacyServiceType;
 
-  return prisma.serviceCatalog.create({
+  const created = await prisma.serviceCatalog.create({
     data: {
       ...payload,
       adminId,
@@ -27,6 +28,8 @@ const createServiceCatalog = async (
       addOns: payload.addOns ? (payload.addOns as any) : [],
     },
   });
+  await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+  return created;
 };
 
 const getAllServiceCatalogs = async (
@@ -76,7 +79,7 @@ const updateServiceCatalog = async (
       ? inferLegacyServiceType(payload.serviceName)
       : undefined;
 
-  return prisma.serviceCatalog.update({
+  const updated = await prisma.serviceCatalog.update({
     where: { id },
     data: {
       ...payload,
@@ -84,13 +87,17 @@ const updateServiceCatalog = async (
       addOns: payload.addOns ? (payload.addOns as any) : undefined,
     },
   });
+  await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+  return updated;
 };
 
 const deleteServiceCatalog = async (id: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const service = await prisma.serviceCatalog.findFirst({ where: { id, adminId } });
   if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
-  return prisma.serviceCatalog.delete({ where: { id } });
+  const deleted = await prisma.serviceCatalog.delete({ where: { id } });
+  await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+  return deleted;
 };
 
 export const serviceCatalogService = {

@@ -20,6 +20,7 @@ router.patch("/pages/:pageId", zodValidate(websiteValidation.updatePage, Validat
 router.get("/revisions", websiteController.listRevisions);
 router.get("/revisions/:revisionId", websiteController.getRevision);
 router.get("/templates", websiteController.listTemplates);
+router.get("/analytics", websiteController.getWebsiteAnalytics);
 router.get("/assets", websiteController.listAssets);
 router.post("/assets", zodValidate(websiteValidation.createAsset, ValidationProperty.BODY), websiteController.registerAsset);
 router.delete("/assets/:assetId", websiteController.deleteAsset);

@@ -64,6 +64,23 @@ const createAsset = z.object({
 
 const addDomain = z.object({ domain: z.string().trim().min(3).max(253) }).strict();
 const renameSubdomain = z.object({ subdomain: z.string().trim().min(3).max(63) }).strict();
+
+const publicAnalytics = z.object({
+  eventType: z.literal("PAGE_VIEW"),
+  path: z.string().trim().min(1).max(500),
+  sessionId: z.string().trim().max(160).optional(),
+  referrer: z.string().trim().max(2048).optional(),
+  utmSource: z.string().trim().max(120).optional(),
+  utmMedium: z.string().trim().max(120).optional(),
+  utmCampaign: z.string().trim().max(160).optional(),
+  metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+}).strict();
+
+const publicClientError = z.object({
+  message: z.string().trim().min(1).max(1000),
+  digest: z.string().trim().max(240).optional(),
+  path: z.string().trim().max(800).optional(),
+}).strict();
 const publicContact = z.object({
   name: z.string().trim().min(1, "Name is required").max(200),
   email: z.string().trim().email("Invalid email address").max(320),
@@ -82,4 +99,6 @@ export const websiteValidation = {
   addDomain,
   renameSubdomain,
   publicContact,
+  publicAnalytics,
+  publicClientError,
 };

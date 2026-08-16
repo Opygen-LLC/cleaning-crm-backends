@@ -20,6 +20,7 @@ import {
     isRetryableStatus,
 } from "../errorHelper/errorContract";
 import logger from "../lib/logger";
+import { ErrorMonitor } from "../lib/monitoring/errorMonitor";
 
 const getRequestId = (req: Request, res: Response): string => {
     const existing = res.locals.requestId;
@@ -136,6 +137,15 @@ export const globalErrorHandler = async (
     }`;
     if (statusCode >= 500) {
         logger.error(logMessage);
+        void ErrorMonitor.captureBackendError({
+            message: err instanceof Error ? err.message : String(err),
+            requestId,
+            path: req.originalUrl || req.path,
+            method: req.method,
+            statusCode,
+            code,
+            stack: err instanceof Error ? err.stack ?? null : null,
+        });
     } else if (NODE_ENV === "development") {
         logger.warn(logMessage);
     }

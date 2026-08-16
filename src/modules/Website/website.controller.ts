@@ -10,6 +10,8 @@ import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { bookingFormService } from "../BookingForm/bookingForm.service";
 import { estimateFormService } from "../EstimateForm/estimateForm.service";
 import { WebsiteAcquisitionService } from "./websiteAcquisition.service";
+import { WEBSITE_ANALYTICS_EVENT, WebsiteAnalyticsService } from "./websiteAnalytics.service";
+import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
 
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
@@ -80,6 +82,12 @@ const submitPublicWebsiteBooking = catchAsync(async (req, res) => {
     req.body,
     req.get("Idempotency-Key") ?? undefined,
   );
+  void WebsiteAnalyticsService.trackConversion(
+    integration.websiteId,
+    WEBSITE_ANALYTICS_EVENT.BOOKING_REQUEST,
+    "/book",
+    { formId: integration.formId },
+  ).catch(() => {});
   res.setHeader("Cache-Control", "no-store");
   return sendResponse(res, {
     httpStatusCode: status.CREATED,
@@ -115,6 +123,12 @@ const submitPublicWebsiteEstimate = catchAsync(async (req, res) => {
     req.body,
     req.get("Idempotency-Key") ?? undefined,
   );
+  void WebsiteAnalyticsService.trackConversion(
+    integration.websiteId,
+    WEBSITE_ANALYTICS_EVENT.ESTIMATE_REQUEST,
+    "/estimate",
+    { formId: integration.formId },
+  ).catch(() => {});
   res.setHeader("Cache-Control", "no-store");
   return sendResponse(res, {
     httpStatusCode: status.CREATED,
@@ -125,7 +139,16 @@ const submitPublicWebsiteEstimate = catchAsync(async (req, res) => {
 });
 
 const submitPublicWebsiteContact = catchAsync(async (req, res) => {
-  const data = await WebsiteAcquisitionService.submitContact(req.params.identifier, req.body);
+  const result = await WebsiteAcquisitionService.submitContact(req.params.identifier, req.body);
+  const { _websiteId, ...data } = result;
+  if (data.leadRef) {
+    void WebsiteAnalyticsService.trackConversion(
+      _websiteId,
+      WEBSITE_ANALYTICS_EVENT.CONTACT_SUBMITTED,
+      "/contact",
+      { merged: data.merged },
+    ).catch(() => {});
+  }
   res.setHeader("Cache-Control", "no-store");
   return sendResponse(res, {
     httpStatusCode: status.CREATED,
@@ -133,6 +156,35 @@ const submitPublicWebsiteContact = catchAsync(async (req, res) => {
     message: "Thanks — your message has been sent to the business.",
     data,
   });
+});
+
+const trackPublicWebsiteAnalytics = catchAsync(async (req, res) => {
+  const data = await WebsiteAnalyticsService.trackPublicPageView(
+    req.params.identifier,
+    req.body,
+    { ip: req.ip, userAgent: req.get("User-Agent") },
+  );
+  res.setHeader("Cache-Control", "no-store");
+  return sendResponse(res, { httpStatusCode: status.ACCEPTED, success: true, message: "Analytics accepted", data });
+});
+
+const reportPublicWebsiteError = catchAsync(async (req, res) => {
+  const resolved = await PublicWebsiteService.resolveIdentifier(req.params.identifier);
+  await PublicWebsiteService.getPublicWebsiteById(resolved.websiteId);
+  void ErrorMonitor.capturePublicWebsiteError({
+    websiteId: resolved.websiteId,
+    message: req.body.message,
+    digest: req.body.digest ?? null,
+    path: req.body.path ?? null,
+    requestId: res.locals.requestId ?? null,
+  });
+  res.setHeader("Cache-Control", "no-store");
+  return sendResponse(res, { httpStatusCode: status.ACCEPTED, success: true, message: "Error report accepted", data: { accepted: true } });
+});
+
+const getWebsiteAnalytics = catchAsync(async (req, res) => {
+  const days = Number(req.query.days ?? 30);
+  return ok(res, "Website analytics retrieved successfully", await WebsiteAnalyticsService.getSummary(req.user, days));
 });
 
 const getPublicWebsite = catchAsync(async (req, res) => {
@@ -172,5 +224,8 @@ export const websiteController = {
   calculatePublicWebsiteEstimate,
   submitPublicWebsiteEstimate,
   submitPublicWebsiteContact,
+  trackPublicWebsiteAnalytics,
+  reportPublicWebsiteError,
+  getWebsiteAnalytics,
   getPublicWebsite,
 };

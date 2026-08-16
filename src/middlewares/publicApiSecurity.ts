@@ -56,3 +56,11 @@ export const publicHostResolveRateLimit = rateLimit({
     },
     message: jsonMessage("Too many website routing requests. Please try again shortly."),
 });
+
+
+/** High-volume but bounded telemetry. Analytics/error endpoints never receive credentials. */
+export const publicTelemetryRateLimit = rateLimit({
+    ...base,
+    limit: 180,
+    message: jsonMessage("Too many telemetry requests. Please try again shortly."),
+});

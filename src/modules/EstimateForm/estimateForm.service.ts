@@ -15,6 +15,7 @@ import { IEstimateFormCreate } from "./estimateForm.interface";
 import { Prisma } from "../../generated/prisma/client";
 import { randomBytes } from "crypto";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
+import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -431,7 +432,7 @@ const createEstimateForm = async (
     const existing = await prisma.estimateForm.findUnique({ where: { slug } });
     const finalSlug = existing ? `${slug}-${Date.now().toString(36)}` : slug;
 
-    return prisma.estimateForm.create({
+    const created = await prisma.estimateForm.create({
         data: {
             slug:               finalSlug,
             adminId,
@@ -480,6 +481,8 @@ const createEstimateForm = async (
         },
         include: formInclude,
     });
+    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+    return created;
 };
 
 const getAllEstimateForms = async (
@@ -558,7 +561,7 @@ const updateEstimateForm = async (
     if (!existing) throw new AppError(status.NOT_FOUND, "Estimate form not found");
     const resolvedServices = payload.services ? await resolveEstimateFormServices(adminId, payload.services) : undefined;
 
-    return prisma.$transaction(async (tx) => {
+    const updated = await prisma.$transaction(async (tx) => {
         // Replace services when provided
         if (payload.services) {
             await tx.estimateFormService.deleteMany({ where: { formId: id } });
@@ -614,6 +617,8 @@ const updateEstimateForm = async (
             include: formInclude,
         });
     });
+    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+    return updated;
 };
 
 const deleteEstimateForm = async (id: string, user: IRequestUser) => {
@@ -621,6 +626,7 @@ const deleteEstimateForm = async (id: string, user: IRequestUser) => {
     const existing = await prisma.estimateForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Estimate form not found");
     await prisma.estimateForm.delete({ where: { id } });
+    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
 };
 
 const togglePublished = async (id: string, user: IRequestUser) => {
@@ -628,11 +634,13 @@ const togglePublished = async (id: string, user: IRequestUser) => {
     const existing = await prisma.estimateForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Estimate form not found");
 
-    return prisma.estimateForm.update({
+    const updated = await prisma.estimateForm.update({
         where: { id },
         data:  { published: !existing.published },
         include: formInclude,
     });
+    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+    return updated;
 };
 
 // ─── Submissions ───────────────────────────────────────────────────────────────

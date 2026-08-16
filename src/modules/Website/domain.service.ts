@@ -17,6 +17,7 @@ import {
   WebsiteDomainProviderService,
 } from "./websiteDomainProvider.service";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
+import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 
 const getOwnedWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
@@ -52,6 +53,7 @@ const invalidateWebsiteRouting = async (websiteId: string, subdomain: string, ex
   await Promise.all([
     WebsiteHostResolverService.invalidateSubdomains([subdomain, ...aliases.map((item) => item.subdomain)]),
     WebsiteHostResolverService.invalidateHosts([...domains.map((item) => item.domain), ...extraHosts]),
+    WebsiteProjectionCacheService.invalidateWebsite(websiteId),
   ]);
 };
 

@@ -39,6 +39,7 @@ model BusinessWebsite {
   domains                 WebsiteDomain[]
   subdomainAliases        WebsiteSubdomainAlias[]
   assets                   WebsiteAsset[]
+  analyticsEvents          WebsiteAnalyticsEvent[]
 
   @@index([status])
   @@index([templateId, templateVersion])
@@ -143,4 +144,30 @@ model WebsiteAsset {
   @@unique([websiteId, publicId])
   @@index([websiteId, folder, createdAt])
   @@map("website_asset")
+}
+
+
+model WebsiteAnalyticsEvent {
+  id             String          @id @default(uuid())
+  websiteId      String
+  eventType      String
+  path           String          @default("/")
+  visitorHash    String?
+  sessionHash    String?
+  referrerHost   String?
+  utmSource      String?
+  utmMedium      String?
+  utmCampaign    String?
+  deviceType     String?
+  metadata       Json            @default("{}")
+  createdAt      DateTime        @default(now())
+
+  website        BusinessWebsite @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@index([websiteId, createdAt])
+  @@index([websiteId, eventType, createdAt])
+  @@index([websiteId, path, createdAt])
+  @@index([websiteId, visitorHash, createdAt])
+  @@index([createdAt])
+  @@map("website_analytics_event")
 }

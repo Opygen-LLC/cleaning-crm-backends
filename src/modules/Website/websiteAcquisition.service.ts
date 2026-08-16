@@ -47,7 +47,7 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
   // bots from learning whether they tripped spam protection and creates no CRM
   // data/no side effects.
   if (payload.companyWebsite?.trim()) {
-    return { accepted: true, leadRef: null, merged: false };
+    return { accepted: true, leadRef: null, merged: false, _websiteId: integration.websiteId };
   }
 
   const email = normalizeEmail(payload.email);
@@ -109,7 +109,7 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
         },
         select: { leadRef: true },
       });
-      return { accepted: true, leadRef: updated.leadRef, merged: true };
+      return { accepted: true, leadRef: updated.leadRef, merged: true, _websiteId: integration.websiteId };
     }
 
     const leadRef = await generateLeadRef(tx);
@@ -129,7 +129,7 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
       select: { leadRef: true },
     });
 
-    return { accepted: true, leadRef: created.leadRef, merged: false };
+    return { accepted: true, leadRef: created.leadRef, merged: false, _websiteId: integration.websiteId };
   });
 };
 

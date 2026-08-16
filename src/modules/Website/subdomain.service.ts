@@ -7,6 +7,7 @@ import type { IRequestUser } from "../../types/requestUser.interface";
 import { normalizeSubdomain } from "./websiteIdentity";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WEBSITE_SUBDOMAIN_RESERVATION_LOCK } from "./websiteProvisioning.service";
+import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 
 const getOwnedWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
@@ -141,6 +142,7 @@ const rename = async (input: string, user: IRequestUser) => {
       result.subdomain,
     ]),
     WebsiteHostResolverService.invalidateHosts(customDomains.map((item) => item.domain)),
+    WebsiteProjectionCacheService.invalidateWebsite(owned.id),
   ]);
 
   return {

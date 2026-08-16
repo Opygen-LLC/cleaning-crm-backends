@@ -7,6 +7,7 @@ import { IReviewFilters, ISubmitPublicReview, IUpdateReview } from "./review.int
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { serviceDisplayName } from "../../lib/utils/serviceIdentity";
+import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 
 function deriveSentiment(rating: number): string {
     if (rating >= 4) return "positive";
@@ -232,7 +233,7 @@ const updateReview = async (id: string, payload: IUpdateReview, user: IRequestUs
     const adminId = await getAdminId(user);
     const review = await prisma.review.findFirst({ where: { id, adminId }, select: { id: true } });
     if (!review) throw new AppError(status.NOT_FOUND, "Review not found.");
-    return prisma.review.update({
+    const updated = await prisma.review.update({
         where: { id },
         data: {
             ...(payload.status !== undefined ? { status: payload.status, isPublished: payload.status === "published" } : {}),
@@ -242,6 +243,8 @@ const updateReview = async (id: string, payload: IUpdateReview, user: IRequestUs
             ...(payload.adminReply !== undefined ? { adminReply: payload.adminReply } : {}),
         },
     });
+    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+    return updated;
 };
 
 const getStaffReviewSummaries = async (user: IRequestUser) => {

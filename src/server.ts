@@ -29,6 +29,7 @@ import "../src/cron/invoiceOverdue.cron";
 // requests don't pay a multi-second cold-start cost after idle periods.
 // See dbKeepAlive.cron.ts for full context.
 import "../src/cron/dbKeepAlive.cron";
+import "../src/cron/websiteAnalyticsRetention.cron";
 // BUGFIX: unlike the three crons above (which self-schedule via a top-level
 // cron.schedule() call the moment their module is imported), subscriptionExpiry.cron.ts
 // deliberately wraps its scheduling in an exported scheduleSubscriptionExpiryJob()
@@ -82,6 +83,8 @@ const corsCommon = {
     "Accept",
     "Origin",
     "Idempotency-Key",
+    "X-Form-Started-At",
+    "X-Turnstile-Token",
   ],
   exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Response-Time"],
 };

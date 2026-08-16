@@ -9,6 +9,7 @@ import {
   SKIPPABLE_ONBOARDING_STEPS,
 } from "./admin.constant";
 import redis from "../../config/redis";
+import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import type {
   GettingStartedStepKey,
   LegacySkippableOnboardingStepKey,
@@ -158,7 +159,10 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
     }
   });
 
-  await redis.del(`admin:profile:${userId}`).catch(() => {});
+  await Promise.all([
+    redis.del(`admin:profile:${userId}`).catch(() => {}),
+    WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
+  ]);
   return getAdmin(userId);
 };
 
@@ -175,10 +179,12 @@ const updateWorkLocation = async (
     throw new AppError(status.NOT_FOUND, "Work location not found");
   }
 
-  return prisma.workLocation.update({
+  const updated = await prisma.workLocation.update({
     where: { id: locationId },
     data: payload,
   });
+  await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+  return updated;
 };
 
 // ── Delete a single work location ───────────────────────────────────────────
@@ -191,6 +197,7 @@ const deleteWorkLocation = async (userId: string, locationId: string) => {
   }
 
   await prisma.workLocation.delete({ where: { id: locationId } });
+  await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
 
   return { id: locationId, deleted: true };
 };

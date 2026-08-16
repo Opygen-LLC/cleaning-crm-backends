@@ -16,6 +16,7 @@ import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteProvisioningService } from "./websiteProvisioning.service";
 import { buildPublishedSnapshot } from "./websiteSnapshot";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
+import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 
 const getWebsiteOrThrow = async (adminId: string, db: any = prisma) => {
   const website = await db.businessWebsite.findUnique({ where: { adminId } });
@@ -342,7 +343,10 @@ const publishWebsite = async (user: IRequestUser) => {
   // Routing cache is only a performance layer, but publishing is one of the
   // lifecycle events where we proactively drop the canonical host mapping so
   // every edge immediately re-resolves against the current website row.
-  await WebsiteHostResolverService.invalidateSubdomains([website.subdomain]);
+  await Promise.all([
+    WebsiteHostResolverService.invalidateSubdomains([website.subdomain]),
+    WebsiteProjectionCacheService.invalidateWebsite(website.id),
+  ]);
   return website;
 };
 

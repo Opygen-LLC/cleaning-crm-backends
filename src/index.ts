@@ -5,6 +5,25 @@ import { seedSuperAdmin } from "./lib/utils/seedSuperAdmin";
 import app from "./server";
 import http from "http";
 import logger from "./lib/logger";
+import { ErrorMonitor } from "./lib/monitoring/errorMonitor";
+
+
+process.on("unhandledRejection", (reason) => {
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+  logger.error(`Unhandled rejection: ${error.stack ?? error.message}`);
+  void ErrorMonitor.captureBackendError({ message: error.message, stack: error.stack ?? null, code: "UNHANDLED_REJECTION" });
+});
+
+process.on("uncaughtException", (error) => {
+  logger.error(`Uncaught exception: ${error.stack ?? error.message}`);
+  void ErrorMonitor.captureBackendError({ message: error.message, stack: error.stack ?? null, code: "UNCAUGHT_EXCEPTION" });
+  // The process may be in an undefined state after an uncaught exception.
+  // Give the non-blocking monitor a brief opportunity to flush, then let the
+  // platform/process manager restart a clean instance.
+  process.exitCode = 1;
+  const exitTimer = setTimeout(() => process.exit(1), 250);
+  exitTimer.unref();
+});
 
 const backendIp = process.env.BACKEND_IP || "0.0.0.0";
 const port = process.env.PORT || PORT || 5000;

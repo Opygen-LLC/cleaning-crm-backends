@@ -37,6 +37,7 @@ import type {
     TUpdateSubscriptionPlanPayload,
 } from "./superAdmin.validation";
 import { invalidateSubscriptionAccessCache } from "../../middlewares/checkSubscription";
+import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -465,33 +466,39 @@ const getAdminAccountById = async (adminId: string) => {
 const suspendAdminAccount = async (adminId: string) => {
     const admin = await prisma.user.findFirst({
         where: { id: adminId, role: UserRole.ADMIN },
+        select: { id: true, admin: { select: { id: true } } },
     });
 
     if (!admin) {
         throw new AppError(status.NOT_FOUND, "Admin account not found.");
     }
 
-    return prisma.user.update({
+    const updated = await prisma.user.update({
         where: { id: adminId },
         data: { status: AccountStatus.SUSPENDED },
         select: { id: true, name: true, email: true, status: true },
     });
+    await WebsiteProjectionCacheService.invalidateAdminWebsite(admin.admin?.id);
+    return updated;
 };
 
 const activateAdminAccount = async (adminId: string) => {
     const admin = await prisma.user.findFirst({
         where: { id: adminId, role: UserRole.ADMIN },
+        select: { id: true, admin: { select: { id: true } } },
     });
 
     if (!admin) {
         throw new AppError(status.NOT_FOUND, "Admin account not found.");
     }
 
-    return prisma.user.update({
+    const updated = await prisma.user.update({
         where: { id: adminId },
         data: { status: AccountStatus.ACTIVE },
         select: { id: true, name: true, email: true, status: true },
     });
+    await WebsiteProjectionCacheService.invalidateAdminWebsite(admin.admin?.id);
+    return updated;
 };
 
 // ─── Create admin account (super-admin dedicated endpoint) ────────────────────
