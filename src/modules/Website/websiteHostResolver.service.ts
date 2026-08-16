@@ -5,10 +5,12 @@ import redis from "../../config/redis";
 import { prisma } from "../../lib/prisma/prisma";
 import { normalizeSubdomain } from "./websiteIdentity";
 
-const ROUTE_CACHE_VERSION = 1 as const;
+const ROUTE_CACHE_VERSION = 3 as const;
 const ROUTE_CACHE_TTL_SECONDS = 300;
 const SUBDOMAIN_KEY_PREFIX = "site-subdomain:";
 const HOST_KEY_PREFIX = "site-host:";
+
+export type WebsiteHostRouteKind = "platform_subdomain" | "subdomain_alias" | "custom_domain";
 
 export interface WebsiteRouteResolution {
   version: typeof ROUTE_CACHE_VERSION;
@@ -17,11 +19,14 @@ export interface WebsiteRouteResolution {
   canonicalSubdomain: string;
   isAlias: boolean;
   redirectCode: 308 | null;
+  primaryCustomHost: string | null;
 }
 
 export interface WebsiteHostResolution extends WebsiteRouteResolution {
   requestedHost: string;
   canonicalHost: string;
+  routeKind: WebsiteHostRouteKind;
+  customDomain: string | null;
 }
 
 const subdomainCacheKey = (subdomain: string) => `${SUBDOMAIN_KEY_PREFIX}${subdomain}`;
@@ -50,7 +55,7 @@ const safeDelete = async (keys: string[]) => {
   try {
     await redis.del(...keys);
   } catch {
-    // Cache invalidation failures must never make a successful rename fail.
+    // Cache invalidation failures must never make a successful mutation fail.
   }
 };
 
@@ -59,34 +64,27 @@ const normalizeHost = (value: string): string => {
   if (!host || host.includes("/") || host.includes("@") || host.includes(" ")) {
     throw new AppError(status.NOT_FOUND, "Website host not found");
   }
-  // The frontend proxy sends a bare hostname, but tolerate a host:port value
-  // for local/manual API checks without accepting IPv6/custom-domain routing.
   return host.replace(/:\d+$/, "");
 };
 
-const parsePlatformSubdomain = (host: string): string => {
-  if (!WEBSITE_BASE_DOMAIN) {
-    throw new AppError(status.SERVICE_UNAVAILABLE, "Website host routing is not configured");
-  }
-
+const platformSubdomainFromHost = (host: string): string | null => {
+  if (!WEBSITE_BASE_DOMAIN) return null;
   const suffix = `.${WEBSITE_BASE_DOMAIN}`;
-  if (!host.endsWith(suffix)) throw new AppError(status.NOT_FOUND, "Website host not found");
-
+  if (!host.endsWith(suffix)) return null;
   const label = host.slice(0, -suffix.length);
-  if (!label || label.includes(".")) throw new AppError(status.NOT_FOUND, "Website host not found");
-
+  if (!label || label.includes(".")) return null;
   try {
     return normalizeSubdomain(label);
   } catch {
-    throw new AppError(status.NOT_FOUND, "Website host not found");
+    return null;
   }
 };
 
 /**
  * Resolve one tenant label to its website. Aliases always point directly to the
  * current website row, so renaming repeatedly never creates redirect chains.
- * Misses are intentionally not cached: a just-provisioned tenant becomes live
- * immediately and does not wait for a negative-cache TTL to expire.
+ * Misses are intentionally not cached so newly provisioned tenants become live
+ * immediately.
  */
 const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> => {
   let subdomain: string;
@@ -103,7 +101,15 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
 
   const website = await prisma.businessWebsite.findUnique({
     where: { subdomain },
-    select: { id: true, subdomain: true },
+    select: {
+      id: true,
+      subdomain: true,
+      domains: {
+        where: { status: "VERIFIED" as any, isPrimary: true },
+        select: { domain: true },
+        take: 1,
+      },
+    },
   });
   if (website) {
     const resolved: WebsiteRouteResolution = {
@@ -113,6 +119,7 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
       canonicalSubdomain: website.subdomain,
       isAlias: false,
       redirectCode: null,
+      primaryCustomHost: website.domains[0]?.domain ?? null,
     };
     await safeSet(subdomainCacheKey(subdomain), resolved);
     return resolved;
@@ -122,8 +129,16 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
     where: { subdomain },
     select: {
       websiteId: true,
-      redirectCode: true,
-      website: { select: { subdomain: true } },
+      website: {
+        select: {
+          subdomain: true,
+          domains: {
+            where: { status: "VERIFIED" as any, isPrimary: true },
+            select: { domain: true },
+            take: 1,
+          },
+        },
+      },
     },
   });
   if (!alias) throw new AppError(status.NOT_FOUND, "Website not found");
@@ -134,12 +149,58 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
     requestedSubdomain: subdomain,
     canonicalSubdomain: alias.website.subdomain,
     isAlias: true,
-    // Phase 6 only supports permanent aliases. Do not trust an unexpected DB
-    // value to turn this public redirect into a different status code.
     redirectCode: 308,
+    primaryCustomHost: alias.website.domains[0]?.domain ?? null,
   };
   await safeSet(subdomainCacheKey(subdomain), resolved);
   return resolved;
+};
+
+const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> => {
+  const domain = await prisma.websiteDomain.findUnique({
+    where: { domain: host },
+    select: {
+      websiteId: true,
+      domain: true,
+      status: true,
+      isPrimary: true,
+      website: {
+        select: {
+          subdomain: true,
+          domains: {
+            where: { status: "VERIFIED" as any, isPrimary: true },
+            select: { domain: true },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+
+  if (!domain || domain.status !== "VERIFIED") {
+    throw new AppError(status.NOT_FOUND, "Website host not found");
+  }
+
+  const primaryCustomHost = domain.website.domains[0]?.domain ?? null;
+  const platformHost = WEBSITE_BASE_DOMAIN
+    ? `${domain.website.subdomain}.${WEBSITE_BASE_DOMAIN}`
+    : null;
+  const canonicalHost = primaryCustomHost ?? platformHost ?? domain.domain;
+  const shouldRedirect = canonicalHost !== host;
+
+  return {
+    version: ROUTE_CACHE_VERSION,
+    websiteId: domain.websiteId,
+    requestedSubdomain: domain.website.subdomain,
+    canonicalSubdomain: domain.website.subdomain,
+    isAlias: shouldRedirect,
+    redirectCode: shouldRedirect ? 308 : null,
+    primaryCustomHost,
+    requestedHost: host,
+    canonicalHost,
+    routeKind: "custom_domain",
+    customDomain: domain.domain,
+  };
 };
 
 const resolveHost = async (input: string): Promise<WebsiteHostResolution> => {
@@ -149,14 +210,28 @@ const resolveHost = async (input: string): Promise<WebsiteHostResolution> => {
     return cached;
   }
 
-  const subdomain = parsePlatformSubdomain(host);
-  const route = await resolveSubdomain(subdomain);
-  const canonicalHost = `${route.canonicalSubdomain}.${WEBSITE_BASE_DOMAIN}`;
-  const resolved: WebsiteHostResolution = {
-    ...route,
-    requestedHost: host,
-    canonicalHost,
-  };
+  const platformSubdomain = platformSubdomainFromHost(host);
+  let resolved: WebsiteHostResolution;
+  if (platformSubdomain) {
+    const route = await resolveSubdomain(platformSubdomain);
+    const canonicalHost = route.primaryCustomHost
+      ?? `${route.canonicalSubdomain}.${WEBSITE_BASE_DOMAIN}`;
+    const shouldRedirect = canonicalHost !== host;
+    resolved = {
+      ...route,
+      isAlias: shouldRedirect,
+      redirectCode: shouldRedirect ? 308 : null,
+      requestedHost: host,
+      canonicalHost,
+      routeKind: route.requestedSubdomain !== route.canonicalSubdomain
+        ? "subdomain_alias"
+        : "platform_subdomain",
+      customDomain: route.primaryCustomHost,
+    };
+  } else {
+    resolved = await resolveCustomHost(host);
+  }
+
   await safeSet(hostCacheKey(host), resolved);
   return resolved;
 };
@@ -173,8 +248,16 @@ const invalidateSubdomains = async (labels: Array<string | null | undefined>) =>
   await safeDelete([...new Set(keys)]);
 };
 
+const invalidateHosts = async (hosts: Array<string | null | undefined>) => {
+  const keys = hosts
+    .filter((value): value is string => Boolean(value))
+    .map((value) => hostCacheKey(normalizeHost(value)));
+  await safeDelete([...new Set(keys)]);
+};
+
 export const WebsiteHostResolverService = {
   resolveSubdomain,
   resolveHost,
   invalidateSubdomains,
+  invalidateHosts,
 };

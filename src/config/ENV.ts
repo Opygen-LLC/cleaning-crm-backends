@@ -100,3 +100,15 @@ export const WEBSITE_CNAME_TARGET: string | undefined = process.env.WEBSITE_CNAM
     ?.trim()
     .toLowerCase()
     .replace(/^\.+|\.+$/g, "");
+
+// Phase 7 custom-domain provider integration. `vercel` registers the tenant
+// hostname on the frontend Vercel project and lets Vercel manage certificates.
+// `manual` keeps DNS verification in-app but assumes TLS/routing is managed by
+// external infrastructure. Never infer a Vercel project from the runtime.
+export const WEBSITE_DOMAIN_PROVIDER: "vercel" | "manual" =
+    process.env.WEBSITE_DOMAIN_PROVIDER?.trim().toLowerCase() === "vercel"
+        ? "vercel"
+        : "manual";
+export const VERCEL_ACCESS_TOKEN: string | undefined = process.env.VERCEL_ACCESS_TOKEN?.trim();
+export const VERCEL_PROJECT_ID: string | undefined = process.env.VERCEL_PROJECT_ID?.trim();
+export const VERCEL_TEAM_ID: string | undefined = process.env.VERCEL_TEAM_ID?.trim();

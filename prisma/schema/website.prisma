@@ -95,6 +95,13 @@ model WebsiteDomain {
   lastCheckedAt      DateTime?
   verifiedAt         DateTime?
   failureReason      String?
+  provider           String              @default("MANUAL")
+  providerVerified   Boolean             @default(false)
+  ownershipVerified  Boolean             @default(false)
+  routingVerified    Boolean             @default(false)
+  tlsStatus          String              @default("PENDING")
+  lastProviderSyncAt DateTime?
+  providerData       Json                @default("{}")
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 

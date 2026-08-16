@@ -31,6 +31,7 @@ router.patch(
 );
 router.get("/domains", websiteController.listDomains);
 router.post("/domains", zodValidate(websiteValidation.addDomain, ValidationProperty.BODY), websiteController.addDomain);
+router.post("/domains/:domainId/verify", websiteController.verifyDomain);
 router.patch("/domains/:domainId/primary", websiteController.setPrimaryDomain);
 router.delete("/domains/:domainId", websiteController.removeDomain);
 

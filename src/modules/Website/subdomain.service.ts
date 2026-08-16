@@ -131,9 +131,16 @@ const rename = async (input: string, user: IRequestUser) => {
     };
   });
 
-  await WebsiteHostResolverService.invalidateSubdomains([
-    result.previousSubdomain,
-    result.subdomain,
+  const customDomains = await prisma.websiteDomain.findMany({
+    where: { websiteId: owned.id, status: "VERIFIED" as any },
+    select: { domain: true },
+  });
+  await Promise.all([
+    WebsiteHostResolverService.invalidateSubdomains([
+      result.previousSubdomain,
+      result.subdomain,
+    ]),
+    WebsiteHostResolverService.invalidateHosts(customDomains.map((item) => item.domain)),
   ]);
 
   return {

@@ -19,9 +19,9 @@ const resolveIdentifier = async (identifier: string): Promise<ResolvedWebsite> =
   const raw = identifier.trim();
   if (!raw) throw new AppError(status.NOT_FOUND, "Website not found");
 
-  // Domain identifiers remain supported for the Phase-1/4 API contract, but
-  // Phase 6 host routing itself only routes platform subdomains. Phase 7 owns
-  // verified custom-domain host routing and TLS/provider integration.
+  // Domain identifiers remain supported for direct API callers. Edge host
+  // routing uses WebsiteHostResolverService; only VERIFIED domain rows may
+  // resolve to public website data.
   if (raw.includes(".")) {
     let domain: string;
     try {
@@ -154,7 +154,10 @@ const projectWebsite = (
   const template = TemplateRegistry.get(config.templateId, config.templateVersion);
   if (!template) throw new AppError(status.SERVICE_UNAVAILABLE, "Website template version is unavailable");
 
-  const primaryDomain = website.domains.find((domain) => domain.isPrimary)?.domain ?? website.domains[0]?.domain ?? null;
+  // Only an explicitly selected verified custom domain becomes canonical.
+  // Merely connecting/verifying an additional hostname must not change SEO or
+  // redirect behavior until the owner intentionally makes it primary.
+  const primaryDomain = website.domains.find((domain) => domain.isPrimary)?.domain ?? null;
   const canonicalUrl = primaryDomain
     ? `https://${primaryDomain}`
     : WEBSITE_BASE_DOMAIN

@@ -31,6 +31,7 @@ const deleteAsset = catchAsync(async (req, res) => ok(res, "Website asset delete
 const listTemplates = catchAsync(async (_req, res) => ok(res, "Website templates retrieved successfully", TemplateRegistry.list()));
 const addDomain = catchAsync(async (req, res) => created(res, "Website domain added successfully", await DomainService.addDomain(req.body, req.user)));
 const listDomains = catchAsync(async (req, res) => ok(res, "Website domains retrieved successfully", await DomainService.listDomains(req.user)));
+const verifyDomain = catchAsync(async (req, res) => ok(res, "Website domain verification checked successfully", await DomainService.verifyDomain(req.params.domainId, req.user)));
 const removeDomain = catchAsync(async (req, res) => ok(res, "Website domain removed successfully", await DomainService.removeDomain(req.params.domainId, req.user)));
 const setPrimaryDomain = catchAsync(async (req, res) => ok(res, "Primary website domain updated successfully", await DomainService.setPrimaryDomain(req.params.domainId, req.user)));
 
@@ -109,6 +110,7 @@ export const websiteController = {
   listTemplates,
   addDomain,
   listDomains,
+  verifyDomain,
   removeDomain,
   setPrimaryDomain,
   getSubdomainAvailability,

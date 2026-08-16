@@ -97,9 +97,12 @@ const loadWebsiteDetails = async (websiteId: string, db: any = prisma) => {
   });
   const draftRevisionNumber = latest._max.revisionNumber ?? 0;
   const { publishedSnapshot: _publishedSnapshot, ...safeWebsite } = website;
+  const platformUrl = WEBSITE_BASE_DOMAIN ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}` : null;
+  const primaryDomain = website.domains.find((domain: any) => domain.isPrimary && domain.status === "VERIFIED")?.domain ?? null;
   return {
     ...safeWebsite,
-    publicUrl: WEBSITE_BASE_DOMAIN ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}` : null,
+    platformUrl,
+    publicUrl: primaryDomain ? `https://${primaryDomain}` : platformUrl,
     draftRevisionNumber,
     hasUnpublishedChanges:
       website.status !== "PUBLISHED" ||
