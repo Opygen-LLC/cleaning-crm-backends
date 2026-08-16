@@ -158,6 +158,7 @@ const submitPublicEstimateForm = catchAsync(async (req, res) => {
     const result = await estimateFormService.submitPublicEstimateForm(
         getParam(req.params.slug),
         req.body,
+        req.get("Idempotency-Key") ?? undefined,
     );
     sendResponse(res, {
         httpStatusCode: status.CREATED,

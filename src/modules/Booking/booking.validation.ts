@@ -23,7 +23,8 @@ const createBookingSchema = z
             .regex(/^[+\d\s\-()]+$/, "Invalid phone number")
             .transform(normalizePhone)
             .optional(),
-        serviceType:   z.enum(ServiceType),
+        serviceCatalogId: z.string().uuid("Invalid service catalog ID").optional(),
+        serviceType:   z.enum(ServiceType).optional(),
         address:       z.string().min(1, "Address is required"),
         scheduledDate: z.string().datetime({ message: "Invalid ISO date string" }),
         durationMins:  z.number().int().positive("Duration must be positive"),
@@ -34,6 +35,13 @@ const createBookingSchema = z
     })
     .strict()
     .superRefine((data, ctx) => {
+        if (!data.serviceCatalogId && !data.serviceType) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Choose a service",
+                path: ["serviceCatalogId"],
+            });
+        }
         if (data.clientId) return;
 
         const missing: string[] = [];
@@ -55,6 +63,7 @@ const createBookingSchema = z
 
 const updateBookingSchema = z
     .object({
+        serviceCatalogId: z.string().uuid("Invalid service catalog ID").optional(),
         serviceType:   z.enum(ServiceType).optional(),
         address:       z.string().min(1).optional(),
         scheduledDate: z.string().datetime().optional(),

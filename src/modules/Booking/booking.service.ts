@@ -23,6 +23,7 @@ import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
 import { notificationService } from "../Settings/notification.service";
 import logger from "../../lib/logger";
+import { resolveServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -120,6 +121,7 @@ const bookingInclude = {
     },
   },
   job: { select: { id: true, jobRef: true, status: true } },
+  serviceCatalog: { select: { id: true, serviceName: true, basePriceGbp: true, duration: true, category: true } },
 } as const;
 
 // ── Booking confirmation email helper ─────────────────────────────────────────
@@ -172,7 +174,7 @@ const sendBookingEmail = async (
     templateData: {
       clientName: booking.client?.name ?? "Valued Customer",
       bookingRef: booking.bookingRef,
-      serviceType: booking.serviceType.replace(/_/g, " "),
+      serviceType: serviceDisplayName(booking),
       scheduledDate: fmt(new Date(booking.scheduledDate)),
       durationMins: booking.durationMins,
       address: booking.address,
@@ -192,6 +194,7 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
 
   // Enforce plan limits before inserting
   await assertWithinLimit(adminId, "booking");
+  const serviceIdentity = await resolveServiceIdentity(adminId, payload);
 
   // Resolve an existing client, or create one inline for a new lead
   const clientId = await resolveOrCreateClient(adminId, payload);
@@ -225,7 +228,11 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
         bookingRef,
         adminId,
         clientId,
-        serviceType: payload.serviceType,
+        serviceCatalogId: serviceIdentity.serviceCatalogId,
+        serviceType: serviceIdentity.serviceType,
+        serviceNameSnapshot: serviceIdentity.serviceNameSnapshot,
+        priceSnapshot: serviceIdentity.priceSnapshot,
+        durationSnapshot: serviceIdentity.durationSnapshot,
         address: payload.address,
         scheduledDate: new Date(payload.scheduledDate),
         durationMins: payload.durationMins,
@@ -266,7 +273,7 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
     adminId: adminId,
     type: NotificationType.BOOKING,
     title: `New booking — ${booking.bookingRef}`,
-    message: `${booking.client.name} booked ${booking.serviceType.replace(/_/g, " ")}`,
+    message: `${booking.client.name} booked ${serviceDisplayName(booking)}`,
     relatedId: booking.id,
   }).catch(() => {});
   invalidateAnalyticsCache(adminId);
@@ -323,7 +330,16 @@ const updateBooking = async (
     );
   }
 
-  const data: Record<string, unknown> = { ...payload };
+  const { serviceCatalogId, serviceType, ...rest } = payload;
+  const data: Record<string, unknown> = { ...rest };
+  if (serviceCatalogId !== undefined || serviceType !== undefined) {
+    const identity = await resolveServiceIdentity(adminId, { serviceCatalogId, serviceType });
+    data.serviceCatalogId = identity.serviceCatalogId;
+    data.serviceType = identity.serviceType;
+    data.serviceNameSnapshot = identity.serviceNameSnapshot;
+    data.priceSnapshot = identity.priceSnapshot;
+    data.durationSnapshot = identity.durationSnapshot;
+  }
   if (payload.scheduledDate) {
     data.scheduledDate = new Date(payload.scheduledDate);
   }
@@ -498,6 +514,7 @@ const getCalendarView = async (query: ICalendarQuery, user: any) => {
         // the client's address at time of booking.
         select: { id: true, name: true, latitude: true, longitude: true },
       },
+      serviceCatalog: { select: { id: true, serviceName: true } },
       staffAssignments: {
         include: {
           staff: {

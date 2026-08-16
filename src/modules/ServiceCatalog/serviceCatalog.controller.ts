@@ -24,7 +24,6 @@ const getAllServiceCatalogs = catchAsync(async (req, res) => {
     searchTerm: req.query.searchTerm as string,
     category: req.query.category as string,
     status: req.query.status as ServiceStatus,
-    adminId: req.query.adminId as string,
   };
 
   const result = await serviceCatalogService.getAllServiceCatalogs(
@@ -44,6 +43,7 @@ const getServiceCatalogById = catchAsync(async (req, res) => {
   const { id } = req.params;
   const result = await serviceCatalogService.getServiceCatalogById(
     id as string,
+    req.user,
   );
 
   sendResponse(res, {
@@ -59,6 +59,7 @@ const updateServiceCatalog = catchAsync(async (req, res) => {
   const result = await serviceCatalogService.updateServiceCatalog(
     id as string,
     req.body,
+    req.user,
   );
 
   sendResponse(res, {
@@ -71,7 +72,7 @@ const updateServiceCatalog = catchAsync(async (req, res) => {
 
 const deleteServiceCatalog = catchAsync(async (req, res) => {
   const { id } = req.params;
-  const result = await serviceCatalogService.deleteServiceCatalog(id as string);
+  const result = await serviceCatalogService.deleteServiceCatalog(id as string, req.user);
 
   sendResponse(res, {
     httpStatusCode: status.OK,

@@ -11,7 +11,11 @@ model RecurringSchedule {
   clientId    String
 
   // What to book
-  serviceType ServiceType
+  serviceType      ServiceType?
+  serviceCatalogId String?
+  serviceNameSnapshot String?
+  priceSnapshot    Decimal?                 @db.Decimal(10, 2)
+  durationSnapshot String?
   address     String
   durationMins Int
   total        Decimal                @db.Decimal(10, 2)
@@ -39,10 +43,12 @@ model RecurringSchedule {
   generatedBookings Booking[]            @relation("RecurringScheduleBookings")
 
   admin        AdminProfile           @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  serviceCatalog ServiceCatalog?       @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
   client       Client                 @relation(fields: [clientId], references: [id])
 
   @@index([adminId, status])
   @@index([nextRunAt, status])
+  @@index([serviceCatalogId])
   @@map("recurring_schedule")
 }
 

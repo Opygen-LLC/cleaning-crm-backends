@@ -6,6 +6,7 @@ import {
     ServiceType,
     FormFieldType,
     EstimateSubmissionStatus,
+    ServiceStatus,
 } from "../../generated/prisma/enums";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
 import { IQueryParams } from "../../interface/query.interface";
@@ -13,6 +14,7 @@ import { IRequestUser } from "../../types/requestUser.interface";
 import { IEstimateFormCreate } from "./estimateForm.interface";
 import { Prisma } from "../../generated/prisma/client";
 import { randomBytes } from "crypto";
+import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -44,7 +46,9 @@ type StoredEstimateAnswer = {
 };
 
 type EstimatePricingResult = {
-    serviceType: ServiceType;
+    serviceCatalogId: string | null;
+    serviceType: ServiceType | null;
+    serviceName: string;
     bedrooms: number;
     bathrooms: number;
     selectedAddOns: { id: string; label: string; price: number }[];
@@ -307,7 +311,12 @@ const validateAndSnapshotAnswers = (
 };
 
 const calculatePricing = (
-    service: { serviceType: ServiceType; basePrice: unknown },
+    service: {
+        serviceCatalogId: string | null;
+        serviceType: ServiceType | null;
+        basePrice: unknown;
+        serviceCatalog: { serviceName: string; basePriceGbp: number; duration: string } | null;
+    },
     addOns: Array<{ id: string; label: string; price: unknown }>,
     bedrooms: number,
     bathrooms: number,
@@ -318,11 +327,15 @@ const calculatePricing = (
         price: Number(addOn.price),
     }));
     const addOnTotal = selectedAddOns.reduce((total, addOn) => total + addOn.price, 0);
-    const basePrice = service.basePrice == null ? null : Number(service.basePrice);
+    const rawBasePrice = service.basePrice ?? service.serviceCatalog?.basePriceGbp ?? null;
+    const basePrice = rawBasePrice == null ? null : Number(rawBasePrice);
+    const serviceName = service.serviceCatalog?.serviceName ?? service.serviceType?.replace(/_/g, " ") ?? "Service";
 
     if (basePrice == null || !Number.isFinite(basePrice)) {
         return {
+            serviceCatalogId: service.serviceCatalogId,
             serviceType: service.serviceType,
+            serviceName,
             bedrooms,
             bathrooms,
             selectedAddOns,
@@ -341,7 +354,9 @@ const calculatePricing = (
     const max = Math.round(basePrice * 1.8 * roomMultiplier + addOnTotal);
 
     return {
+        serviceCatalogId: service.serviceCatalogId,
         serviceType: service.serviceType,
+        serviceName,
         bedrooms,
         bathrooms,
         selectedAddOns,
@@ -359,12 +374,39 @@ const calculatePricing = (
 
 const formInclude = {
     fields:      true,
-    services:    true,
+    services:    { include: { serviceCatalog: true } },
     addOns:      true,
     _count: {
         select: { submissions: true },
     },
 } as const;
+
+type EstimateServiceInput = NonNullable<IEstimateFormCreate["services"]>[number];
+const resolveEstimateFormServices = async (adminId: string, services: EstimateServiceInput[]) => {
+    const ids = [...new Set(services.map((entry) => entry.serviceCatalogId).filter((id): id is string => !!id))];
+    const catalogs = ids.length
+        ? await prisma.serviceCatalog.findMany({
+            where: { id: { in: ids }, adminId, status: ServiceStatus.ACTIVE },
+            select: { id: true, legacyServiceType: true },
+        })
+        : [];
+    const byId = new Map(catalogs.map((catalog) => [catalog.id, catalog]));
+    if (catalogs.length !== ids.length) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "One or more selected services do not belong to this business", {
+            code: "SERVICE_TENANT_MISMATCH", retryable: false,
+            fieldErrors: { services: "Choose services from your own service catalog." },
+        });
+    }
+    return services.map((entry) => {
+        const catalog = entry.serviceCatalogId ? byId.get(entry.serviceCatalogId) : undefined;
+        return {
+            serviceCatalogId: catalog?.id ?? null,
+            serviceType: catalog?.legacyServiceType ?? entry.serviceType ?? null,
+            enabled: entry.enabled ?? true,
+            basePrice: entry.basePrice,
+        };
+    });
+};
 
 // ─── EstimateForm CRUD ────────────────────────────────────────────────────────
 
@@ -382,6 +424,7 @@ const createEstimateForm = async (
     user: IRequestUser,
 ) => {
     const adminId = await getAdminId(user);
+    const resolvedServices = payload.services ? await resolveEstimateFormServices(adminId, payload.services) : undefined;
     const slug    = generateSlug(payload.headline, adminId);
 
     // Ensure slug uniqueness — append a short random suffix if taken
@@ -404,11 +447,7 @@ const createEstimateForm = async (
             services: payload.services?.length
                 ? {
                     createMany: {
-                        data: payload.services.map((s) => ({
-                            serviceType: s.serviceType,
-                            enabled:     s.enabled ?? true,
-                            basePrice:   s.basePrice,
-                        })),
+                        data: resolvedServices!,
                     },
                 }
                 : undefined,
@@ -517,18 +556,14 @@ const updateEstimateForm = async (
 
     const existing = await prisma.estimateForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Estimate form not found");
+    const resolvedServices = payload.services ? await resolveEstimateFormServices(adminId, payload.services) : undefined;
 
     return prisma.$transaction(async (tx) => {
         // Replace services when provided
         if (payload.services) {
             await tx.estimateFormService.deleteMany({ where: { formId: id } });
             await tx.estimateFormService.createMany({
-                data: payload.services.map((s) => ({
-                    formId:      id,
-                    serviceType: s.serviceType,
-                    enabled:     s.enabled ?? true,
-                    basePrice:   s.basePrice,
-                })),
+                data: resolvedServices!.map((service) => ({ formId: id, ...service })),
             });
         }
 
@@ -625,14 +660,19 @@ const getSubmissions = async (
 
     return new QueryBuilder(prisma.estimateFormSubmission, queryParams, {
         searchableFields: ["ref", "name", "email", "phone"],
-        filterableFields: ["status", "serviceType"],
+        filterableFields: ["status", "serviceType", "serviceCatalogId"],
     })
         .where({ formId: { in: adminFormIds } })
         .search()
         .filter()
         .sort()
         .paginate()
-        .include({ form: { select: { headline: true, slug: true } } })
+        .include({
+            form: { select: { headline: true, slug: true } },
+            serviceCatalog: {
+                select: { id: true, serviceName: true, duration: true, basePriceGbp: true },
+            },
+        })
         .execute();
 };
 
@@ -655,7 +695,10 @@ const updateSubmissionStatus = async (
     return prisma.estimateFormSubmission.update({
         where: { id: submissionId },
         data:  { status: newStatus },
-        include: { form: { select: { headline: true } } },
+        include: {
+            form: { select: { headline: true } },
+            serviceCatalog: { select: { id: true, serviceName: true, duration: true, basePriceGbp: true } },
+        },
     });
 };
 
@@ -679,14 +722,20 @@ const publicFormSelect = {
         where: { enabled: true },
         orderBy: { sortOrder: "asc" as const },
     },
-    services: { where: { enabled: true } },
+    services: {
+        where: { enabled: true },
+        select: {
+            id: true, serviceType: true, serviceCatalogId: true, enabled: true, basePrice: true,
+            serviceCatalog: {
+                select: { id: true, serviceName: true, description: true, basePriceGbp: true, duration: true, category: true, addOns: true, status: true, legacyServiceType: true },
+            },
+        },
+    },
     addOns: { where: { enabled: true } },
     admin: {
         select: {
-            businessName: true,
-            businessLogo: true,
-            mobileNumber: true,
-            businessEmail: true,
+            businessName: true, businessLogo: true, mobileNumber: true, businessEmail: true,
+            address: true, city: true, zipcode: true, country: true, brandColor: true,
             user: { select: { name: true, email: true } },
         },
     },
@@ -731,14 +780,23 @@ const getPublicEstimateForm = async (slug: string) => {
         }
     }
 
-    // Do not expose internal ownership identifiers on a public endpoint.
+    const publicServices = form.services
+        .filter((entry) => entry.serviceCatalog ? entry.serviceCatalog.status === ServiceStatus.ACTIVE : !!entry.serviceType)
+        .map((entry) => ({
+            id: entry.id, enabled: entry.enabled, serviceType: entry.serviceType,
+            serviceCatalogId: entry.serviceCatalogId,
+            basePrice: entry.basePrice ?? entry.serviceCatalog?.basePriceGbp ?? null,
+            serviceName: entry.serviceCatalog?.serviceName ?? entry.serviceType?.replace(/_/g, " ") ?? "Service",
+            service: entry.serviceCatalog ? projectCanonicalService(entry.serviceCatalog) : null,
+        }));
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { adminId, ...safeForm } = form;
-    return { ...safeForm, fields, reviewSummary };
+    const { adminId, services, ...safeForm } = form;
+    return { ...safeForm, services: publicServices, fields, business: projectPublicBusiness(form.admin), reviewSummary };
 };
 
 type PublicCalculationPayload = {
-    serviceType: ServiceType;
+    serviceCatalogId?: string;
+    serviceType?: ServiceType;
     bedrooms: number;
     bathrooms: number;
     addOnIds: string[];
@@ -749,12 +807,16 @@ type PublicCalculationPayload = {
 const calculatePublicEstimate = async (slug: string, payload: PublicCalculationPayload) => {
     const form = await loadPublishedPublicForm(slug);
 
-    const service = form.services.find((candidate) => candidate.serviceType === payload.serviceType);
-    if (!service) {
+    const service = form.services.find((candidate) =>
+        payload.serviceCatalogId
+            ? candidate.serviceCatalogId === payload.serviceCatalogId
+            : !!payload.serviceType && candidate.serviceType === payload.serviceType,
+    );
+    if (!service || (service.serviceCatalog && service.serviceCatalog.status !== ServiceStatus.ACTIVE)) {
         throw new AppError(status.UNPROCESSABLE_ENTITY, "That service is no longer available for this estimate form.", {
             code: "ESTIMATE_SERVICE_UNAVAILABLE",
             retryable: false,
-            fieldErrors: { serviceType: "Please choose another service." },
+            fieldErrors: { serviceCatalogId: "Please choose another service." },
         });
     }
 
@@ -819,16 +881,24 @@ const submitPublicEstimateForm = async (
         notes?: string;
         answers?: Record<string, string>;
     },
+    idempotencyKey?: string,
 ) => {
+    if (idempotencyKey && !/^[A-Za-z0-9:_-]{8,128}$/.test(idempotencyKey)) {
+        throw new AppError(status.BAD_REQUEST, "Invalid Idempotency-Key header");
+    }
     const form = await loadPublishedPublicForm(slug);
     const publicFields = buildPublicFields(form.fields);
 
-    const service = form.services.find((candidate) => candidate.serviceType === payload.serviceType);
-    if (!service) {
+    const service = form.services.find((candidate) =>
+        payload.serviceCatalogId
+            ? candidate.serviceCatalogId === payload.serviceCatalogId
+            : !!payload.serviceType && candidate.serviceType === payload.serviceType,
+    );
+    if (!service || (service.serviceCatalog && service.serviceCatalog.status !== ServiceStatus.ACTIVE)) {
         throw new AppError(status.UNPROCESSABLE_ENTITY, "That service is no longer available for this estimate form.", {
             code: "ESTIMATE_SERVICE_UNAVAILABLE",
             retryable: false,
-            fieldErrors: { serviceType: "Please choose another service." },
+            fieldErrors: { serviceCatalogId: "Please choose another service." },
         });
     }
 
@@ -874,25 +944,41 @@ const submitPublicEstimateForm = async (
         coverage,
     };
 
-    const submission = await prisma.estimateFormSubmission.create({
-        data: {
-            ref: generateSubmissionRef(),
-            formId: form.id,
-            serviceType: payload.serviceType,
-            bedrooms: payload.bedrooms,
-            bathrooms: payload.bathrooms,
-            addOnIds: requestedIds,
-            postcode: payload.postcode.trim(),
-            city: payload.city?.trim() || undefined,
-            name: contact.name,
-            email: contact.email,
-            phone: contact.phone,
-            notes: payload.notes?.trim() || contact.notes || undefined,
-            answers: contact.stored as unknown as Prisma.InputJsonValue,
-            estimatedMin: pricing.min,
-            estimatedMax: pricing.max,
-            pricingSnapshot: pricingSnapshot as unknown as Prisma.InputJsonValue,
-        },
+    const canonicalService = {
+        serviceCatalogId: service.serviceCatalog?.id ?? service.serviceCatalogId ?? null,
+        serviceType: service.serviceCatalog?.legacyServiceType ?? service.serviceType ?? null,
+        serviceNameSnapshot: service.serviceCatalog?.serviceName ?? service.serviceType?.replace(/_/g, " ") ?? "Service",
+        priceSnapshot: service.basePrice == null
+            ? service.serviceCatalog?.basePriceGbp ?? null
+            : Number(service.basePrice),
+        durationSnapshot: service.serviceCatalog?.duration ?? null,
+    };
+
+    const submission = await prisma.$transaction(async (tx) => {
+        if (idempotencyKey) {
+            const idempotencyLockKey = `estimate-idempotency:${form.id}:${idempotencyKey}`;
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${idempotencyLockKey}, 0::bigint))`;
+            const existing = await tx.estimateFormSubmission.findFirst({ where: { formId: form.id, idempotencyKey } });
+            if (existing) return existing;
+        }
+        return tx.estimateFormSubmission.create({
+            data: {
+                ref: generateSubmissionRef(), formId: form.id,
+                serviceCatalogId: canonicalService.serviceCatalogId,
+                serviceType: canonicalService.serviceType,
+                serviceNameSnapshot: canonicalService.serviceNameSnapshot,
+                priceSnapshot: canonicalService.priceSnapshot,
+                durationSnapshot: canonicalService.durationSnapshot,
+                idempotencyKey: idempotencyKey ?? null,
+                bedrooms: payload.bedrooms, bathrooms: payload.bathrooms, addOnIds: requestedIds,
+                postcode: payload.postcode.trim(), city: payload.city?.trim() || undefined,
+                name: contact.name, email: contact.email, phone: contact.phone,
+                notes: payload.notes?.trim() || contact.notes || undefined,
+                answers: contact.stored as unknown as Prisma.InputJsonValue,
+                estimatedMin: pricing.min, estimatedMax: pricing.max,
+                pricingSnapshot: pricingSnapshot as unknown as Prisma.InputJsonValue,
+            },
+        });
     });
 
     return {

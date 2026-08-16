@@ -8,17 +8,19 @@ import {
     ValidationProperty,
 } from "../../middlewares/validations/zodValidation.middleware";
 import { bookingFormValidation } from "./bookingForm.validation";
+import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRateLimit } from "../../middlewares/publicApiSecurity";
 
 const router = Router();
 
 // ── Public routes (no auth) ───────────────────────────────────────────────────
 
 // GET  /api/v1/booking-form/public/:slug   — render public form
-router.get("/public/:slug", bookingFormController.getPublicBookingForm);
+router.get("/public/:slug", publicReadRateLimit, bookingFormController.getPublicBookingForm);
 
 // GET  /api/v1/booking-form/public/:slug/slots?date=YYYY-MM-DD — slot availability
 router.get(
     "/public/:slug/slots",
+    publicReadRateLimit,
     zodValidate(
         bookingFormValidation.publicSlotAvailabilityQuerySchema,
         ValidationProperty.QUERY,
@@ -30,6 +32,8 @@ router.get(
 // NOTE: frontend calls .../public/${slug}/submit; was missing the /submit segment → 404
 router.post(
     "/public/:slug/submit",
+    publicMutationRateLimit,
+    publicResourceMutationRateLimit,
     zodValidate(
         bookingFormValidation.publicBookingSubmissionSchema,
         ValidationProperty.BODY,
@@ -46,7 +50,7 @@ router.post(
 // (see seedSubscriptionPlan.ts), so one checkFeature("online booking") gate
 // covers every sub-page consistently with the frontend's OR-match logic.
 
-router.use(checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN));
+router.use(checkAuth(UserRole.ADMIN));
 router.use(checkFeature("online booking"));
 
 // GET    /api/v1/booking-form                — list all forms for admin

@@ -17,11 +17,16 @@ const isoDateSchema = z
 // ── Sub-schemas ────────────────────────────────────────────────────────────────
 
 const serviceSchema = z.object({
-    serviceType: z.enum(ServiceType),
+    serviceCatalogId: z.string().uuid().optional(),
+    serviceType: z.enum(ServiceType).optional(),
     enabled:     z.boolean().optional(),
-    priceLabel:  z.string().max(120).optional(),
-    duration:    z.string().max(120).optional(),
-}).strict();
+    priceLabel:  z.string().trim().max(120).optional(),
+    duration:    z.string().trim().max(120).optional(),
+}).strict().superRefine((value, ctx) => {
+    if (!value.serviceCatalogId && !value.serviceType) {
+        ctx.addIssue({ code: "custom", path: ["serviceCatalogId"], message: "Choose a service" });
+    }
+});
 
 const fieldSchema = z.object({
     type:        z.enum(FormFieldType),
@@ -69,7 +74,8 @@ const publicAnswersSchema = z
     });
 
 export const publicBookingSubmissionSchema = z.object({
-    serviceType: z.enum(ServiceType),
+    serviceCatalogId: z.string().uuid().optional(),
+    serviceType: z.enum(ServiceType).optional(),
     date:        isoDateSchema,
     timeSlot:    z.string().regex(TIME_RE, "Time must be in HH:MM format"),
     name:        z.string().trim().min(1, "Full name is required").max(120),
@@ -78,7 +84,11 @@ export const publicBookingSubmissionSchema = z.object({
     address:     z.string().trim().min(3, "Service address is required").max(500),
     notes:       z.string().trim().max(2000).optional(),
     answers:     publicAnswersSchema.optional(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+    if (!value.serviceCatalogId && !value.serviceType) {
+        ctx.addIssue({ code: "custom", path: ["serviceCatalogId"], message: "Choose a service" });
+    }
+});
 
 export const publicSlotAvailabilityQuerySchema = z.object({
     date: isoDateSchema,

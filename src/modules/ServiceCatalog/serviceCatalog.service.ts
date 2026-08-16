@@ -6,24 +6,24 @@ import {
 } from "./serviceCatalog.interface";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
-import { UserRole } from "../../generated/prisma/enums";
+import { IRequestUser } from "../../types/requestUser.interface";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { inferLegacyServiceType } from "../../lib/utils/serviceIdentity";
 
 const createServiceCatalog = async (
   payload: IServiceCatalogCreate,
-  user: any,
+  user: IRequestUser,
 ) => {
-  const adminProfile = await prisma.adminProfile.findUnique({
-    where: { userId: user.id },
-  });
+  const adminId = await getAdminId(user);
+  const legacyServiceType = payload.legacyServiceType === undefined
+    ? inferLegacyServiceType(payload.serviceName)
+    : payload.legacyServiceType;
 
-  if (!adminProfile) {
-    throw new AppError(status.NOT_FOUND, "Admin profile not found");
-  }
-
-  return await prisma.serviceCatalog.create({
+  return prisma.serviceCatalog.create({
     data: {
       ...payload,
-      adminId: adminProfile.id,
+      adminId,
+      legacyServiceType,
       addOns: payload.addOns ? (payload.addOns as any) : [],
     },
   });
@@ -31,10 +31,11 @@ const createServiceCatalog = async (
 
 const getAllServiceCatalogs = async (
   filters: IServiceCatalogFilters,
-  user: any,
+  user: IRequestUser,
 ) => {
-  const { searchTerm, category, status: serviceStatus, adminId } = filters;
-  const andConditions: any[] = [];
+  const adminId = await getAdminId(user);
+  const { searchTerm, category, status: serviceStatus } = filters;
+  const andConditions: any[] = [{ adminId }];
 
   if (searchTerm) {
     andConditions.push({
@@ -44,81 +45,52 @@ const getAllServiceCatalogs = async (
       ],
     });
   }
+  if (category) andConditions.push({ category });
+  if (serviceStatus) andConditions.push({ status: String(serviceStatus).toUpperCase() });
 
-  if (category) {
-    andConditions.push({ category });
-  }
-
-  if (serviceStatus) {
-    // Handle case-insensitivity for status (e.g., "active" -> "ACTIVE")
-    const statusValue = (serviceStatus as string).toUpperCase();
-    andConditions.push({ status: statusValue as any });
-  }
-
-  // Filter by adminId if provided or restrict by user role
-  if (adminId) {
-    andConditions.push({ adminId });
-  } else if (user.role === UserRole.ADMIN) {
-    const adminProfile = await prisma.adminProfile.findUnique({
-      where: { userId: user.id },
-    });
-    if (adminProfile) {
-      andConditions.push({ adminId: adminProfile.id });
-    }
-  }
-
-  const whereConditions =
-    andConditions.length > 0 ? { AND: andConditions } : {};
-
-  return await prisma.serviceCatalog.findMany({
-    where: whereConditions,
-    orderBy: {
-      createdAt: "desc",
-    },
+  return prisma.serviceCatalog.findMany({
+    where: { AND: andConditions },
+    orderBy: { createdAt: "desc" },
   });
 };
 
-const getServiceCatalogById = async (id: string) => {
-  const service = await prisma.serviceCatalog.findUnique({
-    where: { id },
-  });
-
-  if (!service) {
-    throw new AppError(status.NOT_FOUND, "Service not found");
-  }
-
+const getServiceCatalogById = async (id: string, user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  const service = await prisma.serviceCatalog.findFirst({ where: { id, adminId } });
+  if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
   return service;
 };
 
 const updateServiceCatalog = async (
   id: string,
   payload: IServiceCatalogUpdate,
+  user: IRequestUser,
 ) => {
-  const service = await prisma.serviceCatalog.findUnique({ where: { id } });
+  const adminId = await getAdminId(user);
+  const service = await prisma.serviceCatalog.findFirst({ where: { id, adminId } });
+  if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
 
-  if (!service) {
-    throw new AppError(status.NOT_FOUND, "Service not found");
-  }
+  const legacyServiceType = payload.legacyServiceType !== undefined
+    ? payload.legacyServiceType
+    : payload.serviceName
+      ? inferLegacyServiceType(payload.serviceName)
+      : undefined;
 
-  return await prisma.serviceCatalog.update({
+  return prisma.serviceCatalog.update({
     where: { id },
     data: {
       ...payload,
+      ...(legacyServiceType !== undefined ? { legacyServiceType } : {}),
       addOns: payload.addOns ? (payload.addOns as any) : undefined,
     },
   });
 };
 
-const deleteServiceCatalog = async (id: string) => {
-  const service = await prisma.serviceCatalog.findUnique({ where: { id } });
-
-  if (!service) {
-    throw new AppError(status.NOT_FOUND, "Service not found");
-  }
-
-  return await prisma.serviceCatalog.delete({
-    where: { id },
-  });
+const deleteServiceCatalog = async (id: string, user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  const service = await prisma.serviceCatalog.findFirst({ where: { id, adminId } });
+  if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
+  return prisma.serviceCatalog.delete({ where: { id } });
 };
 
 export const serviceCatalogService = {

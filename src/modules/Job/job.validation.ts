@@ -6,7 +6,8 @@ import { JobStatus, ServiceType } from "../../generated/prisma/enums";
 const createJobSchema = z
     .object({
         clientId:      z.string().uuid("Invalid client ID"),
-        serviceType:   z.enum(ServiceType),
+        serviceCatalogId: z.string().uuid("Invalid service catalog ID").optional(),
+        serviceType:   z.enum(ServiceType).optional(),
         address:       z.string().min(1, "Address is required"),
         scheduledDate: z.string().datetime({ message: "Invalid ISO date string" }),
         durationMins:  z.number().int().positive("Duration must be positive"),
@@ -16,12 +17,18 @@ const createJobSchema = z
         bookingId:     z.string().uuid("Invalid booking ID").optional(),
         staffIds:      z.array(z.string().uuid("Invalid staff ID")).optional(),
     })
-    .strict();
+    .strict()
+    .superRefine((data, ctx) => {
+        if (!data.bookingId && !data.serviceCatalogId && !data.serviceType) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["serviceCatalogId"], message: "Choose a service" });
+        }
+    });
 
 // ── Update ────────────────────────────────────────────────────────────────────
 
 const updateJobSchema = z
     .object({
+        serviceCatalogId: z.string().uuid("Invalid service catalog ID").optional(),
         serviceType:   z.enum(ServiceType).optional(),
         address:       z.string().min(1).optional(),
         scheduledDate: z.string().datetime().optional(),

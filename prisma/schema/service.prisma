@@ -6,6 +6,9 @@ model ServiceCatalog {
   duration     String
   category     String
   status       ServiceStatus @default(ACTIVE)
+  // Phase 0 compatibility: optional mapping to the legacy hard-coded enum.
+  // New/custom catalog services may intentionally leave this null.
+  legacyServiceType ServiceType?
 
   adminId String
   admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
@@ -14,11 +17,21 @@ model ServiceCatalog {
 
   invoices Invoice[]
 
+  bookingFormServices     BookingFormService[]
+  bookingFormSubmissions  BookingFormSubmission[]
+  estimateFormServices    EstimateFormService[]
+  estimateFormSubmissions EstimateFormSubmission[]
+  bookings                Booking[]
+  jobs                    Job[]
+  recurringSchedules      RecurringSchedule[]
+  checklistTemplates      ChecklistTemplate[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
 
   @@unique([serviceName, adminId])
   @@index([adminId, category, status])
+  @@index([adminId, legacyServiceType])
   @@map("service_catalog")
 }

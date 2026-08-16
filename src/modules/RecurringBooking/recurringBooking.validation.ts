@@ -9,7 +9,8 @@ import {
 const createScheduleSchema = z
   .object({
     clientId: z.string().uuid("Invalid client ID"),
-    serviceType: z.enum(ServiceType),
+    serviceCatalogId: z.string().uuid("Invalid service catalog ID").optional(),
+    serviceType: z.enum(ServiceType).optional(),
     address: z.string().min(1, "Address is required"),
     durationMins: z.number().int().positive("Duration must be positive"),
     total: z.number().positive("Total must be positive"),
@@ -25,10 +26,16 @@ const createScheduleSchema = z
 
     staffIds: z.array(z.string().uuid()).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => {
+    if (!data.serviceCatalogId && !data.serviceType) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["serviceCatalogId"], message: "Choose a service" });
+    }
+  });
 
 const updateScheduleSchema = z
   .object({
+    serviceCatalogId: z.string().uuid("Invalid service catalog ID").optional(),
     serviceType: z.enum(ServiceType).optional(),
     address: z.string().min(1).optional(),
     durationMins: z.number().int().positive().optional(),

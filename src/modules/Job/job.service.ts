@@ -54,6 +54,7 @@ import redis from "../../config/redis";
 import logger from "../../lib/logger";
 import { sendPushToUsers } from "../Push/push.service";
 import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
+import { resolveServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
 
 /**
  * PERF FIX (Phase 5.2): geocoding calls an external HTTP API (Google/Mapbox)
@@ -133,6 +134,7 @@ const jobInclude = {
     },
   },
   booking: { select: { id: true, bookingRef: true, status: true } },
+  serviceCatalog: { select: { id: true, serviceName: true, basePriceGbp: true, duration: true, category: true } },
 } as const;
 
 // Map JS getDay() → Prisma WeekDay enum
@@ -206,6 +208,16 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
     );
   }
 
+  const serviceIdentity = booking
+    ? {
+        serviceCatalogId: booking.serviceCatalogId,
+        serviceType: booking.serviceType,
+        serviceNameSnapshot: booking.serviceNameSnapshot ?? booking.serviceType?.replace(/_/g, " ") ?? "Service",
+        priceSnapshot: booking.priceSnapshot == null ? null : Number(booking.priceSnapshot),
+        durationSnapshot: booking.durationSnapshot,
+      }
+    : await resolveServiceIdentity(adminId, payload);
+
   const jobRef = await generateJobRef(adminId);
 
   // PERF FIX (Phase 5.2): job is created immediately without waiting on the
@@ -219,7 +231,11 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
       jobRef,
       adminId,
       clientId: payload.clientId,
-      serviceType: payload.serviceType,
+      serviceCatalogId: serviceIdentity.serviceCatalogId,
+      serviceType: serviceIdentity.serviceType,
+      serviceNameSnapshot: serviceIdentity.serviceNameSnapshot,
+      priceSnapshot: serviceIdentity.priceSnapshot,
+      durationSnapshot: serviceIdentity.durationSnapshot,
       address: payload.address,
       scheduledDate: new Date(payload.scheduledDate),
       durationMins: payload.durationMins,
@@ -334,7 +350,16 @@ const updateJob = async (
     );
   }
 
-  const data: Record<string, unknown> = { ...payload };
+  const { serviceCatalogId, serviceType, ...rest } = payload;
+  const data: Record<string, unknown> = { ...rest };
+  if (serviceCatalogId !== undefined || serviceType !== undefined) {
+    const identity = await resolveServiceIdentity(adminId, { serviceCatalogId, serviceType });
+    data.serviceCatalogId = identity.serviceCatalogId;
+    data.serviceType = identity.serviceType;
+    data.serviceNameSnapshot = identity.serviceNameSnapshot;
+    data.priceSnapshot = identity.priceSnapshot;
+    data.durationSnapshot = identity.durationSnapshot;
+  }
   if (payload.scheduledDate)
     data.scheduledDate = new Date(payload.scheduledDate);
 
@@ -473,7 +498,7 @@ const updateJobStatus = async (
               linkedBookingRef: booking.bookingRef,
               lineItems: [
                 {
-                  description: `${booking.serviceType.replace(/_/g, " ")} — ${booking.address}`,
+                  description: `${serviceDisplayName(booking)} — ${booking.address}`,
                   quantity: 1,
                   unitPrice: lineTotal,
                   total: lineTotal,
@@ -582,7 +607,7 @@ const updateJobStatus = async (
             templateData: {
               clientName: clientRecord.name,
               jobRef: completedJob.jobRef,
-              serviceType: completedJob.serviceType.replace(/_/g, " "),
+              serviceType: serviceDisplayName(completedJob),
               completedDate: new Date(
                 completedJob.scheduledDate,
               ).toLocaleDateString("en-GB", {
@@ -652,7 +677,11 @@ const convertBookingToJob = async (bookingId: string, user: IRequestUser) => {
       jobRef,
       adminId,
       clientId: booking.clientId,
+      serviceCatalogId: booking.serviceCatalogId,
       serviceType: booking.serviceType,
+      serviceNameSnapshot: booking.serviceNameSnapshot,
+      priceSnapshot: booking.priceSnapshot,
+      durationSnapshot: booking.durationSnapshot,
       address: booking.address,
       scheduledDate: booking.scheduledDate,
       durationMins: booking.durationMins,
@@ -746,7 +775,7 @@ const assignStaff = async (
         });
         const jobDetailUrl = `${FRONTEND_URL}/staff/dashboard/jobs/${jobId}`;
         const clientName = client?.name ?? "Client";
-        const friendlyServiceType = updatedJob.serviceType.replace(/_/g, " ");
+        const friendlyServiceType = serviceDisplayName(updatedJob);
         const scheduledDate = new Date(
           updatedJob.scheduledDate,
         ).toLocaleDateString("en-GB", {

@@ -4,6 +4,7 @@ import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import { ServiceType, UserRole } from "../../generated/prisma/enums";
 import { IRequestUser } from "../../types/requestUser.interface";
+import { resolveServiceIdentity } from "../../lib/utils/serviceIdentity";
 
 // ─── Identity resolvers ───────────────────────────────────────────────────────
 //
@@ -47,6 +48,9 @@ const assertStaffAssignedToJob = async (
 // ─── Template includes ─────────────────────────────────────────────────────────
 
 const templateInclude = {
+    serviceCatalog: {
+        select: { id: true, serviceName: true, basePriceGbp: true, duration: true, status: true },
+    },
     tasks: { orderBy: { sortOrder: "asc" as const } },
     _count: {
         select: { jobChecklists: true },
@@ -57,6 +61,7 @@ const templateInclude = {
 
 interface ITemplateCreate {
     name: string;
+    serviceCatalogId?: string | null;
     serviceType?: ServiceType | null;
     tasks?: {
         title: string;
@@ -68,10 +73,18 @@ interface ITemplateCreate {
 const createTemplate = async (payload: ITemplateCreate, user: IRequestUser) => {
     const adminId = await getAdminId(user);
 
+    const serviceIdentity = payload.serviceCatalogId || payload.serviceType
+        ? await resolveServiceIdentity(adminId, {
+              serviceCatalogId: payload.serviceCatalogId ?? undefined,
+              serviceType: payload.serviceType ?? undefined,
+          })
+        : null;
+
     return prisma.checklistTemplate.create({
         data: {
             name: payload.name,
-            serviceType: payload.serviceType ?? null,
+            serviceCatalogId: serviceIdentity?.serviceCatalogId ?? null,
+            serviceType: serviceIdentity?.serviceType ?? payload.serviceType ?? null,
             adminId,
             tasks: payload.tasks?.length
                 ? {
@@ -127,6 +140,15 @@ const updateTemplate = async (
     if (!existing)
         throw new AppError(status.NOT_FOUND, "Checklist template not found");
 
+    const serviceIdentity = payload.serviceCatalogId !== undefined || payload.serviceType !== undefined
+        ? (payload.serviceCatalogId || payload.serviceType
+            ? await resolveServiceIdentity(adminId, {
+                  serviceCatalogId: payload.serviceCatalogId ?? undefined,
+                  serviceType: payload.serviceType ?? undefined,
+              })
+            : null)
+        : undefined;
+
     return prisma.$transaction(async (tx) => {
         if (payload.tasks) {
             await tx.checklistTask.deleteMany({ where: { templateId: id } });
@@ -144,8 +166,9 @@ const updateTemplate = async (
             where: { id },
             data: {
                 ...(payload.name !== undefined && { name: payload.name }),
-                ...(payload.serviceType !== undefined && {
-                    serviceType: payload.serviceType,
+                ...(serviceIdentity !== undefined && {
+                    serviceCatalogId: serviceIdentity?.serviceCatalogId ?? null,
+                    serviceType: serviceIdentity?.serviceType ?? null,
                 }),
             },
             include: templateInclude,
@@ -193,7 +216,7 @@ const getJobChecklists = async (jobId: string, user: IRequestUser) => {
     return prisma.jobChecklist.findMany({
         where: { jobId },
         include: {
-            template: { select: { name: true, serviceType: true } },
+            template: { select: { name: true, serviceCatalogId: true, serviceType: true, serviceCatalog: { select: { id: true, serviceName: true } } } },
             items: { orderBy: { sortOrder: "asc" } },
         },
     });
@@ -243,7 +266,7 @@ const attachToJob = async (
             },
         },
         include: {
-            template: { select: { name: true, serviceType: true } },
+            template: { select: { name: true, serviceCatalogId: true, serviceType: true, serviceCatalog: { select: { id: true, serviceName: true } } } },
             items: { orderBy: { sortOrder: "asc" } },
         },
     });

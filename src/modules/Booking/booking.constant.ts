@@ -8,5 +8,6 @@ export const bookingSearchableFields = [
 export const bookingFilterableFields = [
     "status",
     "serviceType",
+    "serviceCatalogId",
     "clientId",
 ];

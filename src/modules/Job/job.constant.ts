@@ -8,5 +8,6 @@ export const jobSearchableFields = [
 export const jobFilterableFields = [
     "status",
     "serviceType",
+    "serviceCatalogId",
     "clientId",
 ];

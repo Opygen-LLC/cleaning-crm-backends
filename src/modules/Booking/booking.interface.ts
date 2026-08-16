@@ -9,7 +9,8 @@ export interface IBookingCreate {
     clientName?:   string;
     clientEmail?:  string;
     clientPhone?:  string;
-    serviceType:   ServiceType;
+    serviceCatalogId?: string;
+    serviceType?:   ServiceType;
     address:       string;
     scheduledDate: string | Date;
     durationMins:  number;
@@ -22,6 +23,7 @@ export interface IBookingCreate {
 // ── Update ────────────────────────────────────────────────────────────────────
 
 export interface IBookingUpdate {
+    serviceCatalogId?: string;
     serviceType?:   ServiceType;
     address?:       string;
     scheduledDate?: string | Date;

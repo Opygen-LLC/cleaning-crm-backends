@@ -50,10 +50,10 @@ app.use(requestContext);
 app.set("view engine", "ejs");
 app.set("views", path.resolve(process.cwd(), `src/lib/templates`));
 
-app.use(express.json());
+app.use(express.json({ limit: "64kb" }));
 app.use(express.static("./public"));
 app.use(cookieParser());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: "64kb" }));
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 // Add your production Next.js domain to FRONTEND_URL in the environment.
@@ -84,6 +84,7 @@ app.use(
       "X-Requested-With",
       "Accept",
       "Origin",
+      "Idempotency-Key",
     ],
     // Allow FE to read Content-Disposition header for CSV file downloads
     exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Response-Time"],

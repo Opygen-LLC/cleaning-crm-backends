@@ -79,7 +79,8 @@ const serviceKeywords: Partial<Record<ServiceType, string[]>> = {
     [ServiceType.MOVE_IN_OUT_CLEAN]: ["move", "in", "out"],
 };
 
-function specialtyMatchScore(staffSpecialties: string[] | undefined | null, jobType: ServiceType): number {
+function specialtyMatchScore(staffSpecialties: string[] | undefined | null, jobType: ServiceType | null): number {
+    if (!jobType) return 0;
     const keywords = serviceKeywords[jobType] ?? [];
     if (keywords.length === 0 || !staffSpecialties) return 0;
     const lower = (staffSpecialties ?? []).map((s) => s.toLowerCase());
@@ -113,7 +114,7 @@ export interface AutoDispatchResult {
     jobRef:          string;
     scheduledDate:   Date;
     durationMins:    number;
-    serviceType:     ServiceType;
+    serviceType:     ServiceType | null;
     address:         string;
     latitude:        number | null;
     longitude:       number | null;

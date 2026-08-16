@@ -1,4 +1,4 @@
-import { ServiceStatus } from "../../generated/prisma/enums";
+import { ServiceStatus, ServiceType } from "../../generated/prisma/enums";
 
 export interface IServiceAddOn {
     name: string;
@@ -13,6 +13,7 @@ export interface IServiceCatalogCreate {
     category: string;
     status?: ServiceStatus;
     addOns?: IServiceAddOn[];
+    legacyServiceType?: ServiceType | null;
 }
 
 export interface IServiceCatalogUpdate {
@@ -23,11 +24,11 @@ export interface IServiceCatalogUpdate {
     category?: string;
     status?: ServiceStatus;
     addOns?: IServiceAddOn[];
+    legacyServiceType?: ServiceType | null;
 }
 
 export interface IServiceCatalogFilters {
     searchTerm?: string;
     category?: string;
     status?: ServiceStatus;
-    adminId?: string;
 }

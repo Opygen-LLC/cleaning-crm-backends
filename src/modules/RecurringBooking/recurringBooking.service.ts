@@ -1,3 +1,4 @@
+import { resolveServiceIdentity } from "../../lib/utils/serviceIdentity";
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
@@ -167,6 +168,7 @@ const createSchedule = async (
         }
     }
 
+    const serviceIdentity = await resolveServiceIdentity(adminId, payload);
     const scheduleRef = await generateScheduleRef();
 
     // Compute the first nextRunAt from the provided startDate
@@ -184,7 +186,11 @@ const createSchedule = async (
             scheduleRef,
             adminId,
             clientId:     payload.clientId,
-            serviceType:  payload.serviceType,
+            serviceCatalogId: serviceIdentity.serviceCatalogId,
+            serviceType: serviceIdentity.serviceType,
+            serviceNameSnapshot: serviceIdentity.serviceNameSnapshot,
+            priceSnapshot: serviceIdentity.priceSnapshot,
+            durationSnapshot: serviceIdentity.durationSnapshot,
             address:      payload.address,
             durationMins: payload.durationMins,
             total:        payload.total,
@@ -279,12 +285,22 @@ const updateSchedule = async (
             }
         }
 
-        const { staffIds: _staffIds, ...rest } = payload;
+        const { staffIds: _staffIds, serviceCatalogId, serviceType, ...rest } = payload;
+        const serviceIdentity = serviceCatalogId !== undefined || serviceType !== undefined
+            ? await resolveServiceIdentity(adminId, { serviceCatalogId, serviceType })
+            : null;
 
         return tx.recurringSchedule.update({
             where: { id },
             data: {
                 ...rest,
+                ...(serviceIdentity ? {
+                    serviceCatalogId: serviceIdentity.serviceCatalogId,
+                    serviceType: serviceIdentity.serviceType,
+                    serviceNameSnapshot: serviceIdentity.serviceNameSnapshot,
+                    priceSnapshot: serviceIdentity.priceSnapshot,
+                    durationSnapshot: serviceIdentity.durationSnapshot,
+                } : {}),
                 ...(nextRunAt && { nextRunAt }),
             },
             include: scheduleInclude,
@@ -409,7 +425,11 @@ const generateNextBooking = async (id: string, user: IRequestUser) => {
                 bookingRef,
                 adminId:      schedule.adminId,
                 clientId:     schedule.clientId,
-                serviceType:  schedule.serviceType,
+                serviceCatalogId: schedule.serviceCatalogId,
+                serviceType: schedule.serviceType,
+                serviceNameSnapshot: schedule.serviceNameSnapshot,
+                priceSnapshot: schedule.priceSnapshot,
+                durationSnapshot: schedule.durationSnapshot,
                 address:      schedule.address,
                 scheduledDate: schedule.nextRunAt,
                 durationMins: schedule.durationMins,

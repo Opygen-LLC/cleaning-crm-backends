@@ -50,8 +50,8 @@ const generateInvoiceRef = async () => {
 const createInvoice = async (payload: IInvoiceCreate, user: IRequestUser) => {
     const adminId = await getAdminId(user);
 
-    const serviceCatalog = await prisma.serviceCatalog.findUnique({
-        where: { id: payload.serviceCatalogId },
+    const serviceCatalog = await prisma.serviceCatalog.findFirst({
+        where: { id: payload.serviceCatalogId, adminId },
     });
 
     if (!serviceCatalog) {
@@ -186,6 +186,16 @@ const updateInvoice = async (id: string, payload: IInvoiceUpdate, user: IRequest
     }
 
     const { clientDetails, dates, summary, ...updateData } = payload;
+
+    if (payload.serviceCatalogId) {
+        const ownedService = await prisma.serviceCatalog.findFirst({
+            where: { id: payload.serviceCatalogId, adminId: invoice.adminId },
+            select: { id: true },
+        });
+        if (!ownedService) {
+            throw new AppError(status.NOT_FOUND, "Service not found in catalog");
+        }
+    }
 
     const data: any = { ...updateData };
 

@@ -9,31 +9,31 @@ const router = Router();
 
 router.get(
     "/templates",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checkAuth(UserRole.ADMIN),
     checklistController.getAllTemplates,
 );
 
 router.post(
     "/templates",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checkAuth(UserRole.ADMIN),
     checklistController.createTemplate,
 );
 
 router.get(
     "/templates/:id",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checkAuth(UserRole.ADMIN),
     checklistController.getTemplateById,
 );
 
 router.patch(
     "/templates/:id",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checkAuth(UserRole.ADMIN),
     checklistController.updateTemplate,
 );
 
 router.delete(
     "/templates/:id",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checkAuth(UserRole.ADMIN),
     checklistController.deleteTemplate,
 );
 
@@ -42,19 +42,19 @@ router.delete(
 // Admin attaches / reads checklists on a job
 router.get(
     "/job/:jobId",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.STAFF),
+    checkAuth(UserRole.ADMIN, UserRole.STAFF),
     checklistController.getJobChecklists,
 );
 
 router.post(
     "/job/:jobId",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checkAuth(UserRole.ADMIN),
     checklistController.attachToJob,
 );
 
 router.delete(
     "/:checklistId",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    checkAuth(UserRole.ADMIN),
     checklistController.detachFromJob,
 );
 
@@ -62,7 +62,7 @@ router.delete(
 // STAFF can tick/untick items; ADMIN can too (e.g. in job detail view)
 router.patch(
     "/:checklistId/items/:itemId",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.STAFF),
+    checkAuth(UserRole.ADMIN, UserRole.STAFF),
     checklistController.updateItemCompletion,
 );
 

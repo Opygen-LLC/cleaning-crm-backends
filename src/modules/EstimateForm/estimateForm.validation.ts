@@ -8,10 +8,15 @@ import {
 // ── Sub-schemas ────────────────────────────────────────────────────────────────
 
 const serviceSchema = z.object({
-    serviceType: z.enum(ServiceType),
+    serviceCatalogId: z.string().uuid().optional(),
+    serviceType: z.enum(ServiceType).optional(),
     enabled:     z.boolean().optional(),
     basePrice:   z.number().min(0).optional(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+    if (!value.serviceCatalogId && !value.serviceType) {
+        ctx.addIssue({ code: "custom", path: ["serviceCatalogId"], message: "Choose a service" });
+    }
+});
 
 const addOnSchema = z.object({
     label:   z.string().min(1),
@@ -62,8 +67,9 @@ const updateSubmissionStatusSchema = z.object({
 
 // ── Public calculation / submission ──────────────────────────────────────────
 
-const publicCalculationSchema = z.object({
-    serviceType: z.enum(ServiceType),
+const publicCalculationBase = z.object({
+    serviceCatalogId: z.string().uuid().optional(),
+    serviceType: z.enum(ServiceType).optional(),
     bedrooms:    z.number().int().min(0).max(50),
     bathrooms:   z.number().int().min(0).max(50),
     addOnIds:    z.array(z.string().min(1)).max(50).default([]),
@@ -71,7 +77,15 @@ const publicCalculationSchema = z.object({
     city:        z.string().trim().max(120).optional(),
 }).strict();
 
-const publicSubmissionSchema = publicCalculationSchema.extend({
+const requireServiceIdentity = (value: { serviceCatalogId?: string; serviceType?: ServiceType }, ctx: z.RefinementCtx) => {
+    if (!value.serviceCatalogId && !value.serviceType) {
+        ctx.addIssue({ code: "custom", path: ["serviceCatalogId"], message: "Choose a service" });
+    }
+};
+
+const publicCalculationSchema = publicCalculationBase.superRefine(requireServiceIdentity);
+
+const publicSubmissionSchema = publicCalculationBase.extend({
     postcode: z.string().trim().min(1, "Postcode is required").max(32),
     city:     z.string().trim().max(120).optional(),
     // Legacy contact fields remain accepted during the rollout; the server
@@ -81,7 +95,7 @@ const publicSubmissionSchema = publicCalculationSchema.extend({
     phone:    z.string().trim().max(80).optional(),
     notes:    z.string().trim().max(5000).optional(),
     answers:  z.record(z.string(), z.string().max(5000)).optional(),
-}).strict();
+}).strict().superRefine(requireServiceIdentity);
 
 // ── Export ─────────────────────────────────────────────────────────────────────
 

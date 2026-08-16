@@ -2,7 +2,12 @@ model Booking {
   id               String                   @id @default(uuid())
   bookingRef       String                   @unique
   status           BookingStatus            @default(SCHEDULED)
-  serviceType      ServiceType
+  // Legacy enum remains nullable during the ServiceCatalog migration.
+  serviceType      ServiceType?
+  serviceCatalogId String?
+  serviceNameSnapshot String?
+  priceSnapshot    Decimal?                 @db.Decimal(10, 2)
+  durationSnapshot String?
   address          String
   scheduledDate    DateTime
   durationMins     Int
@@ -15,6 +20,7 @@ model Booking {
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
   admin            AdminProfile             @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  serviceCatalog   ServiceCatalog?           @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
   client           Client                   @relation(fields: [clientId], references: [id])
   quote            Quote?                   @relation(fields: [quoteId], references: [id])
   recurringSchedule RecurringSchedule?      @relation("RecurringScheduleBookings", fields: [recurringScheduleId], references: [id], onDelete: SetNull)
@@ -27,6 +33,7 @@ model Booking {
   @@index([adminId, status, createdAt(sort: Desc)])
   @@index([clientId])
   @@index([scheduledDate])
+  @@index([serviceCatalogId])
   @@map("booking")
 }
 

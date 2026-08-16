@@ -16,23 +16,23 @@ import {
     zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
 import { reviewValidation } from "./review.validation";
+import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRateLimit } from "../../middlewares/publicApiSecurity";
 
 const router = Router();
 
-const isAdminOrSuper = checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN);
-// SUPER_ADMIN is exempt from the feature gate (no subscription on file).
-// checkFeature already passes through when role !== ADMIN, so it is safe
-// to chain it after isAdminOrSuper.
+const isTenantAdmin = checkAuth(UserRole.ADMIN);
 const hasReviews     = checkFeature("reviews");
 
 // ── Public routes (no auth, no feature gate) ──────────────────────────────────
 
 // GET  /review/public/:token  → validate token & return job summary
-router.get("/public/:token", reviewController.validateReviewToken);
+router.get("/public/:token", publicReadRateLimit, reviewController.validateReviewToken);
 
 // POST /review/public/:token  → submit review
 router.post(
     "/public/:token",
+    publicMutationRateLimit,
+    publicResourceMutationRateLimit,
     zodValidate(reviewValidation.submitPublicReview, ValidationProperty.BODY),
     reviewController.submitPublicReview,
 );
@@ -42,7 +42,7 @@ router.post(
 // GET  /review/staff-summaries  → per-staff rating breakdown
 router.get(
     "/staff-summaries",
-    isAdminOrSuper,
+    isTenantAdmin,
     hasReviews,
     reviewController.getStaffReviewSummaries,
 );
@@ -50,7 +50,7 @@ router.get(
 // POST /review/generate-token/:jobId  → generate review token for a completed job
 router.post(
     "/generate-token/:jobId",
-    isAdminOrSuper,
+    isTenantAdmin,
     hasReviews,
     reviewController.generateTokenForJob,
 );
@@ -58,7 +58,7 @@ router.post(
 // GET  /review  → paginated list with filters
 router.get(
     "/",
-    isAdminOrSuper,
+    isTenantAdmin,
     hasReviews,
     reviewController.getAllReviews,
 );
@@ -66,7 +66,7 @@ router.get(
 // POST /review/:id/resend-email  → resend review request email
 router.post(
     "/:id/resend-email",
-    isAdminOrSuper,
+    isTenantAdmin,
     hasReviews,
     reviewController.resendReviewEmail,
 );
@@ -74,7 +74,7 @@ router.post(
 // GET  /review/:id  → single review
 router.get(
     "/:id",
-    isAdminOrSuper,
+    isTenantAdmin,
     hasReviews,
     reviewController.getReviewById,
 );
@@ -82,7 +82,7 @@ router.get(
 // PATCH /review/:id  → update status / publish / reply
 router.patch(
     "/:id",
-    isAdminOrSuper,
+    isTenantAdmin,
     hasReviews,
     zodValidate(reviewValidation.updateReview, ValidationProperty.BODY),
     reviewController.updateReview,

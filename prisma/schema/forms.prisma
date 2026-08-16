@@ -43,24 +43,35 @@ model BookingFormField {
 }
 
 model BookingFormService {
-  id          String      @id @default(uuid())
-  serviceType ServiceType
-  enabled     Boolean     @default(true)
-  priceLabel  String?
-  duration    String?
-  formId      String
-  form        BookingForm @relation(fields: [formId], references: [id], onDelete: Cascade)
+  id               String          @id @default(uuid())
+  // Legacy compatibility only. Canonical identity is serviceCatalogId.
+  serviceType      ServiceType?
+  serviceCatalogId String?
+  enabled          Boolean         @default(true)
+  priceLabel       String?
+  duration         String?
+  formId           String
+  form             BookingForm     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  serviceCatalog   ServiceCatalog? @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
 
   @@unique([formId, serviceType])
+  @@unique([formId, serviceCatalogId])
+  @@index([serviceCatalogId])
   @@map("booking_form_service")
 }
 
 model BookingFormSubmission {
-  id          String               @id @default(uuid())
-  ref         String               @unique
-  status      FormSubmissionStatus @default(NEW)
-  serviceType ServiceType
-  date        DateTime
+  id                  String               @id @default(uuid())
+  ref                 String               @unique
+  status              FormSubmissionStatus @default(NEW)
+  // serviceType is retained for old records/clients; catalog ID is canonical.
+  serviceType         ServiceType?
+  serviceCatalogId    String?
+  serviceNameSnapshot String?
+  priceSnapshot       Decimal?             @db.Decimal(10, 2)
+  durationSnapshot    String?
+  idempotencyKey      String?
+  date                DateTime
   timeSlot    String
   name        String
   email       String
@@ -71,8 +82,11 @@ model BookingFormSubmission {
   formId      String
   createdAt   DateTime             @default(now())
   form        BookingForm          @relation(fields: [formId], references: [id], onDelete: Cascade)
+  serviceCatalog ServiceCatalog?   @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
 
   @@index([formId, status])
+  @@index([serviceCatalogId])
+  @@unique([formId, idempotencyKey])
   @@map("booking_form_submission")
 }
 
@@ -119,14 +133,18 @@ model EstimateFormField {
 }
 
 model EstimateFormService {
-  id          String       @id @default(uuid())
-  serviceType ServiceType
-  enabled     Boolean      @default(true)
-  basePrice   Decimal?     @db.Decimal(10, 2)
-  formId      String
-  form        EstimateForm @relation(fields: [formId], references: [id], onDelete: Cascade)
+  id               String          @id @default(uuid())
+  serviceType      ServiceType?
+  serviceCatalogId String?
+  enabled          Boolean         @default(true)
+  basePrice        Decimal?        @db.Decimal(10, 2)
+  formId           String
+  form             EstimateForm    @relation(fields: [formId], references: [id], onDelete: Cascade)
+  serviceCatalog   ServiceCatalog? @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
 
   @@unique([formId, serviceType])
+  @@unique([formId, serviceCatalogId])
+  @@index([serviceCatalogId])
   @@map("estimate_form_service")
 }
 
@@ -143,11 +161,16 @@ model EstimateFormAddOn {
 }
 
 model EstimateFormSubmission {
-  id          String                   @id @default(uuid())
-  ref         String                   @unique
-  status      EstimateSubmissionStatus @default(NEW)
-  serviceType ServiceType
-  bedrooms    Int
+  id                  String                   @id @default(uuid())
+  ref                 String                   @unique
+  status              EstimateSubmissionStatus @default(NEW)
+  serviceType         ServiceType?
+  serviceCatalogId    String?
+  serviceNameSnapshot String?
+  priceSnapshot       Decimal?                 @db.Decimal(10, 2)
+  durationSnapshot    String?
+  idempotencyKey      String?
+  bedrooms            Int
   bathrooms   Int
   addOnIds    String[]
   postcode        String
@@ -163,7 +186,10 @@ model EstimateFormSubmission {
   formId          String
   createdAt   DateTime                 @default(now())
   form        EstimateForm             @relation(fields: [formId], references: [id], onDelete: Cascade)
+  serviceCatalog ServiceCatalog?       @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
 
   @@index([formId, status])
+  @@index([serviceCatalogId])
+  @@unique([formId, idempotencyKey])
   @@map("estimate_form_submission")
 }

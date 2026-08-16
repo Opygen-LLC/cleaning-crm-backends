@@ -3,10 +3,11 @@ import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
-import { FormFieldType, FormSubmissionStatus } from "../../generated/prisma/enums";
+import { FormFieldType, FormSubmissionStatus, ServiceStatus } from "../../generated/prisma/enums";
 import { Prisma } from "../../generated/prisma/client";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { IBookingFormCreate, IPublicBookingSubmission } from "./bookingForm.interface";
+import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 
 // ─── Slot-generation helpers (mirrors frontend logic exactly) ─────────────────
 
@@ -182,12 +183,42 @@ const generateSlug = (headline: string, adminId: string): string => {
 // ─── Standard includes ─────────────────────────────────────────────────────────
 
 const formInclude = {
-    fields:   true,
-    services: true,
+    fields: true,
+    services: { include: { serviceCatalog: true } },
     _count: {
         select: { submissions: true },
     },
 } as const;
+
+type FormServiceInput = NonNullable<IBookingFormCreate["services"]>[number];
+
+const resolveFormServices = async (adminId: string, services: FormServiceInput[]) => {
+    const ids = [...new Set(services.map((s) => s.serviceCatalogId).filter((id): id is string => !!id))];
+    const catalogs = ids.length
+        ? await prisma.serviceCatalog.findMany({
+            where: { id: { in: ids }, adminId, status: ServiceStatus.ACTIVE },
+            select: { id: true, legacyServiceType: true },
+        })
+        : [];
+    const byId = new Map(catalogs.map((c) => [c.id, c]));
+    if (catalogs.length !== ids.length) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "One or more selected services do not belong to this business", {
+            code: "SERVICE_TENANT_MISMATCH", retryable: false,
+            fieldErrors: { services: "Choose services from your own service catalog." },
+        });
+    }
+    return services.map((entry) => {
+        const catalog = entry.serviceCatalogId ? byId.get(entry.serviceCatalogId) : undefined;
+        return {
+            serviceCatalogId: catalog?.id ?? null,
+            // Catalog relation is authoritative; old enum is only a compatibility value.
+            serviceType: catalog?.legacyServiceType ?? entry.serviceType ?? null,
+            enabled: entry.enabled ?? true,
+            priceLabel: entry.priceLabel,
+            duration: entry.duration,
+        };
+    });
+};
 
 // ─── BookingForm CRUD ─────────────────────────────────────────────────────────
 
@@ -196,6 +227,7 @@ const createBookingForm = async (
     user: IRequestUser,
 ) => {
     const adminId = await getAdminId(user);
+    const resolvedServices = payload.services ? await resolveFormServices(adminId, payload.services) : undefined;
     const slug    = generateSlug(payload.headline, adminId);
 
     const existing = await prisma.bookingForm.findUnique({ where: { slug } });
@@ -220,12 +252,7 @@ const createBookingForm = async (
             services: payload.services?.length
                 ? {
                     createMany: {
-                        data: payload.services.map((s) => ({
-                            serviceType: s.serviceType,
-                            enabled:     s.enabled ?? true,
-                            priceLabel:  s.priceLabel,
-                            duration:    s.duration,
-                        })),
+                        data: resolvedServices!,
                     },
                 }
                 : undefined,
@@ -319,19 +346,14 @@ const updateBookingForm = async (
 
     const existing = await prisma.bookingForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Booking form not found");
+    const resolvedServices = payload.services ? await resolveFormServices(adminId, payload.services) : undefined;
 
     return prisma.$transaction(async (tx) => {
         // Replace services when provided
         if (payload.services) {
             await tx.bookingFormService.deleteMany({ where: { formId: id } });
             await tx.bookingFormService.createMany({
-                data: payload.services.map((s) => ({
-                    formId:      id,
-                    serviceType: s.serviceType,
-                    enabled:     s.enabled ?? true,
-                    priceLabel:  s.priceLabel,
-                    duration:    s.duration,
-                })),
+                data: resolvedServices!.map((service) => ({ formId: id, ...service })),
             });
         }
 
@@ -415,7 +437,10 @@ const getSubmissions = async (
 
     return prisma.bookingFormSubmission.findMany({
         where:   { formId: { in: adminFormIds } },
-        include: { form: { select: { headline: true, slug: true } } },
+        include: {
+            form: { select: { headline: true, slug: true } },
+            serviceCatalog: { select: { id: true, serviceName: true, duration: true, basePriceGbp: true } },
+        },
         orderBy: { createdAt: "desc" },
     });
 };
@@ -493,13 +518,14 @@ const getPublicBookingForm = async (slug: string) => {
         where:   { slug },
         include: {
             fields:   { where: { enabled: true }, orderBy: { sortOrder: "asc" } },
-            services: { where: { enabled: true } },
+            services: {
+                where: { enabled: true },
+                include: { serviceCatalog: true },
+            },
             admin: {
                 select: {
-                    businessName: true,
-                    businessLogo: true,
-                    mobileNumber: true,
-                    businessEmail: true,
+                    businessName: true, businessLogo: true, mobileNumber: true, businessEmail: true,
+                    address: true, city: true, zipcode: true, country: true, brandColor: true,
                     user: { select: { name: true, email: true } },
                 },
             },
@@ -532,9 +558,29 @@ const getPublicBookingForm = async (slug: string) => {
         }
     }
 
+    // Canonical projection is additive for backward compatibility: old clients
+    // can still read admin/serviceType while new clients use business + serviceCatalogId.
+    const publicServices = form.services
+        .filter((entry) => entry.serviceCatalog ? entry.serviceCatalog.status === ServiceStatus.ACTIVE : !!entry.serviceType)
+        .map((entry) => ({
+            id: entry.id,
+            enabled: entry.enabled,
+            serviceType: entry.serviceType,
+            serviceCatalogId: entry.serviceCatalogId,
+            priceLabel: entry.priceLabel,
+            duration: entry.duration ?? entry.serviceCatalog?.duration ?? null,
+            service: entry.serviceCatalog ? projectCanonicalService(entry.serviceCatalog) : null,
+            serviceName: entry.serviceCatalog?.serviceName ?? entry.serviceType?.replace(/_/g, " ") ?? "Service",
+            basePriceGbp: entry.serviceCatalog?.basePriceGbp ?? null,
+        }));
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { adminId, ...safeForm } = form;
-    return { ...safeForm, reviewSummary };
+    const { adminId, services, ...safeForm } = form;
+    return {
+        ...safeForm,
+        services: publicServices,
+        business: projectPublicBusiness(form.admin),
+        reviewSummary,
+    };
 };
 
 /**
@@ -612,11 +658,16 @@ const getPublicSlotAvailability = async (slug: string, date: string) => {
 const submitPublicBookingForm = async (
     slug: string,
     payload: IPublicBookingSubmission,
+    idempotencyKey?: string,
 ) => {
+    if (idempotencyKey && !/^[A-Za-z0-9:_-]{8,128}$/.test(idempotencyKey)) {
+        throw new AppError(status.BAD_REQUEST, "Invalid Idempotency-Key header");
+    }
     const form = await prisma.bookingForm.findUnique({
         where: { slug },
         select: {
             id: true,
+            adminId: true,
             published: true,
             blockedDates: true,
             timeSlots: true,
@@ -626,7 +677,12 @@ const submitPublicBookingForm = async (
             bufferTimeMinutes: true,
             services: {
                 where: { enabled: true },
-                select: { serviceType: true },
+                select: {
+                    serviceType: true, serviceCatalogId: true,
+                    serviceCatalog: {
+                        select: { id: true, serviceName: true, basePriceGbp: true, duration: true, status: true, legacyServiceType: true },
+                    },
+                },
             },
             fields: {
                 where: { enabled: true },
@@ -675,14 +731,25 @@ const submitPublicBookingForm = async (
         });
     }
 
-    const serviceEnabled = form.services.some((service) => service.serviceType === payload.serviceType);
-    if (!serviceEnabled) {
+    const selectedService = form.services.find((entry) => {
+        if (payload.serviceCatalogId) return entry.serviceCatalogId === payload.serviceCatalogId;
+        return !!payload.serviceType && entry.serviceType === payload.serviceType;
+    });
+    const catalog = selectedService?.serviceCatalog;
+    if (!selectedService || (catalog && catalog.status !== ServiceStatus.ACTIVE)) {
         throw new AppError(status.UNPROCESSABLE_ENTITY, "That service is no longer available for online booking.", {
             code: "BOOKING_SERVICE_UNAVAILABLE",
             retryable: false,
-            fieldErrors: { serviceType: "Please choose another service." },
+            fieldErrors: { serviceCatalogId: "Please choose another service." },
         });
     }
+    const canonicalService = {
+        serviceCatalogId: catalog?.id ?? selectedService.serviceCatalogId ?? null,
+        serviceType: catalog?.legacyServiceType ?? selectedService.serviceType ?? null,
+        serviceNameSnapshot: catalog?.serviceName ?? selectedService.serviceType?.replace(/_/g, " ") ?? "Service",
+        priceSnapshot: catalog?.basePriceGbp ?? null,
+        durationSnapshot: catalog?.duration ?? null,
+    };
 
     const dayWindows = form.timeSlots.filter((ts) => ts.startsWith(`${dayName}|`));
     const validSlots = generateSlotsFromWindows(
@@ -708,6 +775,15 @@ const submitPublicBookingForm = async (
     // final place serialize on the same slot key; the second sees the committed
     // first booking and receives BOOKING_SLOT_FULL instead of overbooking.
     return prisma.$transaction(async (tx) => {
+        if (idempotencyKey) {
+            const idempotencyLockKey = `booking-idempotency:${form.id}:${idempotencyKey}`;
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${idempotencyLockKey}, 0::bigint))`;
+            const existing = await tx.bookingFormSubmission.findFirst({
+                where: { formId: form.id, idempotencyKey },
+            });
+            if (existing) return existing;
+        }
+
         await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${slotLockKey}, 0::bigint))`;
 
         const existingCount = await tx.bookingFormSubmission.count({
@@ -735,7 +811,12 @@ const submitPublicBookingForm = async (
             data: {
                 ref: generateSubmissionRef(),
                 formId: form.id,
-                serviceType: payload.serviceType,
+                serviceCatalogId: canonicalService.serviceCatalogId,
+                serviceType: canonicalService.serviceType,
+                serviceNameSnapshot: canonicalService.serviceNameSnapshot,
+                priceSnapshot: canonicalService.priceSnapshot,
+                durationSnapshot: canonicalService.durationSnapshot,
+                idempotencyKey: idempotencyKey ?? null,
                 date: dateStart,
                 timeSlot: payload.timeSlot,
                 name: payload.name,

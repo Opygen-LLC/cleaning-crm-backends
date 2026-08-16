@@ -63,6 +63,7 @@ const updateReview = catchAsync(async (req, res) => {
     const result = await reviewService.updateReview(
         req.params.id as string,
         req.body,
+        req.user,
     );
     sendResponse(res, {
         httpStatusCode: httpStatus.OK,

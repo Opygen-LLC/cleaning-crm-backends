@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ServiceStatus } from "../../generated/prisma/enums";
+import { ServiceStatus, ServiceType } from "../../generated/prisma/enums";
 
 const addOnSchema = z.object({
     name: z.string().min(1, "Add-on name is required"),
@@ -14,7 +14,8 @@ const createServiceCatalogSchema = z.object({
     category: z.string().min(1, "Category is required"),
     status: z.nativeEnum(ServiceStatus).optional(),
     addOns: z.array(addOnSchema).optional(),
-});
+    legacyServiceType: z.nativeEnum(ServiceType).nullable().optional(),
+}).strict();
 
 const updateServiceCatalogSchema = z.object({
     serviceName: z.string().optional(),
@@ -24,7 +25,8 @@ const updateServiceCatalogSchema = z.object({
     category: z.string().optional(),
     status: z.nativeEnum(ServiceStatus).optional(),
     addOns: z.array(addOnSchema).optional(),
-});
+    legacyServiceType: z.nativeEnum(ServiceType).nullable().optional(),
+}).strict();
 
 export const serviceCatalogValidation = {
     createServiceCatalog: createServiceCatalogSchema,

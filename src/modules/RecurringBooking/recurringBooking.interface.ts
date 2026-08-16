@@ -4,7 +4,8 @@ import { RecurringFrequency, RecurringStatus, ServiceType, WeekDay } from "../..
 
 export interface IRecurringScheduleCreate {
     clientId:     string;
-    serviceType:  ServiceType;
+    serviceCatalogId?: string;
+    serviceType?:  ServiceType;
     address:      string;
     durationMins: number;
     total:        number;
@@ -22,6 +23,7 @@ export interface IRecurringScheduleCreate {
 // ── Update ────────────────────────────────────────────────────────────────────
 
 export interface IRecurringScheduleUpdate {
+    serviceCatalogId?: string;
     serviceType?:  ServiceType;
     address?:      string;
     durationMins?: number;

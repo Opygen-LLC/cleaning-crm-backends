@@ -4,7 +4,8 @@ import { JobStatus, ServiceType } from "../../generated/prisma/enums";
 
 export interface IJobCreate {
     clientId:      string;
-    serviceType:   ServiceType;
+    serviceCatalogId?: string;
+    serviceType?:   ServiceType;
     address:       string;
     scheduledDate: string | Date;
     durationMins:  number;
@@ -18,6 +19,7 @@ export interface IJobCreate {
 // ── Update ────────────────────────────────────────────────────────────────────
 
 export interface IJobUpdate {
+    serviceCatalogId?: string;
     serviceType?:   ServiceType;
     address?:       string;
     scheduledDate?: string | Date;

@@ -145,6 +145,7 @@ const submitPublicBookingForm = catchAsync(async (req, res) => {
     const result = await bookingFormService.submitPublicBookingForm(
         getParam(req.params.slug),
         req.body,
+        req.get("Idempotency-Key") ?? undefined,
     );
     sendResponse(res, {
         httpStatusCode: status.CREATED,

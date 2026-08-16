@@ -5,16 +5,19 @@
 model ChecklistTemplate {
   id          String    @id @default(uuid())
   name        String
-  serviceType ServiceType?          // null = generic / all services
+  serviceType ServiceType?          // legacy compatibility; null can also mean generic
+  serviceCatalogId String?
   adminId     String
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   admin       AdminProfile          @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  serviceCatalog ServiceCatalog?     @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
   tasks       ChecklistTask[]
   jobChecklists JobChecklist[]
 
   @@index([adminId])
+  @@index([serviceCatalogId])
   @@map("checklist_template")
 }
 

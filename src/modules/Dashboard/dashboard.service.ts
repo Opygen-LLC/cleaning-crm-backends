@@ -60,7 +60,7 @@ const mapStatusToEnum = (s?: string): BookingStatus | undefined => {
   return undefined;
 };
 
-const formatServiceType = (t?: string) => {
+const formatServiceType = (t?: string | null) => {
   if (!t) return "Residential Clean";
   return t
     .replace(/_/g, " ")

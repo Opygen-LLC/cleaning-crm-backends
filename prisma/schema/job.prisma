@@ -2,7 +2,11 @@ model Job {
   id               String               @id @default(uuid())
   jobRef           String               @unique
   status           JobStatus            @default(SCHEDULED)
-  serviceType      ServiceType
+  serviceType      ServiceType?
+  serviceCatalogId String?
+  serviceNameSnapshot String?
+  priceSnapshot    Decimal?                 @db.Decimal(10, 2)
+  durationSnapshot String?
   address          String
   /// [Phase 2 — location-aware dispatch] Geocoded from `address` on
   /// create/update. Nullable — see Client.latitude for the same contract.
@@ -20,6 +24,7 @@ model Job {
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
   admin            AdminProfile         @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  serviceCatalog   ServiceCatalog?       @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
   booking          Booking?             @relation(fields: [bookingId], references: [id])
   client           Client               @relation(fields: [clientId], references: [id])
   estimate         Estimate?            @relation(fields: [estimateId], references: [id])
@@ -34,6 +39,7 @@ model Job {
   @@index([adminId, status])
   @@index([clientId])
   @@index([scheduledDate])
+  @@index([serviceCatalogId])
   // PERF FIX (Phase 3.3): generateJobRef() looks up this admin's most
   // recent job via `where: { adminId }, orderBy: { createdAt: "desc" }`
   // on every job creation. Without this, that query (and the STAFF/admin

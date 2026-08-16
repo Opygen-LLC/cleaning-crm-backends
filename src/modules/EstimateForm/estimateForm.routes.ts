@@ -8,6 +8,7 @@ import {
     zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
 import { estimateFormValidation } from "./estimateForm.validation";
+import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRateLimit } from "../../middlewares/publicApiSecurity";
 
 const router = Router();
 
@@ -23,17 +24,22 @@ const hasEstimateSubmissions = checkFeature("estimate submissions");
 
 router.get(
     "/public/:slug",
+    publicReadRateLimit,
     estimateFormController.getPublicEstimateForm,
 );
 
 router.post(
     "/public/:slug/calculate",
+    publicMutationRateLimit,
+    publicResourceMutationRateLimit,
     zodValidate(estimateFormValidation.publicCalculation, ValidationProperty.BODY),
     estimateFormController.calculatePublicEstimate,
 );
 
 router.post(
     "/public/:slug/submit",
+    publicMutationRateLimit,
+    publicResourceMutationRateLimit,
     zodValidate(estimateFormValidation.publicSubmission, ValidationProperty.BODY),
     estimateFormController.submitPublicEstimateForm,
 );
