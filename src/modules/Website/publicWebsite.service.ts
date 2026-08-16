@@ -3,8 +3,11 @@ import AppError from "../../errorHelper/AppError";
 import { WEBSITE_BASE_DOMAIN } from "../../config/ENV";
 import { prisma } from "../../lib/prisma/prisma";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
+import type { IRequestUser } from "../../types/requestUser.interface";
 import { normalizeDomain, normalizeSubdomain } from "./websiteIdentity";
 import { TemplateRegistry } from "./templateRegistry";
+import { buildPublishedSnapshot, parsePublishedSnapshot } from "./websiteSnapshot";
 
 interface ResolvedWebsite {
   websiteId: string;
@@ -59,7 +62,7 @@ const getReviewSummary = (reviews: Array<{ rating: number }>) => {
   };
 };
 
-const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: string | null = null) => {
+const loadProjectionSource = async (websiteId: string) => {
   const website = await prisma.businessWebsite.findUnique({
     where: { id: websiteId },
     include: {
@@ -97,33 +100,67 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
             select: { id: true, city: true, postcode: true },
             orderBy: { createdAt: "asc" },
           },
+          // Keep form resolution inside the same tenant-scoped query. The
+          // published snapshot may point to a different form than the current
+          // draft, so reading only BusinessWebsite.primary* relations would
+          // make draft changes leak into (or break) the published runtime.
+          bookingForms: {
+            select: { id: true, slug: true, published: true, headline: true, subheading: true },
+          },
+          estimateForms: {
+            select: { id: true, slug: true, published: true, headline: true, subheading: true },
+          },
         },
       },
-      pages: {
-        where: { isEnabled: true },
-        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-      },
+      pages: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
       domains: {
         where: { status: "VERIFIED" as any },
         select: { domain: true, isPrimary: true },
         orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
       },
-      primaryBookingForm: {
-        select: { id: true, adminId: true, slug: true, published: true, headline: true, subheading: true },
-      },
-      primaryEstimateForm: {
-        select: { id: true, adminId: true, slug: true, published: true, headline: true, subheading: true },
-      },
     },
   });
-
   if (!website) throw new AppError(status.NOT_FOUND, "Website not found");
-  if (website.status === "SUSPENDED" || website.admin.user.status !== "ACTIVE") {
-    throw new AppError(status.SERVICE_UNAVAILABLE, "Website temporarily unavailable");
-  }
-  if (website.status !== "PUBLISHED") throw new AppError(status.NOT_FOUND, "Website not found");
+  return website;
+};
 
-  const template = TemplateRegistry.get(website.templateId, website.templateVersion);
+const currentDraftAsPublishedSnapshot = (website: any) => buildPublishedSnapshot({
+  templateId: website.templateId,
+  templateVersion: website.templateVersion,
+  schemaVersion: website.schemaVersion,
+  primaryColor: website.primaryColor,
+  secondaryColor: website.secondaryColor,
+  accentColor: website.accentColor,
+  font: website.font,
+  logo: website.logo,
+  favicon: website.favicon,
+  primaryBookingFormId: website.primaryBookingFormId,
+  primaryEstimateFormId: website.primaryEstimateFormId,
+  metaTitle: website.metaTitle,
+  metaDescription: website.metaDescription,
+  socialImageUrl: website.socialImageUrl,
+  indexSite: website.indexSite,
+  pages: website.pages,
+});
+
+const projectWebsite = (
+  website: Awaited<ReturnType<typeof loadProjectionSource>>,
+  options: { mode: "public" | "preview"; aliasRedirectSubdomain?: string | null },
+) => {
+  if (options.mode === "public") {
+    if (website.status === "SUSPENDED" || website.admin.user.status !== "ACTIVE") {
+      throw new AppError(status.SERVICE_UNAVAILABLE, "Website temporarily unavailable");
+    }
+    if (website.status !== "PUBLISHED") throw new AppError(status.NOT_FOUND, "Website not found");
+  }
+
+  const snapshot = options.mode === "preview"
+    ? currentDraftAsPublishedSnapshot(website)
+    : parsePublishedSnapshot(website.publishedSnapshot) ?? currentDraftAsPublishedSnapshot(website);
+
+  const config = snapshot.website;
+  const pages = snapshot.pages.filter((page) => page.isEnabled);
+  const template = TemplateRegistry.get(config.templateId, config.templateVersion);
   if (!template) throw new AppError(status.SERVICE_UNAVAILABLE, "Website template version is unavailable");
 
   const primaryDomain = website.domains.find((domain) => domain.isPrimary)?.domain ?? website.domains[0]?.domain ?? null;
@@ -132,41 +169,45 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
     : WEBSITE_BASE_DOMAIN
       ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}`
       : null;
-  // WebsiteService already validates ownership when forms are linked. Keep a
-  // defense-in-depth check here as well so malformed/manual database state can
-  // never expose another tenant's public form through this website.
-  const bookingEnabled = Boolean(
-    website.primaryBookingForm?.published && website.primaryBookingForm.adminId === website.admin.id,
-  );
-  const estimateEnabled = Boolean(
-    website.primaryEstimateForm?.published && website.primaryEstimateForm.adminId === website.admin.id,
-  );
+
+  const selectedBookingForm = config.primaryBookingFormId
+    ? website.admin.bookingForms.find((form) => form.id === config.primaryBookingFormId) ?? null
+    : null;
+  const selectedEstimateForm = config.primaryEstimateFormId
+    ? website.admin.estimateForms.find((form) => form.id === config.primaryEstimateFormId) ?? null
+    : null;
+  const bookingEnabled = Boolean(selectedBookingForm?.published);
+  const estimateEnabled = Boolean(selectedEstimateForm?.published);
   const reviewSummary = getReviewSummary(website.admin.reviews);
 
   return {
     website: {
       subdomain: website.subdomain,
-      status: website.status,
+      // Preview deliberately uses the public projection contract so the exact
+      // Phase-3 renderer is exercised without teaching templates about admin
+      // lifecycle states.
+      status: "PUBLISHED" as const,
       template: {
         id: template.id,
         version: template.version,
-        schemaVersion: website.schemaVersion,
+        schemaVersion: config.schemaVersion,
         name: template.name,
         capabilities: template.capabilities,
       },
       canonicalUrl,
-      redirectToSubdomain: aliasRedirectSubdomain,
+      redirectToSubdomain: options.aliasRedirectSubdomain ?? null,
+      preview: options.mode === "preview",
     },
     business: projectPublicBusiness(website.admin),
     theme: {
-      primaryColor: website.primaryColor,
-      secondaryColor: website.secondaryColor,
-      accentColor: website.accentColor,
-      font: website.font,
-      logo: website.logo ?? website.admin.businessLogo ?? null,
-      favicon: website.favicon,
+      primaryColor: config.primaryColor,
+      secondaryColor: config.secondaryColor,
+      accentColor: config.accentColor,
+      font: config.font,
+      logo: config.logo ?? website.admin.businessLogo ?? null,
+      favicon: config.favicon,
     },
-    navigation: website.pages
+    navigation: pages
       .filter((page) => {
         if (!page.showInNavigation) return false;
         if (page.kind === "BOOK" && !bookingEnabled) return false;
@@ -174,7 +215,7 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
         return true;
       })
       .map((page) => ({ title: page.title, path: page.slug, kind: page.kind })),
-    pages: website.pages.map((page) => ({
+    pages: pages.map((page) => ({
       kind: page.kind,
       path: page.slug,
       title: page.title,
@@ -195,32 +236,37 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
       city: location.city,
       postcode: location.postcode,
     })),
-    booking: bookingEnabled && website.primaryBookingForm
+    booking: bookingEnabled && selectedBookingForm
       ? {
-          formId: website.primaryBookingForm.id,
-          legacySlug: website.primaryBookingForm.slug,
-          headline: website.primaryBookingForm.headline,
-          subheading: website.primaryBookingForm.subheading,
-          path: "/book",
+          formId: selectedBookingForm.id,
+          legacySlug: selectedBookingForm.slug,
+          headline: selectedBookingForm.headline,
+          subheading: selectedBookingForm.subheading,
+          path: "/book" as const,
         }
       : null,
-    estimate: estimateEnabled && website.primaryEstimateForm
+    estimate: estimateEnabled && selectedEstimateForm
       ? {
-          formId: website.primaryEstimateForm.id,
-          legacySlug: website.primaryEstimateForm.slug,
-          headline: website.primaryEstimateForm.headline,
-          subheading: website.primaryEstimateForm.subheading,
-          path: "/estimate",
+          formId: selectedEstimateForm.id,
+          legacySlug: selectedEstimateForm.slug,
+          headline: selectedEstimateForm.headline,
+          subheading: selectedEstimateForm.subheading,
+          path: "/estimate" as const,
         }
       : null,
     seo: {
-      title: website.metaTitle ?? website.admin.businessName,
-      description: website.metaDescription,
-      socialImageUrl: website.socialImageUrl ?? website.logo ?? website.admin.businessLogo ?? null,
-      indexSite: website.indexSite,
+      title: config.metaTitle ?? website.admin.businessName,
+      description: config.metaDescription,
+      socialImageUrl: config.socialImageUrl ?? config.logo ?? website.admin.businessLogo ?? null,
+      indexSite: options.mode === "preview" ? false : config.indexSite,
       canonicalUrl,
     },
   };
+};
+
+const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: string | null = null) => {
+  const website = await loadProjectionSource(websiteId);
+  return projectWebsite(website, { mode: "public", aliasRedirectSubdomain });
 };
 
 const getPublicWebsite = async (identifier: string) => {
@@ -228,4 +274,20 @@ const getPublicWebsite = async (identifier: string) => {
   return getPublicWebsiteById(resolved.websiteId, resolved.aliasRedirectSubdomain);
 };
 
-export const PublicWebsiteService = { resolveIdentifier, getPublicWebsiteById, getPublicWebsite };
+const getPreviewWebsite = async (user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
+  if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
+  const source = await loadProjectionSource(website.id);
+  if (source.admin.user.status !== "ACTIVE") {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Website preview is unavailable for this account");
+  }
+  return projectWebsite(source, { mode: "preview" });
+};
+
+export const PublicWebsiteService = {
+  resolveIdentifier,
+  getPublicWebsiteById,
+  getPublicWebsite,
+  getPreviewWebsite,
+};

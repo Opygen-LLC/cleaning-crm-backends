@@ -26,6 +26,10 @@ model BusinessWebsite {
   createdAt               DateTime      @default(now())
   updatedAt               DateTime      @updatedAt
   publishedAt             DateTime?
+  // Working Website/Page rows are the draft. The public runtime serves this
+  // immutable snapshot until Publish is pressed again.
+  publishedSnapshot       Json?
+  publishedRevisionNumber Int?
 
   admin                   AdminProfile  @relation(fields: [adminId], references: [id], onDelete: Cascade)
   primaryBookingForm      BookingForm?  @relation("WebsitePrimaryBookingForm", fields: [primaryBookingFormId], references: [id], onDelete: SetNull)

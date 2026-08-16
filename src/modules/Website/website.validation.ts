@@ -11,7 +11,7 @@ const createWebsite = z.object({
   primaryEstimateFormId: z.string().uuid().nullable().optional(),
 }).strict();
 
-const updateWebsite = z.object({
+const websitePatch = z.object({
   templateId: z.string().trim().min(1).max(80).optional(),
   templateVersion: z.string().trim().min(1).max(32).optional(),
   primaryColor: color.optional(),
@@ -28,7 +28,9 @@ const updateWebsite = z.object({
   indexSite: z.boolean().optional(),
 }).strict();
 
-const updatePage = z.object({
+const updateWebsite = websitePatch;
+
+const pagePatch = z.object({
   title: z.string().trim().min(1).max(120).optional(),
   content: z.record(z.string(), z.unknown()).optional(),
   seoTitle: nullableText(120).optional(),
@@ -37,6 +39,16 @@ const updatePage = z.object({
   isEnabled: z.boolean().optional(),
   sortOrder: z.number().int().min(0).max(10000).optional(),
 }).strict();
+
+const updatePage = pagePatch;
+
+const saveDraft = z.object({
+  website: websitePatch.optional(),
+  pages: z.array(pagePatch.extend({ id: z.string().uuid() })).max(50).optional(),
+}).strict().refine(
+  (value) => Boolean(value.website && Object.keys(value.website).length) || Boolean(value.pages?.length),
+  "Draft contains no changes",
+);
 
 const createAsset = z.object({
   publicId: z.string().trim().min(1).max(255),
@@ -52,4 +64,4 @@ const createAsset = z.object({
 
 const addDomain = z.object({ domain: z.string().trim().min(3).max(253) }).strict();
 
-export const websiteValidation = { createWebsite, updateWebsite, updatePage, createAsset, addDomain };
+export const websiteValidation = { createWebsite, updateWebsite, updatePage, saveDraft, createAsset, addDomain };

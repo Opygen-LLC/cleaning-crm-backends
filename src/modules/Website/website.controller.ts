@@ -12,6 +12,12 @@ const ok = (res: any, message: string, data: unknown) => sendResponse(res, { htt
 const createWebsite = catchAsync(async (req, res) => created(res, "Website created successfully", await WebsiteService.createWebsite(req.body, req.user)));
 const getWebsite = catchAsync(async (req, res) => ok(res, "Website retrieved successfully", await WebsiteService.getWebsite(req.user)));
 const updateWebsite = catchAsync(async (req, res) => ok(res, "Website updated successfully", await WebsiteService.updateWebsite(req.body, req.user)));
+const saveDraft = catchAsync(async (req, res) => ok(res, "Website draft saved successfully", await WebsiteService.saveDraft(req.body, req.user)));
+const publishWebsite = catchAsync(async (req, res) => ok(res, "Website published successfully", await WebsiteService.publishWebsite(req.user)));
+const previewWebsite = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return ok(res, "Website preview retrieved successfully", await PublicWebsiteService.getPreviewWebsite(req.user));
+});
 const listPages = catchAsync(async (req, res) => ok(res, "Website pages retrieved successfully", await WebsiteService.listPages(req.user)));
 const updatePage = catchAsync(async (req, res) => ok(res, "Website page updated successfully", await WebsiteService.updatePage(req.params.pageId, req.body, req.user)));
 const listRevisions = catchAsync(async (req, res) => ok(res, "Website revisions retrieved successfully", await WebsiteService.listRevisions(req.user)));
@@ -26,15 +32,28 @@ const removeDomain = catchAsync(async (req, res) => ok(res, "Website domain remo
 const setPrimaryDomain = catchAsync(async (req, res) => ok(res, "Primary website domain updated successfully", await DomainService.setPrimaryDomain(req.params.domainId, req.user)));
 const getPublicWebsite = catchAsync(async (req, res) => {
   const data = await PublicWebsiteService.getPublicWebsite(req.params.identifier);
-  // Only successful public projections are cacheable. Error responses (most
-  // importantly 404 before publish and 503 while suspended/unavailable) must
-  // never inherit a public cache lifetime.
   res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
   return ok(res, "Public website retrieved successfully", data);
 });
 
 export const websiteController = {
-  createWebsite, getWebsite, updateWebsite, listPages, updatePage, listRevisions, getRevision,
-  listAssets, registerAsset, deleteAsset, listTemplates,
-  addDomain, listDomains, removeDomain, setPrimaryDomain, getPublicWebsite,
+  createWebsite,
+  getWebsite,
+  updateWebsite,
+  saveDraft,
+  publishWebsite,
+  previewWebsite,
+  listPages,
+  updatePage,
+  listRevisions,
+  getRevision,
+  listAssets,
+  registerAsset,
+  deleteAsset,
+  listTemplates,
+  addDomain,
+  listDomains,
+  removeDomain,
+  setPrimaryDomain,
+  getPublicWebsite,
 };

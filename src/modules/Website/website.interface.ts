@@ -33,6 +33,15 @@ export interface WebsitePageUpdateInput {
   sortOrder?: number;
 }
 
+export interface WebsiteDraftPageInput extends WebsitePageUpdateInput {
+  id: string;
+}
+
+export interface WebsiteDraftSaveInput {
+  website?: WebsiteUpdateInput;
+  pages?: WebsiteDraftPageInput[];
+}
+
 export interface WebsiteAssetCreateInput {
   publicId: string;
   url: string;
