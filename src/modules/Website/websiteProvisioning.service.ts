@@ -5,7 +5,7 @@ import type { WebsiteCreateInput } from "./website.interface";
 import { normalizeSubdomain } from "./websiteIdentity";
 import { TemplateRegistry } from "./templateRegistry";
 
-const SUBDOMAIN_RESERVATION_LOCK = "business-website-subdomain-reservation-v1";
+export const WEBSITE_SUBDOMAIN_RESERVATION_LOCK = "business-website-subdomain-reservation-v1";
 const adminProvisioningLock = (adminId: string) => `business-website-provision:${adminId}`;
 const MAX_SUFFIX_ATTEMPTS = 10_000;
 
@@ -57,7 +57,7 @@ export const reserveWebsiteSubdomainTx = async (
   businessName: string,
   adminId: string,
 ): Promise<string> => {
-  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${SUBDOMAIN_RESERVATION_LOCK}))`;
+  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${WEBSITE_SUBDOMAIN_RESERVATION_LOCK}))`;
 
   const base = buildWebsiteSubdomainBase(businessName, adminId);
   if (!(await isSubdomainTaken(db, base))) return base;
@@ -155,7 +155,7 @@ export const createWebsiteForAdminTx = async (
   if (existing) throw new AppError(status.CONFLICT, "This business already has a website");
 
   const subdomain = normalizeSubdomain(payload.subdomain);
-  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${SUBDOMAIN_RESERVATION_LOCK}))`;
+  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${WEBSITE_SUBDOMAIN_RESERVATION_LOCK}))`;
   if (await isSubdomainTaken(db, subdomain)) {
     throw new AppError(status.CONFLICT, "That subdomain is already in use");
   }

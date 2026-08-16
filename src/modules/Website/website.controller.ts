@@ -5,6 +5,9 @@ import { DomainService } from "./domain.service";
 import { PublicWebsiteService } from "./publicWebsite.service";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteService } from "./website.service";
+import { SubdomainService } from "./subdomain.service";
+import { WebsiteHostResolverService } from "./websiteHostResolver.service";
+import { bookingFormService } from "../BookingForm/bookingForm.service";
 
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
@@ -30,6 +33,59 @@ const addDomain = catchAsync(async (req, res) => created(res, "Website domain ad
 const listDomains = catchAsync(async (req, res) => ok(res, "Website domains retrieved successfully", await DomainService.listDomains(req.user)));
 const removeDomain = catchAsync(async (req, res) => ok(res, "Website domain removed successfully", await DomainService.removeDomain(req.params.domainId, req.user)));
 const setPrimaryDomain = catchAsync(async (req, res) => ok(res, "Primary website domain updated successfully", await DomainService.setPrimaryDomain(req.params.domainId, req.user)));
+
+const getSubdomainAvailability = catchAsync(async (req, res) =>
+  ok(res, "Subdomain availability checked successfully", await SubdomainService.checkAvailability(req.params.subdomain, req.user)),
+);
+const renameSubdomain = catchAsync(async (req, res) =>
+  ok(res, "Website subdomain updated successfully", await SubdomainService.rename(req.body.subdomain, req.user)),
+);
+const resolvePublicSubdomain = catchAsync(async (req, res) => {
+  const data = await WebsiteHostResolverService.resolveSubdomain(req.params.subdomain);
+  res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
+  return ok(res, "Website subdomain resolved successfully", data);
+});
+const resolvePublicHost = catchAsync(async (req, res) => {
+  const data = await WebsiteHostResolverService.resolveHost(req.params.host);
+  res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
+  return ok(res, "Website host resolved successfully", data);
+});
+
+const getPublicWebsiteBooking = catchAsync(async (req, res) => {
+  const integration = await PublicWebsiteService.resolvePublicBookingIntegration(req.params.identifier);
+  const data = await bookingFormService.getPublicBookingFormById(integration.formId, integration.adminId);
+  res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
+  return ok(res, "Website booking form retrieved successfully", data);
+});
+
+const getPublicWebsiteBookingSlots = catchAsync(async (req, res) => {
+  const integration = await PublicWebsiteService.resolvePublicBookingIntegration(req.params.identifier);
+  const data = await bookingFormService.getPublicSlotAvailabilityById(
+    integration.formId,
+    integration.adminId,
+    req.query.date as string,
+  );
+  res.setHeader("Cache-Control", "no-store");
+  return ok(res, "Website booking availability retrieved successfully", data);
+});
+
+const submitPublicWebsiteBooking = catchAsync(async (req, res) => {
+  const integration = await PublicWebsiteService.resolvePublicBookingIntegration(req.params.identifier);
+  const data = await bookingFormService.submitPublicBookingFormById(
+    integration.formId,
+    integration.adminId,
+    req.body,
+    req.get("Idempotency-Key") ?? undefined,
+  );
+  res.setHeader("Cache-Control", "no-store");
+  return sendResponse(res, {
+    httpStatusCode: status.CREATED,
+    success: true,
+    message: "Booking request submitted successfully. We'll confirm shortly!",
+    data,
+  });
+});
+
 const getPublicWebsite = catchAsync(async (req, res) => {
   const data = await PublicWebsiteService.getPublicWebsite(req.params.identifier);
   res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
@@ -55,5 +111,12 @@ export const websiteController = {
   listDomains,
   removeDomain,
   setPrimaryDomain,
+  getSubdomainAvailability,
+  renameSubdomain,
+  resolvePublicSubdomain,
+  resolvePublicHost,
+  getPublicWebsiteBooking,
+  getPublicWebsiteBookingSlots,
+  submitPublicWebsiteBooking,
   getPublicWebsite,
 };

@@ -194,21 +194,63 @@ type FormServiceInput = NonNullable<IBookingFormCreate["services"]>[number];
 
 const resolveFormServices = async (adminId: string, services: FormServiceInput[]) => {
     const ids = [...new Set(services.map((s) => s.serviceCatalogId).filter((id): id is string => !!id))];
-    const catalogs = ids.length
+    const legacyTypes = [...new Set(
+        services
+            .filter((service) => !service.serviceCatalogId && service.serviceType)
+            .map((service) => service.serviceType!),
+    )];
+
+    const catalogs = ids.length || legacyTypes.length
         ? await prisma.serviceCatalog.findMany({
-            where: { id: { in: ids }, adminId, status: ServiceStatus.ACTIVE },
+            where: {
+                adminId,
+                status: ServiceStatus.ACTIVE,
+                OR: [
+                    ...(ids.length ? [{ id: { in: ids } }] : []),
+                    ...(legacyTypes.length ? [{ legacyServiceType: { in: legacyTypes } }] : []),
+                ],
+            },
             select: { id: true, legacyServiceType: true },
         })
         : [];
-    const byId = new Map(catalogs.map((c) => [c.id, c]));
-    if (catalogs.length !== ids.length) {
+
+    const byId = new Map(catalogs.map((catalog) => [catalog.id, catalog]));
+    if (ids.some((id) => !byId.has(id))) {
         throw new AppError(status.UNPROCESSABLE_ENTITY, "One or more selected services do not belong to this business", {
-            code: "SERVICE_TENANT_MISMATCH", retryable: false,
-            fieldErrors: { services: "Choose services from your own service catalog." },
+            code: "SERVICE_TENANT_MISMATCH",
+            retryable: false,
+            fieldErrors: { services: "Choose active services from your own service catalog." },
         });
     }
-    return services.map((entry) => {
-        const catalog = entry.serviceCatalogId ? byId.get(entry.serviceCatalogId) : undefined;
+
+    const byLegacy = new Map<string, typeof catalogs>();
+    for (const catalog of catalogs) {
+        if (!catalog.legacyServiceType) continue;
+        const key = String(catalog.legacyServiceType);
+        const bucket = byLegacy.get(key) ?? [];
+        bucket.push(catalog);
+        byLegacy.set(key, bucket);
+    }
+
+    const resolved = services.map((entry) => {
+        let catalog = entry.serviceCatalogId ? byId.get(entry.serviceCatalogId) : undefined;
+
+        // Old clients still send only ServiceType. When exactly one active
+        // catalog service maps to that enum, promote it to the canonical
+        // ServiceCatalog relation automatically. Ambiguous mappings require a
+        // modern client to send serviceCatalogId rather than guessing.
+        if (!catalog && !entry.serviceCatalogId && entry.serviceType) {
+            const matches = byLegacy.get(String(entry.serviceType)) ?? [];
+            if (matches.length > 1) {
+                throw new AppError(status.UNPROCESSABLE_ENTITY, "Choose a specific service from the service catalog", {
+                    code: "SERVICE_SELECTION_AMBIGUOUS",
+                    retryable: false,
+                    fieldErrors: { services: "This legacy service maps to multiple catalog services. Choose a specific service." },
+                });
+            }
+            catalog = matches[0];
+        }
+
         return {
             serviceCatalogId: catalog?.id ?? null,
             // Catalog relation is authoritative; old enum is only a compatibility value.
@@ -218,6 +260,26 @@ const resolveFormServices = async (adminId: string, services: FormServiceInput[]
             duration: entry.duration,
         };
     });
+
+    const identityKeys = resolved
+        .map((service) => service.serviceCatalogId
+            ? `catalog:${service.serviceCatalogId}`
+            : service.serviceType
+                ? `legacy:${service.serviceType}`
+                : null)
+        .filter((key): key is string => !!key);
+    const legacyKeys = resolved
+        .map((service) => service.serviceType ? `legacy:${service.serviceType}` : null)
+        .filter((key): key is string => !!key);
+    if (new Set(identityKeys).size !== identityKeys.length || new Set(legacyKeys).size !== legacyKeys.length) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "A service can only be added to a booking form once", {
+            code: "DUPLICATE_BOOKING_FORM_SERVICE",
+            retryable: false,
+            fieldErrors: { services: "Remove duplicate or ambiguous legacy services before saving." },
+        });
+    }
+
+    return resolved;
 };
 
 // ─── BookingForm CRUD ─────────────────────────────────────────────────────────
@@ -513,9 +575,26 @@ const updateSubmissionStatus = async (
 
 // ─── Public endpoint (unauthenticated) ───────────────────────────────────────
 
-const getPublicBookingForm = async (slug: string) => {
-    const form = await prisma.bookingForm.findUnique({
-        where:   { slug },
+type PublicBookingFormSelector = {
+    slug?: string;
+    formId?: string;
+    adminId?: string;
+};
+
+const publicBookingFormWhere = (selector: PublicBookingFormSelector) => {
+    if (!selector.slug && !selector.formId) {
+        throw new AppError(status.BAD_REQUEST, "A booking form identifier is required");
+    }
+    return {
+        ...(selector.slug ? { slug: selector.slug } : {}),
+        ...(selector.formId ? { id: selector.formId } : {}),
+        ...(selector.adminId ? { adminId: selector.adminId } : {}),
+    };
+};
+
+const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelector) => {
+    const form = await prisma.bookingForm.findFirst({
+        where: publicBookingFormWhere(selector),
         include: {
             fields:   { where: { enabled: true }, orderBy: { sortOrder: "asc" } },
             services: {
@@ -587,9 +666,9 @@ const getPublicBookingForm = async (slug: string) => {
  * Returns authoritative slot availability for a specific date. Only the server
  * decides whether a date/time is selectable; the browser preview is advisory.
  */
-const getPublicSlotAvailability = async (slug: string, date: string) => {
-    const form = await prisma.bookingForm.findUnique({
-        where:  { slug },
+const getPublicSlotAvailabilityBySelector = async (selector: PublicBookingFormSelector, date: string) => {
+    const form = await prisma.bookingForm.findFirst({
+        where: publicBookingFormWhere(selector),
         select: {
             id:                   true,
             published:            true,
@@ -655,16 +734,16 @@ const getPublicSlotAvailability = async (slug: string, date: string) => {
     };
 };
 
-const submitPublicBookingForm = async (
-    slug: string,
+const submitPublicBookingFormBySelector = async (
+    selector: PublicBookingFormSelector,
     payload: IPublicBookingSubmission,
     idempotencyKey?: string,
 ) => {
     if (idempotencyKey && !/^[A-Za-z0-9:_-]{8,128}$/.test(idempotencyKey)) {
         throw new AppError(status.BAD_REQUEST, "Invalid Idempotency-Key header");
     }
-    const form = await prisma.bookingForm.findUnique({
-        where: { slug },
+    const form = await prisma.bookingForm.findFirst({
+        where: publicBookingFormWhere(selector),
         select: {
             id: true,
             adminId: true,
@@ -830,6 +909,31 @@ const submitPublicBookingForm = async (
     });
 };
 
+// Legacy slug routes remain supported for links already shared in email,
+// WhatsApp, Google Business, etc. Website runtime routes use the ID + tenant
+// selector so a slug can never switch a tenant website to another form.
+const getPublicBookingForm = (slug: string) =>
+    getPublicBookingFormBySelector({ slug });
+
+const getPublicBookingFormById = (formId: string, adminId: string) =>
+    getPublicBookingFormBySelector({ formId, adminId });
+
+const getPublicSlotAvailability = (slug: string, date: string) =>
+    getPublicSlotAvailabilityBySelector({ slug }, date);
+
+const getPublicSlotAvailabilityById = (formId: string, adminId: string, date: string) =>
+    getPublicSlotAvailabilityBySelector({ formId, adminId }, date);
+
+const submitPublicBookingForm = (slug: string, payload: IPublicBookingSubmission, idempotencyKey?: string) =>
+    submitPublicBookingFormBySelector({ slug }, payload, idempotencyKey);
+
+const submitPublicBookingFormById = (
+    formId: string,
+    adminId: string,
+    payload: IPublicBookingSubmission,
+    idempotencyKey?: string,
+) => submitPublicBookingFormBySelector({ formId, adminId }, payload, idempotencyKey);
+
 // ─── Export ───────────────────────────────────────────────────────────────────
 
 export const bookingFormService = {
@@ -842,6 +946,9 @@ export const bookingFormService = {
     getSubmissions,
     updateSubmissionStatus,
     getPublicBookingForm,
+    getPublicBookingFormById,
     getPublicSlotAvailability,
+    getPublicSlotAvailabilityById,
     submitPublicBookingForm,
+    submitPublicBookingFormById,
 };

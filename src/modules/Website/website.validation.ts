@@ -63,5 +63,6 @@ const createAsset = z.object({
 }).strict();
 
 const addDomain = z.object({ domain: z.string().trim().min(3).max(253) }).strict();
+const renameSubdomain = z.object({ subdomain: z.string().trim().min(3).max(63) }).strict();
 
-export const websiteValidation = { createWebsite, updateWebsite, updatePage, saveDraft, createAsset, addDomain };
+export const websiteValidation = { createWebsite, updateWebsite, updatePage, saveDraft, createAsset, addDomain, renameSubdomain };

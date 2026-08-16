@@ -5,7 +5,8 @@ import { prisma } from "../../lib/prisma/prisma";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
-import { normalizeDomain, normalizeSubdomain } from "./websiteIdentity";
+import { normalizeDomain } from "./websiteIdentity";
+import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { TemplateRegistry } from "./templateRegistry";
 import { buildPublishedSnapshot, parsePublishedSnapshot } from "./websiteSnapshot";
 
@@ -18,6 +19,9 @@ const resolveIdentifier = async (identifier: string): Promise<ResolvedWebsite> =
   const raw = identifier.trim();
   if (!raw) throw new AppError(status.NOT_FOUND, "Website not found");
 
+  // Domain identifiers remain supported for the Phase-1/4 API contract, but
+  // Phase 6 host routing itself only routes platform subdomains. Phase 7 owns
+  // verified custom-domain host routing and TLS/provider integration.
   if (raw.includes(".")) {
     let domain: string;
     try {
@@ -33,24 +37,11 @@ const resolveIdentifier = async (identifier: string): Promise<ResolvedWebsite> =
     return { websiteId: record.websiteId, aliasRedirectSubdomain: null };
   }
 
-  let subdomain: string;
-  try {
-    subdomain = normalizeSubdomain(raw);
-  } catch {
-    throw new AppError(status.NOT_FOUND, "Website not found");
-  }
-  const website = await prisma.businessWebsite.findUnique({
-    where: { subdomain },
-    select: { id: true },
-  });
-  if (website) return { websiteId: website.id, aliasRedirectSubdomain: null };
-
-  const alias = await prisma.websiteSubdomainAlias.findUnique({
-    where: { subdomain },
-    select: { websiteId: true, website: { select: { subdomain: true } } },
-  });
-  if (!alias) throw new AppError(status.NOT_FOUND, "Website not found");
-  return { websiteId: alias.websiteId, aliasRedirectSubdomain: alias.website.subdomain };
+  const resolved = await WebsiteHostResolverService.resolveSubdomain(raw);
+  return {
+    websiteId: resolved.websiteId,
+    aliasRedirectSubdomain: resolved.isAlias ? resolved.canonicalSubdomain : null,
+  };
 };
 
 const getReviewSummary = (reviews: Array<{ rating: number }>) => {
@@ -274,6 +265,50 @@ const getPublicWebsite = async (identifier: string) => {
   return getPublicWebsiteById(resolved.websiteId, resolved.aliasRedirectSubdomain);
 };
 
+
+const resolvePublicBookingIntegration = async (identifier: string) => {
+  const resolved = await resolveIdentifier(identifier);
+  const website = await prisma.businessWebsite.findUnique({
+    where: { id: resolved.websiteId },
+    select: {
+      id: true,
+      adminId: true,
+      status: true,
+      publishedSnapshot: true,
+      primaryBookingFormId: true,
+      pages: { select: { kind: true, isEnabled: true } },
+      admin: { select: { user: { select: { status: true } } } },
+    },
+  });
+
+  if (!website) throw new AppError(status.NOT_FOUND, "Website not found");
+  if (website.status === "SUSPENDED" || website.admin.user.status !== "ACTIVE") {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Website temporarily unavailable");
+  }
+  if (website.status !== "PUBLISHED") {
+    throw new AppError(status.NOT_FOUND, "Website not found");
+  }
+
+  const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
+  const formId = publishedSnapshot?.website.primaryBookingFormId ?? website.primaryBookingFormId;
+  const bookPageEnabled = publishedSnapshot
+    ? publishedSnapshot.pages.some((page) => page.kind === "BOOK" && page.isEnabled)
+    : website.pages.some((page) => page.kind === "BOOK" && page.isEnabled);
+
+  if (!formId || !bookPageEnabled) {
+    throw new AppError(status.NOT_FOUND, "Online booking is not available on this website.", {
+      code: "WEBSITE_BOOKING_UNAVAILABLE",
+      retryable: false,
+    });
+  }
+
+  return {
+    websiteId: website.id,
+    adminId: website.adminId,
+    formId,
+  };
+};
+
 const getPreviewWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
@@ -289,5 +324,6 @@ export const PublicWebsiteService = {
   resolveIdentifier,
   getPublicWebsiteById,
   getPublicWebsite,
+  resolvePublicBookingIntegration,
   getPreviewWebsite,
 };

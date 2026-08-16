@@ -1,5 +1,6 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
+import { WEBSITE_BASE_DOMAIN } from "../../config/ENV";
 import { prisma } from "../../lib/prisma/prisma";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
@@ -14,6 +15,7 @@ import { assertSafeHttpsUrl } from "./websiteIdentity";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteProvisioningService } from "./websiteProvisioning.service";
 import { buildPublishedSnapshot } from "./websiteSnapshot";
+import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 
 const getWebsiteOrThrow = async (adminId: string, db: any = prisma) => {
   const website = await db.businessWebsite.findUnique({ where: { adminId } });
@@ -82,6 +84,7 @@ const loadWebsiteDetails = async (websiteId: string, db: any = prisma) => {
       pages: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
       domains: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] },
       assets: { orderBy: { createdAt: "desc" } },
+      subdomainAliases: { orderBy: { createdAt: "desc" } },
       primaryBookingForm: { select: { id: true, slug: true, published: true, headline: true } },
       primaryEstimateForm: { select: { id: true, slug: true, published: true, headline: true } },
     },
@@ -96,6 +99,7 @@ const loadWebsiteDetails = async (websiteId: string, db: any = prisma) => {
   const { publishedSnapshot: _publishedSnapshot, ...safeWebsite } = website;
   return {
     ...safeWebsite,
+    publicUrl: WEBSITE_BASE_DOMAIN ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}` : null,
     draftRevisionNumber,
     hasUnpublishedChanges:
       website.status !== "PUBLISHED" ||
@@ -302,7 +306,7 @@ const publishWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const current = await getWebsiteOrThrow(adminId);
 
-  return prisma.$transaction(async (tx: any) => {
+  const website = await prisma.$transaction(async (tx: any) => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${current.id}))`;
     const draft = await loadDraftSnapshot(current.id, tx);
     TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
@@ -331,6 +335,12 @@ const publishWebsite = async (user: IRequestUser) => {
     });
     return loadWebsiteDetails(current.id, tx);
   });
+
+  // Routing cache is only a performance layer, but publishing is one of the
+  // lifecycle events where we proactively drop the canonical host mapping so
+  // every edge immediately re-resolves against the current website row.
+  await WebsiteHostResolverService.invalidateSubdomains([website.subdomain]);
+  return website;
 };
 
 const listRevisions = async (user: IRequestUser) => {

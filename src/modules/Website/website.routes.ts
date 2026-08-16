@@ -23,6 +23,12 @@ router.get("/templates", websiteController.listTemplates);
 router.get("/assets", websiteController.listAssets);
 router.post("/assets", zodValidate(websiteValidation.createAsset, ValidationProperty.BODY), websiteController.registerAsset);
 router.delete("/assets/:assetId", websiteController.deleteAsset);
+router.get("/subdomain/availability/:subdomain", websiteController.getSubdomainAvailability);
+router.patch(
+  "/subdomain",
+  zodValidate(websiteValidation.renameSubdomain, ValidationProperty.BODY),
+  websiteController.renameSubdomain,
+);
 router.get("/domains", websiteController.listDomains);
 router.post("/domains", zodValidate(websiteValidation.addDomain, ValidationProperty.BODY), websiteController.addDomain);
 router.patch("/domains/:domainId/primary", websiteController.setPrimaryDomain);
