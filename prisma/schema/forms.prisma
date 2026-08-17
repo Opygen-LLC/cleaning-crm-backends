@@ -2,6 +2,7 @@ model BookingForm {
   id                  String                  @id @default(uuid())
   slug                String                  @unique
   published           Boolean                 @default(false)
+  websiteManaged      Boolean                 @default(false)
   headline            String
   subheading          String?
   accentColor         String                  @default("#000000")
@@ -24,6 +25,7 @@ model BookingForm {
   primaryForWebsites  BusinessWebsite[]         @relation("WebsitePrimaryBookingForm")
 
   @@index([adminId])
+  @@index([adminId, published])
   @@map("booking_form")
 }
 

@@ -86,6 +86,11 @@ const publicClientError = z.object({
   digest: z.string().trim().max(240).optional(),
   path: z.string().trim().max(800).optional(),
 }).strict();
+const configureWebsiteBooking = z.object({
+  enabled: z.boolean(),
+  bookingFormId: z.string().uuid().nullable().optional(),
+}).strict();
+
 const publicContact = z.object({
   name: z.string().trim().min(1, "Name is required").max(200),
   email: z.string().trim().email("Invalid email address").max(320),
@@ -104,6 +109,7 @@ export const websiteValidation = {
   createAsset,
   addDomain,
   renameSubdomain,
+  configureWebsiteBooking,
   publicContact,
   publicAnalytics,
   publicClientError,

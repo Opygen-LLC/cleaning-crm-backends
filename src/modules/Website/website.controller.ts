@@ -6,6 +6,7 @@ import { PublicWebsiteService } from "./publicWebsite.service";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteService } from "./website.service";
 import { WebsiteStudioService } from "./websiteStudio.service";
+import { WebsiteBookingProvisioningService } from "./websiteBookingProvisioning.service";
 import { SubdomainService } from "./subdomain.service";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { bookingFormService } from "../BookingForm/bookingForm.service";
@@ -29,6 +30,12 @@ const getStudio = catchAsync(async (req, res) => {
 const updateWebsite = catchAsync(async (req, res) => ok(res, "Website updated successfully", await WebsiteService.updateWebsite(req.body, req.user)));
 const saveDraft = catchAsync(async (req, res) => ok(res, "Website draft saved successfully", await WebsiteService.saveDraft(req.body, req.user)));
 const publishWebsite = catchAsync(async (req, res) => ok(res, "Website published successfully", await WebsiteService.publishWebsite(req.body ?? {}, req.user)));
+const getWebsiteBookingSetup = catchAsync(async (req, res) =>
+  ok(res, "Website booking setup retrieved successfully", await WebsiteBookingProvisioningService.getSetup(req.user)),
+);
+const configureWebsiteBooking = catchAsync(async (req, res) =>
+  ok(res, "Website booking setup updated successfully", await WebsiteBookingProvisioningService.configure(req.body, req.user)),
+);
 const previewWebsite = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
   return ok(res, "Website preview retrieved successfully", await PublicWebsiteService.getPreviewWebsite(req.user));
@@ -215,6 +222,8 @@ export const websiteController = {
   createWebsite,
   getWebsite,
   getStudio,
+  getWebsiteBookingSetup,
+  configureWebsiteBooking,
   updateWebsite,
   saveDraft,
   publishWebsite,
