@@ -47,15 +47,6 @@ const resolveIdentifier = async (identifier: string): Promise<ResolvedWebsite> =
   };
 };
 
-const getReviewSummary = (reviews: Array<{ rating: number }>) => {
-  if (reviews.length === 0) return { averageRating: null, count: 0 };
-  const total = reviews.reduce((sum, review) => sum + review.rating, 0);
-  return {
-    averageRating: Math.round((total / reviews.length) * 10) / 10,
-    count: reviews.length,
-  };
-};
-
 const loadProjectionSource = async (websiteId: string) => {
   const website = await prisma.businessWebsite.findUnique({
     where: { id: websiteId },
@@ -72,10 +63,22 @@ const loadProjectionSource = async (websiteId: string) => {
           zipcode: true,
           country: true,
           brandColor: true,
+          currency: true,
           user: { select: { email: true, status: true } },
           serviceCatalogs: {
             where: { status: "ACTIVE" as any },
+            select: {
+              id: true,
+              serviceName: true,
+              description: true,
+              basePriceGbp: true,
+              duration: true,
+              category: true,
+              addOns: true,
+              legacyServiceType: true,
+            },
             orderBy: [{ category: "asc" }, { serviceName: "asc" }],
+            take: 200,
           },
           reviews: {
             where: { isPublished: true, staffId: null },
@@ -94,14 +97,15 @@ const loadProjectionSource = async (websiteId: string) => {
             select: { id: true, city: true, postcode: true },
             orderBy: { createdAt: "asc" },
           },
-          // Keep form resolution inside the same tenant-scoped query. The
-          // published snapshot may point to a different form than the current
-          // draft, so reading only BusinessWebsite.primary* relations would
-          // make draft changes leak into (or break) the published runtime.
+          // Only published forms can power the public runtime. The snapshot
+          // still chooses which tenant-owned form is active, but loading only
+          // published forms prevents unused drafts from inflating the payload.
           bookingForms: {
+            where: { published: true },
             select: { id: true, slug: true, published: true, headline: true, subheading: true },
           },
           estimateForms: {
+            where: { published: true },
             select: { id: true, slug: true, published: true, headline: true, subheading: true },
           },
         },
@@ -114,8 +118,31 @@ const loadProjectionSource = async (websiteId: string) => {
       },
     },
   });
+
   if (!website) throw new AppError(status.NOT_FOUND, "Website not found");
-  return website;
+
+  // Keep the review list bounded for payload size, but calculate the public
+  // aggregate across every published tenant review so businesses with >50
+  // reviews never display an incorrect rating/count. This is only paid on a
+  // website projection cache miss.
+  const reviewAggregate = await prisma.review.aggregate({
+    where: {
+      adminId: website.adminId,
+      isPublished: true,
+      staffId: null,
+    },
+    _avg: { rating: true },
+    _count: { _all: true },
+  });
+
+  const averageRating = reviewAggregate._avg.rating;
+  return {
+    website,
+    reviewSummary: {
+      averageRating: averageRating === null ? null : Math.round(averageRating * 10) / 10,
+      count: reviewAggregate._count._all,
+    },
+  };
 };
 
 const currentDraftAsPublishedSnapshot = (website: any) => buildPublishedSnapshot({
@@ -138,9 +165,11 @@ const currentDraftAsPublishedSnapshot = (website: any) => buildPublishedSnapshot
 });
 
 const projectWebsite = (
-  website: Awaited<ReturnType<typeof loadProjectionSource>>,
+  source: Awaited<ReturnType<typeof loadProjectionSource>>,
   options: { mode: "public" | "preview"; aliasRedirectSubdomain?: string | null },
 ) => {
+  const { website, reviewSummary } = source;
+
   if (options.mode === "public") {
     if (website.status === "SUSPENDED" || website.admin.user.status !== "ACTIVE") {
       throw new AppError(status.SERVICE_UNAVAILABLE, "Website temporarily unavailable");
@@ -175,7 +204,6 @@ const projectWebsite = (
     : null;
   const bookingEnabled = Boolean(selectedBookingForm?.published);
   const estimateEnabled = Boolean(selectedEstimateForm?.published);
-  const reviewSummary = getReviewSummary(website.admin.reviews);
 
   return {
     website: {
@@ -390,7 +418,7 @@ const getPreviewWebsite = async (user: IRequestUser) => {
   const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
   const source = await loadProjectionSource(website.id);
-  if (source.admin.user.status !== "ACTIVE") {
+  if (source.website.admin.user.status !== "ACTIVE") {
     throw new AppError(status.SERVICE_UNAVAILABLE, "Website preview is unavailable for this account");
   }
   return projectWebsite(source, { mode: "preview" });

@@ -191,7 +191,11 @@ const getWebsiteAnalytics = catchAsync(async (req, res) => {
 
 const getPublicWebsite = catchAsync(async (req, res) => {
   const data = await PublicWebsiteService.getPublicWebsite(paramStr(req.params.identifier));
-  res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
+  // The server-side Redis projection is the cache of record. Do not allow a
+  // browser/CDN to keep serving an old tenant projection after suspension, CRM
+  // edits, review moderation or a publish. This keeps public data correctness
+  // independent of downstream cache purge support.
+  res.setHeader("Cache-Control", "no-store");
   return ok(res, "Public website retrieved successfully", data);
 });
 

@@ -13,6 +13,7 @@ export const projectPublicBusiness = (admin: {
     zipcode?: string | null;
     country?: unknown | null;
     brandColor?: string | null;
+    currency?: string | null;
     user?: { name?: string | null; email?: string | null } | null;
 }) => ({
     name: admin.businessName,
@@ -24,6 +25,7 @@ export const projectPublicBusiness = (admin: {
     postcode: admin.zipcode ?? null,
     country: admin.country ?? null,
     brandColor: admin.brandColor ?? "#000000",
+    currency: admin.currency ?? "USD",
 });
 
 export const projectCanonicalService = (service: {

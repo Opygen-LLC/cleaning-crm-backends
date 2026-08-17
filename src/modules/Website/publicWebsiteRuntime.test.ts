@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_WEBSITE_PAGES } from "./website.constant";
 import { TemplateRegistry } from "./templateRegistry";
+import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 
 describe("Phase 3 public website runtime contract", () => {
   it("provisions the complete Clean Modern route set", () => {
@@ -26,6 +27,28 @@ describe("Phase 3 public website runtime contract", () => {
       expect("reviews" in page.content).toBe(false);
       expect("serviceAreas" in page.content).toBe(false);
     }
+  });
+
+  it("projects live CRM currency and canonical service identity for the runtime", () => {
+    const business = projectPublicBusiness({
+      businessName: "Acme Cleaning",
+      currency: "CAD",
+    });
+    const service = projectCanonicalService({
+      id: "service-1",
+      serviceName: "Deep Clean",
+      description: "Deep cleaning",
+      basePriceGbp: 125,
+      duration: "3h",
+      category: "Residential",
+      addOns: [],
+      legacyServiceType: "DEEP_CLEANING",
+    });
+
+    expect(business.currency).toBe("CAD");
+    expect(service.serviceCatalogId).toBe("service-1");
+    expect(service.basePrice).toBe(125);
+    expect(service.basePriceGbp).toBe(125);
   });
 
   it("registers Clean Modern as the first public runtime template", () => {
