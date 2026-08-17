@@ -11,6 +11,10 @@ import {
   websiteSubdomainAvailabilityRateLimit,
   websiteSubdomainMutationRateLimit,
 } from "./websiteSubdomainSecurity";
+import {
+  websiteDomainMutationRateLimit,
+  websiteDomainVerificationRateLimit,
+} from "./websiteDomainSecurity";
 
 const router = Router();
 const isAdmin = checkAuth(UserRole.ADMIN);
@@ -65,9 +69,9 @@ router.patch(
   websiteController.renameSubdomain,
 );
 router.get("/domains", websiteController.listDomains);
-router.post("/domains", zodValidate(websiteValidation.addDomain, ValidationProperty.BODY), websiteController.addDomain);
-router.post("/domains/:domainId/verify", websiteController.verifyDomain);
-router.patch("/domains/:domainId/primary", websiteController.setPrimaryDomain);
-router.delete("/domains/:domainId", websiteController.removeDomain);
+router.post("/domains", websiteDomainMutationRateLimit, zodValidate(websiteValidation.addDomain, ValidationProperty.BODY), websiteController.addDomain);
+router.post("/domains/:domainId/verify", websiteDomainVerificationRateLimit, websiteController.verifyDomain);
+router.patch("/domains/:domainId/primary", websiteDomainMutationRateLimit, websiteController.setPrimaryDomain);
+router.delete("/domains/:domainId", websiteDomainMutationRateLimit, websiteController.removeDomain);
 
 export const websiteRoutes = router;

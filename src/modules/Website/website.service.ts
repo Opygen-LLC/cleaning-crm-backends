@@ -29,6 +29,7 @@ import { buildPublishedSnapshot, parsePublishedSnapshot } from "./websiteSnapsho
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
+import { presentWebsiteDomain } from "./websiteDomainLifecycle";
 import { WEBSITE_STATUS, statusAfterDraftMutation, type WebsiteLifecycleStatus } from "./websiteLifecycle";
 import { validateWebsitePageContent } from "./websiteContent";
 
@@ -227,12 +228,14 @@ const loadWebsiteDetailsWhere = async (where: { id: string } | { adminId: string
   });
   const draftRevisionNumber = latest._max.revisionNumber ?? 0;
   const { publishedSnapshot: _publishedSnapshot, ...safeWebsite } = website;
+  const presentedDomains = website.domains.map((domain: any) => presentWebsiteDomain(domain as any));
   const platformUrl = WEBSITE_BASE_DOMAIN ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}` : null;
   const primaryDomain = WEBSITE_CUSTOM_DOMAINS_ENABLED
     ? website.domains.find((domain: any) => domain.isPrimary && isWebsiteDomainRoutingReady(domain))?.domain ?? null
     : null;
   return {
     ...safeWebsite,
+    domains: presentedDomains,
     platformUrl,
     publicUrl: primaryDomain ? `https://${primaryDomain}` : platformUrl,
     draftRevisionNumber,

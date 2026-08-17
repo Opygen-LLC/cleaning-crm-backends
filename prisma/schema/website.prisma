@@ -110,6 +110,9 @@ model WebsiteDomain {
   verificationToken  String              @unique
   requiredDns        Json                @default("{}")
   isPrimary          Boolean             @default(false)
+  // Separate verification lease: rechecking an ACTIVE domain must never move
+  // its routing status to VERIFYING and briefly take a healthy hostname down.
+  verificationStartedAt DateTime?
   lastCheckedAt      DateTime?
   verifiedAt         DateTime?
   failureReason      String?
@@ -127,6 +130,7 @@ model WebsiteDomain {
 
   @@index([websiteId, status])
   @@index([websiteId, isPrimary, createdAt])
+  @@index([verificationStartedAt])
   @@map("website_domain")
 }
 

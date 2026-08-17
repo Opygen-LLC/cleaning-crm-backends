@@ -22,7 +22,8 @@ import {
   WebsiteDomainProviderService,
 } from "./websiteDomainProvider.service";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
-import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
+import { isWebsiteDomainRoutingReady, readyWebsiteDomainWhere } from "./websiteDomainReadiness";
+import { presentWebsiteDomain } from "./websiteDomainLifecycle";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 
 const getOwnedWebsite = async (user: IRequestUser) => {
@@ -52,7 +53,7 @@ const invalidateWebsiteRouting = async (websiteId: string, subdomain: string, ex
       select: { subdomain: true },
     }),
     prisma.websiteDomain.findMany({
-      where: { websiteId, status: "VERIFIED" as any },
+      where: { websiteId, ...readyWebsiteDomainWhere } as any,
       select: { domain: true },
     }),
   ]);
@@ -96,8 +97,12 @@ const hasOwnershipTxt = async (domain: string, token: string): Promise<boolean> 
   try {
     const records = await dns.resolveTxt(`_cleancrm-verification.${domain}`);
     return records.some((parts) => parts.join("") === token);
-  } catch {
-    return false;
+  } catch (error: any) {
+    // These resolver results conclusively mean the ownership challenge is not
+    // published. Timeouts/SERVFAIL are different: they are transient DNS
+    // failures and must never take an already ACTIVE customer domain offline.
+    if (["ENODATA", "ENOTFOUND", "NXDOMAIN"].includes(String(error?.code ?? ""))) return false;
+    throw error;
   }
 };
 
@@ -159,6 +164,7 @@ const applyProviderState = async (
     failureReason?: string | null;
     checkedAt?: Date;
     verifiedAt?: Date | null;
+    isPrimary?: boolean;
   } = {},
 ) => prisma.websiteDomain.update({
   where: { id: domainId },
@@ -175,8 +181,65 @@ const applyProviderState = async (
     ...(extra.failureReason !== undefined ? { failureReason: extra.failureReason } : {}),
     ...(extra.checkedAt ? { lastCheckedAt: extra.checkedAt } : {}),
     ...(extra.verifiedAt !== undefined ? { verifiedAt: extra.verifiedAt } : {}),
+    ...(extra.isPrimary !== undefined ? { isPrimary: extra.isPrimary } : {}),
+    verificationStartedAt: null,
   },
 });
+
+
+/**
+ * Keep exactly one routable custom-domain canonical host. The first ACTIVE
+ * domain is promoted automatically; subsequent ACTIVE domains stay as aliases
+ * until the owner explicitly chooses one. If a primary domain loses any
+ * ownership/DNS/TLS gate, it is demoted immediately so the free subdomain (or
+ * another healthy primary) becomes canonical instead of sending traffic to a
+ * broken hostname.
+ */
+const ensurePrimaryDomainInvariant = async (websiteId: string, candidateDomainId?: string) =>
+  prisma.$transaction(async (tx: any) => {
+    await acquireTextTransactionAdvisoryLock(tx, `website-domain-primary:${websiteId}`);
+
+    const currentPrimary = await tx.websiteDomain.findFirst({
+      where: { websiteId, isPrimary: true, ...readyWebsiteDomainWhere } as any,
+      select: { id: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (currentPrimary) {
+      // Clean up any stale/multiple primary flags while retaining the healthy
+      // canonical domain. A unique partial index is not portable in Prisma, so
+      // the transaction lock is the invariant boundary.
+      await tx.websiteDomain.updateMany({
+        where: { websiteId, isPrimary: true, id: { not: currentPrimary.id } },
+        data: { isPrimary: false },
+      });
+      return candidateDomainId
+        ? tx.websiteDomain.findUnique({ where: { id: candidateDomainId } })
+        : tx.websiteDomain.findUnique({ where: { id: currentPrimary.id } });
+    }
+
+    const candidate = candidateDomainId
+      ? await tx.websiteDomain.findFirst({
+          where: { id: candidateDomainId, websiteId, ...readyWebsiteDomainWhere } as any,
+        })
+      : await tx.websiteDomain.findFirst({
+          where: { websiteId, ...readyWebsiteDomainWhere } as any,
+          orderBy: { createdAt: "asc" },
+        });
+
+    await tx.websiteDomain.updateMany({
+      where: { websiteId, isPrimary: true },
+      data: { isPrimary: false },
+    });
+
+    if (!candidate) return null;
+    return tx.websiteDomain.update({
+      where: { id: candidate.id },
+      data: { isPrimary: true },
+    });
+  });
+
+const present = (domain: any) => presentWebsiteDomain(domain as any);
 
 const addDomain = async (payload: WebsiteDomainCreateInput, user: IRequestUser) => {
   assertCustomDomainsEnabled();
@@ -189,7 +252,7 @@ const addDomain = async (payload: WebsiteDomainCreateInput, user: IRequestUser) 
 
   const verificationToken = randomBytes(32).toString("hex");
   const staleBefore = new Date(Date.now() - PENDING_DOMAIN_CLAIM_TTL_MS);
-  return prisma.$transaction(async (tx: any) => {
+  const created = await prisma.$transaction(async (tx: any) => {
     // One website-level lock makes the per-tenant domain cap race-safe when two
     // different hostnames are connected concurrently. The hostname lock then
     // serializes cross-tenant claims for the same domain.
@@ -241,14 +304,16 @@ const addDomain = async (payload: WebsiteDomainCreateInput, user: IRequestUser) 
       },
     });
   });
+  return present(created);
 };
 
 const listDomains = async (user: IRequestUser) => {
   const website = await getOwnedWebsite(user);
-  return prisma.websiteDomain.findMany({
+  const domains = await prisma.websiteDomain.findMany({
     where: { websiteId: website.id },
     orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
   });
+  return domains.map(present);
 };
 
 const verifyDomain = async (domainId: string, user: IRequestUser) => {
@@ -266,40 +331,70 @@ const verifyDomain = async (domainId: string, user: IRequestUser) => {
     if (!domain) throw new AppError(status.NOT_FOUND, "Website domain not found");
 
     const checkedAt = new Date();
-    const staleVerifyingBefore = new Date(checkedAt.getTime() - WEBSITE_DOMAIN_VERIFY_LOCK_SECONDS * 1000);
+    const wasRoutingReady = isWebsiteDomainRoutingReady(domain);
+    const staleVerificationBefore = new Date(checkedAt.getTime() - WEBSITE_DOMAIN_VERIFY_LOCK_SECONDS * 1000);
+
+    // A database lease is the authoritative cross-replica verification lock.
+    // For an already ACTIVE domain we deliberately keep status=VERIFIED while
+    // external DNS/provider/TLS checks run so a cache miss cannot make a
+    // healthy customer's hostname disappear temporarily.
     const claimed = await prisma.websiteDomain.updateMany({
       where: {
         id: domain.id,
         websiteId: owned.website.id,
         OR: [
-          { status: { not: "VERIFYING" } },
-          { lastCheckedAt: null },
-          { lastCheckedAt: { lt: staleVerifyingBefore } },
+          { verificationStartedAt: null },
+          { verificationStartedAt: { lt: staleVerificationBefore } },
         ],
       },
-      data: { status: "VERIFYING", failureReason: null, lastCheckedAt: checkedAt },
+      data: {
+        verificationStartedAt: checkedAt,
+        lastCheckedAt: checkedAt,
+        failureReason: null,
+        ...(wasRoutingReady ? {} : { status: "VERIFYING" }),
+      },
     });
     if (claimed.count !== 1) {
       throw new AppError(status.CONFLICT, "Domain verification is already in progress. Try again shortly.");
     }
 
-    const ownershipVerified = await hasOwnershipTxt(domain.domain, domain.verificationToken);
+    let ownershipVerified: boolean;
+    try {
+      ownershipVerified = await hasOwnershipTxt(domain.domain, domain.verificationToken);
+    } catch {
+      const message = "DNS verification lookup temporarily failed. Existing verified routing was kept unchanged. Try again.";
+      const updated = await prisma.websiteDomain.update({
+        where: { id: domain.id },
+        data: {
+          status: wasRoutingReady ? "VERIFIED" : "PENDING",
+          verificationStartedAt: null,
+          failureReason: message,
+          lastCheckedAt: checkedAt,
+          ...(wasRoutingReady ? {} : { verifiedAt: null }),
+        },
+      });
+      return present(updated);
+    }
+
     if (!ownershipVerified) {
       const updated = await prisma.websiteDomain.update({
         where: { id: domain.id },
         data: {
           status: "PENDING",
+          verificationStartedAt: null,
           ownershipVerified: false,
           providerVerified: false,
           routingVerified: false,
           tlsStatus: "PENDING",
+          isPrimary: false,
           verifiedAt: null,
           failureReason: "Add the ownership TXT record, wait for DNS propagation, then check again",
           lastCheckedAt: checkedAt,
         },
       });
+      await ensurePrimaryDomainInvariant(owned.website.id);
       await invalidateWebsiteRouting(owned.website.id, owned.website.subdomain, [domain.domain]);
-      return updated;
+      return present(updated);
     }
 
     let provider: WebsiteDomainProviderState;
@@ -308,23 +403,41 @@ const verifyDomain = async (domainId: string, user: IRequestUser) => {
       // challenge proves that this tenant controls the hostname.
       provider = await WebsiteDomainProviderService.verify(domain.domain);
     } catch (error) {
-      const failureReason = WebsiteDomainProviderService.describeProviderError(error);
-      await prisma.websiteDomain.update({
+      const providerFailure = WebsiteDomainProviderService.describeProviderError(error);
+      if (wasRoutingReady) {
+        const warning = `Status check could not complete: ${providerFailure}. Existing verified routing remains active until a later successful check proves otherwise.`;
+        const preserved = await prisma.websiteDomain.update({
+          where: { id: domain.id },
+          data: {
+            status: "VERIFIED",
+            verificationStartedAt: null,
+            failureReason: warning,
+            lastCheckedAt: checkedAt,
+            lastProviderSyncAt: new Date(),
+          },
+        });
+        return present(preserved);
+      }
+
+      const failed = await prisma.websiteDomain.update({
         where: { id: domain.id },
         data: {
           status: "FAILED",
+          verificationStartedAt: null,
           ownershipVerified: true,
           providerVerified: false,
           routingVerified: false,
-          failureReason,
+          failureReason: providerFailure,
           tlsStatus: "ERROR",
+          isPrimary: false,
           verifiedAt: null,
           lastProviderSyncAt: new Date(),
           lastCheckedAt: checkedAt,
         },
       });
+      await ensurePrimaryDomainInvariant(owned.website.id);
       await invalidateWebsiteRouting(owned.website.id, owned.website.subdomain, [domain.domain]);
-      throw new AppError(status.BAD_GATEWAY, failureReason);
+      return present(failed);
     }
 
     const providerReady = provider.verified && provider.routingConfigured;
@@ -344,10 +457,17 @@ const verifyDomain = async (domainId: string, user: IRequestUser) => {
       failureReason,
       checkedAt,
       verifiedAt: verified ? new Date() : null,
+      isPrimary: verified ? undefined : false,
     });
 
+    let canonicalized = updated;
+    if (verified) {
+      canonicalized = (await ensurePrimaryDomainInvariant(owned.website.id, domain.id)) ?? updated;
+    } else {
+      await ensurePrimaryDomainInvariant(owned.website.id);
+    }
     await invalidateWebsiteRouting(owned.website.id, owned.website.subdomain, [domain.domain]);
-    return updated;
+    return present(canonicalized);
   });
 };
 
@@ -364,8 +484,13 @@ const removeDomain = async (domainId: string, user: IRequestUser) => {
   }
 
   await prisma.websiteDomain.delete({ where: { id: domainId } });
+  const promoted = domain.isPrimary ? await ensurePrimaryDomainInvariant(website.id) : null;
   await invalidateWebsiteRouting(website.id, website.subdomain, [domain.domain]);
-  return { id: domainId, deleted: true } as const;
+  return {
+    id: domainId,
+    deleted: true,
+    promotedPrimaryDomain: promoted?.domain ?? null,
+  } as const;
 };
 
 const setPrimaryDomain = async (domainId: string, user: IRequestUser) => {
@@ -373,7 +498,7 @@ const setPrimaryDomain = async (domainId: string, user: IRequestUser) => {
   const { website } = await getOwnedDomain(domainId, user);
 
   const updated = await prisma.$transaction(async (tx: any) => {
-    await acquireTextTransactionAdvisoryLock(tx, website.id);
+    await acquireTextTransactionAdvisoryLock(tx, `website-domain-primary:${website.id}`);
 
     // Re-read inside the website lock. A verification worker/request may have
     // changed the domain state after the initial tenant-scoped lookup. Never
@@ -398,7 +523,7 @@ const setPrimaryDomain = async (domainId: string, user: IRequestUser) => {
   });
 
   await invalidateWebsiteRouting(website.id, website.subdomain);
-  return updated;
+  return present(updated);
 };
 
 /** Internal hook retained for compatibility with future async/domain workers. */
@@ -419,10 +544,15 @@ const updateVerificationState = async (
       failureReason: state.failureReason ?? null,
       lastCheckedAt: state.checkedAt ?? new Date(),
       verifiedAt: state.status === "VERIFIED" ? new Date() : null,
+      verificationStartedAt: null,
     },
   });
+  await ensurePrimaryDomainInvariant(
+    current.websiteId,
+    state.status === "VERIFIED" ? domainId : undefined,
+  );
   await invalidateWebsiteRouting(current.websiteId, current.website.subdomain, [current.domain]);
-  return updated;
+  return present(updated);
 };
 
 export const DomainService = {
