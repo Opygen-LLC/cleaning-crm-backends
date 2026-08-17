@@ -14,6 +14,11 @@ describe("buildTemplateSelectionPatch", () => {
       schemaVersion: 1,
     });
     expect(Object.keys(patch).sort()).toEqual(["schemaVersion", "templateId", "templateVersion"]);
+    expect(patch).not.toHaveProperty("pages");
+    expect(patch).not.toHaveProperty("primaryBookingFormId");
+    expect(patch).not.toHaveProperty("logo");
+    expect(patch).not.toHaveProperty("services");
+    expect(patch).not.toHaveProperty("reviews");
   });
 
   it("returns no database patch when template identity was not requested", () => {

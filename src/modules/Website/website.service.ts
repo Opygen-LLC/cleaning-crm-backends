@@ -404,9 +404,16 @@ const draftLifecyclePatch = (current: WebsiteLifecycleStatus) => {
   return next === current ? {} : { status: next };
 };
 
-const validateDraftPageContent = (draft: { pages?: Array<{ kind: string; content: unknown }> }) => {
-  for (const page of draft.pages ?? []) validateWebsitePageContent(page.kind, page.content);
-};
+const normalizeDraftPageContent = <T extends { pages?: Array<{ kind: string; content: unknown }> }>(draft: T): T => ({
+  ...draft,
+  pages: (draft.pages ?? []).map((page) => ({
+    ...page,
+    // System-page schemas strip legacy copies of CRM-owned services, reviews,
+    // contact details and booking-form payloads before anything is versioned
+    // or published. Custom pages retain their generic presentation content.
+    content: validateWebsitePageContent(page.kind, page.content),
+  })),
+}) as T;
 
 const createRevisionSnapshot = async (
   db: any,
@@ -417,7 +424,7 @@ const createRevisionSnapshot = async (
 ) => {
   await acquireTextTransactionAdvisoryLock(db, websiteId);
   const currentRevisionNumber = baseRevisionNumber ?? await getLatestRevisionNumber(db, websiteId);
-  const snapshot = await loadDraftSnapshot(websiteId, db);
+  const snapshot = normalizeDraftPageContent(await loadDraftSnapshot(websiteId, db));
   return db.websiteRevision.create({
     data: {
       websiteId,
@@ -441,7 +448,7 @@ const ensurePublishedSnapshotBeforeDraftMutationTx = async (db: any, websiteId: 
   });
   if (!current || current.status !== "PUBLISHED" || current.publishedSnapshot) return;
 
-  const draft = await loadDraftSnapshot(websiteId, db);
+  const draft = normalizeDraftPageContent(await loadDraftSnapshot(websiteId, db));
   const latest = await db.websiteRevision.aggregate({
     where: { websiteId },
     _max: { revisionNumber: true },
@@ -664,14 +671,13 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
   const website = await prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
     const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
-    const draft = await loadDraftSnapshot(current.id, tx);
+    const draft = normalizeDraftPageContent(await loadDraftSnapshot(current.id, tx));
     assertLifecycleAllowsPublish(draft.status as WebsiteLifecycleStatus);
     const publishTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     WebsiteEntitlementService.assertTemplateAllowed(publishTemplate, entitlements);
     if (draft.socialImageUrl && !entitlements.advancedSeo) {
       throw new AppError(status.FORBIDDEN, "Remove the custom social share image or upgrade to Advanced Website SEO before publishing.", { code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false });
     }
-    validateDraftPageContent(draft);
     if (!draft.pages.some((page: any) => page.kind === "HOME" && page.isEnabled)) {
       throw new AppError(status.CONFLICT, "Enable the Home page before publishing the website");
     }
@@ -853,13 +859,12 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
       ? await WebsiteBookingProvisioningService.ensureAttachedForLaunchTx(tx, adminId, current.id)
       : null;
 
-    const draft = bookingFormId ? await loadDraftSnapshot(current.id, tx) : preflightDraft;
+    const draft = normalizeDraftPageContent(bookingFormId ? await loadDraftSnapshot(current.id, tx) : preflightDraft);
     const launchTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     WebsiteEntitlementService.assertTemplateAllowed(launchTemplate, entitlements);
     if (draft.socialImageUrl && !entitlements.advancedSeo) {
       throw new AppError(status.FORBIDDEN, "Remove the custom social share image or upgrade to Advanced Website SEO before launching.", { code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false });
     }
-    validateDraftPageContent(draft);
 
     if (!draft.pages.some((page: any) => page.kind === "HOME" && page.isEnabled)) {
       throw new AppError(status.CONFLICT, "Enable the Home page before launching the website", {
@@ -1017,16 +1022,16 @@ const restoreRevision = async (revisionId: string, payload: WebsiteRevisionResto
     });
     if (!revision) throw new AppError(status.NOT_FOUND, "Website revision not found");
 
-    const restored = parseRevisionSnapshotAsPublished(revision.snapshot);
-    if (!restored) {
+    const parsedRestored = parseRevisionSnapshotAsPublished(revision.snapshot);
+    if (!parsedRestored) {
       throw new AppError(status.UNPROCESSABLE_ENTITY, "This historical revision cannot be restored safely", {
         code: "WEBSITE_REVISION_INVALID",
         retryable: false,
       });
     }
+    const restored = normalizeDraftPageContent(parsedRestored);
 
     TemplateRegistry.requireTemplate(restored.website.templateId, restored.website.templateVersion);
-    validateDraftPageContent(restored);
 
     const pageIds = new Set<string>();
     const pageSlugs = new Set<string>();
