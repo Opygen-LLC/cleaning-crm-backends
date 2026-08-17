@@ -14,7 +14,12 @@ const { redisMock, prismaMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../config/redis", () => ({ default: redisMock }));
-vi.mock("../../config/ENV", () => ({ WEBSITE_BASE_DOMAIN: "sites.example.com" }));
+vi.mock("../../config/ENV", () => ({
+  WEBSITE_BASE_DOMAIN: "sites.example.com",
+  WEBSITE_ROUTE_CACHE_TTL_SECONDS: 300,
+  WEBSITE_ROUTE_NEGATIVE_CACHE_TTL_SECONDS: 10,
+  WEBSITE_ROUTE_CACHE_JITTER_RATIO: 0,
+}));
 vi.mock("../../lib/prisma/prisma", () => ({ prisma: prismaMock }));
 
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
@@ -106,4 +111,40 @@ describe("production tenant host routing", () => {
     expect(result.redirectCode).toBe(308);
     expect(result.canonicalHost).toBe("www.example.com");
   });
+
+  it("caches unknown wildcard hosts briefly so repeated probes do not hit Postgres", async () => {
+    await expect(WebsiteHostResolverService.resolveHost("missing.sites.example.com")).rejects.toMatchObject({
+      statusCode: 404,
+    });
+
+    expect(redisMock.set).toHaveBeenCalledWith(
+      expect.stringContaining("site-route:v4:host:missing.sites.example.com"),
+      expect.stringContaining('"notFound":true'),
+      "EX",
+      10,
+    );
+  });
+
+  it("serves a cached host route without querying the database", async () => {
+    redisMock.get.mockResolvedValue(JSON.stringify({
+      version: 4,
+      websiteId: "website-1",
+      requestedSubdomain: "sparkle",
+      canonicalSubdomain: "sparkle",
+      isAlias: false,
+      redirectCode: null,
+      primaryCustomHost: null,
+      requestedHost: "sparkle.sites.example.com",
+      canonicalHost: "sparkle.sites.example.com",
+      routeKind: "platform_subdomain",
+      customDomain: null,
+    }));
+
+    const result = await WebsiteHostResolverService.resolveHost("sparkle.sites.example.com");
+    expect(result.websiteId).toBe("website-1");
+    expect(prismaMock.businessWebsite.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.websiteSubdomainAlias.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.websiteDomain.findUnique).not.toHaveBeenCalled();
+  });
+
 });

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
     createAdmin: vi.fn(),
     provisionWebsite: vi.fn(),
     createTrial: vi.fn(),
+    invalidateSubdomains: vi.fn(),
   };
 });
 
@@ -34,6 +35,12 @@ vi.mock("../Website/websiteProvisioning.service", () => ({
 vi.mock("../Subscription/subscription.service", () => ({
   subscriptionService: {
     createTrialSubscription: mocks.createTrial,
+  },
+}));
+
+vi.mock("../Website/websiteHostResolver.service", () => ({
+  WebsiteHostResolverService: {
+    invalidateSubdomains: mocks.invalidateSubdomains,
   },
 }));
 
@@ -84,6 +91,7 @@ describe("AccountProvisioningService", () => {
       trialDays: 14,
     });
     expect(result.website.id).toBe("website-1");
+    expect(mocks.invalidateSubdomains).toHaveBeenCalledWith(["sparkle"]);
   });
 
   it("does not attempt trial creation when website provisioning fails", async () => {

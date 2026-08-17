@@ -21,6 +21,7 @@ import { waitUntil } from "@vercel/functions";
 import { auth } from "../../lib/auth";
 import { adminService } from "../Admin/admin.service";
 import { WebsiteProvisioningService } from "../Website/websiteProvisioning.service";
+import { WebsiteHostResolverService } from "../Website/websiteHostResolver.service";
 import { createNotification } from "../../lib/utils/createNotification";
 import { emitToSuperAdmins } from "../../config/socketio";
 import { NotificationType } from "../../generated/prisma/enums";
@@ -598,6 +599,11 @@ const createAdminAccount = async (payload: {
 
             return { user, admin, website };
         });
+
+        // A free subdomain can be negatively cached if someone probed it
+        // before this admin was created. Invalidate only after the tenant
+        // transaction commits so the new hostname becomes live immediately.
+        await WebsiteHostResolverService.invalidateSubdomains([website.subdomain]);
 
         // Fire-and-forget welcome email with login credentials
         if (sendWelcomeEmail) {

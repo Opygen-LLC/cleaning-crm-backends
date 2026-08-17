@@ -101,6 +101,20 @@ export const WEBSITE_CNAME_TARGET: string | undefined = process.env.WEBSITE_CNAM
     .toLowerCase()
     .replace(/^\.+|\.+$/g, "");
 
+// Phase 6 host resolver cache. Positive routes can live for a few minutes;
+// unknown hosts are cached only briefly to absorb wildcard-DNS scans without
+// delaying legitimate provisioning/renames for long. TTL jitter prevents a
+// fleet of host keys from expiring simultaneously.
+export const WEBSITE_ROUTE_CACHE_TTL_SECONDS: number = Math.min(3600, Math.max(30,
+    Number(process.env.WEBSITE_ROUTE_CACHE_TTL_SECONDS) || 300,
+));
+export const WEBSITE_ROUTE_NEGATIVE_CACHE_TTL_SECONDS: number = Math.min(60, Math.max(3,
+    Number(process.env.WEBSITE_ROUTE_NEGATIVE_CACHE_TTL_SECONDS) || 10,
+));
+export const WEBSITE_ROUTE_CACHE_JITTER_RATIO: number = Math.min(0.4, Math.max(0,
+    Number(process.env.WEBSITE_ROUTE_CACHE_JITTER_RATIO) || 0.15,
+));
+
 // Phase 7 custom-domain provider integration. `vercel` registers the tenant
 // hostname on the frontend Vercel project and lets Vercel manage certificates.
 // `manual` keeps DNS verification in-app but assumes TLS/routing is managed by

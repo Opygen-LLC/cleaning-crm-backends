@@ -8,6 +8,7 @@ import { DEFAULT_WEBSITE_PAGES, RESERVED_WEBSITE_SUBDOMAINS } from "./website.co
 import type { WebsiteCreateInput } from "./website.interface";
 import { normalizeSubdomain } from "./websiteIdentity";
 import { TemplateRegistry } from "./templateRegistry";
+import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 
 export const WEBSITE_SUBDOMAIN_RESERVATION_LOCK = "business-website-subdomain-reservation-v1";
 const adminProvisioningLock = (adminId: string) => `business-website-provision:${adminId}`;
@@ -209,11 +210,20 @@ export const provisionDefaultWebsiteForAdmin = async (input: {
   adminId: string;
   businessName: string;
   createdByUserId?: string | null;
-}) =>
-  prisma.$transaction(
+}) => {
+  const result = await prisma.$transaction(
     (tx: Prisma.TransactionClient) => provisionDefaultWebsiteForAdminTx(tx, input),
     PROVISIONING_TRANSACTION_OPTIONS,
   );
+
+  // A wildcard hostname may have been probed before this tenant existed and
+  // therefore be sitting in the short negative resolver cache. Drop it after
+  // commit so backfills/repair provisioning become reachable immediately.
+  if (result.created) {
+    await WebsiteHostResolverService.invalidateSubdomains([result.website.subdomain]);
+  }
+  return result;
+};
 
 export const WebsiteProvisioningService = {
   createWebsiteForAdminTx,

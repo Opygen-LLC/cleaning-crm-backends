@@ -4,6 +4,7 @@ import { PROVISIONING_TRANSACTION_OPTIONS } from "../../lib/prisma/transactionPo
 import { adminService } from "../Admin/admin.service";
 import { subscriptionService } from "../Subscription/subscription.service";
 import { WebsiteProvisioningService } from "../Website/websiteProvisioning.service";
+import { WebsiteHostResolverService } from "../Website/websiteHostResolver.service";
 
 export interface ProvisionRegisteredAdminInput {
   userId: string;
@@ -28,7 +29,7 @@ export interface ProvisionRegisteredAdminInput {
  * function rejects.
  */
 const provisionRegisteredAdmin = async (input: ProvisionRegisteredAdminInput) => {
-  return prisma.$transaction(
+  const result = await prisma.$transaction(
     async (tx: Prisma.TransactionClient) => {
       const admin = await adminService.createAdmin(
         { userId: input.userId, businessName: input.businessName },
@@ -56,6 +57,12 @@ const provisionRegisteredAdmin = async (input: ProvisionRegisteredAdminInput) =>
     },
     PROVISIONING_TRANSACTION_OPTIONS,
   );
+
+  // Commit first, then invalidate any short negative wildcard-host cache entry
+  // that may exist for the newly reserved label. Routing cache is never part
+  // of the registration transaction/source of truth.
+  await WebsiteHostResolverService.invalidateSubdomains([result.website.subdomain]);
+  return result;
 };
 
 export const AccountProvisioningService = {

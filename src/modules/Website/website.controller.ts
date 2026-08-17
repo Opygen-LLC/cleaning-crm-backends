@@ -54,12 +54,14 @@ const renameSubdomain = catchAsync(async (req, res) =>
 );
 const resolvePublicSubdomain = catchAsync(async (req, res) => {
   const data = await WebsiteHostResolverService.resolveSubdomain(paramStr(req.params.subdomain));
-  res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
+  // Redis is the invalidatable routing cache of record. Do not let a browser
+  // or CDN retain a stale alias/canonical-host decision after a rename.
+  res.setHeader("Cache-Control", "no-store, max-age=0");
   return ok(res, "Website subdomain resolved successfully", data);
 });
 const resolvePublicHost = catchAsync(async (req, res) => {
   const data = await WebsiteHostResolverService.resolveHost(paramStr(req.params.host));
-  res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
+  res.setHeader("Cache-Control", "no-store, max-age=0");
   return ok(res, "Website host resolved successfully", data);
 });
 

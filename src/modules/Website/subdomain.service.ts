@@ -133,14 +133,26 @@ const rename = async (input: string, user: IRequestUser) => {
     };
   });
 
-  const customDomains = await prisma.websiteDomain.findMany({
-    where: { websiteId: owned.id, status: "VERIFIED" as any },
-    select: { domain: true },
-  });
+  const [customDomains, aliases] = await Promise.all([
+    prisma.websiteDomain.findMany({
+      where: { websiteId: owned.id, status: "VERIFIED" as any },
+      select: { domain: true },
+    }),
+    prisma.websiteSubdomainAlias.findMany({
+      where: { websiteId: owned.id },
+      select: { subdomain: true },
+    }),
+  ]);
+
+  // Every historical alias can contain a cached canonicalHost from before the
+  // rename. Invalidate all aliases, not just old/new, otherwise an older alias
+  // can temporarily create a 308 -> 308 redirect chain until its Redis TTL
+  // expires. Database aliases always point directly at the current website.
   await Promise.all([
     WebsiteHostResolverService.invalidateSubdomains([
       result.previousSubdomain,
       result.subdomain,
+      ...aliases.map((item) => item.subdomain),
     ]),
     WebsiteHostResolverService.invalidateHosts(customDomains.map((item) => item.domain)),
     WebsiteProjectionCacheService.invalidateWebsite(owned.id),

@@ -223,22 +223,27 @@ const createWebsiteForAdmin = async (
   adminId: string,
   payload: WebsiteCreateInput,
   createdByUserId: string | null = null,
-) => prisma.$transaction(async (tx: any) => {
-  // Validate form ownership in the same transaction as provisioning. The
-  // tenant check is therefore part of the authoritative write path, while the
-  // database foreign keys still arbitrate any concurrent form deletion.
-  await Promise.all([
-    assertOwnedForm(adminId, payload.primaryBookingFormId, "booking", tx),
-    assertOwnedForm(adminId, payload.primaryEstimateFormId, "estimate", tx),
-  ]);
+) => {
+  const website = await prisma.$transaction(async (tx: any) => {
+    // Validate form ownership in the same transaction as provisioning. The
+    // tenant check is therefore part of the authoritative write path, while the
+    // database foreign keys still arbitrate any concurrent form deletion.
+    await Promise.all([
+      assertOwnedForm(adminId, payload.primaryBookingFormId, "booking", tx),
+      assertOwnedForm(adminId, payload.primaryEstimateFormId, "estimate", tx),
+    ]);
 
-  return WebsiteProvisioningService.createWebsiteForAdminTx(
-    tx,
-    adminId,
-    payload,
-    createdByUserId,
-  );
-});
+    return WebsiteProvisioningService.createWebsiteForAdminTx(
+      tx,
+      adminId,
+      payload,
+      createdByUserId,
+    );
+  });
+
+  await WebsiteHostResolverService.invalidateSubdomains([website.subdomain]);
+  return website;
+};
 
 const createWebsite = async (payload: WebsiteCreateInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
