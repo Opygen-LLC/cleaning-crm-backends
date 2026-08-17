@@ -68,7 +68,7 @@ export const updateBookingFormSchema = createBookingFormSchema
 // ── Public booking ─────────────────────────────────────────────────────────────
 
 const publicAnswersSchema = z
-    .record(z.string().min(1), z.string().trim().max(5000))
+    .record(z.string().trim().min(1).max(100), z.string().trim().max(3000))
     .refine((answers) => Object.keys(answers).length <= 50, {
         message: "Too many custom field answers",
     });
@@ -80,7 +80,12 @@ export const publicBookingSubmissionSchema = z.object({
     timeSlot:    z.string().regex(TIME_RE, "Time must be in HH:MM format"),
     name:        z.string().trim().min(1, "Full name is required").max(120),
     email:       z.string().trim().email("Enter a valid email address").max(254),
-    phone:       z.string().trim().min(6, "Enter a valid phone number").max(40),
+    phone:       z.string().trim()
+        .regex(/^[+\d\s()\-.]{7,40}$/, "Enter a valid phone number")
+        .refine((value) => {
+            const digits = value.replace(/\D/g, "");
+            return digits.length >= 7 && digits.length <= 20;
+        }, "Enter a valid phone number"),
     address:     z.string().trim().min(3, "Service address is required").max(500),
     propertyType: z.enum(["HOUSE", "FLAT", "OFFICE", "COMMERCIAL", "OTHER"]).optional(),
     bedrooms:    z.number().int().min(0).max(50).optional(),
@@ -103,7 +108,7 @@ export const publicBookingSubmissionSchema = z.object({
 
 export const publicSlotAvailabilityQuerySchema = z.object({
     date: isoDateSchema,
-}).passthrough();
+}).strict();
 
 // ── Submission status update ───────────────────────────────────────────────────
 

@@ -95,21 +95,25 @@ const createAsset = z.object({
 const addDomain = z.object({ domain: z.string().trim().min(3).max(253) }).strict();
 const renameSubdomain = z.object({ subdomain: z.string().trim().min(3).max(63) }).strict();
 
+const publicAnalyticsMetadata = z
+  .record(z.string().trim().min(1).max(80), z.union([z.string().max(500), z.number().finite(), z.boolean(), z.null()]))
+  .refine((value) => Object.keys(value).length <= 20, "Too many analytics metadata fields");
+
 const publicAnalytics = z.object({
   eventType: z.literal("PAGE_VIEW"),
-  path: z.string().trim().min(1).max(500),
-  sessionId: z.string().trim().max(160).optional(),
-  referrer: z.string().trim().max(2048).optional(),
+  path: z.string().trim().min(1).max(500).regex(/^\//, "Path must be relative to the website"),
+  sessionId: z.string().trim().min(8).max(160).regex(/^[A-Za-z0-9._:-]+$/, "Invalid session id").optional(),
+  referrer: z.string().trim().url().max(2048).optional(),
   utmSource: z.string().trim().max(120).optional(),
   utmMedium: z.string().trim().max(120).optional(),
   utmCampaign: z.string().trim().max(160).optional(),
-  metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+  metadata: publicAnalyticsMetadata.optional(),
 }).strict();
 
 const publicClientError = z.object({
   message: z.string().trim().min(1).max(1000),
-  digest: z.string().trim().max(240).optional(),
-  path: z.string().trim().max(800).optional(),
+  digest: z.string().trim().max(240).regex(/^[A-Za-z0-9._:-]+$/, "Invalid error digest").optional(),
+  path: z.string().trim().max(800).regex(/^\//, "Path must be relative to the website").optional(),
 }).strict();
 const configureWebsiteBooking = z.object({
   enabled: z.boolean(),

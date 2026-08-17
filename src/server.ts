@@ -78,29 +78,27 @@ const allowedOrigins = [
   "https://cleaningcrm.opygen.com",
 ].filter(Boolean) as string[];
 
-const corsCommon = {
+const authenticatedCors = cors({
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "Cookie",
-    "X-Requested-With",
-    "Accept",
-    "Origin",
-    "Idempotency-Key",
-    "X-Form-Started-At",
-    "X-Turnstile-Token",
+    "Content-Type", "Authorization", "Cookie", "X-Requested-With", "Accept",
+    "Origin", "Idempotency-Key", "X-Form-Started-At", "X-Turnstile-Token",
   ],
   exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Response-Time"],
-};
-
-const authenticatedCors = cors({
-  ...corsCommon,
   origin: true,
   credentials: true,
 });
+
+// Tenant websites never need dashboard credentials. Keep the browser contract
+// deliberately narrower than authenticated CRM CORS: read + acquisition POSTs
+// only, no Authorization/Cookie headers and no credentialed requests.
 const publicWebsiteCors = cors({
-  ...corsCommon,
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type", "Accept", "Origin", "Idempotency-Key",
+    "X-Form-Started-At", "X-Turnstile-Token",
+  ],
+  exposedHeaders: ["X-Request-Id", "X-Response-Time"],
   origin: true,
   credentials: false,
 });

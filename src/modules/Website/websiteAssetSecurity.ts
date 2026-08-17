@@ -27,3 +27,22 @@ export const websiteBrandUploadRateLimit = rateLimit({
     error: { code: "WEBSITE_BRAND_UPLOAD_RATE_LIMITED", retryable: true },
   },
 });
+
+
+export const websiteContentUploadRateLimit = rateLimit({
+  windowMs: WINDOW_MS,
+  limit: 40,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  store: new RedisRateLimitStore({
+    prefix: "website-content-upload",
+    windowMs: WINDOW_MS,
+    maxFallbackEntries: 5_000,
+  }),
+  keyGenerator: (req: Request) => `tenant:${req.user.adminId ?? req.user.id}`,
+  message: {
+    success: false,
+    message: "Too many website image uploads. Please wait a few minutes and try again.",
+    error: { code: "WEBSITE_CONTENT_UPLOAD_RATE_LIMITED", retryable: true },
+  },
+});

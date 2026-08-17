@@ -72,7 +72,7 @@ const publicCalculationBase = z.object({
     serviceType: z.enum(ServiceType).optional(),
     bedrooms:    z.number().int().min(0).max(50),
     bathrooms:   z.number().int().min(0).max(50),
-    addOnIds:    z.array(z.string().min(1)).max(50).default([]),
+    addOnIds:    z.array(z.string().trim().min(1).max(120)).max(30).default([]),
     postcode:    z.string().trim().max(32).optional(),
     city:        z.string().trim().max(120).optional(),
 }).strict();
@@ -91,10 +91,12 @@ const publicSubmissionSchema = publicCalculationBase.extend({
     // Legacy contact fields remain accepted during the rollout; the server
     // derives canonical contact data from semantic form answers when present.
     name:     z.string().trim().max(200).optional(),
-    email:    z.string().trim().email("Invalid email").max(320).optional(),
-    phone:    z.string().trim().max(80).optional(),
-    notes:    z.string().trim().max(5000).optional(),
-    answers:  z.record(z.string(), z.string().max(5000)).optional(),
+    email:    z.string().trim().email("Invalid email").max(254).optional(),
+    phone:    z.string().trim().regex(/^[+\d\s()\-.]{7,40}$/, "Enter a valid phone number").max(40).optional(),
+    notes:    z.string().trim().max(3000).optional(),
+    answers:  z.record(z.string().trim().min(1).max(100), z.string().trim().max(3000))
+        .refine((answers) => Object.keys(answers).length <= 50, "Too many custom field answers")
+        .optional(),
 }).strict().superRefine(requireServiceIdentity);
 
 // ── Export ─────────────────────────────────────────────────────────────────────

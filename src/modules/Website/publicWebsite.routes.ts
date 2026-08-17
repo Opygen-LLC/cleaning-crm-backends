@@ -1,9 +1,11 @@
 import { Router } from "express";
 import {
-  publicMutationRateLimit,
   publicReadRateLimit,
   publicHostResolveRateLimit,
-  publicResourceMutationRateLimit,
+  publicFormSubmissionRateLimit,
+  publicFormResourceRateLimit,
+  publicCalculationRateLimit,
+  publicCalculationResourceRateLimit,
   publicContactMutationRateLimit,
   publicContactResourceRateLimit,
   publicTelemetryRateLimit,
@@ -15,6 +17,14 @@ import { estimateFormValidation } from "../EstimateForm/estimateForm.validation"
 import { websiteController } from "./website.controller";
 import { websiteValidation } from "./website.validation";
 import { publicWebsiteSpamGuard } from "../../middlewares/publicSpamProtection";
+import {
+  publicWebsiteMutationOriginGuard,
+  publicJsonOnly,
+  publicTelemetryBodyLimit,
+  publicContactBodyLimit,
+  publicEstimateCalculationBodyLimit,
+  publicFormSubmissionBodyLimit,
+} from "../../middlewares/publicWebsiteRequestSecurity";
 
 const router = Router();
 
@@ -47,9 +57,12 @@ router.get(
 );
 router.post(
   "/:identifier/booking",
-  publicMutationRateLimit,
-  publicResourceMutationRateLimit,
-  publicWebsiteSpamGuard,
+  publicFormSubmissionRateLimit,
+  publicFormResourceRateLimit,
+  publicJsonOnly,
+  publicFormSubmissionBodyLimit,
+  publicWebsiteMutationOriginGuard,
+  publicWebsiteSpamGuard("website_booking"),
   zodValidate(
     bookingFormValidation.publicBookingSubmissionSchema,
     ValidationProperty.BODY,
@@ -67,16 +80,22 @@ router.get(
 );
 router.post(
   "/:identifier/estimate/calculate",
-  publicMutationRateLimit,
-  publicResourceMutationRateLimit,
+  publicCalculationRateLimit,
+  publicCalculationResourceRateLimit,
+  publicJsonOnly,
+  publicEstimateCalculationBodyLimit,
+  publicWebsiteMutationOriginGuard,
   zodValidate(estimateFormValidation.publicCalculation, ValidationProperty.BODY),
   websiteController.calculatePublicWebsiteEstimate,
 );
 router.post(
   "/:identifier/estimate",
-  publicMutationRateLimit,
-  publicResourceMutationRateLimit,
-  publicWebsiteSpamGuard,
+  publicFormSubmissionRateLimit,
+  publicFormResourceRateLimit,
+  publicJsonOnly,
+  publicFormSubmissionBodyLimit,
+  publicWebsiteMutationOriginGuard,
+  publicWebsiteSpamGuard("website_estimate"),
   zodValidate(estimateFormValidation.publicSubmission, ValidationProperty.BODY),
   websiteController.submitPublicWebsiteEstimate,
 );
@@ -87,7 +106,10 @@ router.post(
   "/:identifier/contact",
   publicContactMutationRateLimit,
   publicContactResourceRateLimit,
-  publicWebsiteSpamGuard,
+  publicJsonOnly,
+  publicContactBodyLimit,
+  publicWebsiteMutationOriginGuard,
+  publicWebsiteSpamGuard("website_contact"),
   zodValidate(websiteValidation.publicContact, ValidationProperty.BODY),
   websiteController.submitPublicWebsiteContact,
 );
@@ -96,6 +118,9 @@ router.post(
   "/:identifier/analytics",
   publicTelemetryRateLimit,
   publicResourceTelemetryRateLimit,
+  publicJsonOnly,
+  publicTelemetryBodyLimit,
+  publicWebsiteMutationOriginGuard,
   zodValidate(websiteValidation.publicAnalytics, ValidationProperty.BODY),
   websiteController.trackPublicWebsiteAnalytics,
 );
@@ -103,6 +128,9 @@ router.post(
   "/:identifier/error",
   publicTelemetryRateLimit,
   publicResourceTelemetryRateLimit,
+  publicJsonOnly,
+  publicTelemetryBodyLimit,
+  publicWebsiteMutationOriginGuard,
   zodValidate(websiteValidation.publicClientError, ValidationProperty.BODY),
   websiteController.reportPublicWebsiteError,
 );

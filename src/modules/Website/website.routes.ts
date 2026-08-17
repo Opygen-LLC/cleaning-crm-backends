@@ -4,9 +4,9 @@ import { checkAuth } from "../../middlewares/checkAuth";
 import { ValidationProperty, zodValidate } from "../../middlewares/validations/zodValidation.middleware";
 import { websiteController } from "./website.controller";
 import { websiteValidation } from "./website.validation";
-import { multerMemory } from "../../config/multerMemory";
+import { websiteImageUpload } from "./websiteUpload.middleware";
 import { convertHeicToPng } from "../../middlewares/convertHeicToPngMiddleware";
-import { websiteBrandUploadRateLimit } from "./websiteAssetSecurity";
+import { websiteBrandUploadRateLimit, websiteContentUploadRateLimit } from "./websiteAssetSecurity";
 import {
   websiteSubdomainAvailabilityRateLimit,
   websiteSubdomainMutationRateLimit,
@@ -60,8 +60,8 @@ router.post(
   websiteController.finalizeBrandUpload,
 );
 router.post("/assets", zodValidate(websiteValidation.createAsset, ValidationProperty.BODY), websiteController.registerAsset);
-router.post("/assets/upload", websiteBrandUploadRateLimit, multerMemory.single("asset"), convertHeicToPng, websiteController.uploadBrandAsset);
-router.post("/assets/upload-content", multerMemory.single("asset"), convertHeicToPng, websiteController.uploadContentAsset);
+router.post("/assets/upload", websiteBrandUploadRateLimit, websiteImageUpload.single("asset"), convertHeicToPng, websiteController.uploadBrandAsset);
+router.post("/assets/upload-content", websiteContentUploadRateLimit, websiteImageUpload.single("asset"), convertHeicToPng, websiteController.uploadContentAsset);
 router.delete("/assets/:assetId", websiteController.deleteAsset);
 router.get(
   "/subdomain/availability/:subdomain",

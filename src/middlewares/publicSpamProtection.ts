@@ -4,6 +4,9 @@ import { TURNSTILE_SECRET_KEY } from "../config/ENV";
 const trapFields = ["companyWebsite", "website", "_gotcha", "fax"] as const;
 const MIN_FORM_AGE_MS = 750;
 const MAX_FORM_AGE_MS = 24 * 60 * 60 * 1000;
+const MAX_TURNSTILE_TOKEN_LENGTH = 4096;
+
+type WebsiteSpamAction = "website_booking" | "website_estimate" | "website_contact";
 
 const fail = (res: Response, message = "Invalid public submission") =>
   res.status(400).json({
@@ -12,11 +15,21 @@ const fail = (res: Response, message = "Invalid public submission") =>
     error: { code: "PUBLIC_SPAM_REJECTED", retryable: false },
   });
 
+const getRequestHostname = (req: Request): string | null => {
+  const raw = req.get("Origin")?.trim() || req.get("Referer")?.trim();
+  if (!raw) return null;
+  try {
+    return new URL(raw).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return null;
+  }
+};
+
 const guard = async (
   req: Request,
   res: Response,
   next: NextFunction,
-  options: { requireStartedAt: boolean },
+  options: { requireStartedAt: boolean; action?: WebsiteSpamAction },
 ) => {
   const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
   for (const field of trapFields) {
@@ -24,10 +37,6 @@ const guard = async (
     if (typeof value === "string" && value.trim()) return fail(res);
   }
 
-  // Website forms always send the time at which the form became interactive.
-  // Requiring it on the new tenant website endpoints blocks basic scripted
-  // POSTs before they reach tenant/database work. Legacy shared form URLs keep
-  // it optional so existing embeds are not broken during migration.
   const startedAtHeader = req.get("X-Form-Started-At");
   if (options.requireStartedAt && !startedAtHeader) return fail(res);
   if (startedAtHeader) {
@@ -40,7 +49,7 @@ const guard = async (
 
   if (TURNSTILE_SECRET_KEY) {
     const token = req.get("X-Turnstile-Token")?.trim();
-    if (!token) return fail(res, "Spam verification is required");
+    if (!token || token.length > MAX_TURNSTILE_TOKEN_LENGTH) return fail(res, "Spam verification is required");
     try {
       const form = new URLSearchParams({ secret: TURNSTILE_SECRET_KEY, response: token });
       if (req.ip) form.set("remoteip", req.ip);
@@ -50,8 +59,24 @@ const guard = async (
         body: form,
         signal: AbortSignal.timeout(2500),
       });
-      const result = await response.json() as { success?: boolean };
+      const result = await response.json() as {
+        success?: boolean;
+        hostname?: string;
+        action?: string;
+        "error-codes"?: string[];
+      };
       if (!result.success) return fail(res, "Spam verification failed");
+
+      // Bind the one-time token to this website hostname and the exact form
+      // action. A token generated on another website/form cannot be replayed
+      // against a tenant acquisition endpoint.
+      const expectedHostname = getRequestHostname(req);
+      if (expectedHostname && result.hostname?.toLowerCase().replace(/\.$/, "") !== expectedHostname) {
+        return fail(res, "Spam verification failed");
+      }
+      if (options.action && result.action !== options.action) {
+        return fail(res, "Spam verification failed");
+      }
     } catch {
       return res.status(503).json({
         success: false,
@@ -68,6 +93,7 @@ const guard = async (
 export const publicSpamGuard = (req: Request, res: Response, next: NextFunction) =>
   guard(req, res, next, { requireStartedAt: false });
 
-/** Stronger protection for the Phase 3+ tenant website acquisition endpoints. */
-export const publicWebsiteSpamGuard = (req: Request, res: Response, next: NextFunction) =>
-  guard(req, res, next, { requireStartedAt: true });
+/** Stronger tenant-website spam guard with Turnstile action binding. */
+export const publicWebsiteSpamGuard = (action?: WebsiteSpamAction) =>
+  (req: Request, res: Response, next: NextFunction) =>
+    guard(req, res, next, { requireStartedAt: true, action });

@@ -1,4 +1,6 @@
 import { promises as dns } from "node:dns";
+import https from "node:https";
+import { isIP } from "node:net";
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import {
@@ -227,26 +229,118 @@ const normalizeVercelChallenge = (challenge: any): ProviderDnsRecord | null => {
   return { type: "TXT", host, value, purpose: "provider_verification" };
 };
 
-const probeManagedHttps = async (domain: string): Promise<boolean> => {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), WEBSITE_TLS_PROBE_TIMEOUT_MS);
-  try {
-    // This probe is only called after Vercel reports `misconfigured === false`,
-    // so DNS already points at the provider. Any HTTP response proves that the
-    // TLS handshake/certificate for this hostname is valid; the application
-    // may legitimately answer 404 while the DB row is still pending.
-    await fetch(`https://${domain}/__cleancrm_tls_probe__`, {
-      method: "HEAD",
-      redirect: "manual",
-      signal: controller.signal,
-      headers: { "User-Agent": "CleaningCRM-DomainVerifier/1.0" },
-    });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeout);
+const isPublicIpv4 = (address: string): boolean => {
+  const parts = address.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return false;
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && (b === 0 || b === 168)) return false;
+  if (a === 192 && b === 0 && parts[2] === 2) return false;
+  if (a === 198 && (b === 18 || b === 19 || (b === 51 && parts[2] === 100))) return false;
+  if (a === 203 && b === 0 && parts[2] === 113) return false;
+  return true;
+};
+
+const isPublicIpv6 = (address: string): boolean => {
+  const value = address.toLowerCase().split("%")[0];
+  if (!value || value === "::" || value === "::1") return false;
+  if (value.startsWith("fc") || value.startsWith("fd") || value.startsWith("ff")) return false;
+  if (/^fe[89ab]/.test(value)) return false;
+  if (value.startsWith("2001:db8:")) return false;
+  if (value.startsWith("::ffff:")) {
+    const mapped = value.slice("::ffff:".length);
+    return isIP(mapped) === 4 && isPublicIpv4(mapped);
   }
+  return true;
+};
+
+/** Exported for targeted security regression tests. */
+export const isPublicProviderAddress = (address: string): boolean => {
+  const family = isIP(address);
+  if (family === 4) return isPublicIpv4(address);
+  if (family === 6) return isPublicIpv6(address);
+  return false;
+};
+
+type ProviderAddress = { address: string; family: 4 | 6 };
+
+const resolveProviderAddresses = async (hostOrIp: string): Promise<ProviderAddress[]> => {
+  const normalized = normalizeDnsValue(hostOrIp);
+  const family = isIP(normalized);
+  if (family === 4 || family === 6) {
+    return isPublicProviderAddress(normalized)
+      ? [{ address: normalized, family: family as 4 | 6 }]
+      : [];
+  }
+
+  const [v4, v6] = await Promise.all([
+    dns.resolve4(normalized).catch(() => [] as string[]),
+    dns.resolve6(normalized).catch(() => [] as string[]),
+  ]);
+  return [
+    ...v4.map((address) => ({ address, family: 4 as const })),
+    ...v6.map((address) => ({ address, family: 6 as const })),
+  ].filter((entry) => isPublicProviderAddress(entry.address));
+};
+
+const findPinnedProviderAddress = async (domain: string, routingTarget: string): Promise<ProviderAddress | null> => {
+  const [domainAddresses, providerAddresses] = await Promise.all([
+    resolveProviderAddresses(domain),
+    resolveProviderAddresses(routingTarget),
+  ]);
+  const providerSet = new Set(providerAddresses.map((entry) => `${entry.family}:${entry.address}`));
+  return domainAddresses.find((entry) => providerSet.has(`${entry.family}:${entry.address}`)) ?? null;
+};
+
+/**
+ * Verify HTTPS without allowing a customer-controlled hostname to become an
+ * SSRF primitive. DNS is first proven to overlap the hosting provider's public
+ * routing addresses; the TLS connection is then pinned to that exact address
+ * while keeping SNI/certificate verification on the customer's hostname.
+ */
+const probeManagedHttps = async (domain: string, routingTarget: string | null): Promise<boolean> => {
+  if (!routingTarget) return false;
+  const pinned = await findPinnedProviderAddress(domain, routingTarget);
+  if (!pinned) return false;
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const request = https.request({
+      protocol: "https:",
+      hostname: domain,
+      servername: domain,
+      port: 443,
+      path: "/__cleancrm_tls_probe__",
+      method: "HEAD",
+      rejectUnauthorized: true,
+      timeout: WEBSITE_TLS_PROBE_TIMEOUT_MS,
+      headers: { "User-Agent": "CleaningCRM-DomainVerifier/2.0" },
+      // Pin transport to the provider address selected above. Do not perform a
+      // second attacker-influenced DNS lookup inside https.request.
+      lookup: ((_hostname: string, _options: unknown, callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void) => {
+        callback(null, pinned.address, pinned.family);
+      }) as any,
+    }, (response) => {
+      response.resume();
+      finish(true); // Any HTTP status proves a valid TLS handshake/certificate.
+    });
+
+    request.once("timeout", () => {
+      request.destroy();
+      finish(false);
+    });
+    request.once("error", () => finish(false));
+    request.end();
+  });
 };
 
 const inspectVercel = async (domain: string, verify = false): Promise<WebsiteDomainProviderState> => {
@@ -282,7 +376,8 @@ const inspectVercel = async (domain: string, verify = false): Promise<WebsiteDom
 
   const verified = Boolean(projectDomain.verified);
   const routingConfigured = config?.misconfigured === false;
-  const tlsReady = verified && routingConfigured ? await probeManagedHttps(domain) : false;
+  const routingTarget = recommendedCname ?? recommendedIpv4 ?? WEBSITE_CNAME_TARGET ?? null;
+  const tlsReady = verified && routingConfigured ? await probeManagedHttps(domain, routingTarget) : false;
   return {
     provider: "VERCEL",
     attached: true,
@@ -300,6 +395,7 @@ const inspectVercel = async (domain: string, verify = false): Promise<WebsiteDom
       configuredBy: config?.configuredBy ?? null,
       nameservers: Array.isArray(config?.nameservers) ? config.nameservers : [],
       tlsProbeOk: tlsReady,
+      tlsProbeTarget: routingTarget,
       tlsProbeAt: verified && routingConfigured ? new Date().toISOString() : null,
     },
   };

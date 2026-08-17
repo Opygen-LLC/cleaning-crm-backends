@@ -215,7 +215,14 @@ const finalizeBrandUpload = async (input: WebsiteBrandUploadFinalizeInput, user:
 
   try {
     const context = getResourceContext(resource);
-    if (String(context.website_id ?? "") !== website.id || String(context.asset_kind ?? "") !== input.kind) {
+    const uploadToken = String(context.upload_token ?? "").trim();
+    const expectedTokenPrefix = `${expectedFolder}/${publicIdPrefix(input.kind)}`;
+    if (
+      String(context.website_id ?? "") !== website.id ||
+      String(context.asset_kind ?? "") !== input.kind ||
+      !uploadToken ||
+      normalizedPublicId !== `${expectedTokenPrefix}${uploadToken}`
+    ) {
       throw new AppError(status.FORBIDDEN, "This upload does not belong to your website");
     }
     const expiresAt = Number(context.expires_at ?? 0);

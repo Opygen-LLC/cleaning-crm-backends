@@ -7,7 +7,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { PROVISIONING_TRANSACTION_OPTIONS } from "../../lib/prisma/transactionPolicy";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
-import { uploadToCloudinary } from "../../lib/utils/cloudinary";
+import { deleteFromCloudinary, uploadToCloudinary } from "../../lib/utils/cloudinary";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { ONBOARDING_STEPS } from "../Admin/admin.constant";
 import type {
@@ -1285,43 +1285,49 @@ const uploadContentAsset = async (
   if (!CONTENT_ASSET_SLOTS.has(normalizedSlot)) {
     throw new AppError(status.BAD_REQUEST, "Unsupported website content asset slot");
   }
-  if (!file?.buffer || !file.mimetype.toLowerCase().startsWith("image/")) {
-    throw new AppError(status.BAD_REQUEST, "Upload a valid image file");
+  const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
+  if (!file?.buffer || !allowedTypes.has(file.mimetype.toLowerCase())) {
+    throw new AppError(status.BAD_REQUEST, "Upload a JPEG, PNG, WEBP, or AVIF image");
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    throw new AppError(status.BAD_REQUEST, "Website image must be no larger than 5 MB");
   }
 
+  // Content images are immutable for the same reason as logos: published and
+  // historical snapshots must never change underneath a stored URL.
   const folder = `Cleaning-CRM/websites/${website.id}/content`;
-  const publicId = normalizedSlot;
+  const publicId = `${normalizedSlot}-${randomUUID()}`;
   const uploaded = await uploadToCloudinary(file.buffer, {
     folder,
     public_id: publicId,
-    overwrite: true,
+    overwrite: false,
     transformation: [{ width: 1800, height: 1400, crop: "limit", quality: "auto", fetch_format: "auto" }],
   });
-  if (!uploaded?.secure_url || !uploaded?.public_id) {
+  if (!uploaded?.secure_url || !uploaded?.public_id || !uploaded?.width || !uploaded?.height) {
+    if (uploaded?.public_id) await deleteFromCloudinary(uploaded.public_id).catch(() => undefined);
     throw new AppError(status.BAD_GATEWAY, "Image storage did not return a usable asset");
   }
 
-  return prisma.websiteAsset.upsert({
-    where: { websiteId_publicId: { websiteId: website.id, publicId: uploaded.public_id } },
-    create: {
+  const bytes = Number(uploaded.bytes ?? file.size ?? 0);
+  const width = Number(uploaded.width);
+  const height = Number(uploaded.height);
+  if (bytes <= 0 || bytes > 5 * 1024 * 1024 || width < 320 || height < 180 || width > 5000 || height > 5000) {
+    await deleteFromCloudinary(uploaded.public_id).catch(() => undefined);
+    throw new AppError(status.BAD_REQUEST, "Website image dimensions or file size are not supported");
+  }
+
+  return prisma.websiteAsset.create({
+    data: {
       websiteId: website.id,
       publicId: uploaded.public_id,
       url: uploaded.secure_url,
-      mimeType: `image/${uploaded.format ?? "webp"}`,
-      width: uploaded.width ?? null,
-      height: uploaded.height ?? null,
-      bytes: uploaded.bytes ?? file.size ?? null,
+      mimeType: `image/${uploaded.format === "jpg" ? "jpeg" : (uploaded.format ?? "webp")}`,
+      width,
+      height,
+      bytes,
       altText: "About the business",
       folder,
-      metadata: { kind: "content", slot: normalizedSlot },
-    },
-    update: {
-      url: uploaded.secure_url,
-      mimeType: `image/${uploaded.format ?? "webp"}`,
-      width: uploaded.width ?? null,
-      height: uploaded.height ?? null,
-      bytes: uploaded.bytes ?? file.size ?? null,
-      metadata: { kind: "content", slot: normalizedSlot },
+      metadata: { provider: "cloudinary", kind: "content", slot: normalizedSlot, immutable: true },
     },
   });
 };

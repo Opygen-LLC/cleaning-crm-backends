@@ -37,6 +37,45 @@ export const publicMutationRateLimit = rateLimit({
     message: jsonMessage("Too many submissions. Please wait and try again."),
 });
 
+
+/** Website booking/estimate submissions are expensive writes into CRM state. */
+export const publicFormSubmissionRateLimit = rateLimit({
+    ...base,
+    limit: 12,
+    store: store("public-form-submit"),
+    message: jsonMessage("Too many form submissions. Please wait and try again."),
+});
+
+export const publicFormResourceRateLimit = rateLimit({
+    ...base,
+    limit: 120,
+    store: store("public-form-resource"),
+    keyGenerator: (req: Request) => {
+        const key = req.params.identifier ?? "public";
+        return `public-form-resource:${String(key).toLowerCase().slice(0, 160)}`;
+    },
+    message: jsonMessage("This public form is receiving too many submissions. Please try again shortly."),
+});
+
+/** Estimate calculations do not write CRM state but can trigger pricing work. */
+export const publicCalculationRateLimit = rateLimit({
+    ...base,
+    limit: 60,
+    store: store("public-calculation"),
+    message: jsonMessage("Too many estimate calculations. Please wait and try again."),
+});
+
+export const publicCalculationResourceRateLimit = rateLimit({
+    ...base,
+    limit: 360,
+    store: store("public-calculation-resource"),
+    keyGenerator: (req: Request) => {
+        const key = req.params.identifier ?? "public";
+        return `public-calculation-resource:${String(key).toLowerCase().slice(0, 160)}`;
+    },
+    message: jsonMessage("This estimate form is receiving too many requests. Please try again shortly."),
+});
+
 /**
  * A second limiter protects each public resource/tenant even when abusive
  * traffic is distributed across many IPs. Route params are opaque public
