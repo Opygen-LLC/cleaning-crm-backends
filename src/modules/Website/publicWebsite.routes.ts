@@ -4,6 +4,8 @@ import {
   publicReadRateLimit,
   publicHostResolveRateLimit,
   publicResourceMutationRateLimit,
+  publicContactMutationRateLimit,
+  publicContactResourceRateLimit,
   publicTelemetryRateLimit,
   publicResourceTelemetryRateLimit,
 } from "../../middlewares/publicApiSecurity";
@@ -74,11 +76,11 @@ router.post(
 );
 
 // Public website acquisition. Contact enquiries enter the tenant's native CRM
-// Lead pipeline and are deduplicated by normalized email inside the service.
+// Lead pipeline and are deduplicated by normalized email or phone inside the service.
 router.post(
   "/:identifier/contact",
-  publicMutationRateLimit,
-  publicResourceMutationRateLimit,
+  publicContactMutationRateLimit,
+  publicContactResourceRateLimit,
   publicWebsiteSpamGuard,
   zodValidate(websiteValidation.publicContact, ValidationProperty.BODY),
   websiteController.submitPublicWebsiteContact,

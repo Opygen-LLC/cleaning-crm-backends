@@ -10,6 +10,7 @@ import { leadFilterableFields, leadSearchableFields } from "./lead.constant";
 import { LeadStage } from "../../generated/prisma/enums";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { allocateLeadRef } from "./leadRef.service";
+import { normalizePhone } from "../../lib/utils/normalizePhone";
 
 // ─── Resolve admin profile ────────────────────────────────────────────────────
 
@@ -68,12 +69,17 @@ const STAGE_MAP_TO_FE: Record<string, string> = {
 
 function serializeLead(
     lead: Lead & Record<string, unknown>,
+    businessName?: string,
 ): Record<string, unknown> {
+    const isWebsiteLead = Boolean(lead.sourceWebsiteId);
     return {
         ...lead,
         stage: STAGE_MAP_TO_FE[String(lead.stage)] ?? lead.stage,
         estimatedMin: Number(lead.estimatedMin),
         estimatedMax: Number(lead.estimatedMax),
+        source: isWebsiteLead ? "Website" : (lead.sourceRef ?? null),
+        sourceWebsiteName: isWebsiteLead ? businessName ?? null : null,
+        sourcePage: isWebsiteLead ? "/contact" : null,
     };
 }
 
@@ -83,27 +89,34 @@ function serializeLead(
 const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
     const adminProfile = await resolveAdminProfile(user);
     const email = payload.email.trim().toLowerCase();
+    const phone = payload.phone?.trim() ? normalizePhone(payload.phone) : undefined;
 
     const lead = await prisma.$transaction(async (tx) => {
         // Website acquisition and manual CRM entry share this email lock, so
         // case variants cannot race into duplicate tenant leads.
-        await acquireExtendedTextTransactionAdvisoryLock(
-            tx,
+        const lockKeys = [
             `lead-email:${adminProfile.id}:${email}`,
-        );
+            ...(phone ? [`lead-phone:${adminProfile.id}:${phone}`] : []),
+        ].sort();
+        for (const lockKey of lockKeys) {
+            await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
+        }
 
         const existing = await tx.lead.findFirst({
             where: {
                 adminId: adminProfile.id,
-                email: { equals: email, mode: "insensitive" },
+                OR: [
+                    { email: { equals: email, mode: "insensitive" } },
+                    ...(phone ? [{ phone }] : []),
+                ],
             },
             select: { id: true },
         });
         if (existing) {
-            throw new AppError(status.CONFLICT, "A lead with this email already exists", {
-                code: "LEAD_EMAIL_EXISTS",
+            throw new AppError(status.CONFLICT, "A lead with this email or phone already exists", {
+                code: "LEAD_CONTACT_EXISTS",
                 retryable: false,
-                fieldErrors: { email: "A lead with this email already exists." },
+                fieldErrors: { email: "A lead with this email or phone already exists." },
             });
         }
 
@@ -115,7 +128,7 @@ const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
                 leadRef,
                 name: payload.name.trim(),
                 email,
-                phone: payload.phone?.trim() || undefined,
+                phone,
                 serviceInterest: service?.serviceName ?? payload.serviceInterest.trim(),
                 serviceCatalogId: service?.id ?? null,
                 estimatedMin: payload.estimatedMin ?? 0,
@@ -127,7 +140,7 @@ const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
         });
     });
 
-    return serializeLead(lead as Lead & Record<string, unknown>);
+    return serializeLead(lead as Lead & Record<string, unknown>, adminProfile.businessName);
 };
 
 const getLeads = async (query: IQueryParams, user: IRequestUser) => {
@@ -154,7 +167,7 @@ const getLeads = async (query: IQueryParams, user: IRequestUser) => {
     return {
         ...result,
         data: result.data.map((lead) =>
-            serializeLead(lead as Lead & Record<string, unknown>),
+            serializeLead(lead as Lead & Record<string, unknown>, adminProfile.businessName),
         ),
     };
 };
@@ -184,7 +197,7 @@ const getLeadById = async (id: string, user: IRequestUser) => {
         },
     });
 
-    return serializeLead(lead as Lead & Record<string, unknown>);
+    return serializeLead(lead as Lead & Record<string, unknown>, adminProfile.businessName);
 };
 
 const updateLead = async (
@@ -209,7 +222,11 @@ const updateLead = async (
 
     const service = await resolveTenantService(prisma, adminProfile.id, payload.serviceCatalogId);
     const { serviceCatalogId: _serviceCatalogId, ...payloadWithoutCatalogId } = payload;
-    const updateData: Prisma.LeadUpdateInput = { ...payloadWithoutCatalogId };
+    const updateData: Prisma.LeadUpdateInput = {
+        ...payloadWithoutCatalogId,
+        ...(payload.email !== undefined ? { email: payload.email.trim().toLowerCase() } : {}),
+        ...(payload.phone !== undefined ? { phone: payload.phone.trim() ? normalizePhone(payload.phone) : null } : {}),
+    };
     if (service) {
         updateData.serviceCatalog = { connect: { id: service.id } };
         updateData.serviceInterest = service.serviceName;
@@ -223,7 +240,7 @@ const updateLead = async (
         data: updateData,
     });
 
-    return serializeLead(lead as Lead & Record<string, unknown>);
+    return serializeLead(lead as Lead & Record<string, unknown>, adminProfile.businessName);
 };
 
 const updateLeadStage = async (
@@ -253,7 +270,7 @@ const updateLeadStage = async (
         data: { stage: dbStage },
     });
 
-    return serializeLead(lead as Lead & Record<string, unknown>);
+    return serializeLead(lead as Lead & Record<string, unknown>, adminProfile.businessName);
 
 };
 

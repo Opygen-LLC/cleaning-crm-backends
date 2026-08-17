@@ -54,10 +54,11 @@ beforeEach(() => {
     websiteId: "website-1",
     adminId: "admin-1",
     subdomain: "sparkle-cleaning",
+    businessName: "Sparkle Cleaning",
   });
 });
 
-describe("Phase 8 website acquisition integration", () => {
+describe("Phase 14 website acquisition integration", () => {
   it("attributes website booking submissions to the resolved BusinessWebsite", async () => {
     bookingFormMock.submitPublicBookingFormById.mockResolvedValue({ ref: "#BK-1" });
 
@@ -110,10 +111,46 @@ describe("Phase 8 website acquisition integration", () => {
         serviceCatalogId: "service-1",
         serviceInterest: "Deep Clean",
         sourceWebsiteId: "website-1",
-        sourceRef: "WEBSITE:sparkle-cleaning",
+        sourceRef: "Website",
         email: "jane@example.com",
       }),
     }));
     expect(result.leadRef).toBe("LEAD-0042");
   });
+
+  it("merges a website enquiry by normalized phone when the email is new", async () => {
+    prismaMock.tx.serviceCatalog.findFirst.mockResolvedValue(null);
+    prismaMock.tx.lead.findMany.mockResolvedValue([{
+      id: "lead-1",
+      email: "old@example.com",
+      phone: "+441234567890",
+      sourceRef: null,
+      sourceWebsiteId: null,
+      notes: null,
+      createdAt: new Date("2026-01-01"),
+    }]);
+    prismaMock.tx.lead.update.mockResolvedValue({ leadRef: "LEAD-0007" });
+
+    const result = await WebsiteAcquisitionService.submitContact("sparkle-cleaning", {
+      name: "Jane Customer",
+      email: "new@example.com",
+      phone: "+44 (1234) 567-890",
+      message: "Please arrange a weekly cleaning visit.",
+    });
+
+    expect(advisoryLockMock).toHaveBeenCalledWith(
+      prismaMock.tx,
+      "lead-phone:admin-1:+441234567890",
+    );
+    expect(prismaMock.tx.lead.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "lead-1" },
+      data: expect.objectContaining({
+        email: "old@example.com",
+        phone: "+441234567890",
+        sourceWebsiteId: "website-1",
+      }),
+    }));
+    expect(result).toMatchObject({ leadRef: "LEAD-0007", merged: true });
+  });
+
 });

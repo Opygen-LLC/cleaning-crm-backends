@@ -118,10 +118,16 @@ const configureWebsiteBooking = z.object({
 }).strict();
 
 const publicContact = z.object({
-  name: z.string().trim().min(1, "Name is required").max(200),
-  email: z.string().trim().email("Invalid email address").max(320),
-  phone: z.string().trim().max(80).optional(),
-  message: z.string().trim().min(1, "Message is required").max(5000),
+  name: z.string().trim().min(2, "Name must be at least 2 characters").max(120),
+  email: z.string().trim().toLowerCase().email("Invalid email address").max(254),
+  phone: z.string().trim()
+    .regex(/^[+\d\s()\-.]{7,40}$/, "Enter a valid phone number")
+    .refine((value) => {
+      const digits = value.replace(/\D/g, "");
+      return digits.length >= 7 && digits.length <= 20;
+    }, "Enter a valid phone number")
+    .optional(),
+  message: z.string().trim().min(10, "Please provide a little more detail").max(3000),
   serviceCatalogId: z.string().uuid().optional(),
   companyWebsite: z.string().trim().max(500).optional(),
 }).strict();

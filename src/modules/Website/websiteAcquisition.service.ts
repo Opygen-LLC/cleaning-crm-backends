@@ -7,6 +7,7 @@ import { PublicWebsiteService } from "./publicWebsite.service";
 import { bookingFormService } from "../BookingForm/bookingForm.service";
 import { estimateFormService } from "../EstimateForm/estimateForm.service";
 import { allocateLeadRef } from "../Lead/leadRef.service";
+import { normalizePhone } from "../../lib/utils/normalizePhone";
 
 export interface PublicWebsiteContactPayload {
   name: string;
@@ -22,6 +23,12 @@ const MAX_LEAD_NOTES = 12_000;
 
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
 const normalizeOptional = (value?: string) => value?.trim() || undefined;
+const normalizeOptionalPhone = (value?: string) => {
+  const raw = normalizeOptional(value);
+  if (!raw) return undefined;
+  const normalized = normalizePhone(raw);
+  return normalized.replace(/\D/g, "").length >= 7 ? normalized : undefined;
+};
 
 const appendBoundedNote = (existing: string | null, incoming: string) => {
   const combined = [existing?.trim(), incoming.trim()].filter(Boolean).join("\n\n");
@@ -85,16 +92,24 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
 
   const email = normalizeEmail(payload.email);
   const name = payload.name.trim();
-  const phone = normalizeOptional(payload.phone);
+  const phone = normalizeOptionalPhone(payload.phone);
   const message = payload.message.trim();
-  const sourceRef = `WEBSITE:${integration.subdomain}`;
+  const sourceRef = "Website";
+  const sourcePage = "/contact";
 
   return prisma.$transaction(async (tx) => {
     // Serialize submissions for the same tenant/email across all app instances.
     // This complements @@unique([email, adminId]) and also protects older rows
     // whose email casing predates normalized public capture.
-    const lockKey = `lead-email:${integration.adminId}:${email}`;
-    await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
+    // Use the same email lock as manual CRM lead creation, plus a phone lock
+    // when present. Acquiring in deterministic order prevents lock inversion.
+    const lockKeys = [
+      `lead-email:${integration.adminId}:${email}`,
+      ...(phone ? [`lead-phone:${integration.adminId}:${phone}`] : []),
+    ].sort();
+    for (const lockKey of lockKeys) {
+      await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
+    }
 
     const service = payload.serviceCatalogId
       ? await tx.serviceCatalog.findFirst({
@@ -116,25 +131,33 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
     }
 
     const timestamp = new Date().toISOString();
-    const note = `[Website enquiry ${timestamp}]${service ? `\nService: ${service.serviceName}` : ""}\n${message}`;
+    const note = `[Website enquiry ${timestamp}]\nWebsite: ${integration.businessName}\nPage: ${sourcePage}\nEmail: ${email}${phone ? `\nPhone: ${phone}` : ""}${service ? `\nService: ${service.serviceName}` : ""}\n${message}`;
     const matchingLeads = await tx.lead.findMany({
       where: {
         adminId: integration.adminId,
-        email: { equals: email, mode: "insensitive" },
+        OR: [
+          { email: { equals: email, mode: "insensitive" } },
+          ...(phone ? [{ phone }] : []),
+        ],
       },
       orderBy: { createdAt: "asc" },
       take: 20,
     });
-    // Prefer an already-normalized row if historical casing duplicates exist;
-    // otherwise use the oldest case-insensitive match and normalize it now.
-    const existing = matchingLeads.find((lead) => lead.email === email) ?? matchingLeads[0];
+    // Email is the strongest stable identifier. If no email match exists,
+    // reuse a normalized-phone match. We never create a third duplicate when
+    // historical data already contains conflicting email/phone rows.
+    const emailMatch = matchingLeads.find((lead) => lead.email.toLowerCase() === email);
+    const phoneMatch = phone ? matchingLeads.find((lead) => lead.phone === phone) : undefined;
+    const existing = emailMatch ?? phoneMatch ?? matchingLeads[0];
 
     if (existing) {
       const updated = await tx.lead.update({
         where: { id: existing.id },
         data: {
           name,
-          email,
+          // A phone-only dedupe should not silently replace an established
+          // email address. The newly submitted address is retained in notes.
+          email: emailMatch ? email : existing.email,
           ...(phone ? { phone } : {}),
           ...(service ? {
             serviceInterest: service.serviceName,

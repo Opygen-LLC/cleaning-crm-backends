@@ -355,7 +355,7 @@ const loadPublishedIntegrationSource = async (identifier: string) => {
       bookingShowPrices: true,
       subdomain: true,
       pages: { select: { kind: true, isEnabled: true } },
-      admin: { select: { user: { select: { status: true } } } },
+      admin: { select: { businessName: true, user: { select: { status: true } } } },
     },
   });
 
@@ -447,6 +447,7 @@ const resolvePublicContactIntegration = async (identifier: string) => {
     websiteId: website.id,
     adminId: website.adminId,
     subdomain: website.subdomain,
+    businessName: website.admin.businessName,
   };
 };
 
