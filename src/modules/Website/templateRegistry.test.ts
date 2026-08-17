@@ -9,7 +9,18 @@ describe("TemplateRegistry", () => {
     expect(template.schemaVersion).toBe(1);
   });
 
+  it("resolves a versionless template deterministically", () => {
+    expect(TemplateRegistry.requireTemplate("clean-modern").version).toBe("1.0.0");
+  });
+
   it("rejects unknown versions rather than silently upgrading tenants", () => {
     expect(() => TemplateRegistry.requireTemplate("clean-modern", "9.9.9")).toThrow();
+  });
+
+  it("does not expose mutable registry state to callers", () => {
+    const copy = TemplateRegistry.requireTemplate("clean-modern", "1.0.0");
+    copy.capabilities.booking = false;
+
+    expect(TemplateRegistry.requireTemplate("clean-modern", "1.0.0").capabilities.booking).toBe(true);
   });
 });

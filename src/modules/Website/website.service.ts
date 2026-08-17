@@ -195,16 +195,22 @@ const createWebsiteForAdmin = async (
   adminId: string,
   payload: WebsiteCreateInput,
   createdByUserId: string | null = null,
-) => {
+) => prisma.$transaction(async (tx: any) => {
+  // Validate form ownership in the same transaction as provisioning. The
+  // tenant check is therefore part of the authoritative write path, while the
+  // database foreign keys still arbitrate any concurrent form deletion.
   await Promise.all([
-    assertOwnedForm(adminId, payload.primaryBookingFormId, "booking"),
-    assertOwnedForm(adminId, payload.primaryEstimateFormId, "estimate"),
+    assertOwnedForm(adminId, payload.primaryBookingFormId, "booking", tx),
+    assertOwnedForm(adminId, payload.primaryEstimateFormId, "estimate", tx),
   ]);
 
-  return prisma.$transaction((tx: any) =>
-    WebsiteProvisioningService.createWebsiteForAdminTx(tx, adminId, payload, createdByUserId),
+  return WebsiteProvisioningService.createWebsiteForAdminTx(
+    tx,
+    adminId,
+    payload,
+    createdByUserId,
   );
-};
+});
 
 const createWebsite = async (payload: WebsiteCreateInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
@@ -221,18 +227,28 @@ const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) =>
   const adminId = await getAdminId(user);
   const current = await getWebsiteOrThrow(adminId);
 
-  await Promise.all([
-    assertOwnedForm(adminId, payload.primaryBookingFormId, "booking"),
-    assertOwnedForm(adminId, payload.primaryEstimateFormId, "estimate"),
-  ]);
-  const data = prepareWebsitePatch(payload, current);
-
   return prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
-    await ensurePublishedSnapshotBeforeDraftMutationTx(tx, current.id);
-    await tx.businessWebsite.update({ where: { id: current.id }, data });
-    await createRevisionSnapshot(tx, current.id, user.id, "Website settings updated");
-    return loadWebsiteDetails(current.id, tx);
+
+    // Re-read after acquiring the website lock. Two concurrent editors may both
+    // have loaded the same pre-lock template state; using the locked row avoids
+    // applying a templateVersion patch against stale templateId data.
+    const lockedCurrent = await tx.businessWebsite.findFirst({
+      where: { id: current.id, adminId },
+      select: { id: true, templateId: true, templateVersion: true },
+    });
+    if (!lockedCurrent) throw new AppError(status.NOT_FOUND, "Business website not found");
+
+    await Promise.all([
+      assertOwnedForm(adminId, payload.primaryBookingFormId, "booking", tx),
+      assertOwnedForm(adminId, payload.primaryEstimateFormId, "estimate", tx),
+    ]);
+    const data = prepareWebsitePatch(payload, lockedCurrent);
+
+    await ensurePublishedSnapshotBeforeDraftMutationTx(tx, lockedCurrent.id);
+    await tx.businessWebsite.update({ where: { id: lockedCurrent.id }, data });
+    await createRevisionSnapshot(tx, lockedCurrent.id, user.id, "Website settings updated");
+    return loadWebsiteDetails(lockedCurrent.id, tx);
   });
 };
 
@@ -268,11 +284,6 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
   const current = await getWebsiteOrThrow(adminId);
   const websitePatch = payload.website ?? {};
 
-  await Promise.all([
-    assertOwnedForm(adminId, websitePatch.primaryBookingFormId, "booking"),
-    assertOwnedForm(adminId, websitePatch.primaryEstimateFormId, "estimate"),
-  ]);
-
   const uniquePageIds = [...new Set((payload.pages ?? []).map((page) => page.id))];
   if (uniquePageIds.length !== (payload.pages ?? []).length) {
     throw new AppError(status.BAD_REQUEST, "A website page can only be updated once per draft save");
@@ -280,11 +291,23 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
 
   return prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
-    await ensurePublishedSnapshotBeforeDraftMutationTx(tx, current.id);
+
+    const lockedCurrent = await tx.businessWebsite.findFirst({
+      where: { id: current.id, adminId },
+      select: { id: true, templateId: true, templateVersion: true },
+    });
+    if (!lockedCurrent) throw new AppError(status.NOT_FOUND, "Business website not found");
+
+    await Promise.all([
+      assertOwnedForm(adminId, websitePatch.primaryBookingFormId, "booking", tx),
+      assertOwnedForm(adminId, websitePatch.primaryEstimateFormId, "estimate", tx),
+    ]);
+
+    await ensurePublishedSnapshotBeforeDraftMutationTx(tx, lockedCurrent.id);
 
     if (uniquePageIds.length) {
       const ownedPages = await tx.websitePage.findMany({
-        where: { websiteId: current.id, id: { in: uniquePageIds } },
+        where: { websiteId: lockedCurrent.id, id: { in: uniquePageIds } },
         select: { id: true },
       });
       if (ownedPages.length !== uniquePageIds.length) {
@@ -293,8 +316,8 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
     }
 
     if (Object.keys(websitePatch).length) {
-      const data = prepareWebsitePatch(websitePatch, current);
-      await tx.businessWebsite.update({ where: { id: current.id }, data });
+      const data = prepareWebsitePatch(websitePatch, lockedCurrent);
+      await tx.businessWebsite.update({ where: { id: lockedCurrent.id }, data });
     }
 
     for (const page of payload.pages ?? []) {
@@ -302,8 +325,8 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
       await tx.websitePage.update({ where: { id }, data: data as any });
     }
 
-    await createRevisionSnapshot(tx, current.id, user.id, "Draft saved");
-    return loadWebsiteDetails(current.id, tx);
+    await createRevisionSnapshot(tx, lockedCurrent.id, user.id, "Draft saved");
+    return loadWebsiteDetails(lockedCurrent.id, tx);
   });
 };
 

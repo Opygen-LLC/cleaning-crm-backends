@@ -270,15 +270,25 @@ const removeDomain = async (domainId: string, user: IRequestUser) => {
 };
 
 const setPrimaryDomain = async (domainId: string, user: IRequestUser) => {
-  const { website, domain } = await getOwnedDomain(domainId, user);
-  if (domain.status !== "VERIFIED") {
-    throw new AppError(status.CONFLICT, "Verify the domain before making it primary");
-  }
+  const { website } = await getOwnedDomain(domainId, user);
 
   const updated = await prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, website.id);
+
+    // Re-read inside the website lock. A verification worker/request may have
+    // changed the domain state after the initial tenant-scoped lookup. Never
+    // promote a stale or foreign domain to canonical routing.
+    const candidate = await tx.websiteDomain.findFirst({
+      where: { id: domainId, websiteId: website.id },
+      select: { id: true, status: true },
+    });
+    if (!candidate) throw new AppError(status.NOT_FOUND, "Website domain not found");
+    if (candidate.status !== "VERIFIED") {
+      throw new AppError(status.CONFLICT, "Verify the domain before making it primary");
+    }
+
     await tx.websiteDomain.updateMany({
-      where: { websiteId: website.id, isPrimary: true },
+      where: { websiteId: website.id, isPrimary: true, id: { not: domainId } },
       data: { isPrimary: false },
     });
     return tx.websiteDomain.update({ where: { id: domainId }, data: { isPrimary: true } });

@@ -109,6 +109,7 @@ model WebsiteDomain {
   website            BusinessWebsite     @relation(fields: [websiteId], references: [id], onDelete: Cascade)
 
   @@index([websiteId, status])
+  @@index([websiteId, isPrimary, createdAt])
   @@map("website_domain")
 }
 
@@ -142,6 +143,7 @@ model WebsiteAsset {
   website            BusinessWebsite @relation(fields: [websiteId], references: [id], onDelete: Cascade)
 
   @@unique([websiteId, publicId])
+  @@index([websiteId, createdAt])
   @@index([websiteId, folder, createdAt])
   @@map("website_asset")
 }

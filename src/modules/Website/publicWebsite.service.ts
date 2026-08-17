@@ -5,7 +5,6 @@ import { prisma } from "../../lib/prisma/prisma";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
-import { normalizeDomain } from "./websiteIdentity";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { TemplateRegistry } from "./templateRegistry";
 import { buildPublishedSnapshot, parsePublishedSnapshot } from "./websiteSnapshot";
@@ -20,22 +19,25 @@ const resolveIdentifier = async (identifier: string): Promise<ResolvedWebsite> =
   const raw = identifier.trim();
   if (!raw) throw new AppError(status.NOT_FOUND, "Website not found");
 
-  // Domain identifiers remain supported for direct API callers. Edge host
-  // routing uses WebsiteHostResolverService; only VERIFIED domain rows may
-  // resolve to public website data.
+  // Full hosts and custom domains share the same resolver/cache used by edge
+  // routing. This prevents the public service from maintaining a second, DB-
+  // only hostname resolution path and also supports callers that pass the full
+  // platform hostname instead of only the tenant label.
   if (raw.includes(".")) {
-    let domain: string;
+    let resolved: Awaited<ReturnType<typeof WebsiteHostResolverService.resolveHost>>;
     try {
-      domain = normalizeDomain(raw);
-    } catch {
-      throw new AppError(status.NOT_FOUND, "Website not found");
+      resolved = await WebsiteHostResolverService.resolveHost(raw);
+    } catch (error) {
+      if (error instanceof AppError && error.statusCode === status.NOT_FOUND) {
+        throw new AppError(status.NOT_FOUND, "Website not found");
+      }
+      throw error;
     }
-    const record = await prisma.websiteDomain.findFirst({
-      where: { domain, status: "VERIFIED" as any },
-      select: { websiteId: true },
-    });
-    if (!record) throw new AppError(status.NOT_FOUND, "Website not found");
-    return { websiteId: record.websiteId, aliasRedirectSubdomain: null };
+    return {
+      websiteId: resolved.websiteId,
+      aliasRedirectSubdomain:
+        resolved.routeKind === "subdomain_alias" ? resolved.canonicalSubdomain : null,
+    };
   }
 
   const resolved = await WebsiteHostResolverService.resolveSubdomain(raw);
