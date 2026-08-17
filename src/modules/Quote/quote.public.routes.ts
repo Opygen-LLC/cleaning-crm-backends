@@ -5,7 +5,7 @@ import {
     zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
 import { quoteValidation } from "./quote.validation";
-import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRateLimit } from "../../middlewares/publicApiSecurity";
+import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRateLimit, publicSensitiveNoStore } from "../../middlewares/publicApiSecurity";
 
 /**
  * Public quote routes are mounted outside the subscription gate in
@@ -15,10 +15,11 @@ import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRat
  */
 const router = Router();
 
-router.get("/:token", publicReadRateLimit, quoteController.getPublicQuote);
+router.get("/:token", publicSensitiveNoStore, publicReadRateLimit, quoteController.getPublicQuote);
 
 router.post(
     "/:token/action",
+    publicSensitiveNoStore,
     publicMutationRateLimit,
     publicResourceMutationRateLimit,
     zodValidate(quoteValidation.publicQuoteAction, ValidationProperty.BODY),

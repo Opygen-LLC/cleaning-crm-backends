@@ -3,12 +3,13 @@ import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
 import status from "http-status";
-import { BookingStatus, UserRole } from "../../generated/prisma/enums";
+import { BookingStatus, FormSubmissionStatus, UserRole } from "../../generated/prisma/enums";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
 import { IQueryParams } from "../../interface/query.interface";
 import {
   IBookingCreate,
   IBookingUpdate,
+  IBookingSubmissionConversion,
   IAssignStaff,
   ICalendarQuery,
 } from "./booking.interface";
@@ -24,20 +25,25 @@ import { NotificationType } from "../../generated/prisma/enums";
 import { notificationService } from "../Settings/notification.service";
 import logger from "../../lib/logger";
 import { resolveServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
+import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
+import type { Prisma } from "../../generated/prisma/client";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Generates a unique booking reference: #OP-BK-0001
+ * Generates a unique booking reference: #OP-BK-0001.
  *
- * PERF FIX #8: The previous version queried ORDER BY createdAt DESC with no
- * adminId filter, causing a full-table sort as the bookings table grows.
- * Now scoped to adminId so the existing composite index
- * @@index([adminId, status, createdAt(sort: Desc)]) is used efficiently.
+ * bookingRef is globally unique in the current schema, so generation must use
+ * one global sequence/lock. A tenant-scoped sequence would be unsafe until the
+ * database uniqueness constraint is migrated to a tenant+reference composite.
  */
-const generateBookingRef = async (adminId: string): Promise<string> => {
-  const last = await prisma.booking.findFirst({
-    where: { adminId },
+const generateBookingRef = async (tx: Prisma.TransactionClient): Promise<string> => {
+  // bookingRef is globally unique in the current compatibility schema. Keep
+  // the sequence global and serialize generation so concurrent tenants cannot
+  // choose the same next reference. Tenant-local refs can be introduced later
+  // only together with a composite uniqueness migration.
+  await acquireExtendedTextTransactionAdvisoryLock(tx, "booking-ref-sequence");
+  const last = await tx.booking.findFirst({
     orderBy: { createdAt: "desc" },
     select: { bookingRef: true },
   });
@@ -220,9 +226,8 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
     }
   }
 
-  const bookingRef = await generateBookingRef(adminId);
-
   const booking = await prisma.$transaction(async (tx) => {
+    const bookingRef = await generateBookingRef(tx);
     const newBooking = await tx.booking.create({
       data: {
         bookingRef,
@@ -279,6 +284,219 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
   invalidateAnalyticsCache(adminId);
 
   return booking;
+};
+
+/**
+ * Convert an Online Booking submission into a real Booking atomically.
+ *
+ * The submission owns the service identity. The browser may adjust schedule,
+ * duration and price, but it cannot replace serviceCatalogId/serviceType with
+ * a service from another tenant. Repeating the request is idempotent: once the
+ * submission has convertedBookingId, the existing booking is returned.
+ */
+const convertBookingFormSubmission = async (
+  submissionId: string,
+  payload: IBookingSubmissionConversion,
+  user: IRequestUser,
+) => {
+  const adminId = await getAdminId(user);
+
+  const preview = await prisma.bookingFormSubmission.findFirst({
+    where: { id: submissionId, form: { adminId } },
+    select: {
+      id: true,
+      email: true,
+      convertedBookingId: true,
+      convertedBooking: { include: bookingInclude },
+    },
+  });
+  if (!preview) throw new AppError(status.NOT_FOUND, "Booking submission not found");
+  if (preview.convertedBooking) {
+    return { booking: preview.convertedBooking, alreadyConverted: true };
+  }
+
+  await assertWithinLimit(adminId, "booking");
+  const existingClient = await prisma.client.findUnique({
+    where: { email_adminId: { email: preview.email.trim(), adminId } },
+    select: { id: true },
+  });
+  if (!existingClient) await assertWithinLimit(adminId, "client");
+
+  const result = await prisma.$transaction(async (tx) => {
+    await acquireExtendedTextTransactionAdvisoryLock(tx, `booking-form-convert:${submissionId}`);
+
+    const submission = await tx.bookingFormSubmission.findFirst({
+      where: { id: submissionId, form: { adminId } },
+      include: {
+        serviceCatalog: {
+          select: {
+            id: true,
+            adminId: true,
+            serviceName: true,
+            basePriceGbp: true,
+            duration: true,
+            legacyServiceType: true,
+          },
+        },
+        convertedBooking: { include: bookingInclude },
+      },
+    });
+    if (!submission) throw new AppError(status.NOT_FOUND, "Booking submission not found");
+    if (submission.convertedBooking) {
+      return { booking: submission.convertedBooking, alreadyConverted: true };
+    }
+    if (submission.status === FormSubmissionStatus.CONVERTED) {
+      // Older releases marked submissions CONVERTED in a second request after
+      // creating a booking and therefore have no reliable booking FK. Creating
+      // another booking here could duplicate a real customer booking.
+      throw new AppError(status.CONFLICT, "This legacy converted submission is not linked to its booking", {
+        code: "LEGACY_CONVERSION_UNLINKED",
+        retryable: false,
+      });
+    }
+    if (submission.status === FormSubmissionStatus.DECLINED) {
+      throw new AppError(status.CONFLICT, "Declined submissions cannot be converted to bookings", {
+        code: "BOOKING_SUBMISSION_DECLINED",
+        retryable: false,
+      });
+    }
+
+    let catalog = submission.serviceCatalog;
+    if (catalog && catalog.adminId !== adminId) {
+      // Defensive invariant for historical/bad data. Never copy a cross-tenant
+      // foreign key into a real booking even if the database was populated
+      // before Phase 0 tenant checks existed.
+      throw new AppError(status.CONFLICT, "Submission service does not belong to this business", {
+        code: "SERVICE_TENANT_MISMATCH",
+        retryable: false,
+      });
+    }
+
+    if (!catalog && submission.serviceType) {
+      const matches = await tx.serviceCatalog.findMany({
+        where: { adminId, legacyServiceType: submission.serviceType },
+        orderBy: { createdAt: "asc" },
+        take: 2,
+        select: {
+          id: true,
+          adminId: true,
+          serviceName: true,
+          basePriceGbp: true,
+          duration: true,
+          legacyServiceType: true,
+        },
+      });
+      // Attach the FK only when legacy -> catalog mapping is unambiguous.
+      catalog = matches.length === 1 ? matches[0] : null;
+    }
+
+    if (!catalog && !submission.serviceType) {
+      throw new AppError(status.UNPROCESSABLE_ENTITY, "This submission has no valid service identity", {
+        code: "BOOKING_SUBMISSION_SERVICE_MISSING",
+        retryable: false,
+      });
+    }
+
+    const email = submission.email.trim();
+    let client = await tx.client.findUnique({
+      where: { email_adminId: { email, adminId } },
+      select: { id: true },
+    });
+    if (!client) {
+      client = await tx.client.create({
+        data: {
+          adminId,
+          name: submission.name.trim(),
+          email,
+          phone: submission.phone.trim(),
+          addressLine1: submission.address,
+          city: "",
+          zipcode: "",
+          country: "",
+        },
+        select: { id: true },
+      });
+    }
+
+    if (payload.staffIds?.length) {
+      const uniqueStaffIds = [...new Set(payload.staffIds)];
+      const staffCount = await tx.staffProfile.count({
+        where: { id: { in: uniqueStaffIds }, adminId },
+      });
+      if (staffCount !== uniqueStaffIds.length) {
+        throw new AppError(status.BAD_REQUEST, "One or more staff members not found");
+      }
+    }
+
+    const bookingRef = await generateBookingRef(tx);
+    const serviceType = catalog?.legacyServiceType ?? submission.serviceType ?? null;
+    const serviceNameSnapshot =
+      submission.serviceNameSnapshot ??
+      catalog?.serviceName ??
+      (serviceType ? serviceType.toLowerCase().split("_").map((part) => part[0].toUpperCase() + part.slice(1)).join(" ") : "Service");
+
+    const booking = await tx.booking.create({
+      data: {
+        bookingRef,
+        adminId,
+        clientId: client.id,
+        serviceCatalogId: catalog?.id ?? null,
+        serviceType,
+        serviceNameSnapshot,
+        priceSnapshot: submission.priceSnapshot ?? catalog?.basePriceGbp ?? null,
+        durationSnapshot: submission.durationSnapshot ?? catalog?.duration ?? null,
+        address: submission.address,
+        scheduledDate: new Date(payload.scheduledDate),
+        durationMins: payload.durationMins,
+        total: payload.total,
+        notes: payload.notes ?? submission.notes ?? undefined,
+        ...(payload.staffIds?.length
+          ? { staffAssignments: { createMany: { data: [...new Set(payload.staffIds)].map((staffId) => ({ staffId })) } } }
+          : {}),
+      },
+      include: bookingInclude,
+    });
+
+    await tx.client.update({
+      where: { id: client.id },
+      data: {
+        totalBookings: { increment: 1 },
+        lastBookingDate: new Date(payload.scheduledDate),
+      },
+    });
+
+    await tx.bookingFormSubmission.update({
+      where: { id: submission.id },
+      data: {
+        status: FormSubmissionStatus.CONVERTED,
+        convertedBookingId: booking.id,
+        convertedAt: new Date(),
+        // Backfill old submissions during conversion when a unique catalog
+        // mapping is now available.
+        serviceCatalogId: catalog?.id ?? submission.serviceCatalogId,
+        serviceType,
+        serviceNameSnapshot,
+        priceSnapshot: submission.priceSnapshot ?? catalog?.basePriceGbp ?? null,
+        durationSnapshot: submission.durationSnapshot ?? catalog?.duration ?? null,
+      },
+    });
+
+    return { booking, alreadyConverted: false };
+  });
+
+  if (!result.alreadyConverted) {
+    sendBookingEmail(result.booking, "created").catch(() => {});
+    createNotification({
+      adminId,
+      type: NotificationType.BOOKING,
+      title: `New booking — ${result.booking.bookingRef}`,
+      message: `${result.booking.client.name} booked ${serviceDisplayName(result.booking)}`,
+      relatedId: result.booking.id,
+    }).catch(() => {});
+    invalidateAnalyticsCache(adminId);
+  }
+
+  return result;
 };
 
 const getAllBookings = async (queryParams: IQueryParams, user: any) => {
@@ -549,6 +767,7 @@ const getCalendarView = async (query: ICalendarQuery, user: any) => {
 
 export const bookingService = {
   createBooking,
+  convertBookingFormSubmission,
   getAllBookings,
   getBookingById,
   updateBooking,

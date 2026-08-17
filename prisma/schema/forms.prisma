@@ -72,6 +72,8 @@ model BookingFormSubmission {
   priceSnapshot       Decimal?             @db.Decimal(10, 2)
   durationSnapshot    String?
   idempotencyKey      String?
+  convertedBookingId  String?              @unique
+  convertedAt         DateTime?
   date                DateTime
   timeSlot    String
   name        String
@@ -84,6 +86,7 @@ model BookingFormSubmission {
   createdAt   DateTime             @default(now())
   form        BookingForm          @relation(fields: [formId], references: [id], onDelete: Cascade)
   serviceCatalog ServiceCatalog?   @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
+  convertedBooking Booking?         @relation("BookingFormSubmissionConversion", fields: [convertedBookingId], references: [id], onDelete: SetNull)
 
   @@index([formId, status])
   @@index([serviceCatalogId])

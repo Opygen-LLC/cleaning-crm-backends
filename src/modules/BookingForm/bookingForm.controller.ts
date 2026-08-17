@@ -2,6 +2,7 @@ import status from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { bookingFormService } from "./bookingForm.service";
+import { bookingService } from "../Booking/booking.service";
 
 const getParam = (value: string | string[]) => Array.isArray(value) ? value[0] : value;
 
@@ -117,6 +118,20 @@ const updateSubmissionStatus = catchAsync(async (req, res) => {
     });
 });
 
+const convertSubmissionToBooking = catchAsync(async (req, res) => {
+    const result = await bookingService.convertBookingFormSubmission(
+        getParam(req.params.submissionId),
+        req.body,
+        req.user,
+    );
+    sendResponse(res, {
+        httpStatusCode: result.alreadyConverted ? status.OK : status.CREATED,
+        success: true,
+        message: result.alreadyConverted ? "Submission was already converted" : "Submission converted to booking successfully",
+        data: result,
+    });
+});
+
 // ── Public (unauthenticated) ──────────────────────────────────────────────────
 
 const getPublicBookingForm = catchAsync(async (req, res) => {
@@ -167,6 +182,7 @@ export const bookingFormController = {
     getSubmissions,
     getFormSubmissions,
     updateSubmissionStatus,
+    convertSubmissionToBooking,
     getPublicBookingForm,
     getPublicSlotAvailability,
     submitPublicBookingForm,

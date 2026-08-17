@@ -59,6 +59,15 @@ const createBookingSchema = z
         }
     });
 
+
+const convertBookingSubmissionSchema = z.object({
+    scheduledDate: z.string().datetime({ message: "Invalid ISO date string" }),
+    durationMins: z.number().int().positive("Duration must be positive"),
+    total: z.number().positive("Total must be positive"),
+    notes: z.string().trim().max(2000).optional(),
+    staffIds: z.array(z.string().uuid("Invalid staff ID")).max(50).optional(),
+}).strict();
+
 // ── Update ────────────────────────────────────────────────────────────────────
 
 const updateBookingSchema = z
@@ -102,6 +111,7 @@ const calendarQuerySchema = z
 
 export const bookingValidation = {
     createBooking:  createBookingSchema,
+    convertBookingSubmission: convertBookingSubmissionSchema,
     updateBooking:  updateBookingSchema,
     updateStatus:   updateStatusSchema,
     assignStaff:    assignStaffSchema,

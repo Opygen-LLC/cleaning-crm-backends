@@ -1,5 +1,5 @@
 import { rateLimit } from "express-rate-limit";
-import type { Request } from "express";
+import type { NextFunction, Request, Response } from "express";
 
 const jsonMessage = (message: string) => ({
     success: false,
@@ -64,3 +64,14 @@ export const publicTelemetryRateLimit = rateLimit({
     limit: 180,
     message: jsonMessage("Too many telemetry requests. Please try again shortly."),
 });
+
+/**
+ * Public token responses (quotes/reviews) may contain customer-specific data.
+ * Prevent browsers, CDNs and intermediary proxies from storing those payloads.
+ */
+export const publicSensitiveNoStore = (_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    next();
+};

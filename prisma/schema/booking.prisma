@@ -28,6 +28,7 @@ model Booking {
   job              Job?
   invoice          Invoice?
   changeRequests   BookingChangeRequest[]
+  sourceBookingFormSubmission BookingFormSubmission? @relation("BookingFormSubmissionConversion")
 
   @@index([adminId, status])
   @@index([adminId, status, createdAt(sort: Desc)])

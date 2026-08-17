@@ -95,13 +95,14 @@ export const resolveServiceIdentity = async (
 
     // Compatibility bridge: if this tenant already has a canonical catalog row
     // mapped to the old enum, attach it automatically while preserving the enum.
-    const catalog = await prisma.serviceCatalog.findFirst({
+    const catalogs = await prisma.serviceCatalog.findMany({
         where: {
             adminId,
             legacyServiceType: input.serviceType,
             status: ServiceStatus.ACTIVE,
         },
         orderBy: { createdAt: "asc" },
+        take: 2,
         select: {
             id: true,
             serviceName: true,
@@ -109,6 +110,11 @@ export const resolveServiceIdentity = async (
             duration: true,
         },
     });
+
+    // Never guess when a tenant has more than one catalog service mapped to
+    // the same legacy enum. Old callers remain valid, but the canonical FK is
+    // attached only when the mapping is unambiguous.
+    const catalog = catalogs.length === 1 ? catalogs[0] : null;
 
     return {
         serviceCatalogId: catalog?.id ?? null,

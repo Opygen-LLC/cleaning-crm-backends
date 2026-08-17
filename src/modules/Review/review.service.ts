@@ -36,6 +36,7 @@ const validateReviewToken = async (token: string) => {
             job: {
                 select: {
                     id: true,
+                    adminId: true,
                     jobRef: true,
                     serviceType: true,
                     serviceNameSnapshot: true,
@@ -51,7 +52,11 @@ const validateReviewToken = async (token: string) => {
             },
         },
     });
-    if (!reviewToken) throw new AppError(status.NOT_FOUND, "Invalid or expired review link.");
+    if (!reviewToken || reviewToken.adminId !== reviewToken.job.adminId) {
+        // Treat corrupt/cross-tenant historical token data as an invalid public
+        // link instead of leaking whether either tenant resource exists.
+        throw new AppError(status.NOT_FOUND, "Invalid or expired review link.");
+    }
     if (reviewToken.used) throw new AppError(status.GONE, "This review link has already been used.");
     if (new Date() > reviewToken.expiresAt) throw new AppError(status.GONE, "This review link has expired.");
 
@@ -92,7 +97,9 @@ const submitPublicReview = async (token: string, payload: ISubmitPublicReview) =
                 },
             },
         });
-        if (!reviewToken) throw new AppError(status.NOT_FOUND, "Invalid review link.");
+        if (!reviewToken || reviewToken.adminId !== reviewToken.job.adminId) {
+            throw new AppError(status.NOT_FOUND, "Invalid review link.");
+        }
         if (reviewToken.used) throw new AppError(status.GONE, "Review already submitted.");
         if (new Date() > reviewToken.expiresAt) throw new AppError(status.GONE, "Review link expired.");
 
@@ -112,7 +119,7 @@ const submitPublicReview = async (token: string, payload: ISubmitPublicReview) =
         const common = {
             reviewTokenId: reviewToken.id,
             jobId: reviewToken.job.id,
-            adminId: reviewToken.job.adminId,
+            adminId: reviewToken.adminId,
             clientName: reviewToken.job.client.name,
         };
         await tx.review.createMany({
@@ -144,7 +151,13 @@ const getAllReviews = async (filters: IReviewFilters, user: IRequestUser) => {
         page = 1, limit = 10, searchTerm, status: filterStatus, rating,
         staffId, jobId, dateFrom, dateTo,
     } = filters;
-    const where: any = { adminId };
+    const where: any = {
+        adminId,
+        // A Review row and the job behind its capability token must agree on
+        // tenant ownership. This prevents corrupt historical relations from
+        // pulling another tenant's job/service data into an admin list.
+        reviewToken: { job: { adminId } },
+    };
     if (filterStatus) where.status = filterStatus;
     if (rating) where.rating = Number(rating);
     if (staffId) where.staffId = staffId;
@@ -184,7 +197,10 @@ const getAllReviews = async (filters: IReviewFilters, user: IRequestUser) => {
                 },
             },
         }),
-        prisma.review.findMany({ where: { adminId }, select: { rating: true, status: true, comment: true } }),
+        prisma.review.findMany({
+            where: { adminId, reviewToken: { job: { adminId } } },
+            select: { rating: true, status: true, comment: true },
+        }),
     ]);
 
     const published = allForAdmin.filter((r) => r.status === "published");
@@ -210,7 +226,7 @@ const getAllReviews = async (filters: IReviewFilters, user: IRequestUser) => {
 const getReviewById = async (id: string, user: IRequestUser) => {
     const adminId = await getAdminId(user);
     const review = await prisma.review.findFirst({
-        where: { id, adminId },
+        where: { id, adminId, reviewToken: { job: { adminId } } },
         include: {
             reviewToken: {
                 include: {
@@ -251,7 +267,7 @@ const updateReview = async (id: string, payload: IUpdateReview, user: IRequestUs
 const getStaffReviewSummaries = async (user: IRequestUser) => {
     const adminId = await getAdminId(user);
     const staffReviews = await prisma.review.findMany({
-        where: { adminId, NOT: { staffId: null } },
+        where: { adminId, NOT: { staffId: null }, reviewToken: { job: { adminId } } },
         include: {
             reviewToken: {
                 include: {

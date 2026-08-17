@@ -32,6 +32,16 @@ export interface IBookingUpdate {
     notes?:         string;
 }
 
+// ── Booking-form conversion ──────────────────────────────────────────────────
+
+export interface IBookingSubmissionConversion {
+    scheduledDate: string | Date;
+    durationMins: number;
+    total: number;
+    notes?: string;
+    staffIds?: string[];
+}
+
 // ── Filters ───────────────────────────────────────────────────────────────────
 
 export interface IBookingFilters {

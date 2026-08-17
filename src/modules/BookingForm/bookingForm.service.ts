@@ -499,18 +499,18 @@ const getSubmissions = async (
         if (!form) throw new AppError(status.NOT_FOUND, "Booking form not found");
     }
 
-    const adminFormIds = formId
-        ? [formId]
-        : (await prisma.bookingForm.findMany({
-            where:  { adminId },
-            select: { id: true },
-        })).map((f) => f.id);
-
     return prisma.bookingFormSubmission.findMany({
-        where:   { formId: { in: adminFormIds } },
+        // Scope through the owning form as well as an optional form id. This
+        // keeps tenant isolation in the database predicate and avoids relying
+        // on a separately fetched list of tenant form ids.
+        where: {
+            ...(formId ? { formId } : {}),
+            form: { adminId },
+        },
         include: {
             form: { select: { headline: true, slug: true } },
             serviceCatalog: { select: { id: true, serviceName: true, duration: true, basePriceGbp: true } },
+            convertedBooking: { select: { id: true, bookingRef: true } },
         },
         orderBy: { createdAt: "desc" },
     });
@@ -532,9 +532,25 @@ const updateSubmissionStatus = async (
             form: {
                 select: { headline: true, maxBookingsPerSlot: true },
             },
+            convertedBooking: { select: { id: true, bookingRef: true } },
         },
     });
     if (!submission) throw new AppError(status.NOT_FOUND, "Submission not found");
+
+    // CONVERTED is a derived state backed by convertedBookingId. Prevent a
+    // status-only PATCH from manufacturing or undoing a conversion.
+    if (newStatus === FormSubmissionStatus.CONVERTED && !submission.convertedBooking) {
+        throw new AppError(status.CONFLICT, "Convert this submission using the booking conversion action", {
+            code: "BOOKING_CONVERSION_REQUIRED",
+            retryable: false,
+        });
+    }
+    if (submission.convertedBooking && newStatus !== FormSubmissionStatus.CONVERTED) {
+        throw new AppError(status.CONFLICT, "Converted submissions are linked to a booking and cannot change status", {
+            code: "BOOKING_CONVERSION_IMMUTABLE",
+            retryable: false,
+        });
+    }
 
     // A declined request no longer consumes capacity. If an admin restores it,
     // reserve capacity under the same database lock used by public checkout so
@@ -646,8 +662,8 @@ const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelecto
         }
     }
 
-    // Canonical projection is additive for backward compatibility: old clients
-    // can still read admin/serviceType while new clients use business + serviceCatalogId.
+    // Canonical public projection: internal AdminProfile data is removed from
+    // the response. Legacy serviceType stays alongside canonical serviceCatalogId.
     const publicServices = form.services
         .filter((entry) => entry.serviceCatalog ? entry.serviceCatalog.status === ServiceStatus.ACTIVE : !!entry.serviceType)
         .map((entry) => ({
@@ -659,10 +675,11 @@ const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelecto
             duration: entry.duration ?? entry.serviceCatalog?.duration ?? null,
             service: entry.serviceCatalog ? projectCanonicalService(entry.serviceCatalog) : null,
             serviceName: entry.serviceCatalog?.serviceName ?? entry.serviceType?.replace(/_/g, " ") ?? "Service",
+            basePrice: entry.serviceCatalog?.basePriceGbp ?? null,
             basePriceGbp: entry.serviceCatalog?.basePriceGbp ?? null,
         }));
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { adminId, services, ...safeForm } = form;
+    const { adminId, admin, services, ...safeForm } = form;
     return {
         ...safeForm,
         services: publicServices,

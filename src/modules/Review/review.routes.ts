@@ -16,7 +16,7 @@ import {
     zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
 import { reviewValidation } from "./review.validation";
-import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRateLimit } from "../../middlewares/publicApiSecurity";
+import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRateLimit, publicSensitiveNoStore } from "../../middlewares/publicApiSecurity";
 
 const router = Router();
 
@@ -26,11 +26,12 @@ const hasReviews     = checkFeature("reviews");
 // ── Public routes (no auth, no feature gate) ──────────────────────────────────
 
 // GET  /review/public/:token  → validate token & return job summary
-router.get("/public/:token", publicReadRateLimit, reviewController.validateReviewToken);
+router.get("/public/:token", publicSensitiveNoStore, publicReadRateLimit, reviewController.validateReviewToken);
 
 // POST /review/public/:token  → submit review
 router.post(
     "/public/:token",
+    publicSensitiveNoStore,
     publicMutationRateLimit,
     publicResourceMutationRateLimit,
     zodValidate(reviewValidation.submitPublicReview, ValidationProperty.BODY),

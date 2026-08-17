@@ -9,6 +9,7 @@ import {
 } from "../../middlewares/validations/zodValidation.middleware";
 import { estimateFormValidation } from "./estimateForm.validation";
 import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRateLimit } from "../../middlewares/publicApiSecurity";
+import { publicSpamGuard } from "../../middlewares/publicSpamProtection";
 
 const router = Router();
 
@@ -40,6 +41,7 @@ router.post(
     "/public/:slug/submit",
     publicMutationRateLimit,
     publicResourceMutationRateLimit,
+    publicSpamGuard,
     zodValidate(estimateFormValidation.publicSubmission, ValidationProperty.BODY),
     estimateFormController.submitPublicEstimateForm,
 );

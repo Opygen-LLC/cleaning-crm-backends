@@ -9,6 +9,8 @@ import {
 } from "../../middlewares/validations/zodValidation.middleware";
 import { bookingFormValidation } from "./bookingForm.validation";
 import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRateLimit } from "../../middlewares/publicApiSecurity";
+import { publicSpamGuard } from "../../middlewares/publicSpamProtection";
+import { bookingValidation } from "../Booking/booking.validation";
 
 const router = Router();
 
@@ -34,6 +36,7 @@ router.post(
     "/public/:slug/submit",
     publicMutationRateLimit,
     publicResourceMutationRateLimit,
+    publicSpamGuard,
     zodValidate(
         bookingFormValidation.publicBookingSubmissionSchema,
         ValidationProperty.BODY,
@@ -78,6 +81,13 @@ router.patch(
         ValidationProperty.BODY,
     ),
     bookingFormController.updateSubmissionStatus,
+);
+
+// POST /api/v1/booking-form/submissions/:submissionId/convert — authoritative, tenant-scoped conversion
+router.post(
+    "/submissions/:submissionId/convert",
+    zodValidate(bookingValidation.convertBookingSubmission, ValidationProperty.BODY),
+    bookingFormController.convertSubmissionToBooking,
 );
 
 // GET    /api/v1/booking-form/:id            — get single form

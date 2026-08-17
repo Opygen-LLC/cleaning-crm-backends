@@ -805,7 +805,7 @@ const getPublicEstimateFormFor = async (locator: PublicEstimateFormLocator) => {
             service: entry.serviceCatalog ? projectCanonicalService(entry.serviceCatalog) : null,
         }));
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { adminId, services, ...safeForm } = form;
+    const { adminId, admin, services, ...safeForm } = form;
     return { ...safeForm, services: publicServices, fields, business: projectPublicBusiness(form.admin), reviewSummary };
 };
 

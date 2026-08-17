@@ -40,6 +40,9 @@ export const projectCanonicalService = (service: {
     serviceCatalogId: service.id,
     name: service.serviceName,
     description: service.description,
+    // Canonical price field for new consumers. Keep basePriceGbp during the
+    // compatibility window so existing clients do not break.
+    basePrice: service.basePriceGbp,
     basePriceGbp: service.basePriceGbp,
     duration: service.duration,
     category: service.category,
