@@ -28,6 +28,12 @@ const {
     favicon: null,
     primaryBookingFormId: null,
     primaryEstimateFormId: null,
+    bookingEnabled: true,
+    bookingShowHeaderCta: true,
+    bookingShowServiceCtas: true,
+    bookingShowHomeCta: true,
+    bookingShowAvailableSlots: true,
+    bookingShowPrices: true,
     metaTitle: null,
     metaDescription: null,
     socialImageUrl: null,
@@ -148,7 +154,11 @@ vi.mock("./websiteProvisioning.service", () => ({ WebsiteProvisioningService: {}
 vi.mock("./websiteBookingProvisioning.service", () => ({ WebsiteBookingProvisioningService: bookingProvisioningMock }));
 vi.mock("./publicWebsite.service", () => ({ PublicWebsiteService: publicWebsiteMock }));
 vi.mock("./websiteSnapshot", () => ({
-  buildPublishedSnapshot: vi.fn((draft: any) => ({ version: 1, website: { primaryBookingFormId: draft.primaryBookingFormId }, pages: draft.pages })),
+  buildPublishedSnapshot: vi.fn((draft: any) => ({
+    version: 1,
+    website: { primaryBookingFormId: draft.primaryBookingFormId, bookingEnabled: draft.bookingEnabled },
+    pages: draft.pages,
+  })),
 }));
 vi.mock("./websiteHostResolver.service", () => ({ WebsiteHostResolverService: hostResolverMock }));
 vi.mock("./websiteProjectionCache.service", () => ({ WebsiteProjectionCacheService: projectionCacheMock }));
@@ -160,6 +170,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.status = "DRAFT";
   state.primaryBookingFormId = null;
+  state.bookingEnabled = true;
   state.publishedAt = null;
   state.publishedSnapshot = null;
   state.publishedRevisionNumber = null;
@@ -203,4 +214,16 @@ describe("first website launch", () => {
     expect(txMock.websiteRevision.create).toHaveBeenCalledTimes(revisionCalls);
     expect(bookingProvisioningMock.ensureAttachedForLaunchTx).toHaveBeenCalledTimes(bookingCalls);
   });
+  it("launches without provisioning a BookingForm when website booking is disabled", async () => {
+    state.bookingEnabled = false;
+
+    const result = await WebsiteService.launchWebsite({}, { id: "user-1" } as never);
+
+    expect(bookingProvisioningMock.ensureAttachedForLaunchTx).not.toHaveBeenCalled();
+    expect(result.publicUrl).toBe("https://bio-cleaning.sites.example.com");
+    expect(txMock.businessWebsite.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "PUBLISHED" }),
+    }));
+  });
+
 });

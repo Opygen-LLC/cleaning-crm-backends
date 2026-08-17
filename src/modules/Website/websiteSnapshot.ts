@@ -25,6 +25,12 @@ export interface WebsitePublishedSnapshotV1 {
     favicon: string | null;
     primaryBookingFormId: string | null;
     primaryEstimateFormId: string | null;
+    bookingEnabled: boolean;
+    bookingShowHeaderCta: boolean;
+    bookingShowServiceCtas: boolean;
+    bookingShowHomeCta: boolean;
+    bookingShowAvailableSlots: boolean;
+    bookingShowPrices: boolean;
     metaTitle: string | null;
     metaDescription: string | null;
     socialImageUrl: string | null;
@@ -45,6 +51,12 @@ interface DraftWebsiteLike {
   favicon?: string | null;
   primaryBookingFormId?: string | null;
   primaryEstimateFormId?: string | null;
+  bookingEnabled?: boolean;
+  bookingShowHeaderCta?: boolean;
+  bookingShowServiceCtas?: boolean;
+  bookingShowHomeCta?: boolean;
+  bookingShowAvailableSlots?: boolean;
+  bookingShowPrices?: boolean;
   metaTitle?: string | null;
   metaDescription?: string | null;
   socialImageUrl?: string | null;
@@ -79,6 +91,12 @@ export const buildPublishedSnapshot = (draft: DraftWebsiteLike): WebsitePublishe
     favicon: draft.favicon ?? null,
     primaryBookingFormId: draft.primaryBookingFormId ?? null,
     primaryEstimateFormId: draft.primaryEstimateFormId ?? null,
+    bookingEnabled: draft.bookingEnabled ?? true,
+    bookingShowHeaderCta: draft.bookingShowHeaderCta ?? true,
+    bookingShowServiceCtas: draft.bookingShowServiceCtas ?? true,
+    bookingShowHomeCta: draft.bookingShowHomeCta ?? true,
+    bookingShowAvailableSlots: draft.bookingShowAvailableSlots ?? true,
+    bookingShowPrices: draft.bookingShowPrices ?? true,
     metaTitle: draft.metaTitle ?? null,
     metaDescription: draft.metaDescription ?? null,
     socialImageUrl: draft.socialImageUrl ?? null,
@@ -124,6 +142,12 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
     !stringOrNull(site.favicon) ||
     !stringOrNull(site.primaryBookingFormId) ||
     !stringOrNull(site.primaryEstimateFormId) ||
+    (site.bookingEnabled !== undefined && typeof site.bookingEnabled !== "boolean") ||
+    (site.bookingShowHeaderCta !== undefined && typeof site.bookingShowHeaderCta !== "boolean") ||
+    (site.bookingShowServiceCtas !== undefined && typeof site.bookingShowServiceCtas !== "boolean") ||
+    (site.bookingShowHomeCta !== undefined && typeof site.bookingShowHomeCta !== "boolean") ||
+    (site.bookingShowAvailableSlots !== undefined && typeof site.bookingShowAvailableSlots !== "boolean") ||
+    (site.bookingShowPrices !== undefined && typeof site.bookingShowPrices !== "boolean") ||
     !stringOrNull(site.metaTitle) ||
     !stringOrNull(site.metaDescription) ||
     !stringOrNull(site.socialImageUrl) ||
@@ -172,6 +196,12 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
       favicon: site.favicon,
       primaryBookingFormId: site.primaryBookingFormId,
       primaryEstimateFormId: site.primaryEstimateFormId,
+      bookingEnabled: site.bookingEnabled ?? true,
+      bookingShowHeaderCta: site.bookingShowHeaderCta ?? true,
+      bookingShowServiceCtas: site.bookingShowServiceCtas ?? true,
+      bookingShowHomeCta: site.bookingShowHomeCta ?? true,
+      bookingShowAvailableSlots: site.bookingShowAvailableSlots ?? true,
+      bookingShowPrices: site.bookingShowPrices ?? true,
       metaTitle: site.metaTitle,
       metaDescription: site.metaDescription,
       socialImageUrl: site.socialImageUrl,

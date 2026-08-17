@@ -28,7 +28,10 @@ beforeEach(() => {
     subdomain: "bio-cleaning",
     status: "PUBLISHED",
   });
-  prismaMock.adminProfile.findUnique.mockResolvedValue({ businessName: "Bio Cleaning" });
+  prismaMock.adminProfile.findUnique.mockResolvedValue({
+    businessName: "Bio Cleaning",
+    businessWebsite: { status: "PUBLISHED", publishedSnapshot: null },
+  });
   prismaMock.bookingForm.findMany.mockResolvedValue([]);
   prismaMock.estimateForm.findMany.mockResolvedValue([]);
   templateRegistryMock.list.mockReturnValue([{ id: "clean-modern", version: "1.0.0" }]);
@@ -43,12 +46,15 @@ describe("WebsiteStudioService.getStudio", () => {
     expect(result.features.customDomainsEnabled).toBe(true);
     expect(prismaMock.adminProfile.findUnique).toHaveBeenCalledWith({
       where: { id: "admin-1" },
-      select: { businessName: true },
+      select: {
+        businessName: true,
+        businessWebsite: { select: { status: true, publishedSnapshot: true } },
+      },
     });
   });
 
   it("uses a safe label when a legacy profile has a blank business name", async () => {
-    prismaMock.adminProfile.findUnique.mockResolvedValue({ businessName: "   " });
+    prismaMock.adminProfile.findUnique.mockResolvedValue({ businessName: "   ", businessWebsite: null });
 
     const result = await WebsiteStudioService.getStudio({ id: "user-1" } as never);
 

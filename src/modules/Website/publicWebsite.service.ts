@@ -164,6 +164,12 @@ const currentDraftAsPublishedSnapshot = (website: any) => buildPublishedSnapshot
   favicon: website.favicon,
   primaryBookingFormId: website.primaryBookingFormId,
   primaryEstimateFormId: website.primaryEstimateFormId,
+  bookingEnabled: website.bookingEnabled,
+  bookingShowHeaderCta: website.bookingShowHeaderCta,
+  bookingShowServiceCtas: website.bookingShowServiceCtas,
+  bookingShowHomeCta: website.bookingShowHomeCta,
+  bookingShowAvailableSlots: website.bookingShowAvailableSlots,
+  bookingShowPrices: website.bookingShowPrices,
   metaTitle: website.metaTitle,
   metaDescription: website.metaDescription,
   socialImageUrl: website.socialImageUrl,
@@ -211,7 +217,7 @@ const projectWebsite = (
   const selectedEstimateForm = config.primaryEstimateFormId
     ? website.admin.estimateForms.find((form) => form.id === config.primaryEstimateFormId) ?? null
     : null;
-  const bookingEnabled = Boolean(selectedBookingForm?.published);
+  const bookingEnabled = config.bookingEnabled && Boolean(selectedBookingForm?.published);
   const estimateEnabled = Boolean(selectedEstimateForm?.published);
 
   return {
@@ -245,7 +251,7 @@ const projectWebsite = (
     navigation: pages
       .filter((page) => {
         if (!page.showInNavigation) return false;
-        if (page.kind === "BOOK" && !bookingEnabled) return false;
+        if (page.kind === "BOOK" && (!bookingEnabled || !config.bookingShowHeaderCta)) return false;
         if (page.kind === "ESTIMATE" && !estimateEnabled) return false;
         return true;
       })
@@ -271,6 +277,14 @@ const projectWebsite = (
       city: location.city,
       postcode: location.postcode,
     })),
+    bookingPreferences: {
+      enabled: config.bookingEnabled,
+      showHeaderCta: config.bookingShowHeaderCta,
+      showServiceCtas: config.bookingShowServiceCtas,
+      showHomeCta: config.bookingShowHomeCta,
+      showAvailableSlots: config.bookingShowAvailableSlots,
+      showPrices: config.bookingShowPrices,
+    },
     booking: bookingEnabled && selectedBookingForm
       ? {
           formId: selectedBookingForm.id,
@@ -334,6 +348,9 @@ const loadPublishedIntegrationSource = async (identifier: string) => {
       publishedSnapshot: true,
       primaryBookingFormId: true,
       primaryEstimateFormId: true,
+      bookingEnabled: true,
+      bookingShowAvailableSlots: true,
+      bookingShowPrices: true,
       subdomain: true,
       pages: { select: { kind: true, isEnabled: true } },
       admin: { select: { user: { select: { status: true } } } },
@@ -356,11 +373,20 @@ const resolvePublicBookingIntegration = async (identifier: string) => {
 
   const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
   const formId = selectPublishedIntegrationFormId(publishedSnapshot, website.primaryBookingFormId, "booking");
+  const bookingEnabled = publishedSnapshot
+    ? publishedSnapshot.website.bookingEnabled
+    : website.bookingEnabled;
+  const showAvailableSlots = publishedSnapshot
+    ? publishedSnapshot.website.bookingShowAvailableSlots
+    : website.bookingShowAvailableSlots;
+  const showPrices = publishedSnapshot
+    ? publishedSnapshot.website.bookingShowPrices
+    : website.bookingShowPrices;
   const bookPageEnabled = publishedSnapshot
     ? publishedSnapshot.pages.some((page) => page.kind === "BOOK" && page.isEnabled)
     : website.pages.some((page) => page.kind === "BOOK" && page.isEnabled);
 
-  if (!formId || !bookPageEnabled) {
+  if (!bookingEnabled || !formId || !bookPageEnabled) {
     throw new AppError(status.NOT_FOUND, "Online booking is not available on this website.", {
       code: "WEBSITE_BOOKING_UNAVAILABLE",
       retryable: false,
@@ -371,6 +397,8 @@ const resolvePublicBookingIntegration = async (identifier: string) => {
     websiteId: website.id,
     adminId: website.adminId,
     formId,
+    showAvailableSlots,
+    showPrices,
   };
 };
 

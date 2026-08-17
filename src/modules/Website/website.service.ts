@@ -82,6 +82,40 @@ const assertOwnedForm = async (
   if (!record) throw new AppError(status.BAD_REQUEST, `Selected ${kind} form does not belong to this business`);
 };
 
+const assertBookingReadyForPublish = async (
+  adminId: string,
+  draft: {
+    bookingEnabled: boolean;
+    primaryBookingFormId: string | null;
+    pages: Array<{ kind: string; isEnabled: boolean }>;
+  },
+  db: any,
+) => {
+  if (!draft.bookingEnabled) return;
+  if (!draft.pages.some((page) => page.kind === "BOOK" && page.isEnabled)) {
+    throw new AppError(status.CONFLICT, "Enable the Book Online page before publishing online booking", {
+      code: "WEBSITE_BOOK_PAGE_REQUIRED",
+      retryable: false,
+    });
+  }
+  if (!draft.primaryBookingFormId) {
+    throw new AppError(status.CONFLICT, "Select a published booking form before enabling online booking", {
+      code: "WEBSITE_BOOKING_FORM_REQUIRED",
+      retryable: false,
+    });
+  }
+  const form = await db.bookingForm.findFirst({
+    where: { id: draft.primaryBookingFormId, adminId, published: true },
+    select: { id: true },
+  });
+  if (!form) {
+    throw new AppError(status.CONFLICT, "The selected booking form must be published before the website can go live", {
+      code: "WEBSITE_BOOKING_FORM_UNPUBLISHED",
+      retryable: false,
+    });
+  }
+};
+
 /**
  * Revision snapshots intentionally exclude publishedSnapshot itself. Including
  * it would recursively embed the previous publication in every new revision
@@ -106,6 +140,12 @@ const loadDraftSnapshot = async (websiteId: string, db: any) => {
       favicon: true,
       primaryBookingFormId: true,
       primaryEstimateFormId: true,
+      bookingEnabled: true,
+      bookingShowHeaderCta: true,
+      bookingShowServiceCtas: true,
+      bookingShowHomeCta: true,
+      bookingShowAvailableSlots: true,
+      bookingShowPrices: true,
       metaTitle: true,
       metaDescription: true,
       socialImageUrl: true,
@@ -484,6 +524,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
       assertOwnedForm(adminId, draft.primaryBookingFormId, "booking", tx),
       assertOwnedForm(adminId, draft.primaryEstimateFormId, "estimate", tx),
     ]);
+    await assertBookingReadyForPublish(adminId, draft, tx);
 
     const revision = await createRevisionSnapshot(tx, current.id, user.id, "Website published", baseRevisionNumber);
     const publishedSnapshot = buildPublishedSnapshot(draft);
@@ -645,13 +686,12 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
     // Booking attachment participates in this same transaction. This closes
     // the gap where a site could be marked live while /book had no published
     // tenant-owned form attached.
-    const bookingFormId = await WebsiteBookingProvisioningService.ensureAttachedForLaunchTx(
-      tx,
-      adminId,
-      current.id,
-    );
+    const preflightDraft = await loadDraftSnapshot(current.id, tx);
+    const bookingFormId = preflightDraft.bookingEnabled
+      ? await WebsiteBookingProvisioningService.ensureAttachedForLaunchTx(tx, adminId, current.id)
+      : null;
 
-    const draft = await loadDraftSnapshot(current.id, tx);
+    const draft = bookingFormId ? await loadDraftSnapshot(current.id, tx) : preflightDraft;
     TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     validateDraftPageContent(draft);
 
@@ -662,7 +702,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
         fieldErrors: { template: "The Home page must be enabled." },
       });
     }
-    if (!draft.pages.some((page: any) => page.kind === "BOOK" && page.isEnabled)) {
+    if (draft.bookingEnabled && !draft.pages.some((page: any) => page.kind === "BOOK" && page.isEnabled)) {
       throw new AppError(status.CONFLICT, "Enable the Book Online page before launching the website", {
         code: "WEBSITE_BOOK_PAGE_REQUIRED",
         retryable: false,
@@ -670,16 +710,18 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
       });
     }
 
-    const attachedBookingForm = await tx.bookingForm.findFirst({
-      where: { id: bookingFormId, adminId, published: true },
-      select: { id: true },
-    });
-    if (!attachedBookingForm || draft.primaryBookingFormId !== bookingFormId) {
-      throw new AppError(status.CONFLICT, "Website booking is not ready to publish", {
-        code: "WEBSITE_BOOKING_NOT_READY",
-        retryable: true,
-        fieldErrors: { services: "Reconnect Online Booking and try again." },
+    if (draft.bookingEnabled) {
+      const attachedBookingForm = await tx.bookingForm.findFirst({
+        where: { id: bookingFormId!, adminId, published: true },
+        select: { id: true },
       });
+      if (!attachedBookingForm || draft.primaryBookingFormId !== bookingFormId) {
+        throw new AppError(status.CONFLICT, "Website booking is not ready to publish", {
+          code: "WEBSITE_BOOKING_NOT_READY",
+          retryable: true,
+          fieldErrors: { services: "Reconnect Online Booking and try again." },
+        });
+      }
     }
 
     // Building the immutable publication document before the write validates

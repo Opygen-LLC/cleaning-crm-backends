@@ -35,15 +35,15 @@ describe("public website projection cache", () => {
     expect(redisMock.eval).toHaveBeenCalledWith(
       expect.stringContaining("INCR"),
       3,
-      "site-projection:v5:website-1",
-      "site-projection-lock:v5:website-1",
-      "site-projection-generation:v5:website-1",
+      "site-projection:v6:website-1",
+      "site-projection-lock:v6:website-1",
+      "site-projection-generation:v6:website-1",
     );
   });
 
   it("returns a valid Redis projection without calling the loader", async () => {
     redisMock.get.mockResolvedValue(JSON.stringify({
-      version: 5,
+      version: 6,
       websiteId: "website-1",
       generation: 3,
       cachedAt: new Date().toISOString(),
@@ -66,7 +66,7 @@ describe("public website projection cache", () => {
     expect(result).toEqual({ business: { name: "Sparkle" } });
     expect(loader).toHaveBeenCalledTimes(1);
     expect(redisMock.set).toHaveBeenCalledWith(
-      "site-projection-lock:v5:website-1",
+      "site-projection-lock:v6:website-1",
       expect.any(String),
       "EX",
       8,
@@ -75,8 +75,8 @@ describe("public website projection cache", () => {
     expect(redisMock.eval).toHaveBeenCalledWith(
       expect.stringContaining("current ~= ARGV[1]"),
       2,
-      "site-projection:v5:website-1",
-      "site-projection-generation:v5:website-1",
+      "site-projection:v6:website-1",
+      "site-projection-generation:v6:website-1",
       "0",
       expect.stringContaining('"version":5'),
       "180",

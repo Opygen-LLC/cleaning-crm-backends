@@ -4,6 +4,7 @@ import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteService } from "./website.service";
+import { parsePublishedSnapshot } from "./websiteSnapshot";
 
 /**
  * Lightweight read model for Website Studio.
@@ -21,7 +22,12 @@ const getStudio = async (user: IRequestUser) => {
     WebsiteService.getWebsiteForAdmin(adminId),
     prisma.adminProfile.findUnique({
       where: { id: adminId },
-      select: { businessName: true },
+      select: {
+        businessName: true,
+        businessWebsite: {
+          select: { status: true, publishedSnapshot: true },
+        },
+      },
     }),
     prisma.bookingForm.findMany({
       where: { adminId },
@@ -37,10 +43,31 @@ const getStudio = async (user: IRequestUser) => {
     }),
   ]);
 
+  const published = parsePublishedSnapshot(business?.businessWebsite?.publishedSnapshot);
+  const publishedBookingFormId = published?.website.bookingEnabled
+    ? published.website.primaryBookingFormId
+    : null;
+  const publishedBookingForm = publishedBookingFormId
+    ? bookingForms.find((form) => form.id === publishedBookingFormId && form.published) ?? null
+    : null;
+  const publishedBookPageEnabled = Boolean(
+    published?.pages.some((page) => page.kind === "BOOK" && page.isEnabled),
+  );
+
   return {
     website,
     business: {
       name: business?.businessName?.trim() || "Your cleaning business",
+    },
+    booking: {
+      live: Boolean(
+        business?.businessWebsite?.status === "PUBLISHED" &&
+        published?.website.bookingEnabled &&
+        publishedBookPageEnabled &&
+        publishedBookingForm,
+      ),
+      publishedBookingFormId: publishedBookingForm?.id ?? null,
+      publishedBookingFormHeadline: publishedBookingForm?.headline ?? null,
     },
     templates: TemplateRegistry.list(),
     bookingForms,

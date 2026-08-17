@@ -11,6 +11,11 @@ import { statusAfterDraftMutation, WEBSITE_STATUS, type WebsiteLifecycleStatus }
 export interface WebsiteBookingSetupPayload {
   enabled: boolean;
   bookingFormId?: string | null;
+  showHeaderCta?: boolean;
+  showServiceCtas?: boolean;
+  showHomeCta?: boolean;
+  showAvailableSlots?: boolean;
+  showPrices?: boolean;
 }
 
 export interface WebsiteBookingSetupFormOption {
@@ -31,6 +36,13 @@ export interface WebsiteBookingSetupResult {
   requiresSelection: boolean;
   canCreateDefault: boolean;
   websitePath: "/book";
+  settings: {
+    showHeaderCta: boolean;
+    showServiceCtas: boolean;
+    showHomeCta: boolean;
+    showAvailableSlots: boolean;
+    showPrices: boolean;
+  };
 }
 
 const DEFAULT_AVAILABLE_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -115,6 +127,12 @@ const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupRe
       where: { adminId },
       select: {
         primaryBookingFormId: true,
+        bookingEnabled: true,
+        bookingShowHeaderCta: true,
+        bookingShowServiceCtas: true,
+        bookingShowHomeCta: true,
+        bookingShowAvailableSlots: true,
+        bookingShowPrices: true,
         primaryBookingForm: { select: formOptionSelect },
       },
     }),
@@ -148,15 +166,22 @@ const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupRe
   }));
 
   return {
-    enabled: Boolean(primary),
-    primaryBookingFormId: primary?.id ?? null,
+    enabled: website.bookingEnabled,
+    primaryBookingFormId: website.primaryBookingFormId,
     primaryBookingForm: primary,
     publishedForms: options,
     publishedFormCount: options.length,
     bookableServiceCount,
-    requiresSelection: !primary && options.length > 1,
+    requiresSelection: website.bookingEnabled && !primary && options.length > 1,
     canCreateDefault: options.length === 0,
     websitePath: "/book",
+    settings: {
+      showHeaderCta: website.bookingShowHeaderCta,
+      showServiceCtas: website.bookingShowServiceCtas,
+      showHomeCta: website.bookingShowHomeCta,
+      showAvailableSlots: website.bookingShowAvailableSlots,
+      showPrices: website.bookingShowPrices,
+    },
   };
 };
 
@@ -360,6 +385,16 @@ const selectOrCreateBookingFormTx = async (
     }
   }
 
+  if (!targetForm) {
+    // Defensive invariant: every successful path above must select, reuse or
+    // create exactly one BookingForm. Keep the return type non-null and fail
+    // closed if a provider/database mock ever violates that contract.
+    throw new AppError(status.INTERNAL_SERVER_ERROR, "Unable to provision website booking", {
+      code: "WEBSITE_BOOKING_PROVISION_FAILED",
+      retryable: true,
+    });
+  }
+
   if (targetForm.websiteManaged) {
     // Auto-created forms mirror ServiceCatalog online-booking eligibility.
     // Manually authored forms remain owner-controlled and are never rewritten.
@@ -393,6 +428,7 @@ const ensureAttachedForLaunchTx = async (
           status: true,
           accentColor: true,
           primaryBookingFormId: true,
+          bookingEnabled: true,
         },
       },
     },
@@ -462,10 +498,18 @@ const configure = async (
 
     const nextWebsiteStatus = statusAfterDraftMutation(admin.businessWebsite.status as WebsiteLifecycleStatus);
 
+    const presentationPatch = {
+      ...(payload.showHeaderCta !== undefined ? { bookingShowHeaderCta: payload.showHeaderCta } : {}),
+      ...(payload.showServiceCtas !== undefined ? { bookingShowServiceCtas: payload.showServiceCtas } : {}),
+      ...(payload.showHomeCta !== undefined ? { bookingShowHomeCta: payload.showHomeCta } : {}),
+      ...(payload.showAvailableSlots !== undefined ? { bookingShowAvailableSlots: payload.showAvailableSlots } : {}),
+      ...(payload.showPrices !== undefined ? { bookingShowPrices: payload.showPrices } : {}),
+    };
+
     if (!payload.enabled) {
       await tx.businessWebsite.update({
         where: { id: admin.businessWebsite.id },
-        data: { primaryBookingFormId: null, status: nextWebsiteStatus },
+        data: { bookingEnabled: false, status: nextWebsiteStatus, ...presentationPatch },
       });
       return;
     }
@@ -475,7 +519,9 @@ const configure = async (
       where: { id: admin.businessWebsite.id },
       data: {
         primaryBookingFormId: targetForm.id,
+        bookingEnabled: true,
         status: nextWebsiteStatus,
+        ...presentationPatch,
       },
     });
   });

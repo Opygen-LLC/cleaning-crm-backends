@@ -39,6 +39,48 @@ describe("website published snapshots", () => {
     expect(parsePublishedSnapshot(snapshot)).toEqual(snapshot);
   });
 
+  it("stores website booking presentation controls inside the immutable snapshot", () => {
+    const snapshot = buildPublishedSnapshot({
+      ...draft,
+      primaryBookingFormId: "booking-1",
+      bookingEnabled: false,
+      bookingShowHeaderCta: false,
+      bookingShowServiceCtas: false,
+      bookingShowHomeCta: false,
+      bookingShowAvailableSlots: false,
+      bookingShowPrices: false,
+    });
+
+    expect(snapshot.website).toEqual(expect.objectContaining({
+      bookingEnabled: false,
+      bookingShowHeaderCta: false,
+      bookingShowServiceCtas: false,
+      bookingShowHomeCta: false,
+      bookingShowAvailableSlots: false,
+      bookingShowPrices: false,
+    }));
+  });
+
+  it("defaults legacy V1 snapshots to the previous booking presentation behavior", () => {
+    const snapshot = buildPublishedSnapshot(draft);
+    const legacy = JSON.parse(JSON.stringify(snapshot));
+    delete legacy.website.bookingEnabled;
+    delete legacy.website.bookingShowHeaderCta;
+    delete legacy.website.bookingShowServiceCtas;
+    delete legacy.website.bookingShowHomeCta;
+    delete legacy.website.bookingShowAvailableSlots;
+    delete legacy.website.bookingShowPrices;
+
+    expect(parsePublishedSnapshot(legacy)?.website).toEqual(expect.objectContaining({
+      bookingEnabled: true,
+      bookingShowHeaderCta: true,
+      bookingShowServiceCtas: true,
+      bookingShowHomeCta: true,
+      bookingShowAvailableSlots: true,
+      bookingShowPrices: true,
+    }));
+  });
+
   it("rejects malformed snapshots", () => {
     expect(parsePublishedSnapshot({ version: 1, website: {}, pages: [] })).toBeNull();
     expect(parsePublishedSnapshot(null)).toBeNull();

@@ -60,6 +60,12 @@ const draft = {
   favicon: null,
   primaryBookingFormId: null,
   primaryEstimateFormId: null,
+  bookingEnabled: false,
+  bookingShowHeaderCta: true,
+  bookingShowServiceCtas: true,
+  bookingShowHomeCta: true,
+  bookingShowAvailableSlots: true,
+  bookingShowPrices: true,
   metaTitle: null,
   metaDescription: null,
   socialImageUrl: null,
@@ -79,6 +85,8 @@ const draft = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  draft.bookingEnabled = false;
+  draft.primaryBookingFormId = null;
   prismaMock.businessWebsite.findUnique.mockResolvedValue({ id: "website-1" });
   txMock.businessWebsite.findUnique.mockResolvedValue(draft);
   txMock.businessWebsite.update.mockResolvedValue({});
@@ -102,4 +110,14 @@ describe("website publish cache invalidation", () => {
     expect(hostResolverMock.invalidateSubdomains).toHaveBeenCalledWith(["sparkle"]);
     expect(projectionCacheMock.invalidateWebsite).toHaveBeenCalledWith("website-1");
   });
+
+  it("refuses to publish when online booking is enabled without a valid Book page/form", async () => {
+    draft.bookingEnabled = true;
+
+    await expect(WebsiteService.publishWebsite({}, { id: "user-1" } as never)).rejects.toMatchObject({
+      message: "Enable the Book Online page before publishing online booking",
+    });
+    expect(txMock.businessWebsite.update).not.toHaveBeenCalled();
+  });
+
 });

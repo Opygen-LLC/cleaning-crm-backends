@@ -94,7 +94,14 @@ const resolvePublicHost = catchAsync(async (req, res) => {
 
 const getPublicWebsiteBooking = catchAsync(async (req, res) => {
   const integration = await PublicWebsiteService.resolvePublicBookingIntegration(paramStr(req.params.identifier));
-  const data = await bookingFormService.getPublicBookingFormById(integration.formId, integration.adminId);
+  const form = await bookingFormService.getPublicBookingFormById(integration.formId, integration.adminId);
+  const data = {
+    ...form,
+    websiteSettings: {
+      showAvailableSlots: integration.showAvailableSlots,
+      showPrices: integration.showPrices,
+    },
+  };
   res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
   return ok(res, "Website booking form retrieved successfully", data);
 });

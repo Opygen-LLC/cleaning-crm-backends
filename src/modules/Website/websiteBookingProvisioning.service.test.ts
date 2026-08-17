@@ -37,6 +37,7 @@ const admin = {
     status: "PROVISIONED",
     accentColor: "#14B8A6",
     primaryBookingFormId: null,
+    bookingEnabled: true,
   },
 };
 
@@ -65,6 +66,12 @@ beforeEach(() => {
   txMock.businessWebsite.update.mockResolvedValue({});
   prismaMock.businessWebsite.findUnique.mockResolvedValue({
     primaryBookingFormId: "form-1",
+    bookingEnabled: true,
+    bookingShowHeaderCta: true,
+    bookingShowServiceCtas: true,
+    bookingShowHomeCta: true,
+    bookingShowAvailableSlots: true,
+    bookingShowPrices: true,
     primaryBookingForm: {
       id: "form-1",
       headline: "Bio Cleaning Online Booking",
@@ -107,7 +114,7 @@ describe("WebsiteBookingProvisioningService", () => {
     });
     expect(txMock.businessWebsite.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "website-1" },
-      data: expect.objectContaining({ primaryBookingFormId: "form-1", status: "DRAFT" }),
+      data: expect.objectContaining({ primaryBookingFormId: "form-1", bookingEnabled: true, status: "DRAFT" }),
     }));
     expect(result.enabled).toBe(true);
     expect(result.primaryBookingFormId).toBe("form-1");
@@ -126,6 +133,21 @@ describe("WebsiteBookingProvisioningService", () => {
     expect(txMock.bookingForm.create).not.toHaveBeenCalled();
     expect(txMock.businessWebsite.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ primaryBookingFormId: "existing-form" }),
+    }));
+  });
+
+  it("disables website booking without discarding the selected BookingForm", async () => {
+    await WebsiteBookingProvisioningService.configure(
+      { enabled: false, showHeaderCta: false },
+      { id: "user-1" } as never,
+    );
+
+    expect(txMock.businessWebsite.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "website-1" },
+      data: expect.objectContaining({ bookingEnabled: false, bookingShowHeaderCta: false, status: "DRAFT" }),
+    }));
+    expect(txMock.businessWebsite.update).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ primaryBookingFormId: null }),
     }));
   });
 

@@ -18,6 +18,15 @@ model BusinessWebsite {
   primaryBookingFormId   String?
   primaryEstimateFormId  String?
 
+  // Website-specific presentation controls around the existing BookingForm.
+  // These are draft values and are copied into publishedSnapshot on Publish.
+  bookingEnabled             Boolean @default(true)
+  bookingShowHeaderCta       Boolean @default(true)
+  bookingShowServiceCtas     Boolean @default(true)
+  bookingShowHomeCta         Boolean @default(true)
+  bookingShowAvailableSlots  Boolean @default(true)
+  bookingShowPrices          Boolean @default(true)
+
   metaTitle               String?
   metaDescription         String?
   socialImageUrl          String?

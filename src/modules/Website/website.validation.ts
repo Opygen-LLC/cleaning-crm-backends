@@ -23,6 +23,12 @@ const websitePatch = z.object({
   favicon: z.string().url().max(2048).nullable().optional(),
   primaryBookingFormId: z.string().uuid().nullable().optional(),
   primaryEstimateFormId: z.string().uuid().nullable().optional(),
+  bookingEnabled: z.boolean().optional(),
+  bookingShowHeaderCta: z.boolean().optional(),
+  bookingShowServiceCtas: z.boolean().optional(),
+  bookingShowHomeCta: z.boolean().optional(),
+  bookingShowAvailableSlots: z.boolean().optional(),
+  bookingShowPrices: z.boolean().optional(),
   metaTitle: nullableText(120).optional(),
   metaDescription: nullableText(320).optional(),
   socialImageUrl: z.string().url().max(2048).nullable().optional(),
@@ -103,6 +109,11 @@ const publicClientError = z.object({
 const configureWebsiteBooking = z.object({
   enabled: z.boolean(),
   bookingFormId: z.string().uuid().nullable().optional(),
+  showHeaderCta: z.boolean().optional(),
+  showServiceCtas: z.boolean().optional(),
+  showHomeCta: z.boolean().optional(),
+  showAvailableSlots: z.boolean().optional(),
+  showPrices: z.boolean().optional(),
 }).strict();
 
 const publicContact = z.object({

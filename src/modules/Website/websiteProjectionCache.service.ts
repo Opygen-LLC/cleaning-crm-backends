@@ -7,7 +7,7 @@ import {
 import redis from "../../config/redis";
 import { prisma } from "../../lib/prisma/prisma";
 
-const CACHE_VERSION = 5 as const;
+const CACHE_VERSION = 6 as const;
 const KEY_PREFIX = `site-projection:v${CACHE_VERSION}:`;
 const LOCK_PREFIX = `site-projection-lock:v${CACHE_VERSION}:`;
 const GENERATION_PREFIX = `site-projection-generation:v${CACHE_VERSION}:`;

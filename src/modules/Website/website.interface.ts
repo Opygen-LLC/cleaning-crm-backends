@@ -17,6 +17,12 @@ export interface WebsiteUpdateInput {
   favicon?: string | null;
   primaryBookingFormId?: string | null;
   primaryEstimateFormId?: string | null;
+  bookingEnabled?: boolean;
+  bookingShowHeaderCta?: boolean;
+  bookingShowServiceCtas?: boolean;
+  bookingShowHomeCta?: boolean;
+  bookingShowAvailableSlots?: boolean;
+  bookingShowPrices?: boolean;
   metaTitle?: string | null;
   metaDescription?: string | null;
   socialImageUrl?: string | null;
