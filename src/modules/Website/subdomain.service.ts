@@ -10,6 +10,9 @@ import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WEBSITE_SUBDOMAIN_RESERVATION_LOCK } from "./websiteProvisioning.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 
+const platformUrl = (subdomain: string) =>
+  WEBSITE_BASE_DOMAIN ? `https://${subdomain}.${WEBSITE_BASE_DOMAIN}` : null;
+
 const getOwnedWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await prisma.businessWebsite.findUnique({
@@ -52,6 +55,7 @@ const checkAvailability = async (input: string, user: IRequestUser) => {
         current: false,
         reclaimableAlias: false,
         reason: error.message,
+        publicUrl: null,
       };
     }
     throw error;
@@ -62,8 +66,21 @@ const checkAvailability = async (input: string, user: IRequestUser) => {
     subdomain,
     ...result,
     reason: result.available ? null : "That subdomain is already in use",
-    publicUrl: WEBSITE_BASE_DOMAIN ? `https://${subdomain}.${WEBSITE_BASE_DOMAIN}` : null,
+    publicUrl: platformUrl(subdomain),
   };
+};
+
+/**
+ * Populate the two routing entries affected by a rename after invalidation.
+ * This is best-effort only; Postgres remains authoritative and a cache outage
+ * must never turn a successful domain mutation into an API failure.
+ */
+const warmRenamedRoutes = async (previousSubdomain: string, subdomain: string) => {
+  if (!WEBSITE_BASE_DOMAIN) return;
+  await Promise.allSettled([
+    WebsiteHostResolverService.resolveHost(`${subdomain}.${WEBSITE_BASE_DOMAIN}`),
+    WebsiteHostResolverService.resolveHost(`${previousSubdomain}.${WEBSITE_BASE_DOMAIN}`),
+  ]);
 };
 
 const rename = async (input: string, user: IRequestUser) => {
@@ -75,11 +92,17 @@ const rename = async (input: string, user: IRequestUser) => {
       previousSubdomain: owned.subdomain,
       changed: false,
       aliasCreated: false,
-      publicUrl: WEBSITE_BASE_DOMAIN ? `https://${owned.subdomain}.${WEBSITE_BASE_DOMAIN}` : null,
+      alias: null,
+      redirectCode: null,
+      publicUrl: platformUrl(owned.subdomain),
+      previousPublicUrl: platformUrl(owned.subdomain),
     };
   }
 
   const result = await prisma.$transaction(async (tx: any) => {
+    // Lock this website first, then the shared reservation namespace. All
+    // subdomain mutations in this service use the same ordering so concurrent
+    // retries cannot interleave the canonical row and alias history.
     await acquireTextTransactionAdvisoryLock(tx, owned.id);
     await acquireTextTransactionAdvisoryLock(tx, WEBSITE_SUBDOMAIN_RESERVATION_LOCK);
 
@@ -91,18 +114,37 @@ const rename = async (input: string, user: IRequestUser) => {
     });
     if (!current) throw new AppError(status.NOT_FOUND, "Business website not found");
     if (nextSubdomain === current.subdomain) {
-      return { previousSubdomain: current.subdomain, subdomain: current.subdomain, changed: false, aliasCreated: false };
+      return {
+        previousSubdomain: current.subdomain,
+        subdomain: current.subdomain,
+        changed: false,
+        aliasCreated: false,
+        alias: null,
+      };
     }
 
-    const [occupiedWebsite, occupiedAlias] = await Promise.all([
+    const [occupiedWebsite, occupiedAlias, currentAlias] = await Promise.all([
       tx.businessWebsite.findUnique({ where: { subdomain: nextSubdomain }, select: { id: true } }),
-      tx.websiteSubdomainAlias.findUnique({ where: { subdomain: nextSubdomain }, select: { id: true, websiteId: true } }),
+      tx.websiteSubdomainAlias.findUnique({
+        where: { subdomain: nextSubdomain },
+        select: { id: true, websiteId: true },
+      }),
+      tx.websiteSubdomainAlias.findUnique({
+        where: { subdomain: current.subdomain },
+        select: { id: true, websiteId: true },
+      }),
     ]);
+
     if (occupiedWebsite && occupiedWebsite.id !== current.id) {
       throw new AppError(status.CONFLICT, "That subdomain is already in use");
     }
     if (occupiedAlias && occupiedAlias.websiteId !== current.id) {
       throw new AppError(status.CONFLICT, "That subdomain is already in use");
+    }
+    if (currentAlias && currentAlias.websiteId !== current.id) {
+      // This should never be possible through supported allocation paths, but
+      // fail closed rather than stealing another tenant's historical hostname.
+      throw new AppError(status.CONFLICT, "The current website address has a conflicting historical alias");
     }
 
     // Reclaiming one of this website's own historical aliases is safe and
@@ -112,14 +154,22 @@ const rename = async (input: string, user: IRequestUser) => {
     }
 
     // The old canonical label becomes a permanent alias before the canonical
-    // row changes, all inside the same transaction.
-    await tx.websiteSubdomainAlias.create({
-      data: {
-        websiteId: current.id,
-        subdomain: current.subdomain,
-        redirectCode: 308,
-      },
-    });
+    // row changes, all inside the same transaction. If an old inconsistent row
+    // for this exact website already exists, repair/reuse it rather than
+    // failing the rename on a unique constraint.
+    const alias = currentAlias?.websiteId === current.id
+      ? await tx.websiteSubdomainAlias.update({
+          where: { id: currentAlias.id },
+          data: { redirectCode: 308 },
+        })
+      : await tx.websiteSubdomainAlias.create({
+          data: {
+            websiteId: current.id,
+            subdomain: current.subdomain,
+            redirectCode: 308,
+          },
+        });
+
     await tx.businessWebsite.update({
       where: { id: current.id },
       data: { subdomain: nextSubdomain },
@@ -129,7 +179,8 @@ const rename = async (input: string, user: IRequestUser) => {
       previousSubdomain: current.subdomain,
       subdomain: nextSubdomain,
       changed: true,
-      aliasCreated: true,
+      aliasCreated: !currentAlias,
+      alias,
     };
   });
 
@@ -158,9 +209,13 @@ const rename = async (input: string, user: IRequestUser) => {
     WebsiteProjectionCacheService.invalidateWebsite(owned.id),
   ]);
 
+  await warmRenamedRoutes(result.previousSubdomain, result.subdomain);
+
   return {
     ...result,
-    publicUrl: WEBSITE_BASE_DOMAIN ? `https://${result.subdomain}.${WEBSITE_BASE_DOMAIN}` : null,
+    redirectCode: result.changed ? 308 : null,
+    publicUrl: platformUrl(result.subdomain),
+    previousPublicUrl: platformUrl(result.previousSubdomain),
   };
 };
 

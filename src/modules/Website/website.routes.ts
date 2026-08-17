@@ -7,6 +7,10 @@ import { websiteValidation } from "./website.validation";
 import { multerMemory } from "../../config/multerMemory";
 import { convertHeicToPng } from "../../middlewares/convertHeicToPngMiddleware";
 import { websiteBrandUploadRateLimit } from "./websiteAssetSecurity";
+import {
+  websiteSubdomainAvailabilityRateLimit,
+  websiteSubdomainMutationRateLimit,
+} from "./websiteSubdomainSecurity";
 
 const router = Router();
 const isAdmin = checkAuth(UserRole.ADMIN);
@@ -49,9 +53,14 @@ router.post("/assets", zodValidate(websiteValidation.createAsset, ValidationProp
 router.post("/assets/upload", websiteBrandUploadRateLimit, multerMemory.single("asset"), convertHeicToPng, websiteController.uploadBrandAsset);
 router.post("/assets/upload-content", multerMemory.single("asset"), convertHeicToPng, websiteController.uploadContentAsset);
 router.delete("/assets/:assetId", websiteController.deleteAsset);
-router.get("/subdomain/availability/:subdomain", websiteController.getSubdomainAvailability);
+router.get(
+  "/subdomain/availability/:subdomain",
+  websiteSubdomainAvailabilityRateLimit,
+  websiteController.getSubdomainAvailability,
+);
 router.patch(
   "/subdomain",
+  websiteSubdomainMutationRateLimit,
   zodValidate(websiteValidation.renameSubdomain, ValidationProperty.BODY),
   websiteController.renameSubdomain,
 );
