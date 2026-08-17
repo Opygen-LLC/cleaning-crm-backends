@@ -1,11 +1,7 @@
 import { createHash } from "node:crypto";
+import type { IncrementResponse, Store } from "express-rate-limit";
 import redis from "../../config/redis";
 import { BoundedTtlCache } from "../cache/boundedTtlCache";
-
-interface RateLimitCounter {
-  totalHits: number;
-  resetTime: Date;
-}
 
 interface LocalCounter {
   totalHits: number;
@@ -31,9 +27,9 @@ interface RedisRateLimitStoreOptions {
  * counter so public forms are still protected without turning a cache outage
  * into a public-site outage.
  */
-export class RedisRateLimitStore {
+export class RedisRateLimitStore implements Store {
   readonly localKeys = false;
-  private readonly prefix: string;
+  readonly prefix: string;
   private readonly windowMs: number;
   private readonly fallback: BoundedTtlCache<LocalCounter>;
 
@@ -50,7 +46,7 @@ export class RedisRateLimitStore {
     return `rate:${this.prefix}:${digest}`;
   }
 
-  private localIncrement(storageKey: string): RateLimitCounter {
+  private localIncrement(storageKey: string): IncrementResponse {
     const now = Date.now();
     const current = this.fallback.get(storageKey);
     const resetAt = current && current.resetAt > now
@@ -64,7 +60,7 @@ export class RedisRateLimitStore {
     return { totalHits: next.totalHits, resetTime: new Date(resetAt) };
   }
 
-  async increment(key: string): Promise<RateLimitCounter> {
+  async increment(key: string): Promise<IncrementResponse> {
     const storageKey = this.storageKey(key);
     try {
       const result = await redis.eval(

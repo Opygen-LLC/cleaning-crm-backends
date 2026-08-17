@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx --watch src/index.ts",
-    "build": "prisma generate && tsup",
+    "build": "prisma generate && tsc --noEmit && tsup",
+    "typecheck": "prisma generate && tsc --noEmit",
     "start": "node ./dist/index.js",
     "vercel-build": "pnpm run build",
     "migrate": "prisma migrate dev",

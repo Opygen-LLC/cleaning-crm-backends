@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+type WebsiteTransactionMock = {
+  businessWebsite: { findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+  websiteRevision: { aggregate: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+  bookingForm: { findFirst: ReturnType<typeof vi.fn> };
+  estimateForm: { findFirst: ReturnType<typeof vi.fn> };
+};
+
 const { prismaMock, txMock, hostResolverMock, projectionCacheMock } = vi.hoisted(() => {
-  const tx = {
+  const tx: WebsiteTransactionMock = {
     businessWebsite: { findUnique: vi.fn(), update: vi.fn() },
     websiteRevision: { aggregate: vi.fn(), create: vi.fn() },
     bookingForm: { findFirst: vi.fn() },
@@ -11,7 +18,7 @@ const { prismaMock, txMock, hostResolverMock, projectionCacheMock } = vi.hoisted
     txMock: tx,
     prismaMock: {
       businessWebsite: { findUnique: vi.fn() },
-      $transaction: vi.fn(async (callback: (tx: typeof tx) => unknown) => callback(tx)),
+      $transaction: vi.fn(async (callback: (transaction: WebsiteTransactionMock) => unknown) => callback(tx)),
     },
     hostResolverMock: { invalidateSubdomains: vi.fn() },
     projectionCacheMock: { invalidateWebsite: vi.fn() },
