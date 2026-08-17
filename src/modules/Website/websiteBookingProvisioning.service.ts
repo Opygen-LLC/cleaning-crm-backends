@@ -482,21 +482,22 @@ const configure = async (
       },
     });
 
-    if (!admin?.businessWebsite) {
+    const businessWebsite = admin?.businessWebsite;
+    if (!admin || !businessWebsite) {
       throw new AppError(status.NOT_FOUND, "Business website not found", {
         code: "WEBSITE_NOT_FOUND",
         retryable: false,
       });
     }
 
-    if (admin.businessWebsite.status === WEBSITE_STATUS.SUSPENDED) {
+    if (businessWebsite.status === WEBSITE_STATUS.SUSPENDED) {
       throw new AppError(status.CONFLICT, "Suspended websites cannot change booking configuration", {
         code: "WEBSITE_SUSPENDED",
         retryable: false,
       });
     }
 
-    const nextWebsiteStatus = statusAfterDraftMutation(admin.businessWebsite.status as WebsiteLifecycleStatus);
+    const nextWebsiteStatus = statusAfterDraftMutation(businessWebsite.status as WebsiteLifecycleStatus);
 
     const presentationPatch = {
       ...(payload.showHeaderCta !== undefined ? { bookingShowHeaderCta: payload.showHeaderCta } : {}),
@@ -508,15 +509,19 @@ const configure = async (
 
     if (!payload.enabled) {
       await tx.businessWebsite.update({
-        where: { id: admin.businessWebsite.id },
+        where: { id: businessWebsite.id },
         data: { bookingEnabled: false, status: nextWebsiteStatus, ...presentationPatch },
       });
       return;
     }
 
-    const targetForm = await selectOrCreateBookingFormTx(tx, admin, payload.bookingFormId);
+    const targetForm = await selectOrCreateBookingFormTx(
+      tx,
+      { id: admin.id, businessName: admin.businessName, businessWebsite },
+      payload.bookingFormId,
+    );
     await tx.businessWebsite.update({
-      where: { id: admin.businessWebsite.id },
+      where: { id: businessWebsite.id },
       data: {
         primaryBookingFormId: targetForm.id,
         bookingEnabled: true,

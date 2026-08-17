@@ -9,6 +9,11 @@ import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { WebsiteEntitlementService } from "./websiteEntitlement.service";
 import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
 
+type WebsiteStudioDomain = Parameters<typeof isWebsiteDomainRoutingReady>[0] & {
+  id: string;
+  [key: string]: unknown;
+};
+
 /**
  * Lightweight read model for Website Studio.
  *
@@ -69,9 +74,14 @@ const getStudio = async (user: IRequestUser) => {
     published?.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled),
   );
 
+  // WebsiteService deliberately presents domains as an API-safe read model.
+  // Its database adapter is intentionally generic, so establish the minimum
+  // routing-ready shape once here instead of letting callback parameters fall
+  // through to implicit `any` under strict TypeScript settings.
+  const websiteDomains = website.domains as WebsiteStudioDomain[];
   const allowedReadyDomainIds = new Set(
     WEBSITE_CUSTOM_DOMAINS_ENABLED && entitlements.customDomains && entitlements.customDomainLimit > 0
-      ? website.domains
+      ? websiteDomains
           .filter((domain) => isWebsiteDomainRoutingReady(domain))
           .slice(0, entitlements.customDomainLimit)
           .map((domain) => domain.id)
@@ -79,7 +89,7 @@ const getStudio = async (user: IRequestUser) => {
   );
   const studioWebsite = {
     ...website,
-    domains: website.domains.map((domain) => ({
+    domains: websiteDomains.map((domain) => ({
       ...domain,
       entitlementActive:
         isWebsiteDomainRoutingReady(domain) && allowedReadyDomainIds.has(domain.id),

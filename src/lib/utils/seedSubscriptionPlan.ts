@@ -1,3 +1,4 @@
+import type { Prisma } from "../../generated/prisma/client";
 import {
     Currency,
     SubscriptionName,
@@ -331,10 +332,20 @@ export async function seedSubscriptionPlans() {
                 subscriptionPlan = await prisma.subscriptionPlan.update({
                     where: { id: subscriptionPlan.id },
                     data: {
+                        // Prisma JSON inputs require JSON-shaped object values.
+                        // `SubscriptionPlanFeature` is an interface and therefore
+                        // does not carry Prisma's InputJsonObject index signature,
+                        // so serialize the merged rows into plain JSON objects at
+                        // this persistence boundary rather than weakening the
+                        // domain type with a broad cast.
                         features: [
                             ...existingFeatures,
                             ...missingWebsiteEntitlements,
-                        ],
+                        ].map((feature) => ({
+                            label: feature.label,
+                            included: feature.included,
+                            ...(feature.limit ? { limit: feature.limit } : {}),
+                        })) satisfies Prisma.InputJsonValue,
                     },
                 });
             }
