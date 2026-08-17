@@ -5,13 +5,14 @@ import {
   publicHostResolveRateLimit,
   publicResourceMutationRateLimit,
   publicTelemetryRateLimit,
+  publicResourceTelemetryRateLimit,
 } from "../../middlewares/publicApiSecurity";
 import { ValidationProperty, zodValidate } from "../../middlewares/validations/zodValidation.middleware";
 import { bookingFormValidation } from "../BookingForm/bookingForm.validation";
 import { estimateFormValidation } from "../EstimateForm/estimateForm.validation";
 import { websiteController } from "./website.controller";
 import { websiteValidation } from "./website.validation";
-import { publicSpamGuard } from "../../middlewares/publicSpamProtection";
+import { publicWebsiteSpamGuard } from "../../middlewares/publicSpamProtection";
 
 const router = Router();
 
@@ -40,7 +41,7 @@ router.post(
   "/:identifier/booking",
   publicMutationRateLimit,
   publicResourceMutationRateLimit,
-  publicSpamGuard,
+  publicWebsiteSpamGuard,
   zodValidate(
     bookingFormValidation.publicBookingSubmissionSchema,
     ValidationProperty.BODY,
@@ -67,7 +68,7 @@ router.post(
   "/:identifier/estimate",
   publicMutationRateLimit,
   publicResourceMutationRateLimit,
-  publicSpamGuard,
+  publicWebsiteSpamGuard,
   zodValidate(estimateFormValidation.publicSubmission, ValidationProperty.BODY),
   websiteController.submitPublicWebsiteEstimate,
 );
@@ -78,7 +79,7 @@ router.post(
   "/:identifier/contact",
   publicMutationRateLimit,
   publicResourceMutationRateLimit,
-  publicSpamGuard,
+  publicWebsiteSpamGuard,
   zodValidate(websiteValidation.publicContact, ValidationProperty.BODY),
   websiteController.submitPublicWebsiteContact,
 );
@@ -86,12 +87,14 @@ router.post(
 router.post(
   "/:identifier/analytics",
   publicTelemetryRateLimit,
+  publicResourceTelemetryRateLimit,
   zodValidate(websiteValidation.publicAnalytics, ValidationProperty.BODY),
   websiteController.trackPublicWebsiteAnalytics,
 );
 router.post(
   "/:identifier/error",
   publicTelemetryRateLimit,
+  publicResourceTelemetryRateLimit,
   zodValidate(websiteValidation.publicClientError, ValidationProperty.BODY),
   websiteController.reportPublicWebsiteError,
 );

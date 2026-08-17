@@ -131,9 +131,15 @@ const trackPublicPageView = async (
 ) => {
   const resolved = await PublicWebsiteService.resolveIdentifier(identifier);
   // Resolve the public projection first so analytics cannot be written for a
-  // suspended/unpublished tenant simply by guessing a valid subdomain.
-  await PublicWebsiteService.getPublicWebsiteById(resolved.websiteId);
-  return createEvent(resolved.websiteId, WEBSITE_ANALYTICS_EVENT.PAGE_VIEW, payload.path, payload, context);
+  // suspended/unpublished tenant simply by guessing a valid subdomain. Only
+  // real enabled website page paths are accepted, preventing unbounded path
+  // cardinality from fabricated telemetry requests.
+  const site = await PublicWebsiteService.getPublicWebsiteById(resolved.websiteId);
+  const path = sanitizePath(payload.path);
+  if (!site.pages.some((page) => page.path === path)) {
+    return { accepted: true, recorded: false };
+  }
+  return createEvent(resolved.websiteId, WEBSITE_ANALYTICS_EVENT.PAGE_VIEW, path, payload, context);
 };
 
 const trackConversion = async (
@@ -164,19 +170,18 @@ const getSummary = async (user: IRequestUser, requestedDays = 30) => {
   since.setHours(0, 0, 0, 0);
   const baseWhere = { websiteId: website.id, createdAt: { gte: since } };
 
-  const [pageViews, visitors, conversions, pageGroups] = await Promise.all([
+  const [pageViews, visitorCountRows, conversions, pageGroups] = await Promise.all([
     prisma.websiteAnalyticsEvent.count({
       where: { ...baseWhere, eventType: WEBSITE_ANALYTICS_EVENT.PAGE_VIEW },
     }),
-    prisma.websiteAnalyticsEvent.findMany({
-      where: {
-        ...baseWhere,
-        eventType: WEBSITE_ANALYTICS_EVENT.PAGE_VIEW,
-        visitorHash: { not: null },
-      },
-      select: { visitorHash: true },
-      distinct: ["visitorHash"],
-    }),
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+      SELECT COUNT(DISTINCT "visitorHash")::bigint AS "count"
+      FROM "website_analytics_event"
+      WHERE "websiteId" = ${website.id}
+        AND "eventType" = ${WEBSITE_ANALYTICS_EVENT.PAGE_VIEW}
+        AND "visitorHash" IS NOT NULL
+        AND "createdAt" >= ${since}
+    `,
     prisma.websiteAnalyticsEvent.groupBy({
       by: ["eventType"],
       where: {
@@ -207,7 +212,7 @@ const getSummary = async (user: IRequestUser, requestedDays = 30) => {
   return {
     days,
     pageViews,
-    uniqueVisitors: visitors.length,
+    uniqueVisitors: Number(visitorCountRows[0]?.count ?? 0),
     conversions: { contacts, bookings, estimates, total: contacts + bookings + estimates },
     topPages: pageGroups
       .map((item) => ({ path: item.path, views: item._count._all }))

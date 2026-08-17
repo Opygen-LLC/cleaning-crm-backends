@@ -19,7 +19,7 @@ import cookieParser from "cookie-parser";
 import { notFound } from "./middlewares/notFound";
 import { maintenanceModeGate } from "./middlewares/maintenanceMode";
 import path from "path";
-import { BETTER_AUTH_URL, FRONTEND_URL, NODE_ENV, WEBSITE_BASE_DOMAIN } from "./config/ENV";
+import { BETTER_AUTH_URL, FRONTEND_URL, NODE_ENV, TRUST_PROXY_HOPS, WEBSITE_BASE_DOMAIN } from "./config/ENV";
 import { WebsiteHostResolverService } from "./modules/Website/websiteHostResolver.service";
 
 import "../src/cron/staffStatus.cron";
@@ -44,6 +44,11 @@ import { requestContext } from "./middlewares/requestContext";
 scheduleSubscriptionExpiryJob();
 
 const app = express();
+
+// Public rate limits and privacy-preserving analytics depend on req.ip. Trust
+// only the explicitly configured number of ingress hops; never blindly trust
+// arbitrary X-Forwarded-For input from direct internet clients.
+if (TRUST_PROXY_HOPS > 0) app.set("trust proxy", TRUST_PROXY_HOPS);
 
 // Assign a correlation ID before any parser/CORS/router work so even early
 // failures can be traced from the browser to server logs.

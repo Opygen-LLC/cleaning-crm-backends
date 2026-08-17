@@ -214,6 +214,7 @@ const projectWebsite = (
   return {
     website: {
       subdomain: website.subdomain,
+      publishedAt: website.publishedAt,
       // Preview deliberately uses the public projection contract so the exact
       // Phase-3 renderer is exercised without teaching templates about admin
       // lifecycle states.
@@ -297,23 +298,17 @@ const projectWebsite = (
 
 const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: string | null = null) => {
   type PublicProjection = ReturnType<typeof projectWebsite>;
-  const cached = await WebsiteProjectionCacheService.get<PublicProjection>(websiteId);
-  if (cached) {
-    // Alias information belongs to the current request, not the canonical
-    // website projection. Keep one cache entry per website and overlay only
-    // the request-specific redirect hint.
-    return {
-      ...cached,
-      website: {
-        ...cached.website,
-        redirectToSubdomain: aliasRedirectSubdomain,
-      },
-    };
-  }
+  const canonical = await WebsiteProjectionCacheService.getOrLoad<PublicProjection>(
+    websiteId,
+    async () => {
+      const website = await loadProjectionSource(websiteId);
+      return projectWebsite(website, { mode: "public", aliasRedirectSubdomain: null });
+    },
+  );
 
-  const website = await loadProjectionSource(websiteId);
-  const canonical = projectWebsite(website, { mode: "public", aliasRedirectSubdomain: null });
-  await WebsiteProjectionCacheService.set(websiteId, canonical);
+  // Alias information belongs to the current request, not the canonical
+  // website projection. Keep one cache entry per website and overlay only the
+  // request-specific redirect hint.
   return aliasRedirectSubdomain
     ? { ...canonical, website: { ...canonical.website, redirectToSubdomain: aliasRedirectSubdomain } }
     : canonical;

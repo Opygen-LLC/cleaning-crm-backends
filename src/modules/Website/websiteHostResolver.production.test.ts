@@ -148,4 +148,62 @@ describe("production tenant host routing", () => {
     expect(prismaMock.websiteDomain.findFirst).not.toHaveBeenCalled();
   });
 
+  it("never resolves a nested platform hostname as another tenant subdomain", async () => {
+    prismaMock.websiteDomain.findFirst.mockResolvedValue(null);
+
+    await expect(WebsiteHostResolverService.resolveHost("victim.attacker.sites.example.com")).rejects.toMatchObject({
+      statusCode: 404,
+    });
+
+    expect(prismaMock.businessWebsite.findUnique).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { subdomain: "victim" } }),
+    );
+  });
+
+  it("rejects URL-shaped and IP host input before any tenant database lookup", async () => {
+    await expect(WebsiteHostResolverService.resolveHost("https://sparkle.sites.example.com/path")).rejects.toMatchObject({
+      statusCode: 404,
+    });
+    await expect(WebsiteHostResolverService.resolveHost("127.0.0.1")).rejects.toMatchObject({
+      statusCode: 404,
+    });
+
+    expect(prismaMock.businessWebsite.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.websiteSubdomainAlias.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.websiteDomain.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("keeps cached tenant routes isolated by exact host", async () => {
+    redisMock.get.mockImplementation(async (key: string) => {
+      if (key.includes("sparkle.sites.example.com")) {
+        return JSON.stringify({
+          version: 5,
+          websiteId: "website-a",
+          requestedSubdomain: "sparkle",
+          canonicalSubdomain: "sparkle",
+          isAlias: false,
+          redirectCode: null,
+          primaryCustomHost: null,
+          requestedHost: "sparkle.sites.example.com",
+          canonicalHost: "sparkle.sites.example.com",
+          routeKind: "platform_subdomain",
+          customDomain: null,
+        });
+      }
+      return null;
+    });
+    prismaMock.businessWebsite.findUnique.mockResolvedValue({
+      id: "website-b",
+      subdomain: "fresh",
+      domains: [],
+    });
+
+    const cached = await WebsiteHostResolverService.resolveHost("sparkle.sites.example.com");
+    const fresh = await WebsiteHostResolverService.resolveHost("fresh.sites.example.com");
+
+    expect(cached.websiteId).toBe("website-a");
+    expect(fresh.websiteId).toBe("website-b");
+    expect(fresh.canonicalHost).toBe("fresh.sites.example.com");
+  });
+
 });

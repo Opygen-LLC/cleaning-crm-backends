@@ -2,6 +2,8 @@ import type { NextFunction, Request, Response } from "express";
 import { TURNSTILE_SECRET_KEY } from "../config/ENV";
 
 const trapFields = ["companyWebsite", "website", "_gotcha", "fax"] as const;
+const MIN_FORM_AGE_MS = 750;
+const MAX_FORM_AGE_MS = 24 * 60 * 60 * 1000;
 
 const fail = (res: Response, message = "Invalid public submission") =>
   res.status(400).json({
@@ -10,21 +12,28 @@ const fail = (res: Response, message = "Invalid public submission") =>
     error: { code: "PUBLIC_SPAM_REJECTED", retryable: false },
   });
 
-export const publicSpamGuard = async (req: Request, res: Response, next: NextFunction) => {
+const guard = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  options: { requireStartedAt: boolean },
+) => {
   const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
   for (const field of trapFields) {
     const value = body[field];
     if (typeof value === "string" && value.trim()) return fail(res);
   }
 
-  // New website clients send the time at which the form became interactive.
-  // The header is optional for legacy shared form URLs, but if supplied it must
-  // be plausible: sub-second automated posts and stale replay payloads fail.
+  // Website forms always send the time at which the form became interactive.
+  // Requiring it on the new tenant website endpoints blocks basic scripted
+  // POSTs before they reach tenant/database work. Legacy shared form URLs keep
+  // it optional so existing embeds are not broken during migration.
   const startedAtHeader = req.get("X-Form-Started-At");
+  if (options.requireStartedAt && !startedAtHeader) return fail(res);
   if (startedAtHeader) {
     const startedAt = Number(startedAtHeader);
     const age = Date.now() - startedAt;
-    if (!Number.isFinite(startedAt) || age < 750 || age > 24 * 60 * 60 * 1000) {
+    if (!Number.isFinite(startedAt) || age < MIN_FORM_AGE_MS || age > MAX_FORM_AGE_MS) {
       return fail(res);
     }
   }
@@ -54,3 +63,11 @@ export const publicSpamGuard = async (req: Request, res: Response, next: NextFun
 
   return next();
 };
+
+/** Backward-compatible protection for legacy shared public forms. */
+export const publicSpamGuard = (req: Request, res: Response, next: NextFunction) =>
+  guard(req, res, next, { requireStartedAt: false });
+
+/** Stronger protection for the Phase 3+ tenant website acquisition endpoints. */
+export const publicWebsiteSpamGuard = (req: Request, res: Response, next: NextFunction) =>
+  guard(req, res, next, { requireStartedAt: true });

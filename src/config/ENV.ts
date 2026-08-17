@@ -31,6 +31,7 @@ export const SLOW_REQUEST_THRESHOLD_MS: number = Math.max(
     50,
     Number(process.env.SLOW_REQUEST_THRESHOLD_MS) || 250,
 );
+export const TRUST_PROXY_HOPS: number = Math.min(5, Math.max(0, Math.trunc(Number(process.env.TRUST_PROXY_HOPS) || 0)));
 
 export const CLOUDINARY_CLOUD_NAME: string = process.env
     .CLOUDINARY_CLOUD_NAME as string;
@@ -145,3 +146,7 @@ export const ERROR_MONITOR_WEBHOOK_URL: string | undefined = process.env.ERROR_M
 export const ERROR_MONITOR_WEBHOOK_TOKEN: string | undefined = process.env.ERROR_MONITOR_WEBHOOK_TOKEN?.trim();
 export const ERROR_MONITOR_SERVICE_NAME: string = process.env.ERROR_MONITOR_SERVICE_NAME?.trim() || "cleaning-crm-api";
 export const WEBSITE_ANALYTICS_RETENTION_DAYS: number = Math.min(730, Math.max(30, Number(process.env.WEBSITE_ANALYTICS_RETENTION_DAYS) || 180));
+export const WEBSITE_PROJECTION_CACHE_TTL_SECONDS: number = Math.min(1800, Math.max(30, Number(process.env.WEBSITE_PROJECTION_CACHE_TTL_SECONDS) || 180));
+export const WEBSITE_PROJECTION_CACHE_JITTER_RATIO: number = Math.min(0.4, Math.max(0, Number(process.env.WEBSITE_PROJECTION_CACHE_JITTER_RATIO) || 0.15));
+export const WEBSITE_PROJECTION_REBUILD_LOCK_SECONDS: number = Math.min(30, Math.max(2, Number(process.env.WEBSITE_PROJECTION_REBUILD_LOCK_SECONDS) || 8));
+export const WEBSITE_ERROR_DEDUPE_TTL_SECONDS: number = Math.min(3600, Math.max(10, Number(process.env.WEBSITE_ERROR_DEDUPE_TTL_SECONDS) || 120));

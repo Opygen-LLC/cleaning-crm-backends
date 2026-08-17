@@ -1,5 +1,8 @@
 import { rateLimit } from "express-rate-limit";
 import type { NextFunction, Request, Response } from "express";
+import { RedisRateLimitStore } from "../lib/rateLimit/redisRateLimitStore";
+
+const WINDOW_MS = 15 * 60 * 1000;
 
 const jsonMessage = (message: string) => ({
     success: false,
@@ -8,22 +11,29 @@ const jsonMessage = (message: string) => ({
 });
 
 const base = {
-    windowMs: 15 * 60 * 1000,
+    windowMs: WINDOW_MS,
     standardHeaders: "draft-8" as const,
     legacyHeaders: false,
 };
 
-/** Per-IP protection for unauthenticated reads. */
+const store = (prefix: string) => new RedisRateLimitStore({
+    prefix,
+    windowMs: WINDOW_MS,
+});
+
+/** Per-IP distributed protection for unauthenticated reads. */
 export const publicReadRateLimit = rateLimit({
     ...base,
     limit: 180,
+    store: store("public-read"),
     message: jsonMessage("Too many requests. Please try again shortly."),
 });
 
-/** Per-IP protection for unauthenticated writes/calculations. */
+/** Per-IP distributed protection for unauthenticated writes/calculations. */
 export const publicMutationRateLimit = rateLimit({
     ...base,
     limit: 30,
+    store: store("public-write"),
     message: jsonMessage("Too many submissions. Please wait and try again."),
 });
 
@@ -35,9 +45,10 @@ export const publicMutationRateLimit = rateLimit({
 export const publicResourceMutationRateLimit = rateLimit({
     ...base,
     limit: 240,
+    store: store("public-resource-write"),
     keyGenerator: (req: Request) => {
         const key = req.params.identifier ?? req.params.slug ?? req.params.token ?? "public";
-        return `public-resource:${String(key).slice(0, 160)}`;
+        return `public-resource:${String(key).toLowerCase().slice(0, 160)}`;
     },
     message: jsonMessage("This public form is receiving too many requests. Please try again shortly."),
 });
@@ -50,6 +61,7 @@ export const publicResourceMutationRateLimit = rateLimit({
 export const publicHostResolveRateLimit = rateLimit({
     ...base,
     limit: 1200,
+    store: store("public-host-resolve"),
     keyGenerator: (req: Request) => {
         const key = req.params.host ?? req.params.subdomain ?? "host";
         return `public-host:${String(key).toLowerCase().slice(0, 253)}`;
@@ -57,12 +69,27 @@ export const publicHostResolveRateLimit = rateLimit({
     message: jsonMessage("Too many website routing requests. Please try again shortly."),
 });
 
-
-/** High-volume but bounded telemetry. Analytics/error endpoints never receive credentials. */
+/** High-volume but bounded telemetry per visitor/IP. */
 export const publicTelemetryRateLimit = rateLimit({
     ...base,
     limit: 180,
+    store: store("public-telemetry"),
     message: jsonMessage("Too many telemetry requests. Please try again shortly."),
+});
+
+/**
+ * Stops distributed telemetry/error-report floods from targeting one tenant
+ * while preserving enough headroom for normal page-view analytics.
+ */
+export const publicResourceTelemetryRateLimit = rateLimit({
+    ...base,
+    limit: 2_000,
+    store: store("public-resource-telemetry"),
+    keyGenerator: (req: Request) => {
+        const key = req.params.identifier ?? "public";
+        return `public-telemetry-resource:${String(key).toLowerCase().slice(0, 160)}`;
+    },
+    message: jsonMessage("This website is receiving too many telemetry requests. Please try again shortly."),
 });
 
 /**
