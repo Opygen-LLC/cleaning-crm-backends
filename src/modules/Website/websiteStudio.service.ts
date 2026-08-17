@@ -8,6 +8,7 @@ import { parsePublishedSnapshot } from "./websiteSnapshot";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { WebsiteEntitlementService } from "./websiteEntitlement.service";
 import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
+import { WebsiteOverviewService } from "./websiteOverview.service";
 
 type WebsiteStudioDomain = Parameters<typeof isWebsiteDomainRoutingReady>[0] & {
   id: string;
@@ -26,7 +27,7 @@ type WebsiteStudioDomain = Parameters<typeof isWebsiteDomainRoutingReady>[0] & {
 const getStudio = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
 
-  const [website, business, bookingForms, estimateForms, entitlements] = await Promise.all([
+  const [website, business, bookingForms, estimateForms, entitlements, overview] = await Promise.all([
     WebsiteService.getWebsiteForAdmin(adminId),
     prisma.adminProfile.findUnique({
       where: { id: adminId },
@@ -52,6 +53,7 @@ const getStudio = async (user: IRequestUser) => {
       take: 100,
     }),
     WebsiteEntitlementService.getForAdminId(adminId),
+    WebsiteOverviewService.getForAdminId(adminId),
   ]);
 
   const published = parsePublishedSnapshot(business?.businessWebsite?.publishedSnapshot);
@@ -116,6 +118,7 @@ const getStudio = async (user: IRequestUser) => {
       city: business?.city?.trim() || null,
     },
     seoDefaults,
+    overview,
     booking: {
       live: Boolean(
         business?.businessWebsite?.status === "PUBLISHED" &&
