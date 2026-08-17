@@ -170,6 +170,7 @@ const currentDraftAsPublishedSnapshot = (website: any) => buildPublishedSnapshot
   bookingShowHomeCta: website.bookingShowHomeCta,
   bookingShowAvailableSlots: website.bookingShowAvailableSlots,
   bookingShowPrices: website.bookingShowPrices,
+  estimateEnabled: website.estimateEnabled,
   metaTitle: website.metaTitle,
   metaDescription: website.metaDescription,
   socialImageUrl: website.socialImageUrl,
@@ -218,7 +219,7 @@ const projectWebsite = (
     ? website.admin.estimateForms.find((form) => form.id === config.primaryEstimateFormId) ?? null
     : null;
   const bookingEnabled = config.bookingEnabled && Boolean(selectedBookingForm?.published);
-  const estimateEnabled = Boolean(selectedEstimateForm?.published);
+  const estimateEnabled = config.estimateEnabled && Boolean(selectedEstimateForm?.published);
 
   return {
     website: {
@@ -348,6 +349,7 @@ const loadPublishedIntegrationSource = async (identifier: string) => {
       publishedSnapshot: true,
       primaryBookingFormId: true,
       primaryEstimateFormId: true,
+      estimateEnabled: true,
       bookingEnabled: true,
       bookingShowAvailableSlots: true,
       bookingShowPrices: true,
@@ -406,11 +408,14 @@ const resolvePublicEstimateIntegration = async (identifier: string) => {
   const website = await loadPublishedIntegrationSource(identifier);
   const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
   const formId = selectPublishedIntegrationFormId(publishedSnapshot, website.primaryEstimateFormId, "estimate");
+  const estimateEnabled = publishedSnapshot
+    ? publishedSnapshot.website.estimateEnabled
+    : website.estimateEnabled;
   const estimatePageEnabled = publishedSnapshot
     ? publishedSnapshot.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled)
     : website.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled);
 
-  if (!formId || !estimatePageEnabled) {
+  if (!estimateEnabled || !formId || !estimatePageEnabled) {
     throw new AppError(status.NOT_FOUND, "Online estimates are not available on this website.", {
       code: "WEBSITE_ESTIMATE_UNAVAILABLE",
       retryable: false,

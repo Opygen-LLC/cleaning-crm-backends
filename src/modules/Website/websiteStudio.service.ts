@@ -53,6 +53,15 @@ const getStudio = async (user: IRequestUser) => {
   const publishedBookPageEnabled = Boolean(
     published?.pages.some((page) => page.kind === "BOOK" && page.isEnabled),
   );
+  const publishedEstimateFormId = published?.website.estimateEnabled
+    ? published.website.primaryEstimateFormId
+    : null;
+  const publishedEstimateForm = publishedEstimateFormId
+    ? estimateForms.find((form) => form.id === publishedEstimateFormId && form.published) ?? null
+    : null;
+  const publishedEstimatePageEnabled = Boolean(
+    published?.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled),
+  );
 
   return {
     website,
@@ -68,6 +77,16 @@ const getStudio = async (user: IRequestUser) => {
       ),
       publishedBookingFormId: publishedBookingForm?.id ?? null,
       publishedBookingFormHeadline: publishedBookingForm?.headline ?? null,
+    },
+    estimate: {
+      live: Boolean(
+        business?.businessWebsite?.status === "PUBLISHED" &&
+        published?.website.estimateEnabled &&
+        publishedEstimatePageEnabled &&
+        publishedEstimateForm,
+      ),
+      publishedEstimateFormId: publishedEstimateForm?.id ?? null,
+      publishedEstimateFormHeadline: publishedEstimateForm?.headline ?? null,
     },
     templates: TemplateRegistry.list(),
     bookingForms,

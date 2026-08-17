@@ -29,6 +29,7 @@ const websitePatch = z.object({
   bookingShowHomeCta: z.boolean().optional(),
   bookingShowAvailableSlots: z.boolean().optional(),
   bookingShowPrices: z.boolean().optional(),
+  estimateEnabled: z.boolean().optional(),
   metaTitle: nullableText(120).optional(),
   metaDescription: nullableText(320).optional(),
   socialImageUrl: z.string().url().max(2048).nullable().optional(),

@@ -146,6 +146,7 @@ const createWebsiteRecordTx = async (
       bookingShowHomeCta: DEFAULT_WEBSITE_SETTINGS.bookingShowHomeCta,
       bookingShowAvailableSlots: DEFAULT_WEBSITE_SETTINGS.bookingShowAvailableSlots,
       bookingShowPrices: DEFAULT_WEBSITE_SETTINGS.bookingShowPrices,
+      estimateEnabled: DEFAULT_WEBSITE_SETTINGS.estimateEnabled,
       metaTitle: DEFAULT_WEBSITE_SETTINGS.metaTitle,
       metaDescription: DEFAULT_WEBSITE_SETTINGS.metaDescription,
       socialImageUrl: DEFAULT_WEBSITE_SETTINGS.socialImageUrl,

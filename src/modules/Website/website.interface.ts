@@ -23,6 +23,7 @@ export interface WebsiteUpdateInput {
   bookingShowHomeCta?: boolean;
   bookingShowAvailableSlots?: boolean;
   bookingShowPrices?: boolean;
+  estimateEnabled?: boolean;
   metaTitle?: string | null;
   metaDescription?: string | null;
   socialImageUrl?: string | null;

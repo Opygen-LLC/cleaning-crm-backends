@@ -31,6 +31,7 @@ export interface WebsitePublishedSnapshotV1 {
     bookingShowHomeCta: boolean;
     bookingShowAvailableSlots: boolean;
     bookingShowPrices: boolean;
+    estimateEnabled: boolean;
     metaTitle: string | null;
     metaDescription: string | null;
     socialImageUrl: string | null;
@@ -57,6 +58,7 @@ interface DraftWebsiteLike {
   bookingShowHomeCta?: boolean;
   bookingShowAvailableSlots?: boolean;
   bookingShowPrices?: boolean;
+  estimateEnabled?: boolean;
   metaTitle?: string | null;
   metaDescription?: string | null;
   socialImageUrl?: string | null;
@@ -97,6 +99,10 @@ export const buildPublishedSnapshot = (draft: DraftWebsiteLike): WebsitePublishe
     bookingShowHomeCta: draft.bookingShowHomeCta ?? true,
     bookingShowAvailableSlots: draft.bookingShowAvailableSlots ?? true,
     bookingShowPrices: draft.bookingShowPrices ?? true,
+    // Before Phase 13, selecting a published estimate form implicitly exposed
+    // /estimate. Preserve that behavior for legacy draft objects while new
+    // rows use the explicit estimateEnabled database default.
+    estimateEnabled: draft.estimateEnabled ?? Boolean(draft.primaryEstimateFormId),
     metaTitle: draft.metaTitle ?? null,
     metaDescription: draft.metaDescription ?? null,
     socialImageUrl: draft.socialImageUrl ?? null,
@@ -148,6 +154,7 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
     (site.bookingShowHomeCta !== undefined && typeof site.bookingShowHomeCta !== "boolean") ||
     (site.bookingShowAvailableSlots !== undefined && typeof site.bookingShowAvailableSlots !== "boolean") ||
     (site.bookingShowPrices !== undefined && typeof site.bookingShowPrices !== "boolean") ||
+    (site.estimateEnabled !== undefined && typeof site.estimateEnabled !== "boolean") ||
     !stringOrNull(site.metaTitle) ||
     !stringOrNull(site.metaDescription) ||
     !stringOrNull(site.socialImageUrl) ||
@@ -202,6 +209,10 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
       bookingShowHomeCta: site.bookingShowHomeCta ?? true,
       bookingShowAvailableSlots: site.bookingShowAvailableSlots ?? true,
       bookingShowPrices: site.bookingShowPrices ?? true,
+      // Legacy V1 snapshots had no explicit estimate switch; an attached form
+      // meant estimates were enabled. Keep those already-published sites live
+      // during rolling deployment/migration.
+      estimateEnabled: site.estimateEnabled ?? Boolean(site.primaryEstimateFormId),
       metaTitle: site.metaTitle,
       metaDescription: site.metaDescription,
       socialImageUrl: site.socialImageUrl,

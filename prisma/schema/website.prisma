@@ -27,6 +27,11 @@ model BusinessWebsite {
   bookingShowAvailableSlots  Boolean @default(true)
   bookingShowPrices          Boolean @default(true)
 
+  // Website presentation switch around the existing EstimateForm engine.
+  // The selected form stays attached when disabled so it can be re-enabled
+  // without rebuilding or duplicating estimate configuration.
+  estimateEnabled            Boolean @default(false)
+
   metaTitle               String?
   metaDescription         String?
   socialImageUrl          String?

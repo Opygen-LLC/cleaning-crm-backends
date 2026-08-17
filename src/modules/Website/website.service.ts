@@ -116,6 +116,40 @@ const assertBookingReadyForPublish = async (
   }
 };
 
+const assertEstimateReadyForPublish = async (
+  adminId: string,
+  draft: {
+    estimateEnabled: boolean;
+    primaryEstimateFormId: string | null;
+    pages: Array<{ kind: string; isEnabled: boolean }>;
+  },
+  db: any,
+) => {
+  if (!draft.estimateEnabled) return;
+  if (!draft.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled)) {
+    throw new AppError(status.CONFLICT, "Enable the Estimate page before publishing estimate requests", {
+      code: "WEBSITE_ESTIMATE_PAGE_REQUIRED",
+      retryable: false,
+    });
+  }
+  if (!draft.primaryEstimateFormId) {
+    throw new AppError(status.CONFLICT, "Select a published estimate form before enabling estimate requests", {
+      code: "WEBSITE_ESTIMATE_FORM_REQUIRED",
+      retryable: false,
+    });
+  }
+  const form = await db.estimateForm.findFirst({
+    where: { id: draft.primaryEstimateFormId, adminId, published: true },
+    select: { id: true },
+  });
+  if (!form) {
+    throw new AppError(status.CONFLICT, "The selected estimate form must be published before the website can go live", {
+      code: "WEBSITE_ESTIMATE_FORM_UNPUBLISHED",
+      retryable: false,
+    });
+  }
+};
+
 /**
  * Revision snapshots intentionally exclude publishedSnapshot itself. Including
  * it would recursively embed the previous publication in every new revision
@@ -146,6 +180,7 @@ const loadDraftSnapshot = async (websiteId: string, db: any) => {
       bookingShowHomeCta: true,
       bookingShowAvailableSlots: true,
       bookingShowPrices: true,
+      estimateEnabled: true,
       metaTitle: true,
       metaDescription: true,
       socialImageUrl: true,
@@ -524,7 +559,10 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
       assertOwnedForm(adminId, draft.primaryBookingFormId, "booking", tx),
       assertOwnedForm(adminId, draft.primaryEstimateFormId, "estimate", tx),
     ]);
-    await assertBookingReadyForPublish(adminId, draft, tx);
+    await Promise.all([
+      assertBookingReadyForPublish(adminId, draft, tx),
+      assertEstimateReadyForPublish(adminId, draft, tx),
+    ]);
 
     const revision = await createRevisionSnapshot(tx, current.id, user.id, "Website published", baseRevisionNumber);
     const publishedSnapshot = buildPublishedSnapshot(draft);
@@ -723,6 +761,8 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
         });
       }
     }
+
+    await assertEstimateReadyForPublish(adminId, draft, tx);
 
     // Building the immutable publication document before the write validates
     // the exact config/pages the public projection will consume after commit.

@@ -61,6 +61,29 @@ describe("website published snapshots", () => {
     }));
   });
 
+  it("stores estimate availability inside the immutable publication snapshot", () => {
+    const snapshot = buildPublishedSnapshot({
+      ...draft,
+      primaryEstimateFormId: "estimate-1",
+      estimateEnabled: true,
+    });
+
+    expect(snapshot.website.primaryEstimateFormId).toBe("estimate-1");
+    expect(snapshot.website.estimateEnabled).toBe(true);
+  });
+
+  it("keeps legacy estimate snapshots live when they already had an attached form", () => {
+    const snapshot = buildPublishedSnapshot({
+      ...draft,
+      primaryEstimateFormId: "estimate-legacy",
+      estimateEnabled: true,
+    });
+    const legacy = JSON.parse(JSON.stringify(snapshot));
+    delete legacy.website.estimateEnabled;
+
+    expect(parsePublishedSnapshot(legacy)?.website.estimateEnabled).toBe(true);
+  });
+
   it("defaults legacy V1 snapshots to the previous booking presentation behavior", () => {
     const snapshot = buildPublishedSnapshot(draft);
     const legacy = JSON.parse(JSON.stringify(snapshot));
