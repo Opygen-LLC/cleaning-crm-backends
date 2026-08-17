@@ -14,13 +14,14 @@ import { prisma } from "../../lib/prisma/prisma";
 import { normalizeSubdomain } from "./websiteIdentity";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 
-const ROUTE_CACHE_VERSION = 5 as const;
+const ROUTE_CACHE_VERSION = 6 as const;
 const CACHE_NAMESPACE = `site-route:v${ROUTE_CACHE_VERSION}`;
 const SUBDOMAIN_KEY_PREFIX = `${CACHE_NAMESPACE}:subdomain:`;
 const HOST_KEY_PREFIX = `${CACHE_NAMESPACE}:host:`;
 const DOMAIN_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export type WebsiteHostRouteKind = "platform_subdomain" | "subdomain_alias" | "custom_domain";
+export type WebsiteHostAvailability = "live" | "unpublished" | "suspended";
 
 export interface WebsiteRouteResolution {
   version: typeof ROUTE_CACHE_VERSION;
@@ -30,6 +31,7 @@ export interface WebsiteRouteResolution {
   isAlias: boolean;
   redirectCode: 308 | null;
   primaryCustomHost: string | null;
+  availability: WebsiteHostAvailability;
 }
 
 export interface WebsiteHostResolution extends WebsiteRouteResolution {
@@ -123,6 +125,14 @@ const normalizeHost = (value: string): string => {
   return ascii;
 };
 
+const websiteAvailability = (websiteStatus: string, accountStatus: string): WebsiteHostAvailability => {
+  if (websiteStatus === "SUSPENDED" || accountStatus === "SUSPENDED" || accountStatus === "DELETED") {
+    return "suspended";
+  }
+  if (websiteStatus !== "PUBLISHED" || accountStatus !== "ACTIVE") return "unpublished";
+  return "live";
+};
+
 const platformSubdomainFromHost = (host: string): string | null => {
   if (!WEBSITE_BASE_DOMAIN) return null;
   if (host === WEBSITE_BASE_DOMAIN) return null;
@@ -170,6 +180,8 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
     select: {
       id: true,
       subdomain: true,
+      status: true,
+      admin: { select: { user: { select: { status: true } } } },
       domains: {
         where: { ...readyWebsiteDomainWhere, isPrimary: true } as any,
         select: { domain: true },
@@ -187,6 +199,7 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
       isAlias: false,
       redirectCode: null,
       primaryCustomHost: WEBSITE_CUSTOM_DOMAINS_ENABLED ? website.domains[0]?.domain ?? null : null,
+      availability: websiteAvailability(website.status, website.admin.user.status),
     };
     await safeSet(key, resolved);
     return resolved;
@@ -200,6 +213,8 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
       website: {
         select: {
           subdomain: true,
+          status: true,
+          admin: { select: { user: { select: { status: true } } } },
           domains: {
             where: { ...readyWebsiteDomainWhere, isPrimary: true } as any,
             select: { domain: true },
@@ -221,11 +236,12 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
     requestedSubdomain: subdomain,
     canonicalSubdomain: alias.website.subdomain,
     isAlias: true,
-    // Phase 6 guarantees permanent redirects for historical free subdomains.
+    // Historical free-subdomain aliases always redirect permanently to the current canonical host.
     // Fail closed to 308 even if an older row was manually created with a
     // different code.
     redirectCode: 308,
     primaryCustomHost: WEBSITE_CUSTOM_DOMAINS_ENABLED ? alias.website.domains[0]?.domain ?? null : null,
+    availability: websiteAvailability(alias.website.status, alias.website.admin.user.status),
   };
   await safeSet(key, resolved);
   return resolved;
@@ -244,6 +260,8 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
       website: {
         select: {
           subdomain: true,
+          status: true,
+          admin: { select: { user: { select: { status: true } } } },
           domains: {
             where: { ...readyWebsiteDomainWhere, isPrimary: true } as any,
             select: { domain: true },
@@ -278,6 +296,7 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
     canonicalHost,
     routeKind: "custom_domain",
     customDomain: domain.domain,
+    availability: websiteAvailability(domain.website.status, domain.website.admin.user.status),
   };
 };
 

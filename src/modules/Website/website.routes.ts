@@ -23,6 +23,7 @@ router.put(
 router.patch("/me", zodValidate(websiteValidation.updateWebsite, ValidationProperty.BODY), websiteController.updateWebsite);
 router.put("/draft", zodValidate(websiteValidation.saveDraft, ValidationProperty.BODY), websiteController.saveDraft);
 router.post("/publish", zodValidate(websiteValidation.publishWebsite, ValidationProperty.BODY), websiteController.publishWebsite);
+router.post("/launch", zodValidate(websiteValidation.publishWebsite, ValidationProperty.BODY), websiteController.launchWebsite);
 router.get("/preview", websiteController.previewWebsite);
 router.get("/pages", websiteController.listPages);
 router.patch("/pages/:pageId", zodValidate(websiteValidation.updatePage, ValidationProperty.BODY), websiteController.updatePage);

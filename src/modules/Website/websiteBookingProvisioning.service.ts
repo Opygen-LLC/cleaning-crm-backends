@@ -6,7 +6,7 @@ import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/adv
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
-import { statusAfterDraftMutation, WEBSITE_STATUS } from "./websiteLifecycle";
+import { statusAfterDraftMutation, WEBSITE_STATUS, type WebsiteLifecycleStatus } from "./websiteLifecycle";
 
 export interface WebsiteBookingSetupPayload {
   enabled: boolean;
@@ -272,6 +272,155 @@ const createManagedBookingForm = async (
   return form;
 };
 
+const selectOrCreateBookingFormTx = async (
+  tx: any,
+  admin: {
+    id: string;
+    businessName: string;
+    businessWebsite: {
+      id: string;
+      status: string;
+      accentColor: string;
+      primaryBookingFormId: string | null;
+    };
+  },
+  requestedBookingFormId?: string | null,
+) => {
+  const adminId = admin.id;
+  const services = await ensureAtLeastOneBookableService(tx, adminId);
+  let targetForm: { id: string; websiteManaged: boolean } | null = null;
+
+  if (requestedBookingFormId) {
+    targetForm = await tx.bookingForm.findFirst({
+      where: { id: requestedBookingFormId, adminId, published: true },
+      select: { id: true, websiteManaged: true },
+    });
+
+    if (!targetForm) {
+      throw new AppError(status.UNPROCESSABLE_ENTITY, "Choose a published booking form owned by this business", {
+        code: "BOOKING_FORM_INVALID",
+        retryable: false,
+        fieldErrors: { bookingFormId: "Choose one of your published booking forms." },
+      });
+    }
+  } else if (admin.businessWebsite.primaryBookingFormId) {
+    const currentPrimary = await tx.bookingForm.findFirst({
+      where: { id: admin.businessWebsite.primaryBookingFormId, adminId },
+      select: { id: true, published: true, websiteManaged: true },
+    });
+
+    if (currentPrimary?.published) {
+      targetForm = currentPrimary;
+    } else if (currentPrimary?.websiteManaged) {
+      await tx.bookingForm.update({
+        where: { id: currentPrimary.id },
+        data: { published: true },
+      });
+      targetForm = { id: currentPrimary.id, websiteManaged: true };
+    }
+  }
+
+  if (!targetForm) {
+    const publishedForms = await tx.bookingForm.findMany({
+      where: { adminId, published: true },
+      select: { id: true, websiteManaged: true },
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      take: 2,
+    });
+
+    if (publishedForms.length === 1) {
+      targetForm = publishedForms[0];
+    } else if (publishedForms.length > 1) {
+      throw new AppError(status.CONFLICT, "Choose which published booking form should power your website.", {
+        code: "BOOKING_FORM_SELECTION_REQUIRED",
+        retryable: false,
+        fieldErrors: { bookingFormId: "Select a published booking form to continue." },
+      });
+    }
+  }
+
+  if (!targetForm) {
+    // Reuse a previously generated form that an owner later unpublished. This
+    // keeps launch/configuration retries idempotent and preserves one managed
+    // website form per tenant.
+    const reusableManaged = await tx.bookingForm.findFirst({
+      where: { adminId, websiteManaged: true },
+      select: { id: true, websiteManaged: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (reusableManaged) {
+      await tx.bookingForm.update({
+        where: { id: reusableManaged.id },
+        data: { published: true },
+      });
+      targetForm = reusableManaged;
+    } else {
+      targetForm = await createManagedBookingForm(tx, admin, admin.businessWebsite, services);
+    }
+  }
+
+  if (targetForm.websiteManaged) {
+    // Auto-created forms mirror ServiceCatalog online-booking eligibility.
+    // Manually authored forms remain owner-controlled and are never rewritten.
+    await syncManagedFormServices(tx, targetForm.id, services);
+  }
+
+  return targetForm;
+};
+
+/**
+ * Transaction-level primitive used by the first website launch. It shares the
+ * same selection/creation rules as the onboarding booking screen, but never
+ * opens a nested transaction and therefore participates in the website launch
+ * commit atomically.
+ */
+const ensureAttachedForLaunchTx = async (
+  tx: any,
+  adminId: string,
+  websiteId: string,
+): Promise<string> => {
+  await acquireExtendedTextTransactionAdvisoryLock(tx, `website-booking-provision:${adminId}`);
+
+  const admin = await tx.adminProfile.findUnique({
+    where: { id: adminId },
+    select: {
+      id: true,
+      businessName: true,
+      businessWebsite: {
+        select: {
+          id: true,
+          status: true,
+          accentColor: true,
+          primaryBookingFormId: true,
+        },
+      },
+    },
+  });
+
+  if (!admin?.businessWebsite || admin.businessWebsite.id !== websiteId) {
+    throw new AppError(status.NOT_FOUND, "Business website not found", {
+      code: "WEBSITE_NOT_FOUND",
+      retryable: false,
+    });
+  }
+  if (admin.businessWebsite.status === WEBSITE_STATUS.SUSPENDED) {
+    throw new AppError(status.CONFLICT, "Suspended websites cannot be launched", {
+      code: "WEBSITE_SUSPENDED",
+      retryable: false,
+    });
+  }
+
+  const targetForm = await selectOrCreateBookingFormTx(tx, admin, null);
+  if (targetForm.id !== admin.businessWebsite.primaryBookingFormId) {
+    await tx.businessWebsite.update({
+      where: { id: websiteId },
+      data: { primaryBookingFormId: targetForm.id },
+    });
+  }
+  return targetForm.id;
+};
+
 const configure = async (
   payload: WebsiteBookingSetupPayload,
   user: IRequestUser,
@@ -311,106 +460,17 @@ const configure = async (
       });
     }
 
-    const nextWebsiteStatus = statusAfterDraftMutation(admin.businessWebsite.status);
+    const nextWebsiteStatus = statusAfterDraftMutation(admin.businessWebsite.status as WebsiteLifecycleStatus);
 
     if (!payload.enabled) {
       await tx.businessWebsite.update({
         where: { id: admin.businessWebsite.id },
-        data: {
-          primaryBookingFormId: null,
-          status: nextWebsiteStatus,
-        },
+        data: { primaryBookingFormId: null, status: nextWebsiteStatus },
       });
       return;
     }
 
-    const services = await ensureAtLeastOneBookableService(tx, adminId);
-
-    let targetForm: { id: string; websiteManaged: boolean } | null = null;
-
-    if (payload.bookingFormId) {
-      targetForm = await tx.bookingForm.findFirst({
-        where: {
-          id: payload.bookingFormId,
-          adminId,
-          published: true,
-        },
-        select: { id: true, websiteManaged: true },
-      });
-
-      if (!targetForm) {
-        throw new AppError(status.UNPROCESSABLE_ENTITY, "Choose a published booking form owned by this business", {
-          code: "BOOKING_FORM_INVALID",
-          retryable: false,
-          fieldErrors: { bookingFormId: "Choose one of your published booking forms." },
-        });
-      }
-    } else if (admin.businessWebsite.primaryBookingFormId) {
-      const currentPrimary = await tx.bookingForm.findFirst({
-        where: {
-          id: admin.businessWebsite.primaryBookingFormId,
-          adminId,
-        },
-        select: { id: true, published: true, websiteManaged: true },
-      });
-
-      if (currentPrimary?.published) {
-        targetForm = currentPrimary;
-      } else if (currentPrimary?.websiteManaged) {
-        await tx.bookingForm.update({
-          where: { id: currentPrimary.id },
-          data: { published: true },
-        });
-        targetForm = { id: currentPrimary.id, websiteManaged: true };
-      }
-    }
-
-    if (!targetForm) {
-      const publishedForms = await tx.bookingForm.findMany({
-        where: { adminId, published: true },
-        select: { id: true, websiteManaged: true },
-        orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-        take: 2,
-      });
-
-      if (publishedForms.length === 1) {
-        targetForm = publishedForms[0];
-      } else if (publishedForms.length > 1) {
-        throw new AppError(status.CONFLICT, "Choose which published booking form should power your website.", {
-          code: "BOOKING_FORM_SELECTION_REQUIRED",
-          retryable: false,
-          fieldErrors: { bookingFormId: "Select a published booking form to continue." },
-        });
-      }
-    }
-
-    if (!targetForm) {
-      // Reuse a previously generated form that an owner later unpublished.
-      // This keeps the deterministic slug idempotent and prevents duplicate
-      // managed forms after retries or publish/unpublish cycles.
-      const reusableManaged = await tx.bookingForm.findFirst({
-        where: { adminId, websiteManaged: true },
-        select: { id: true, websiteManaged: true },
-        orderBy: { createdAt: "asc" },
-      });
-
-      if (reusableManaged) {
-        await tx.bookingForm.update({
-          where: { id: reusableManaged.id },
-          data: { published: true },
-        });
-        targetForm = reusableManaged;
-      } else {
-        targetForm = await createManagedBookingForm(tx, admin, admin.businessWebsite, services);
-      }
-    }
-
-    if (targetForm.websiteManaged) {
-      // Auto-created forms stay synchronized with the onboarding service flags.
-      // Manually created forms are never rewritten by website provisioning.
-      await syncManagedFormServices(tx, targetForm.id, services);
-    }
-
+    const targetForm = await selectOrCreateBookingFormTx(tx, admin, payload.bookingFormId);
     await tx.businessWebsite.update({
       where: { id: admin.businessWebsite.id },
       data: {
@@ -427,4 +487,5 @@ const configure = async (
 export const WebsiteBookingProvisioningService = {
   getSetup,
   configure,
+  ensureAttachedForLaunchTx,
 };

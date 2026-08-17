@@ -1,11 +1,14 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
+import logger from "../../lib/logger";
 import { WEBSITE_BASE_DOMAIN, WEBSITE_CUSTOM_DOMAINS_ENABLED } from "../../config/ENV";
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
+import { PROVISIONING_TRANSACTION_OPTIONS } from "../../lib/prisma/transactionPolicy";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { uploadToCloudinary } from "../../lib/utils/cloudinary";
 import type { IRequestUser } from "../../types/requestUser.interface";
+import { ONBOARDING_STEPS } from "../Admin/admin.constant";
 import type {
   WebsiteAssetCreateInput,
   WebsiteCreateInput,
@@ -14,9 +17,11 @@ import type {
   WebsitePublishInput,
   WebsiteUpdateInput,
 } from "./website.interface";
-import { assertSafeHttpsUrl } from "./websiteIdentity";
+import { assertSafeHttpsUrl, normalizeSubdomain } from "./websiteIdentity";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteProvisioningService } from "./websiteProvisioning.service";
+import { WebsiteBookingProvisioningService } from "./websiteBookingProvisioning.service";
+import { PublicWebsiteService } from "./publicWebsite.service";
 import { buildPublishedSnapshot } from "./websiteSnapshot";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
@@ -463,6 +468,239 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
   return website;
 };
 
+
+const REQUIRED_ONBOARDING_STEPS = ONBOARDING_STEPS.map((step) => step.key);
+
+/**
+ * First-time launch is deliberately stronger than a normal Website Studio
+ * publish. It validates tenant identity/routing, guarantees a published
+ * BookingForm is attached, snapshots the exact draft, publishes it and stamps
+ * onboarding completion in one transaction. The endpoint is retry-safe: once
+ * a fully published onboarding launch is committed, a repeated request returns
+ * the existing live website without creating another revision.
+ */
+const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  const current = await getWebsiteOrThrow(adminId);
+
+  const result = await prisma.$transaction(async (tx: any) => {
+    await acquireTextTransactionAdvisoryLock(tx, current.id);
+
+    const owner = await tx.adminProfile.findUnique({
+      where: { id: adminId },
+      select: {
+        id: true,
+        businessName: true,
+        businessEmail: true,
+        onboardingCompletedAt: true,
+        onboardingCompletedSteps: true,
+        user: { select: { email: true, status: true } },
+        businessWebsite: {
+          select: {
+            id: true,
+            subdomain: true,
+            status: true,
+            publishedAt: true,
+            publishedSnapshot: true,
+            publishedRevisionNumber: true,
+          },
+        },
+      },
+    });
+
+    if (!owner?.businessWebsite || owner.businessWebsite.id !== current.id) {
+      throw new AppError(status.NOT_FOUND, "Business website not found", {
+        code: "WEBSITE_NOT_FOUND",
+        retryable: false,
+      });
+    }
+    if (owner.user.status !== "ACTIVE") {
+      throw new AppError(status.CONFLICT, "This account cannot launch a public website while it is inactive", {
+        code: "ACCOUNT_NOT_ACTIVE",
+        retryable: false,
+      });
+    }
+    if (!owner.businessName.trim()) {
+      throw new AppError(status.UNPROCESSABLE_ENTITY, "Add your business name before launching the website", {
+        code: "BUSINESS_NAME_REQUIRED",
+        retryable: false,
+        fieldErrors: { business_profile: "Business name is required." },
+      });
+    }
+    const contactEmail = (owner.businessEmail || owner.user.email || "").trim();
+    if (!contactEmail || !contactEmail.includes("@")) {
+      throw new AppError(status.UNPROCESSABLE_ENTITY, "Add a valid business email before launching the website", {
+        code: "BUSINESS_EMAIL_REQUIRED",
+        retryable: false,
+        fieldErrors: { business_profile: "A valid email is required." },
+      });
+    }
+    if (!WEBSITE_BASE_DOMAIN) {
+      throw new AppError(status.SERVICE_UNAVAILABLE, "Website base domain is not configured", {
+        code: "WEBSITE_BASE_DOMAIN_NOT_CONFIGURED",
+        retryable: false,
+      });
+    }
+
+    const normalizedSubdomain = normalizeSubdomain(owner.businessWebsite.subdomain);
+    if (normalizedSubdomain !== owner.businessWebsite.subdomain) {
+      throw new AppError(status.CONFLICT, "Website subdomain is not normalized", {
+        code: "WEBSITE_SUBDOMAIN_INVALID",
+        retryable: false,
+        fieldErrors: { website_address: "Choose the website address again." },
+      });
+    }
+
+    const [canonicalCollision, aliasCollision] = await Promise.all([
+      tx.businessWebsite.findFirst({
+        where: { subdomain: normalizedSubdomain, id: { not: current.id } },
+        select: { id: true },
+      }),
+      tx.websiteSubdomainAlias.findFirst({
+        where: { subdomain: normalizedSubdomain },
+        select: { websiteId: true },
+      }),
+    ]);
+    if (canonicalCollision || aliasCollision) {
+      throw new AppError(status.CONFLICT, "That website address is no longer available", {
+        code: "WEBSITE_SUBDOMAIN_CONFLICT",
+        retryable: false,
+        fieldErrors: { website_address: "Choose another available website address." },
+      });
+    }
+
+    const completed = new Set(owner.onboardingCompletedSteps);
+    const missingSteps = owner.onboardingCompletedAt
+      ? []
+      : REQUIRED_ONBOARDING_STEPS.filter((step) => !completed.has(step));
+    if (missingSteps.length > 0) {
+      throw new AppError(status.CONFLICT, "Complete the website setup before launching", {
+        code: "ACCOUNT_SETUP_INCOMPLETE",
+        retryable: false,
+        fieldErrors: Object.fromEntries(missingSteps.map((step) => [step, "Complete this step first."])),
+      });
+    }
+
+    assertLifecycleAllowsPublish(owner.businessWebsite.status as WebsiteLifecycleStatus);
+    const latestRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
+
+    // Idempotent retry path: the first launch committed completely and there
+    // are no newer draft revisions. Do not create a duplicate publish revision.
+    if (
+      owner.onboardingCompletedAt &&
+      owner.businessWebsite.status === WEBSITE_STATUS.PUBLISHED &&
+      owner.businessWebsite.publishedAt &&
+      owner.businessWebsite.publishedSnapshot &&
+      owner.businessWebsite.publishedRevisionNumber !== null &&
+      latestRevisionNumber <= owner.businessWebsite.publishedRevisionNumber
+    ) {
+      return {
+        businessName: owner.businessName,
+        alreadyLive: true,
+        website: await loadWebsiteDetails(current.id, tx),
+      };
+    }
+
+    // Booking attachment participates in this same transaction. This closes
+    // the gap where a site could be marked live while /book had no published
+    // tenant-owned form attached.
+    const bookingFormId = await WebsiteBookingProvisioningService.ensureAttachedForLaunchTx(
+      tx,
+      adminId,
+      current.id,
+    );
+
+    const draft = await loadDraftSnapshot(current.id, tx);
+    TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
+
+    if (!draft.pages.some((page: any) => page.kind === "HOME" && page.isEnabled)) {
+      throw new AppError(status.CONFLICT, "Enable the Home page before launching the website", {
+        code: "WEBSITE_HOME_REQUIRED",
+        retryable: false,
+        fieldErrors: { template: "The Home page must be enabled." },
+      });
+    }
+    if (!draft.pages.some((page: any) => page.kind === "BOOK" && page.isEnabled)) {
+      throw new AppError(status.CONFLICT, "Enable the Book Online page before launching the website", {
+        code: "WEBSITE_BOOK_PAGE_REQUIRED",
+        retryable: false,
+        fieldErrors: { services: "Online booking requires the Book page." },
+      });
+    }
+
+    const attachedBookingForm = await tx.bookingForm.findFirst({
+      where: { id: bookingFormId, adminId, published: true },
+      select: { id: true },
+    });
+    if (!attachedBookingForm || draft.primaryBookingFormId !== bookingFormId) {
+      throw new AppError(status.CONFLICT, "Website booking is not ready to publish", {
+        code: "WEBSITE_BOOKING_NOT_READY",
+        retryable: true,
+        fieldErrors: { services: "Reconnect Online Booking and try again." },
+      });
+    }
+
+    // Building the immutable publication document before the write validates
+    // the exact config/pages the public projection will consume after commit.
+    const publishedSnapshot = buildPublishedSnapshot(draft);
+    const revision = await createRevisionSnapshot(
+      tx,
+      current.id,
+      user.id,
+      "Website launched",
+      latestRevisionNumber,
+    );
+    const launchedAt = new Date();
+
+    await tx.businessWebsite.update({
+      where: { id: current.id },
+      data: {
+        status: WEBSITE_STATUS.PUBLISHED,
+        publishedAt: launchedAt,
+        publishedSnapshot: publishedSnapshot as any,
+        publishedRevisionNumber: revision.revisionNumber,
+      },
+    });
+    if (!owner.onboardingCompletedAt) {
+      await tx.adminProfile.update({
+        where: { id: adminId },
+        data: { onboardingCompletedAt: launchedAt },
+      });
+    }
+
+    return {
+      businessName: owner.businessName,
+      alreadyLive: false,
+      website: await loadWebsiteDetails(current.id, tx),
+    };
+  }, PROVISIONING_TRANSACTION_OPTIONS);
+
+  // Drop both routing and projection caches only after the database commit, so
+  // no worker can rebuild Redis from a half-published transaction.
+  await Promise.all([
+    WebsiteHostResolverService.invalidateSubdomains([result.website.subdomain]),
+    WebsiteProjectionCacheService.invalidateWebsite(result.website.id),
+  ]);
+
+  // Warm the canonical public projection. A cache outage must not roll back a
+  // successful database publication; the first real visitor can rebuild it.
+  try {
+    await PublicWebsiteService.getPublicWebsiteById(result.website.id);
+  } catch (error) {
+    logger.warn(
+      `[website-launch] projection warm failed for ${result.website.id}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  return {
+    businessName: result.businessName,
+    alreadyLive: result.alreadyLive,
+    launchedAt: result.website.publishedAt,
+    publicUrl: result.website.publicUrl,
+    website: result.website,
+  };
+};
+
 const listRevisions = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await getWebsiteOrThrow(adminId);
@@ -575,6 +813,7 @@ export const WebsiteService = {
   updateWebsite,
   saveDraft,
   publishWebsite,
+  launchWebsite,
   listPages,
   updatePage,
   listRevisions,

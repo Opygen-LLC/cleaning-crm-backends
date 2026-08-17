@@ -50,6 +50,33 @@ function buildPagination(options: IPaginationOptions) {
     return { page, limit, skip };
 }
 
+const invalidateAdminWebsiteRouting = async (adminProfileId: string | null | undefined) => {
+    if (!adminProfileId) return;
+    try {
+        const website = await prisma.businessWebsite.findUnique({
+            where: { adminId: adminProfileId },
+            select: {
+                subdomain: true,
+                subdomainAliases: { select: { subdomain: true } },
+                domains: { select: { domain: true } },
+            },
+        });
+        if (!website) return;
+
+        await Promise.all([
+            WebsiteHostResolverService.invalidateSubdomains([
+                website.subdomain,
+                ...website.subdomainAliases.map((alias) => alias.subdomain),
+            ]),
+            WebsiteHostResolverService.invalidateHosts(website.domains.map((domain) => domain.domain)),
+        ]);
+    } catch {
+        // Account suspension/activation is authoritative in Postgres. Routing
+        // cache cleanup is best-effort; the public projection still re-checks
+        // account status and the short routing TTL self-heals if this lookup fails.
+    }
+};
+
 // ─── Activity Logs ────────────────────────────────────────────────────────────
 
 const getActivityLogs = async (
@@ -480,7 +507,10 @@ const suspendAdminAccount = async (adminId: string) => {
         data: { status: AccountStatus.SUSPENDED },
         select: { id: true, name: true, email: true, status: true },
     });
-    await WebsiteProjectionCacheService.invalidateAdminWebsite(admin.admin?.id);
+    await Promise.all([
+        WebsiteProjectionCacheService.invalidateAdminWebsite(admin.admin?.id),
+        invalidateAdminWebsiteRouting(admin.admin?.id),
+    ]);
     return updated;
 };
 
@@ -499,7 +529,10 @@ const activateAdminAccount = async (adminId: string) => {
         data: { status: AccountStatus.ACTIVE },
         select: { id: true, name: true, email: true, status: true },
     });
-    await WebsiteProjectionCacheService.invalidateAdminWebsite(admin.admin?.id);
+    await Promise.all([
+        WebsiteProjectionCacheService.invalidateAdminWebsite(admin.admin?.id),
+        invalidateAdminWebsiteRouting(admin.admin?.id),
+    ]);
     return updated;
 };
 

@@ -30,6 +30,7 @@ const getStudio = catchAsync(async (req, res) => {
 const updateWebsite = catchAsync(async (req, res) => ok(res, "Website updated successfully", await WebsiteService.updateWebsite(req.body, req.user)));
 const saveDraft = catchAsync(async (req, res) => ok(res, "Website draft saved successfully", await WebsiteService.saveDraft(req.body, req.user)));
 const publishWebsite = catchAsync(async (req, res) => ok(res, "Website published successfully", await WebsiteService.publishWebsite(req.body ?? {}, req.user)));
+const launchWebsite = catchAsync(async (req, res) => ok(res, "Website launched successfully", await WebsiteService.launchWebsite(req.body ?? {}, req.user)));
 const getWebsiteBookingSetup = catchAsync(async (req, res) =>
   ok(res, "Website booking setup retrieved successfully", await WebsiteBookingProvisioningService.getSetup(req.user)),
 );
@@ -227,6 +228,7 @@ export const websiteController = {
   updateWebsite,
   saveDraft,
   publishWebsite,
+  launchWebsite,
   previewWebsite,
   listPages,
   updatePage,

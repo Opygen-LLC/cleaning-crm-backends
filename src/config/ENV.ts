@@ -102,7 +102,7 @@ export const WEBSITE_CNAME_TARGET: string | undefined = process.env.WEBSITE_CNAM
     .toLowerCase()
     .replace(/^\.+|\.+$/g, "");
 
-// Phase 6 host resolver cache. Positive routes can live for a few minutes;
+// Phase 5 production host resolver cache. Positive routes can live for a few minutes;
 // unknown hosts are cached only briefly to absorb wildcard-DNS scans without
 // delaying legitimate provisioning/renames for long. TTL jitter prevents a
 // fleet of host keys from expiring simultaneously.

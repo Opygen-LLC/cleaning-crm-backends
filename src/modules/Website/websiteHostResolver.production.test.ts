@@ -40,6 +40,8 @@ describe("production tenant host routing", () => {
     prismaMock.businessWebsite.findUnique.mockResolvedValue({
       id: "website-1",
       subdomain: "sparkle",
+      status: "PUBLISHED",
+      admin: { user: { status: "ACTIVE" } },
       domains: [],
     });
 
@@ -49,6 +51,7 @@ describe("production tenant host routing", () => {
     expect(result.canonicalSubdomain).toBe("sparkle");
     expect(result.canonicalHost).toBe("sparkle.sites.example.com");
     expect(result.redirectCode).toBeNull();
+    expect(result.availability).toBe("live");
   });
 
   it("turns an old subdomain alias into one permanent redirect to the current host", async () => {
@@ -56,6 +59,8 @@ describe("production tenant host routing", () => {
       websiteId: "website-1",
       website: {
         subdomain: "sparkle-london",
+        status: "PUBLISHED",
+        admin: { user: { status: "ACTIVE" } },
         domains: [],
       },
     });
@@ -75,6 +80,8 @@ describe("production tenant host routing", () => {
       isPrimary: false,
       website: {
         subdomain: "sparkle",
+        status: "PUBLISHED",
+        admin: { user: { status: "ACTIVE" } },
         domains: [{ domain: "www.example.com" }],
       },
     });
@@ -92,7 +99,7 @@ describe("production tenant host routing", () => {
       domain: "unverified.example.com",
       status: "PENDING",
       isPrimary: false,
-      website: { subdomain: "sparkle", domains: [] },
+      website: { subdomain: "sparkle", status: "PUBLISHED", admin: { user: { status: "ACTIVE" } }, domains: [] },
     });
 
     await expect(WebsiteHostResolverService.resolveHost("unverified.example.com")).rejects.toMatchObject({
@@ -104,6 +111,8 @@ describe("production tenant host routing", () => {
     prismaMock.businessWebsite.findUnique.mockResolvedValue({
       id: "website-1",
       subdomain: "sparkle",
+      status: "PUBLISHED",
+      admin: { user: { status: "ACTIVE" } },
       domains: [{ domain: "www.example.com" }],
     });
 
@@ -119,7 +128,7 @@ describe("production tenant host routing", () => {
     });
 
     expect(redisMock.set).toHaveBeenCalledWith(
-      expect.stringContaining("site-route:v5:host:missing.sites.example.com"),
+      expect.stringContaining("site-route:v6:host:missing.sites.example.com"),
       expect.stringContaining('"notFound":true'),
       "EX",
       10,
@@ -128,13 +137,14 @@ describe("production tenant host routing", () => {
 
   it("serves a cached host route without querying the database", async () => {
     redisMock.get.mockResolvedValue(JSON.stringify({
-      version: 5,
+      version: 6,
       websiteId: "website-1",
       requestedSubdomain: "sparkle",
       canonicalSubdomain: "sparkle",
       isAlias: false,
       redirectCode: null,
       primaryCustomHost: null,
+      availability: "live",
       requestedHost: "sparkle.sites.example.com",
       canonicalHost: "sparkle.sites.example.com",
       routeKind: "platform_subdomain",
@@ -177,13 +187,14 @@ describe("production tenant host routing", () => {
     redisMock.get.mockImplementation(async (key: string) => {
       if (key.includes("sparkle.sites.example.com")) {
         return JSON.stringify({
-          version: 5,
+          version: 6,
           websiteId: "website-a",
           requestedSubdomain: "sparkle",
           canonicalSubdomain: "sparkle",
           isAlias: false,
           redirectCode: null,
           primaryCustomHost: null,
+          availability: "live",
           requestedHost: "sparkle.sites.example.com",
           canonicalHost: "sparkle.sites.example.com",
           routeKind: "platform_subdomain",
@@ -195,6 +206,8 @@ describe("production tenant host routing", () => {
     prismaMock.businessWebsite.findUnique.mockResolvedValue({
       id: "website-b",
       subdomain: "fresh",
+      status: "PUBLISHED",
+      admin: { user: { status: "ACTIVE" } },
       domains: [],
     });
 
@@ -204,6 +217,32 @@ describe("production tenant host routing", () => {
     expect(cached.websiteId).toBe("website-a");
     expect(fresh.websiteId).toBe("website-b");
     expect(fresh.canonicalHost).toBe("fresh.sites.example.com");
+  });
+
+  it("marks draft websites unpublished so the edge can fail closed before rendering", async () => {
+    prismaMock.businessWebsite.findUnique.mockResolvedValue({
+      id: "website-draft",
+      subdomain: "draft-cleaner",
+      status: "DRAFT",
+      admin: { user: { status: "ACTIVE" } },
+      domains: [],
+    });
+
+    const result = await WebsiteHostResolverService.resolveHost("draft-cleaner.sites.example.com");
+    expect(result.availability).toBe("unpublished");
+  });
+
+  it("marks suspended tenant accounts unavailable at the routing layer", async () => {
+    prismaMock.businessWebsite.findUnique.mockResolvedValue({
+      id: "website-suspended",
+      subdomain: "paused-cleaner",
+      status: "PUBLISHED",
+      admin: { user: { status: "SUSPENDED" } },
+      domains: [],
+    });
+
+    const result = await WebsiteHostResolverService.resolveHost("paused-cleaner.sites.example.com");
+    expect(result.availability).toBe("suspended");
   });
 
 });

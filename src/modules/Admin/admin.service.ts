@@ -10,6 +10,7 @@ import {
 } from "./admin.constant";
 import redis from "../../config/redis";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
+import { WEBSITE_STATUS } from "../Website/websiteLifecycle";
 import type {
   GettingStartedStepKey,
   LegacySkippableOnboardingStepKey,
@@ -523,12 +524,22 @@ const completeOnboardingStep = async (
     }
   }
 
-  if (!completed.has(step)) {
-    await prisma.adminProfile.update({
-      where: { id: admin.id },
-      data: { onboardingCompletedSteps: { push: step } },
+  await prisma.$transaction(async (tx) => {
+    if (!completed.has(step)) {
+      await tx.adminProfile.update({
+        where: { id: admin.id },
+        data: { onboardingCompletedSteps: { push: step } },
+      });
+    }
+
+    // Registration creates a PROVISIONED website. As soon as onboarding makes
+    // progress it becomes an explicit draft, even when Step 1 only changed CRM
+    // business fields rather than website fields directly.
+    await tx.businessWebsite.updateMany({
+      where: { adminId: admin.id, status: WEBSITE_STATUS.PROVISIONED },
+      data: { status: WEBSITE_STATUS.DRAFT },
     });
-  }
+  });
 
   return getOnboardingStatus(userId);
 };
