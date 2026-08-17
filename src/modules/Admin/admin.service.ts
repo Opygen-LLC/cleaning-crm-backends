@@ -129,11 +129,15 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
   // value) from the frontend's country picker — resolve it to the real
   // Prisma enum member here rather than trusting the client to send it.
   if (country !== undefined) {
-    const resolved = resolveCountryEnum(country);
-    if (!resolved) {
-      throw new AppError(status.BAD_REQUEST, `Unrecognised country: "${country}"`);
+    if (country === null) {
+      data.country = null;
+    } else {
+      const resolved = resolveCountryEnum(country);
+      if (!resolved) {
+        throw new AppError(status.BAD_REQUEST, `Unrecognised country: "${country}"`);
+      }
+      data.country = resolved;
     }
-    data.country = resolved;
   }
 
   await prisma.$transaction(async (tx) => {

@@ -21,7 +21,7 @@ describe("website structured content", () => {
     expect(content.aboutBody).toBe("Legacy content remains supported.");
   });
 
-  it("accepts structured About and Contact fields", () => {
+  it("accepts structured About fields and strips duplicated CRM contact data", () => {
     const about = validateWebsitePageContent("ABOUT", {
       heading: "About Bio Cleaning",
       body: "Professional cleaning with environmentally conscious products.",
@@ -39,11 +39,10 @@ describe("website structured content", () => {
       openingHours: "Monday-Friday: 08:00-18:00",
     });
     expect(about.yearsExperience).toBe(12);
-    expect(contact.email).toBe("hello@biocleaning.example");
+    expect(contact).toEqual({ heading: "Talk to Bio Cleaning", intro: "We are happy to help." });
   });
 
   it("rejects invalid structured fields and oversized JSON", () => {
-    expect(() => validateWebsitePageContent("CONTACT", { email: "not-an-email" })).toThrow();
     expect(() => validateWebsitePageContent("ABOUT", { yearsExperience: 999 })).toThrow();
     expect(() => validateWebsitePageContent("HOME", { heroSubtitle: "x".repeat(40_000) })).toThrow();
   });

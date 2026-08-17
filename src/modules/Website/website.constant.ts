@@ -95,10 +95,6 @@ export const DEFAULT_WEBSITE_PAGES = [
       eyebrow: "Contact",
       heading: "How can we help?",
       intro: "Call or email us with a question, or use online booking when you are ready to arrange a clean.",
-      phone: "",
-      email: "",
-      address: "",
-      openingHours: "",
     },
   },
   {

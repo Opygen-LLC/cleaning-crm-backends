@@ -9,6 +9,7 @@ export const projectPublicBusiness = (admin: {
     mobileNumber?: string | null;
     businessEmail?: string | null;
     businessDescription?: string | null;
+    businessHours?: unknown | null;
     address?: string | null;
     city?: string | null;
     zipcode?: string | null;
@@ -22,6 +23,7 @@ export const projectPublicBusiness = (admin: {
     phone: admin.mobileNumber ?? "",
     email: admin.businessEmail ?? admin.user?.email ?? "",
     description: admin.businessDescription ?? null,
+    businessHours: admin.businessHours ?? null,
     address: admin.address ?? null,
     city: admin.city ?? null,
     postcode: admin.zipcode ?? null,

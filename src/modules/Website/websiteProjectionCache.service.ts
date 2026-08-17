@@ -7,19 +7,22 @@ import {
 import redis from "../../config/redis";
 import { prisma } from "../../lib/prisma/prisma";
 
-const CACHE_VERSION = 4 as const;
+const CACHE_VERSION = 5 as const;
 const KEY_PREFIX = `site-projection:v${CACHE_VERSION}:`;
 const LOCK_PREFIX = `site-projection-lock:v${CACHE_VERSION}:`;
+const GENERATION_PREFIX = `site-projection-generation:v${CACHE_VERSION}:`;
 
 interface ProjectionCacheEnvelope<T> {
   version: typeof CACHE_VERSION;
   websiteId: string;
+  generation: number;
   cachedAt: string;
   data: T;
 }
 
 const keyFor = (websiteId: string) => `${KEY_PREFIX}${websiteId}`;
 const lockKeyFor = (websiteId: string) => `${LOCK_PREFIX}${websiteId}`;
+const generationKeyFor = (websiteId: string) => `${GENERATION_PREFIX}${websiteId}`;
 
 const jitteredTtl = () => {
   if (WEBSITE_PROJECTION_CACHE_JITTER_RATIO <= 0) return WEBSITE_PROJECTION_CACHE_TTL_SECONDS;
@@ -38,24 +41,61 @@ const get = async <T>(websiteId: string): Promise<T | null> => {
     if (parsed.version !== CACHE_VERSION || parsed.websiteId !== websiteId) return null;
     return parsed.data;
   } catch {
-    // Redis is an acceleration layer only. Public sites must continue to work
-    // from PostgreSQL when Redis is unavailable or contains a malformed value.
     return null;
   }
 };
 
-const set = async <T>(websiteId: string, data: T): Promise<void> => {
+const getGeneration = async (websiteId: string): Promise<number | null> => {
+  try {
+    const raw = await redis.get(generationKeyFor(websiteId));
+    if (!raw) return 0;
+    const parsed = Number(raw);
+    return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Compare-and-set the projection against the generation observed before the
+ * PostgreSQL load. If a CRM mutation invalidates the website while a cold
+ * projection is being built, the stale loader is forbidden from re-inserting
+ * its old result after invalidation.
+ */
+const setForGeneration = async <T>(websiteId: string, data: T, generation: number): Promise<boolean> => {
   const envelope: ProjectionCacheEnvelope<T> = {
     version: CACHE_VERSION,
     websiteId,
+    generation,
     cachedAt: new Date().toISOString(),
     data,
   };
   try {
-    await redis.set(keyFor(websiteId), JSON.stringify(envelope), "EX", jitteredTtl());
+    const result = await redis.eval(
+      `
+        local current = redis.call('GET', KEYS[2])
+        if not current then current = '0' end
+        if current ~= ARGV[1] then return 0 end
+        redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+        return 1
+      `,
+      2,
+      keyFor(websiteId),
+      generationKeyFor(websiteId),
+      String(generation),
+      JSON.stringify(envelope),
+      String(jitteredTtl()),
+    );
+    return Number(result) === 1;
   } catch {
-    // Cache failure must never fail a public website request.
+    return false;
   }
+};
+
+const set = async <T>(websiteId: string, data: T): Promise<void> => {
+  const generation = await getGeneration(websiteId);
+  if (generation === null) return;
+  await setForGeneration(websiteId, data, generation);
 };
 
 const acquireRebuildLock = async (websiteId: string): Promise<{ token: string | null; redisAvailable: boolean }> => {
@@ -88,17 +128,26 @@ const releaseRebuildLock = async (websiteId: string, token: string): Promise<voi
       token,
     );
   } catch {
-    // The lock has a short TTL and is only a stampede guard. Never fail the
-    // public request if Redis disappears after the rebuild has completed.
+    // Short-lived lock; never fail a website request on cleanup.
   }
 };
 
-/**
- * Read-through public projection cache with distributed rebuild suppression.
- * A cold tenant should cause one PostgreSQL projection build across the API
- * fleet, not one build per concurrent request/replica. If Redis is unavailable
- * the loader still runs directly, preserving correctness and availability.
- */
+const loadAndCacheCurrentGeneration = async <T>(websiteId: string, loader: () => Promise<T>): Promise<T> => {
+  let generation = await getGeneration(websiteId);
+  if (generation === null) return loader();
+
+  let loaded = await loader();
+  if (await setForGeneration(websiteId, loaded, generation)) return loaded;
+
+  // A CRM mutation committed while the first DB read was in flight. Reload
+  // once from the authoritative DB state and cache only against the new epoch.
+  generation = await getGeneration(websiteId);
+  if (generation === null) return loader();
+  loaded = await loader();
+  await setForGeneration(websiteId, loaded, generation);
+  return loaded;
+};
+
 const getOrLoad = async <T>(websiteId: string, loader: () => Promise<T>): Promise<T> => {
   const cached = await get<T>(websiteId);
   if (cached) return cached;
@@ -106,47 +155,44 @@ const getOrLoad = async <T>(websiteId: string, loader: () => Promise<T>): Promis
   const lock = await acquireRebuildLock(websiteId);
   if (lock.token) {
     try {
-      // Double-check after acquiring the lock: another request may have filled
-      // the cache between our first GET and SET NX.
       const filled = await get<T>(websiteId);
       if (filled) return filled;
-      const loaded = await loader();
-      await set(websiteId, loaded);
-      return loaded;
+      return await loadAndCacheCurrentGeneration(websiteId, loader);
     } finally {
       await releaseRebuildLock(websiteId, lock.token);
     }
   }
 
-  // If Redis itself is unavailable, waiting cannot discover another replica's
-  // result. Go directly to PostgreSQL rather than adding artificial latency.
-  if (!lock.redisAvailable) {
-    const loaded = await loader();
-    await set(websiteId, loaded);
-    return loaded;
-  }
+  if (!lock.redisAvailable) return loader();
 
-  // Another replica is rebuilding. Wait briefly for its result instead of
-  // immediately stampeding PostgreSQL. The total wait remains below 400 ms;
-  // after that we fail open to the loader so Redis contention cannot stall a
-  // public site indefinitely.
   for (const delayMs of [25, 50, 100, 150]) {
     await sleep(delayMs);
     const filled = await get<T>(websiteId);
     if (filled) return filled;
   }
 
-  const loaded = await loader();
-  await set(websiteId, loaded);
-  return loaded;
+  return loadAndCacheCurrentGeneration(websiteId, loader);
 };
 
 const invalidateWebsite = async (websiteId: string | null | undefined): Promise<void> => {
   if (!websiteId) return;
   try {
-    await redis.del(keyFor(websiteId), lockKeyFor(websiteId));
+    // Generation bump + cache deletion are atomic. This closes the classic
+    // stale-repopulation race between a concurrent cache miss and a CRM write.
+    await redis.eval(
+      `
+        redis.call('INCR', KEYS[3])
+        redis.call('DEL', KEYS[1], KEYS[2])
+        return 1
+      `,
+      3,
+      keyFor(websiteId),
+      lockKeyFor(websiteId),
+      generationKeyFor(websiteId),
+    );
   } catch {
-    // Mutations remain authoritative even if invalidation cannot reach Redis.
+    // Redis remains an acceleration layer. PostgreSQL mutations must succeed
+    // even during a cache outage; normal TTL expiry provides eventual refresh.
   }
 };
 
@@ -159,8 +205,7 @@ const invalidateAdminWebsite = async (adminId: string | null | undefined): Promi
     });
     if (website) await invalidateWebsite(website.id);
   } catch {
-    // Never turn an otherwise-successful CRM mutation into a failure because a
-    // best-effort public cache invalidation could not be completed.
+    // Never turn a successful CRM mutation into a failure due to cache cleanup.
   }
 };
 

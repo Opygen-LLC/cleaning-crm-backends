@@ -5,7 +5,6 @@ import AppError from "../../errorHelper/AppError";
 const trimmedText = (max: number) => z.string().trim().max(max);
 const optionalText = (max: number) => trimmedText(max).optional();
 const nullableUrl = z.string().trim().url().max(2048).nullable().optional();
-const optionalEmail = z.union([z.literal(""), z.string().trim().email().max(320)]).optional();
 
 /**
  * Structured content contracts for the pages edited in Website Studio.
@@ -40,11 +39,10 @@ const contactContentSchema = z.object({
   eyebrow: optionalText(120),
   heading: optionalText(180),
   intro: optionalText(1200),
-  phone: optionalText(80),
-  email: optionalEmail,
-  address: optionalText(600),
-  openingHours: optionalText(1200),
-}).passthrough();
+  // Legacy phone/email/address/openingHours keys are stripped on the next
+  // draft save. Existing published snapshots remain readable, while the public
+  // renderer ignores those legacy values and uses AdminProfile exclusively.
+}).strip();
 
 const genericContentSchema = z.record(z.string(), z.unknown());
 const MAX_PAGE_CONTENT_BYTES = 32 * 1024;

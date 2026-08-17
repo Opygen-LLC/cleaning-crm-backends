@@ -15,6 +15,9 @@ model AdminProfile {
   businessEmail         String?
   businessType          String?
   businessDescription   String?
+  /// Canonical opening hours used by CRM and every public website template.
+  /// Website page content must not duplicate these values.
+  businessHours         Json?
   website               String?
   /// Persisted completion for the five-step website-first onboarding wizard.
   /// Defaults are provisioned at registration, so completion cannot be inferred

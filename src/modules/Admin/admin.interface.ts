@@ -1,20 +1,22 @@
 import { Currency } from "../../generated/prisma/enums";
+import type { BusinessHours } from "./businessHours";
 
 export interface UpdateAdminPayload {
   businessName?: string;
   businessLogo?: string;
-  businessType?: string;
-  businessEmail?: string;
-  businessDescription?: string;
-  website?: string;
+  businessType?: string | null;
+  businessEmail?: string | null;
+  businessDescription?: string | null;
+  businessHours?: BusinessHours | null;
+  website?: string | null;
   brandColor?: string;
   currency?: Currency;
-  mobileNumber?: string;
+  mobileNumber?: string | null;
 
-  address?: string;
-  city?: string;
-  zipcode?: string;
-  country?: string;
+  address?: string | null;
+  city?: string | null;
+  zipcode?: string | null;
+  country?: string | null;
 
   workLocations?: {
     city: string;

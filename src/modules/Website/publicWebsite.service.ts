@@ -60,6 +60,7 @@ const loadProjectionSource = async (websiteId: string) => {
           mobileNumber: true,
           businessEmail: true,
           businessDescription: true,
+          businessHours: true,
           address: true,
           city: true,
           zipcode: true,

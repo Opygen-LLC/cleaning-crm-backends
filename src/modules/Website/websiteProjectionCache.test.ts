@@ -29,19 +29,23 @@ describe("public website projection cache", () => {
     await expect(WebsiteProjectionCacheService.get("website-1")).resolves.toBeNull();
   });
 
-  it("invalidates both the projection and rebuild lock after CRM mutations", async () => {
+  it("atomically bumps the generation and invalidates projection/lock after CRM mutations", async () => {
     prismaMock.businessWebsite.findUnique.mockResolvedValue({ id: "website-1" });
     await WebsiteProjectionCacheService.invalidateAdminWebsite("admin-1");
-    expect(redisMock.del).toHaveBeenCalledWith(
-      "site-projection:v4:website-1",
-      "site-projection-lock:v4:website-1",
+    expect(redisMock.eval).toHaveBeenCalledWith(
+      expect.stringContaining("INCR"),
+      3,
+      "site-projection:v5:website-1",
+      "site-projection-lock:v5:website-1",
+      "site-projection-generation:v5:website-1",
     );
   });
 
   it("returns a valid Redis projection without calling the loader", async () => {
     redisMock.get.mockResolvedValue(JSON.stringify({
-      version: 4,
+      version: 5,
       websiteId: "website-1",
+      generation: 3,
       cachedAt: new Date().toISOString(),
       data: { business: { name: "Sparkle" } },
     }));
@@ -53,7 +57,8 @@ describe("public website projection cache", () => {
     expect(loader).not.toHaveBeenCalled();
   });
 
-  it("rebuilds a cold projection once after acquiring the distributed lock", async () => {
+  it("rebuilds a cold projection under the distributed lock", async () => {
+    redisMock.get.mockResolvedValue(null);
     const loader = vi.fn().mockResolvedValue({ business: { name: "Sparkle" } });
 
     const result = await WebsiteProjectionCacheService.getOrLoad("website-1", loader);
@@ -61,17 +66,42 @@ describe("public website projection cache", () => {
     expect(result).toEqual({ business: { name: "Sparkle" } });
     expect(loader).toHaveBeenCalledTimes(1);
     expect(redisMock.set).toHaveBeenCalledWith(
-      "site-projection-lock:v4:website-1",
+      "site-projection-lock:v5:website-1",
       expect.any(String),
       "EX",
       8,
       "NX",
     );
-    expect(redisMock.set).toHaveBeenCalledWith(
-      "site-projection:v4:website-1",
-      expect.stringContaining('"version":4'),
-      "EX",
-      180,
+    expect(redisMock.eval).toHaveBeenCalledWith(
+      expect.stringContaining("current ~= ARGV[1]"),
+      2,
+      "site-projection:v5:website-1",
+      "site-projection-generation:v5:website-1",
+      "0",
+      expect.stringContaining('"version":5'),
+      "180",
     );
+  });
+
+  it("reloads when a CRM mutation changes generation during a cold projection build", async () => {
+    // First cache lookup miss, first generation=4. After first load the CAS
+    // fails (mutation raced), then the new generation=5 is read and reloaded.
+    redisMock.get
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("4")
+      .mockResolvedValueOnce("5");
+    redisMock.eval
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(1);
+    const loader = vi.fn()
+      .mockResolvedValueOnce({ services: ["old"] })
+      .mockResolvedValueOnce({ services: ["new"] });
+
+    const result = await WebsiteProjectionCacheService.getOrLoad("website-1", loader);
+
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ services: ["new"] });
   });
 });

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Currency } from "../../generated/prisma/enums";
 import { ONBOARDING_STEPS, SKIPPABLE_ONBOARDING_STEPS } from "./admin.constant";
+import { businessHoursInputSchema, jsonArrayInput, nullableMultipartInput } from "./businessHours";
 
 export const createAdminSchema = z.object({
   businessName: z.string().min(1, "Business name is required"),
@@ -18,21 +19,22 @@ const updateAdminSchema = z
   .object({
     businessName: z.string().trim().min(1).max(160).optional(),
     brandColor: z.string().optional(),
-    businessType: z.string().trim().min(1).max(120).optional(),
-    businessEmail: z.string().trim().email().max(320).optional(),
-    businessDescription: z.string().trim().max(1000).optional(),
-    website: z.string().url().optional(),
+    businessType: nullableMultipartInput(z.string().trim().min(1).max(120)),
+    businessEmail: nullableMultipartInput(z.string().trim().email().max(320)),
+    businessDescription: nullableMultipartInput(z.string().trim().max(1000)),
+    businessHours: businessHoursInputSchema,
+    website: nullableMultipartInput(z.string().url()),
     currency: z.enum(Currency).optional(),
-    mobileNumber: z.string().trim().min(3).max(40).optional(),
+    mobileNumber: nullableMultipartInput(z.string().trim().min(3).max(40)),
 
-    address: z.string().trim().max(300).optional(),
-    city: z.string().trim().min(1).max(120).optional(),
-    zipcode: z.string().trim().max(32).optional(),
+    address: nullableMultipartInput(z.string().trim().max(300)),
+    city: nullableMultipartInput(z.string().trim().min(1).max(120)),
+    zipcode: nullableMultipartInput(z.string().trim().max(32)),
     // Accepts an ISO-3166-1 alpha-2 code (e.g. "GB") or an already-valid
     // Country enum value. The service resolves it to the Prisma enum.
-    country: z.string().trim().min(1).max(64).optional(),
+    country: nullableMultipartInput(z.string().trim().min(1).max(64)),
 
-    workLocations: z.array(workLocationSchema).max(25).optional(),
+    workLocations: jsonArrayInput(z.array(workLocationSchema).max(25)).optional(),
   })
   .strict();
 
