@@ -27,6 +27,7 @@ import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
 import { WEBSITE_STATUS, statusAfterDraftMutation, type WebsiteLifecycleStatus } from "./websiteLifecycle";
+import { validateWebsitePageContent } from "./websiteContent";
 
 const getWebsiteOrThrow = async (adminId: string, db: any = prisma) => {
   const website = await db.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
@@ -176,6 +177,10 @@ const assertLifecycleAllowsPublish = (current: WebsiteLifecycleStatus) => {
 const draftLifecyclePatch = (current: WebsiteLifecycleStatus) => {
   const next = statusAfterDraftMutation(current);
   return next === current ? {} : { status: next };
+};
+
+const validateDraftPageContent = (draft: { pages?: Array<{ kind: string; content: unknown }> }) => {
+  for (const page of draft.pages ?? []) validateWebsitePageContent(page.kind, page.content);
 };
 
 const createRevisionSnapshot = async (
@@ -339,7 +344,7 @@ const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user:
   const website = await getWebsiteOrThrow(adminId);
   const page = await prisma.websitePage.findFirst({
     where: { id: pageId, websiteId: website.id },
-    select: { id: true },
+    select: { id: true, kind: true },
   });
   if (!page) throw new AppError(status.NOT_FOUND, "Website page not found");
 
@@ -357,7 +362,10 @@ const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user:
     if (nextStatus !== lockedWebsite.status) {
       await tx.businessWebsite.update({ where: { id: website.id }, data: { status: nextStatus } });
     }
-    const updated = await tx.websitePage.update({ where: { id: pageId }, data: payload as any });
+    const normalizedPayload = payload.content === undefined
+      ? payload
+      : { ...payload, content: validateWebsitePageContent(page.kind, payload.content) };
+    const updated = await tx.websitePage.update({ where: { id: pageId }, data: normalizedPayload as any });
     await createRevisionSnapshot(tx, website.id, user.id, `Page updated: ${pageId}`);
     return updated;
   });
@@ -393,14 +401,16 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
 
     await ensurePublishedSnapshotBeforeDraftMutationTx(tx, lockedCurrent.id);
 
+    const ownedPageKinds = new Map<string, string>();
     if (uniquePageIds.length) {
       const ownedPages = await tx.websitePage.findMany({
         where: { websiteId: lockedCurrent.id, id: { in: uniquePageIds } },
-        select: { id: true },
+        select: { id: true, kind: true },
       });
       if (ownedPages.length !== uniquePageIds.length) {
         throw new AppError(status.NOT_FOUND, "One or more website pages do not belong to this business");
       }
+      for (const page of ownedPages) ownedPageKinds.set(page.id, page.kind);
     }
 
     const lifecyclePatch = draftLifecyclePatch(lockedCurrent.status as WebsiteLifecycleStatus);
@@ -414,7 +424,12 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
 
     for (const page of payload.pages ?? []) {
       const { id, ...data } = page;
-      await tx.websitePage.update({ where: { id }, data: data as any });
+      const pageKind = ownedPageKinds.get(id);
+      if (!pageKind) throw new AppError(status.NOT_FOUND, "Website page not found");
+      const normalizedData = data.content === undefined
+        ? data
+        : { ...data, content: validateWebsitePageContent(pageKind, data.content) };
+      await tx.websitePage.update({ where: { id }, data: normalizedData as any });
     }
 
     await createRevisionSnapshot(tx, lockedCurrent.id, user.id, "Draft saved", baseRevisionNumber);
@@ -432,6 +447,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
     const draft = await loadDraftSnapshot(current.id, tx);
     assertLifecycleAllowsPublish(draft.status as WebsiteLifecycleStatus);
     TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
+    validateDraftPageContent(draft);
     if (!draft.pages.some((page: any) => page.kind === "HOME" && page.isEnabled)) {
       throw new AppError(status.CONFLICT, "Enable the Home page before publishing the website");
     }
@@ -612,6 +628,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
 
     const draft = await loadDraftSnapshot(current.id, tx);
     TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
+    validateDraftPageContent(draft);
 
     if (!draft.pages.some((page: any) => page.kind === "HOME" && page.isEnabled)) {
       throw new AppError(status.CONFLICT, "Enable the Home page before launching the website", {
@@ -793,6 +810,60 @@ const uploadBrandAsset = async (
   return asset;
 };
 
+const CONTENT_ASSET_SLOTS = new Set(["about-image"]);
+
+const uploadContentAsset = async (
+  file: Express.Multer.File,
+  slot: string,
+  user: IRequestUser,
+) => {
+  const adminId = await getAdminId(user);
+  const website = await getWebsiteOrThrow(adminId);
+  const normalizedSlot = slot.trim().toLowerCase();
+  if (!CONTENT_ASSET_SLOTS.has(normalizedSlot)) {
+    throw new AppError(status.BAD_REQUEST, "Unsupported website content asset slot");
+  }
+  if (!file?.buffer || !file.mimetype.toLowerCase().startsWith("image/")) {
+    throw new AppError(status.BAD_REQUEST, "Upload a valid image file");
+  }
+
+  const folder = `Cleaning-CRM/websites/${website.id}/content`;
+  const publicId = normalizedSlot;
+  const uploaded = await uploadToCloudinary(file.buffer, {
+    folder,
+    public_id: publicId,
+    overwrite: true,
+    transformation: [{ width: 1800, height: 1400, crop: "limit", quality: "auto", fetch_format: "auto" }],
+  });
+  if (!uploaded?.secure_url || !uploaded?.public_id) {
+    throw new AppError(status.BAD_GATEWAY, "Image storage did not return a usable asset");
+  }
+
+  return prisma.websiteAsset.upsert({
+    where: { websiteId_publicId: { websiteId: website.id, publicId: uploaded.public_id } },
+    create: {
+      websiteId: website.id,
+      publicId: uploaded.public_id,
+      url: uploaded.secure_url,
+      mimeType: `image/${uploaded.format ?? "webp"}`,
+      width: uploaded.width ?? null,
+      height: uploaded.height ?? null,
+      bytes: uploaded.bytes ?? file.size ?? null,
+      altText: "About the business",
+      folder,
+      metadata: { kind: "content", slot: normalizedSlot },
+    },
+    update: {
+      url: uploaded.secure_url,
+      mimeType: `image/${uploaded.format ?? "webp"}`,
+      width: uploaded.width ?? null,
+      height: uploaded.height ?? null,
+      bytes: uploaded.bytes ?? file.size ?? null,
+      metadata: { kind: "content", slot: normalizedSlot },
+    },
+  });
+};
+
 const deleteAsset = async (assetId: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await getWebsiteOrThrow(adminId);
@@ -821,5 +892,6 @@ export const WebsiteService = {
   listAssets,
   registerAsset,
   uploadBrandAsset,
+  uploadContentAsset,
   deleteAsset,
 };

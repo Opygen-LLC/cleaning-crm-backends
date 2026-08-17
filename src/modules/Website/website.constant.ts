@@ -42,6 +42,7 @@ export const DEFAULT_WEBSITE_PAGES = [
       aboutBody: "We focus on clear communication, dependable service and a consistently high standard of cleaning.",
       reviewsHeading: "What customers say",
       areasHeading: "Areas we cover",
+      finalCtaHeading: "A cleaner space is a few clicks away.",
     },
   },
   {
@@ -67,6 +68,9 @@ export const DEFAULT_WEBSITE_PAGES = [
       heading: "Cleaning you can feel confident booking",
       body: "We make professional cleaning straightforward: clear services, reliable scheduling and a team focused on doing the job properly.",
       values: ["Reliable service", "Clear communication", "Attention to detail"],
+      imageUrl: null,
+      imageAlt: "Professional cleaning team",
+      yearsExperience: null,
     },
   },
   {
@@ -91,6 +95,10 @@ export const DEFAULT_WEBSITE_PAGES = [
       eyebrow: "Contact",
       heading: "How can we help?",
       intro: "Call or email us with a question, or use online booking when you are ready to arrange a clean.",
+      phone: "",
+      email: "",
+      address: "",
+      openingHours: "",
     },
   },
   {

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const color = z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Use a 6-digit hex color");
 const nullableText = (max: number) => z.string().trim().max(max).nullable();
+const pageContent = z.record(z.string(), z.unknown()).refine((value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= 32 * 1024, "Website page content is too large");
 
 const createWebsite = z.object({
   subdomain: z.string().trim().min(3).max(63),
@@ -32,7 +33,7 @@ const updateWebsite = websitePatch;
 
 const pagePatch = z.object({
   title: z.string().trim().min(1).max(120).optional(),
-  content: z.record(z.string(), z.unknown()).optional(),
+  content: pageContent.optional(),
   seoTitle: nullableText(120).optional(),
   seoDescription: nullableText(320).optional(),
   showInNavigation: z.boolean().optional(),

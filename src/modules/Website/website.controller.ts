@@ -53,6 +53,11 @@ const uploadBrandAsset = catchAsync(async (req, res) => {
   if (!kind) throw new AppError(status.BAD_REQUEST, "Asset kind must be logo or favicon");
   return created(res, "Website brand asset uploaded successfully", await WebsiteService.uploadBrandAsset(req.file, kind, req.user));
 });
+const uploadContentAsset = catchAsync(async (req, res) => {
+  if (!req.file) throw new AppError(status.BAD_REQUEST, "Image file is required");
+  const slot = typeof req.body.slot === "string" ? req.body.slot : "";
+  return created(res, "Website content asset uploaded successfully", await WebsiteService.uploadContentAsset(req.file, slot, req.user));
+});
 const deleteAsset = catchAsync(async (req, res) => ok(res, "Website asset deleted successfully", await WebsiteService.deleteAsset(paramStr(req.params.assetId), req.user)));
 const listTemplates = catchAsync(async (_req, res) => ok(res, "Website templates retrieved successfully", TemplateRegistry.list()));
 const addDomain = catchAsync(async (req, res) => created(res, "Website domain added successfully", await DomainService.addDomain(req.body, req.user)));
@@ -237,6 +242,7 @@ export const websiteController = {
   listAssets,
   registerAsset,
   uploadBrandAsset,
+  uploadContentAsset,
   deleteAsset,
   listTemplates,
   addDomain,

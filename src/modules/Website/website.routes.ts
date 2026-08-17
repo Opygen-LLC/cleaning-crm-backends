@@ -34,6 +34,7 @@ router.get("/analytics", websiteController.getWebsiteAnalytics);
 router.get("/assets", websiteController.listAssets);
 router.post("/assets", zodValidate(websiteValidation.createAsset, ValidationProperty.BODY), websiteController.registerAsset);
 router.post("/assets/upload", multerMemory.single("asset"), convertHeicToPng, websiteController.uploadBrandAsset);
+router.post("/assets/upload-content", multerMemory.single("asset"), convertHeicToPng, websiteController.uploadContentAsset);
 router.delete("/assets/:assetId", websiteController.deleteAsset);
 router.get("/subdomain/availability/:subdomain", websiteController.getSubdomainAvailability);
 router.patch(
