@@ -9,6 +9,7 @@ import type { WebsiteCreateInput } from "./website.interface";
 import { normalizeSubdomain } from "./websiteIdentity";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
+import { WEBSITE_STATUS } from "./websiteLifecycle";
 
 export const WEBSITE_SUBDOMAIN_RESERVATION_LOCK = "business-website-subdomain-reservation-v1";
 const adminProvisioningLock = (adminId: string) => `business-website-provision:${adminId}`;
@@ -129,6 +130,7 @@ const createWebsiteRecordTx = async (
     data: {
       adminId,
       subdomain,
+      status: WEBSITE_STATUS.PROVISIONED,
       templateId: template.id,
       templateVersion: template.version,
       schemaVersion: template.schemaVersion,

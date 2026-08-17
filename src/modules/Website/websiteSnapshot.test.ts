@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPublishedSnapshot, parsePublishedSnapshot } from "./websiteSnapshot";
+import { buildPublishedSnapshot, parsePublishedSnapshot, selectPublishedIntegrationFormId } from "./websiteSnapshot";
 
 describe("website published snapshots", () => {
   const draft = {
@@ -42,6 +42,18 @@ describe("website published snapshots", () => {
   it("rejects malformed snapshots", () => {
     expect(parsePublishedSnapshot({ version: 1, website: {}, pages: [] })).toBeNull();
     expect(parsePublishedSnapshot(null)).toBeNull();
+  });
+
+  it("does not leak draft booking/estimate selections across the published boundary", () => {
+    const snapshot = buildPublishedSnapshot({
+      ...draft,
+      primaryBookingFormId: null,
+      primaryEstimateFormId: null,
+    });
+
+    expect(selectPublishedIntegrationFormId(snapshot, "draft-booking-form", "booking")).toBeNull();
+    expect(selectPublishedIntegrationFormId(snapshot, "draft-estimate-form", "estimate")).toBeNull();
+    expect(selectPublishedIntegrationFormId(null, "legacy-booking-form", "booking")).toBe("legacy-booking-form");
   });
 
   it("deep-copies page content", () => {

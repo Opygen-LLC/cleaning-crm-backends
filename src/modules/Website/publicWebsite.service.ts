@@ -7,7 +7,7 @@ import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { TemplateRegistry } from "./templateRegistry";
-import { buildPublishedSnapshot, parsePublishedSnapshot } from "./websiteSnapshot";
+import { buildPublishedSnapshot, parsePublishedSnapshot, selectPublishedIntegrationFormId } from "./websiteSnapshot";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 
@@ -352,7 +352,7 @@ const resolvePublicBookingIntegration = async (identifier: string) => {
   const website = await loadPublishedIntegrationSource(identifier);
 
   const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
-  const formId = publishedSnapshot?.website.primaryBookingFormId ?? website.primaryBookingFormId;
+  const formId = selectPublishedIntegrationFormId(publishedSnapshot, website.primaryBookingFormId, "booking");
   const bookPageEnabled = publishedSnapshot
     ? publishedSnapshot.pages.some((page) => page.kind === "BOOK" && page.isEnabled)
     : website.pages.some((page) => page.kind === "BOOK" && page.isEnabled);
@@ -374,7 +374,7 @@ const resolvePublicBookingIntegration = async (identifier: string) => {
 const resolvePublicEstimateIntegration = async (identifier: string) => {
   const website = await loadPublishedIntegrationSource(identifier);
   const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
-  const formId = publishedSnapshot?.website.primaryEstimateFormId ?? website.primaryEstimateFormId;
+  const formId = selectPublishedIntegrationFormId(publishedSnapshot, website.primaryEstimateFormId, "estimate");
   const estimatePageEnabled = publishedSnapshot
     ? publishedSnapshot.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled)
     : website.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled);

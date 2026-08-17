@@ -20,6 +20,7 @@ import { buildPublishedSnapshot } from "./websiteSnapshot";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
+import { WEBSITE_STATUS, statusAfterDraftMutation, type WebsiteLifecycleStatus } from "./websiteLifecycle";
 
 const getWebsiteOrThrow = async (adminId: string, db: any = prisma) => {
   const website = await db.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
@@ -110,8 +111,10 @@ const loadWebsiteDetailsWhere = async (where: { id: string } | { adminId: string
     platformUrl,
     publicUrl: primaryDomain ? `https://${primaryDomain}` : platformUrl,
     draftRevisionNumber,
+    // Publication state and draft dirtiness are separate concerns. A
+    // SUSPENDED website may still have a perfectly current published snapshot,
+    // while PROVISIONED/DRAFT sites have no published revision yet.
     hasUnpublishedChanges:
-      website.status !== "PUBLISHED" ||
       website.publishedRevisionNumber === null ||
       draftRevisionNumber > website.publishedRevisionNumber,
   };
@@ -144,6 +147,29 @@ const assertExpectedRevision = async (
     });
   }
   return currentRevisionNumber;
+};
+
+const assertLifecycleAllowsDraftMutation = (current: WebsiteLifecycleStatus) => {
+  if (current === WEBSITE_STATUS.SUSPENDED) {
+    throw new AppError(status.CONFLICT, "A suspended website cannot be edited", {
+      code: "WEBSITE_SUSPENDED",
+      retryable: false,
+    });
+  }
+};
+
+const assertLifecycleAllowsPublish = (current: WebsiteLifecycleStatus) => {
+  if (current === WEBSITE_STATUS.SUSPENDED) {
+    throw new AppError(status.CONFLICT, "A suspended website cannot be published", {
+      code: "WEBSITE_SUSPENDED",
+      retryable: false,
+    });
+  }
+};
+
+const draftLifecyclePatch = (current: WebsiteLifecycleStatus) => {
+  const next = statusAfterDraftMutation(current);
+  return next === current ? {} : { status: next };
 };
 
 const createRevisionSnapshot = async (
@@ -272,9 +298,10 @@ const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) =>
     // applying a templateVersion patch against stale templateId data.
     const lockedCurrent = await tx.businessWebsite.findFirst({
       where: { id: current.id, adminId },
-      select: { id: true, templateId: true, templateVersion: true },
+      select: { id: true, status: true, templateId: true, templateVersion: true },
     });
     if (!lockedCurrent) throw new AppError(status.NOT_FOUND, "Business website not found");
+    assertLifecycleAllowsDraftMutation(lockedCurrent.status as WebsiteLifecycleStatus);
 
     await Promise.all([
       assertOwnedForm(adminId, payload.primaryBookingFormId, "booking", tx),
@@ -283,7 +310,10 @@ const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) =>
     const data = prepareWebsitePatch(payload, lockedCurrent);
 
     await ensurePublishedSnapshotBeforeDraftMutationTx(tx, lockedCurrent.id);
-    await tx.businessWebsite.update({ where: { id: lockedCurrent.id }, data });
+    await tx.businessWebsite.update({
+      where: { id: lockedCurrent.id },
+      data: { ...data, ...draftLifecyclePatch(lockedCurrent.status as WebsiteLifecycleStatus) },
+    });
     await createRevisionSnapshot(tx, lockedCurrent.id, user.id, "Website settings updated");
     return loadWebsiteDetails(lockedCurrent.id, tx);
   });
@@ -309,7 +339,18 @@ const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user:
 
   return prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, website.id);
+    const lockedWebsite = await tx.businessWebsite.findUnique({
+      where: { id: website.id },
+      select: { status: true },
+    });
+    if (!lockedWebsite) throw new AppError(status.NOT_FOUND, "Business website not found");
+    assertLifecycleAllowsDraftMutation(lockedWebsite.status as WebsiteLifecycleStatus);
+
     await ensurePublishedSnapshotBeforeDraftMutationTx(tx, website.id);
+    const nextStatus = statusAfterDraftMutation(lockedWebsite.status as WebsiteLifecycleStatus);
+    if (nextStatus !== lockedWebsite.status) {
+      await tx.businessWebsite.update({ where: { id: website.id }, data: { status: nextStatus } });
+    }
     const updated = await tx.websitePage.update({ where: { id: pageId }, data: payload as any });
     await createRevisionSnapshot(tx, website.id, user.id, `Page updated: ${pageId}`);
     return updated;
@@ -332,9 +373,10 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
 
     const lockedCurrent = await tx.businessWebsite.findFirst({
       where: { id: current.id, adminId },
-      select: { id: true, templateId: true, templateVersion: true },
+      select: { id: true, status: true, templateId: true, templateVersion: true },
     });
     if (!lockedCurrent) throw new AppError(status.NOT_FOUND, "Business website not found");
+    assertLifecycleAllowsDraftMutation(lockedCurrent.status as WebsiteLifecycleStatus);
 
     const baseRevisionNumber = await assertExpectedRevision(tx, lockedCurrent.id, expectedRevisionNumber);
 
@@ -355,9 +397,13 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
       }
     }
 
-    if (Object.keys(websitePatch).length) {
-      const data = prepareWebsitePatch(websitePatch, lockedCurrent);
-      await tx.businessWebsite.update({ where: { id: lockedCurrent.id }, data });
+    const lifecyclePatch = draftLifecyclePatch(lockedCurrent.status as WebsiteLifecycleStatus);
+    if (Object.keys(websitePatch).length || Object.keys(lifecyclePatch).length) {
+      const data = Object.keys(websitePatch).length ? prepareWebsitePatch(websitePatch, lockedCurrent) : {};
+      await tx.businessWebsite.update({
+        where: { id: lockedCurrent.id },
+        data: { ...data, ...lifecyclePatch },
+      });
     }
 
     for (const page of payload.pages ?? []) {
@@ -378,6 +424,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
     await acquireTextTransactionAdvisoryLock(tx, current.id);
     const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
     const draft = await loadDraftSnapshot(current.id, tx);
+    assertLifecycleAllowsPublish(draft.status as WebsiteLifecycleStatus);
     TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     if (!draft.pages.some((page: any) => page.kind === "HOME" && page.isEnabled)) {
       throw new AppError(status.CONFLICT, "Enable the Home page before publishing the website");
@@ -396,7 +443,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
     await tx.businessWebsite.update({
       where: { id: current.id },
       data: {
-        status: "PUBLISHED",
+        status: WEBSITE_STATUS.PUBLISHED,
         publishedAt: new Date(),
         publishedSnapshot: publishedSnapshot as any,
         publishedRevisionNumber: revision.revisionNumber,

@@ -180,3 +180,19 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
     pages: pages.sort((a, b) => a.sortOrder - b.sortOrder),
   };
 };
+
+/**
+ * Select a website integration id without crossing the draft/public boundary.
+ * If a published snapshot exists, its value is authoritative even when null.
+ * Falling back with `??` would expose an unpublished draft form selection.
+ */
+export const selectPublishedIntegrationFormId = (
+  snapshot: WebsitePublishedSnapshotV1 | null,
+  draftFormId: string | null,
+  kind: "booking" | "estimate",
+): string | null => {
+  if (!snapshot) return draftFormId;
+  return kind === "booking"
+    ? snapshot.website.primaryBookingFormId
+    : snapshot.website.primaryEstimateFormId;
+};
