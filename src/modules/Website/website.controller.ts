@@ -17,6 +17,7 @@ import { WEBSITE_ANALYTICS_EVENT, WebsiteAnalyticsService } from "./websiteAnaly
 import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
 import AppError from "../../errorHelper/AppError";
 import { WebsiteEntitlementService } from "./websiteEntitlement.service";
+import { adminService } from "../Admin/admin.service";
 
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
@@ -32,7 +33,14 @@ const getStudio = catchAsync(async (req, res) => {
 const updateWebsite = catchAsync(async (req, res) => ok(res, "Website updated successfully", await WebsiteService.updateWebsite(req.body, req.user)));
 const saveDraft = catchAsync(async (req, res) => ok(res, "Website draft saved successfully", await WebsiteService.saveDraft(req.body, req.user)));
 const publishWebsite = catchAsync(async (req, res) => ok(res, "Website published successfully", await WebsiteService.publishWebsite(req.body ?? {}, req.user)));
-const launchWebsite = catchAsync(async (req, res) => ok(res, "Website launched successfully", await WebsiteService.launchWebsite(req.body ?? {}, req.user)));
+const launchWebsite = catchAsync(async (req, res) => {
+  const launch = await WebsiteService.launchWebsite(req.body ?? {}, req.user);
+  const onboarding = await adminService.getOnboardingStatus(req.user.id);
+  return ok(res, "Website launched successfully", {
+    ...launch,
+    onboarding,
+  });
+});
 const getWebsiteBookingSetup = catchAsync(async (req, res) =>
   ok(res, "Website booking setup retrieved successfully", await WebsiteBookingProvisioningService.getSetup(req.user)),
 );

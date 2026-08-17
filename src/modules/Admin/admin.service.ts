@@ -11,6 +11,7 @@ import {
 import redis from "../../config/redis";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { WEBSITE_STATUS } from "../Website/websiteLifecycle";
+import { WebsiteService } from "../Website/website.service";
 import type {
   GettingStartedStepKey,
   LegacySkippableOnboardingStepKey,
@@ -351,11 +352,14 @@ interface WebsiteSetupOffer {
   subdomain: string;
 }
 
-interface OnboardingStatusResult {
+export interface OnboardingStatusResult {
   isComplete: boolean;
   completedCount: number;
   totalCount: number;
   skippedCount: number;
+  currentStep: number;
+  resumeStep: OnboardingStepKey | null;
+  savedAt: Date;
   steps: OnboardingStepResult[];
   gettingStarted: GettingStartedResult;
   /**
@@ -398,6 +402,7 @@ const getOnboardingStatus = async (
     where: { userId },
     select: {
       id: true,
+      updatedAt: true,
       onboardingCompletedAt: true,
       onboardingCompletedSteps: true,
       businessWebsite: {
@@ -405,6 +410,7 @@ const getOnboardingStatus = async (
           status: true,
           subdomain: true,
           publishedAt: true,
+          updatedAt: true,
         },
       },
     },
@@ -490,11 +496,19 @@ const getOnboardingStatus = async (
         }
       : null;
 
+  const firstIncompleteIndex = steps.findIndex((step) => !step.completed);
+  const savedAt = admin.businessWebsite?.updatedAt && admin.businessWebsite.updatedAt > admin.updatedAt
+    ? admin.businessWebsite.updatedAt
+    : admin.updatedAt;
+
   return {
     isComplete,
     completedCount,
     totalCount: steps.length,
     skippedCount: 0,
+    currentStep: isComplete ? steps.length : firstIncompleteIndex === -1 ? steps.length : firstIncompleteIndex + 1,
+    resumeStep: isComplete || firstIncompleteIndex === -1 ? null : steps[firstIncompleteIndex]!.key,
+    savedAt,
     steps,
     gettingStarted: {
       isComplete: gettingStartedCompletedCount === gettingStartedSteps.length,
@@ -506,11 +520,33 @@ const getOnboardingStatus = async (
   };
 };
 
+export interface OnboardingMutationResult {
+  onboarding: OnboardingStatusResult;
+  website: Awaited<ReturnType<typeof WebsiteService.getWebsiteForAdmin>>;
+  publicUrl: string | null;
+}
+
+const buildOnboardingMutationResult = async (
+  userId: string,
+  adminId: string,
+): Promise<OnboardingMutationResult> => {
+  const [onboarding, website] = await Promise.all([
+    getOnboardingStatus(userId),
+    WebsiteService.getWebsiteForAdmin(adminId),
+  ]);
+
+  return {
+    onboarding,
+    website,
+    publicUrl: website.publicUrl,
+  };
+};
+
 /** Persist one setup milestone after its underlying resource has been saved. */
 const completeOnboardingStep = async (
   userId: string,
   step: OnboardingStepKey,
-): Promise<OnboardingStatusResult> => {
+): Promise<OnboardingMutationResult> => {
   const admin = await prisma.adminProfile.findUnique({
     where: { userId },
     select: {
@@ -527,7 +563,7 @@ const completeOnboardingStep = async (
     });
   }
 
-  if (admin.onboardingCompletedAt) return getOnboardingStatus(userId);
+  if (admin.onboardingCompletedAt) return buildOnboardingMutationResult(userId, admin.id);
 
   const stepIndex = REQUIRED_SETUP_KEYS.indexOf(step);
   if (stepIndex === -1) {
@@ -583,18 +619,18 @@ const completeOnboardingStep = async (
     });
   });
 
-  return getOnboardingStatus(userId);
+  return buildOnboardingMutationResult(userId, admin.id);
 };
 
 /**
- * Used by "Skip setup and use defaults". It deliberately does not stamp
- * onboardingCompletedAt; the frontend publishes the already-provisioned site
- * first and only then calls finalize, so a publication failure cannot leave a
- * supposedly-finished account with no live website.
+ * Used by "Skip setup and use defaults". This marks every setup step complete
+ * but deliberately leaves onboardingCompletedAt untouched. Website launch is
+ * the atomic publication boundary and owns the final completion timestamp, so
+ * a failed publish can never leave an account marked finished without a live site.
  */
 const skipWebsiteOnboardingSetup = async (
   userId: string,
-): Promise<OnboardingStatusResult> => {
+): Promise<OnboardingMutationResult> => {
   const admin = await prisma.adminProfile.findUnique({
     where: { userId },
     select: { id: true, onboardingCompletedAt: true },
@@ -613,13 +649,13 @@ const skipWebsiteOnboardingSetup = async (
     });
   }
 
-  return getOnboardingStatus(userId);
+  return buildOnboardingMutationResult(userId, admin.id);
 };
 
 /** Called only after the website has successfully published. */
 const finalizeOnboardingSetup = async (
   userId: string,
-): Promise<OnboardingStatusResult> => {
+): Promise<OnboardingMutationResult> => {
   const admin = await prisma.adminProfile.findUnique({
     where: { userId },
     select: {
@@ -666,7 +702,7 @@ const finalizeOnboardingSetup = async (
     });
   }
 
-  return getOnboardingStatus(userId);
+  return buildOnboardingMutationResult(userId, admin.id);
 };
 
 // ─── Legacy skip endpoints ───────────────────────────────────────────────────

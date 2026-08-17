@@ -11,11 +11,11 @@ export const adminFilterableFields = [
 // Website-first onboarding. Defaults are provisioned at registration, but each
 // step must still be explicitly completed so the wizard can resume safely.
 export const ACCOUNT_SETUP_STEPS = [
-  { key: "business_profile", label: "Business information" },
-  { key: "services", label: "Services" },
-  { key: "branding", label: "Branding" },
-  { key: "website_address", label: "Website address" },
-  { key: "template", label: "Template" },
+  { key: "business_profile", label: "Business" },
+  { key: "branding", label: "Brand" },
+  { key: "services", label: "Services + Booking" },
+  { key: "website_address", label: "Website Address" },
+  { key: "template", label: "Template + Launch" },
 ] as const;
 
 export const ONBOARDING_STEPS = ACCOUNT_SETUP_STEPS;

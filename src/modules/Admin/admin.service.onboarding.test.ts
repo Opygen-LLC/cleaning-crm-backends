@@ -12,6 +12,17 @@ vi.mock("../../lib/prisma/prisma", () => ({
   },
 }));
 
+vi.mock("../Website/website.service", () => ({
+  WebsiteService: {
+    getWebsiteForAdmin: vi.fn(async () => ({
+      id: "website-1",
+      subdomain: "bio-cleaning",
+      publicUrl: "https://bio-cleaning.sites.example.com",
+      platformUrl: "https://bio-cleaning.sites.example.com",
+    })),
+  },
+}));
+
 import { prisma } from "../../lib/prisma/prisma";
 import { adminService } from "./admin.service";
 
@@ -27,10 +38,11 @@ const db = prisma as unknown as {
 
 const USER_ID = "user-1";
 const ADMIN_ID = "admin-1";
-const STEPS = ["business_profile", "services", "branding", "website_address", "template"];
+const STEPS = ["business_profile", "branding", "services", "website_address", "template"];
 
 const statusRow = (completed: string[] = [], finished: Date | null = null) => ({
   id: ADMIN_ID,
+  updatedAt: new Date("2026-08-18T00:00:00Z"),
   onboardingCompletedAt: finished,
   onboardingCompletedSteps: completed,
 });
@@ -57,7 +69,21 @@ describe("website-first onboarding status", () => {
     expect(result.steps.map((step) => step.key)).toEqual(STEPS);
     expect(result.totalCount).toBe(5);
     expect(result.completedCount).toBe(1);
+    expect(result.currentStep).toBe(2);
+    expect(result.resumeStep).toBe("branding");
     expect(result.isComplete).toBe(false);
+  });
+
+
+  it("resumes at the first incomplete step without discarding progress saved in the old order", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(statusRow(["business_profile", "services"]));
+
+    const result = await adminService.getOnboardingStatus(USER_ID);
+
+    expect(result.completedCount).toBe(2);
+    expect(result.currentStep).toBe(2);
+    expect(result.resumeStep).toBe("branding");
+    expect(result.steps.find((step) => step.key === "services")?.completed).toBe(true);
   });
 
   it("treats an already completed legacy tenant as fully complete", async () => {
@@ -114,7 +140,7 @@ describe("website-first onboarding status", () => {
   });
 
   it("requires at least one ServiceCatalog record before completing services", async () => {
-    db.adminProfile.findUnique.mockResolvedValue(statusRow(["business_profile"]));
+    db.adminProfile.findUnique.mockResolvedValue(statusRow(["business_profile", "branding"]));
     db.serviceCatalog.count.mockResolvedValue(0);
 
     await expect(adminService.completeOnboardingStep(USER_ID, "services")).rejects.toMatchObject({
@@ -135,8 +161,9 @@ describe("website-first onboarding status", () => {
       where: { id: ADMIN_ID },
       data: { onboardingCompletedSteps: STEPS },
     });
-    expect(result.completedCount).toBe(5);
-    expect(result.isComplete).toBe(false);
+    expect(result.onboarding.completedCount).toBe(5);
+    expect(result.onboarding.isComplete).toBe(false);
+    expect(result.publicUrl).toBe("https://bio-cleaning.sites.example.com");
   });
 });
 
@@ -168,6 +195,7 @@ describe("onboarding finalization", () => {
       where: { id: ADMIN_ID },
       data: { onboardingCompletedAt: expect.any(Date) },
     });
-    expect(result.isComplete).toBe(true);
+    expect(result.onboarding.isComplete).toBe(true);
+    expect(result.website.subdomain).toBe("bio-cleaning");
   });
 });

@@ -35,8 +35,8 @@ export interface UpdateWorkLocationPayload {
 
 export type OnboardingStepKey =
   | "business_profile"
-  | "services"
   | "branding"
+  | "services"
   | "website_address"
   | "template";
 
