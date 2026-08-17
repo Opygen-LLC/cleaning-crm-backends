@@ -229,7 +229,11 @@ const reportPublicWebsiteError = catchAsync(async (req, res) => {
 
 const getWebsiteAnalytics = catchAsync(async (req, res) => {
   const days = Number(req.query.days ?? 30);
-  return ok(res, "Website analytics retrieved successfully", await WebsiteAnalyticsService.getSummary(req.user, days));
+  const data = await WebsiteAnalyticsService.getSummary(req.user, days);
+  // Redis is the shared cache of record for these aggregates. Never let a CDN
+  // or shared HTTP proxy cache one tenant's authenticated dashboard payload.
+  res.setHeader("Cache-Control", "private, no-store");
+  return ok(res, "Website analytics retrieved successfully", data);
 });
 
 const getPublicWebsite = catchAsync(async (req, res) => {
