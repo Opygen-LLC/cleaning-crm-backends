@@ -147,7 +147,8 @@ const trackConversion = async (
   eventType: Exclude<WebsiteAnalyticsEventType, "PAGE_VIEW">,
   path: string,
   metadata: Record<string, unknown> = {},
-) => createEvent(websiteId, eventType, path, { metadata }, {});
+  campaign: Pick<PublicAnalyticsPayload, "utmSource" | "utmMedium" | "utmCampaign"> = {},
+) => createEvent(websiteId, eventType, path, { metadata, ...campaign }, {});
 
 const getSummary = async (user: IRequestUser, requestedDays = 30) => {
   const adminId = await getAdminId(user);

@@ -129,6 +129,10 @@ const submitPublicWebsiteBooking = catchAsync(async (req, res) => {
     WEBSITE_ANALYTICS_EVENT.BOOKING_REQUEST,
     "/book",
     { formId: result._formId, submissionRef: data.ref },
+    {
+      utmSource: req.body.utmSource,
+      utmCampaign: req.body.utmCampaign,
+    },
   ).catch(() => {});
   res.setHeader("Cache-Control", "no-store");
   return sendResponse(res, {

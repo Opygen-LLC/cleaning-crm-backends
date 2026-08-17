@@ -46,6 +46,13 @@ export interface IPublicBookingSubmission {
     email: string;
     phone: string;
     address: string;
+    propertyType?: "HOUSE" | "FLAT" | "OFFICE" | "COMMERCIAL" | "OTHER";
+    bedrooms?: number;
+    bathrooms?: number;
     notes?: string;
     answers?: Record<string, string>;
+    // Marketing values may be supplied by the browser, but WEBSITE identity
+    // and sourcePage are always derived by the server-side website resolver.
+    utmSource?: string;
+    utmCampaign?: string;
 }

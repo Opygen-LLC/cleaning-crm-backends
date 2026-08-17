@@ -10,6 +10,7 @@ import { IRequestUser } from "../../types/requestUser.interface";
 import { IBookingFormCreate, IPublicBookingSubmission } from "./bookingForm.interface";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
+import { buildBookingSubmissionAttribution } from "./bookingSubmissionAttribution";
 
 // ─── Slot-generation helpers (mirrors frontend logic exactly) ─────────────────
 
@@ -956,14 +957,19 @@ const submitPublicBookingFormBySelector = async (
                 priceSnapshot: canonicalService.priceSnapshot,
                 durationSnapshot: canonicalService.durationSnapshot,
                 idempotencyKey: idempotencyKey ?? null,
-                sourceWebsiteId: selector.sourceWebsiteId ?? null,
+                // source/sourcePage/websiteId are derived from the trusted
+                // resolver selector, never from customer-controlled JSON.
+                ...buildBookingSubmissionAttribution(selector.sourceWebsiteId, payload),
+                propertyType: payload.propertyType ?? null,
+                bedrooms: payload.bedrooms ?? null,
+                bathrooms: payload.bathrooms ?? null,
                 date: dateStart,
                 timeSlot: payload.timeSlot,
-                name: payload.name,
-                email: payload.email,
-                phone: payload.phone,
-                address: payload.address,
-                notes: payload.notes || undefined,
+                name: payload.name.trim(),
+                email: payload.email.trim().toLowerCase(),
+                phone: payload.phone.trim(),
+                address: payload.address.trim(),
+                notes: payload.notes?.trim() || undefined,
                 answers: customAnswers as Prisma.InputJsonValue,
             },
         });

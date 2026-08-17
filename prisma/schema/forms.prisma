@@ -79,9 +79,16 @@ model BookingFormSubmission {
   idempotencyKey      String?
   convertedBookingId  String?              @unique
   convertedAt         DateTime?
-  // Stable source attribution for submissions created through a BusinessWebsite.
-  // Legacy/direct public form links leave this null.
+  // Stable source attribution. source/sourcePage are server-derived; public
+  // request bodies can never choose WEBSITE or supply a website id.
   sourceWebsiteId     String?
+  source              String               @default("PUBLIC_LINK")
+  sourcePage          String?
+  utmSource           String?
+  utmCampaign         String?
+  propertyType        String?
+  bedrooms            Int?
+  bathrooms           Int?
   date                DateTime
   timeSlot    String
   name        String
@@ -100,6 +107,8 @@ model BookingFormSubmission {
   @@index([formId, status])
   @@index([serviceCatalogId])
   @@index([sourceWebsiteId, createdAt])
+  @@index([source, createdAt])
+  @@index([utmSource, createdAt])
   @@unique([formId, idempotencyKey])
   @@map("booking_form_submission")
 }

@@ -82,11 +82,22 @@ export const publicBookingSubmissionSchema = z.object({
     email:       z.string().trim().email("Enter a valid email address").max(254),
     phone:       z.string().trim().min(6, "Enter a valid phone number").max(40),
     address:     z.string().trim().min(3, "Service address is required").max(500),
+    propertyType: z.enum(["HOUSE", "FLAT", "OFFICE", "COMMERCIAL", "OTHER"]).optional(),
+    bedrooms:    z.number().int().min(0).max(50).optional(),
+    bathrooms:   z.number().int().min(0).max(50).optional(),
     notes:       z.string().trim().max(2000).optional(),
     answers:     publicAnswersSchema.optional(),
+    utmSource:   z.string().trim().max(120).optional(),
+    utmCampaign: z.string().trim().max(160).optional(),
 }).strict().superRefine((value, ctx) => {
     if (!value.serviceCatalogId && !value.serviceType) {
         ctx.addIssue({ code: "custom", path: ["serviceCatalogId"], message: "Choose a service" });
+    }
+    if ((value.propertyType === "HOUSE" || value.propertyType === "FLAT") && value.bedrooms === undefined) {
+        ctx.addIssue({ code: "custom", path: ["bedrooms"], message: "Choose the number of bedrooms" });
+    }
+    if ((value.propertyType === "HOUSE" || value.propertyType === "FLAT") && value.bathrooms === undefined) {
+        ctx.addIssue({ code: "custom", path: ["bathrooms"], message: "Choose the number of bathrooms" });
     }
 });
 
