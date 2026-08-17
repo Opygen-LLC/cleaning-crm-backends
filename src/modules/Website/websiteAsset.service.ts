@@ -16,6 +16,7 @@ import type {
   WebsiteBrandUploadSignatureInput,
 } from "./website.interface";
 import { WebsiteService } from "./website.service";
+import { WebsiteEntitlementService } from "./websiteEntitlement.service";
 
 const ALLOWED_MIME_TYPES = new Set([
   "image/jpeg",
@@ -135,10 +136,16 @@ const requestBrandUploadSignature = async (input: WebsiteBrandUploadSignatureInp
   assertCloudinaryConfigured();
   assertDeclaredUpload(input);
   const adminId = await getAdminId(user);
-  const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true, status: true } });
+  const [website, entitlements] = await Promise.all([
+    prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true, status: true } }),
+    WebsiteEntitlementService.getForAdminId(adminId),
+  ]);
   if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
   if (website.status === "SUSPENDED") {
     throw new AppError(status.CONFLICT, "A suspended website cannot upload branding assets");
+  }
+  if (input.kind === "social" && !entitlements.advancedSeo) {
+    throw new AppError(status.FORBIDDEN, "Social share image uploads require Advanced Website SEO.", { code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false });
   }
 
   const folder = folderFor(website.id);
@@ -181,9 +188,15 @@ const requestBrandUploadSignature = async (input: WebsiteBrandUploadSignatureInp
 const finalizeBrandUpload = async (input: WebsiteBrandUploadFinalizeInput, user: IRequestUser) => {
   assertCloudinaryConfigured();
   const adminId = await getAdminId(user);
-  const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true, status: true } });
+  const [website, entitlements] = await Promise.all([
+    prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true, status: true } }),
+    WebsiteEntitlementService.getForAdminId(adminId),
+  ]);
   if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
   if (website.status === "SUSPENDED") throw new AppError(status.CONFLICT, "A suspended website cannot upload branding assets");
+  if (input.kind === "social" && !entitlements.advancedSeo) {
+    throw new AppError(status.FORBIDDEN, "Social share image uploads require Advanced Website SEO.", { code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false });
+  }
   const expectedFolder = folderFor(website.id);
   const normalizedPublicId = input.publicId.trim();
   if (!normalizedPublicId.startsWith(`${expectedFolder}/${publicIdPrefix(input.kind)}`)) {

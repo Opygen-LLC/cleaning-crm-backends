@@ -5,6 +5,7 @@ import {
 } from "../../generated/prisma/enums";
 import { prisma } from "../prisma/prisma";
 import logger from "../logger";
+import { normalizeSubscriptionPlanFeatures } from "./subscriptionPlanFeatures";
 
 /**
  * Feature label strings must stay in sync with the `featureLabel` /
@@ -20,6 +21,17 @@ import logger from "../logger";
  * the PLAN_RANK check in FeatureGate — you only need to list features
  * that *first appear* at a given tier.
  */
+const WEBSITE_ENTITLEMENT_LABELS = new Set([
+    "custom domains",
+    "premium website templates",
+    "website analytics history",
+    "advanced website seo",
+]);
+
+function normalizeFeatureLabel(value: string): string {
+    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 const SUBSCRIPTION_PLANS: {
     name: SubscriptionName;
     description: string;
@@ -54,8 +66,14 @@ const SUBSCRIPTION_PLANS: {
             { label: "Expenses", included: true },
             { label: "Services", included: true },
             { label: "Email support", included: true },
+            // Website core stays on every paid tier. Advanced website features
+            // are plan entitlements handled server-side as well as in the UI.
+            { label: "Custom Domains", included: false, limit: "0" },
+            { label: "Premium Website Templates", included: false },
+            { label: "Website Analytics History", included: true, limit: "30 days" },
+            { label: "Advanced Website SEO", included: false },
             // Features NOT included on Starter
-            { label: "Online Booking", included: false },
+            { label: "Online Booking", included: true },
             { label: "Reviews", included: false },
             { label: "Reports", included: false },
             { label: "Leads Pipeline", included: false },
@@ -107,6 +125,10 @@ const SUBSCRIPTION_PLANS: {
             { label: "Quotes", included: true },
             { label: "Expenses", included: true },
             { label: "Services", included: true },
+            { label: "Custom Domains", included: true, limit: "1 domain" },
+            { label: "Premium Website Templates", included: true },
+            { label: "Website Analytics History", included: true, limit: "90 days" },
+            { label: "Advanced Website SEO", included: true },
             // Growth-tier unlocks
             { label: "Online Booking", included: true },
             { label: "Reviews", included: true },
@@ -151,6 +173,10 @@ const SUBSCRIPTION_PLANS: {
             { label: "Unlimited staff", included: true, limit: "unlimited" },
             { label: "Unlimited clients", included: true, limit: "unlimited" },
             { label: "Unlimited bookings", included: true, limit: "unlimited" },
+            { label: "Custom Domains", included: true, limit: "3 domains" },
+            { label: "Premium Website Templates", included: true },
+            { label: "Website Analytics History", included: true, limit: "365 days" },
+            { label: "Advanced Website SEO", included: true },
             // All Growth features included via PLAN_RANK — list key ones for UI
             { label: "Online Booking", included: true },
             { label: "Reviews", included: true },
@@ -197,6 +223,10 @@ const SUBSCRIPTION_PLANS: {
             { label: "Choose your client limit", included: true },
             { label: "Choose your bookings per month", included: true },
             { label: "$10 base charge", included: true },
+            { label: "Custom Domains", included: true, limit: "5 domains" },
+            { label: "Premium Website Templates", included: true },
+            { label: "Website Analytics History", included: true, limit: "730 days" },
+            { label: "Advanced Website SEO", included: true },
             { label: "$5 per staff member", included: true },
             {
                 label: "$0.10 per client",
@@ -273,6 +303,46 @@ export async function seedSubscriptionPlans() {
                 err,
             );
             continue;
+        }
+
+        // Phase 22 introduces website entitlements for existing installations.
+        // Add only entitlement rows that do not already exist; never overwrite
+        // prices, limits, or feature choices made by super-admin. Core website,
+        // free-subdomain, and Online Booking access are runtime invariants and
+        // are deliberately not represented as configurable website entitlements.
+        try {
+            const existingFeatures = normalizeSubscriptionPlanFeatures(
+                subscriptionPlan.features,
+            );
+            const existingLabels = new Set(
+                existingFeatures.map((feature) =>
+                    normalizeFeatureLabel(feature.label),
+                ),
+            );
+            const missingWebsiteEntitlements = sub.features.filter((feature) => {
+                const key = normalizeFeatureLabel(feature.label);
+                return (
+                    WEBSITE_ENTITLEMENT_LABELS.has(key) &&
+                    !existingLabels.has(key)
+                );
+            });
+
+            if (missingWebsiteEntitlements.length > 0) {
+                subscriptionPlan = await prisma.subscriptionPlan.update({
+                    where: { id: subscriptionPlan.id },
+                    data: {
+                        features: [
+                            ...existingFeatures,
+                            ...missingWebsiteEntitlements,
+                        ],
+                    },
+                });
+            }
+        } catch (err) {
+            logger.error(
+                `❌ Failed to merge website entitlements: ${sub.name}`,
+                err,
+            );
         }
 
         for (const plan of sub.plans) {

@@ -32,6 +32,11 @@ export const CANONICAL_FEATURE_LABELS: string[] = [
     "online booking settings",
     "booking submissions",
     "online booking submissions",
+    // Website subscription entitlements
+    "custom domains",
+    "premium website templates",
+    "website analytics history",
+    "advanced website seo",
     // Estimates / Pricing Forms
     "pricing forms",
     "estimate forms",

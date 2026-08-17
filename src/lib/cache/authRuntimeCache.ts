@@ -52,6 +52,28 @@ export async function getRuntimeTenantId(
   return value;
 }
 
+
+export async function getRuntimeTenantOwnerStatus(adminId: string): Promise<string | null> {
+  const redisKey = `auth:tenant-owner-status:${adminId}`;
+  const shared = await redis.get(redisKey).catch(() => null);
+  if (shared) return shared;
+
+  const admin = await singleFlight(`tenant-owner-status:${adminId}`, () =>
+    prisma.adminProfile.findUnique({
+      where: { id: adminId },
+      select: { user: { select: { status: true } } },
+    }),
+  );
+  const ownerStatus = admin?.user.status ?? null;
+  if (ownerStatus) void redis.setex(redisKey, 60, ownerStatus).catch(() => {});
+  return ownerStatus;
+}
+
+export function invalidateRuntimeTenantOwnerStatus(adminId: string | null | undefined): void {
+  if (!adminId) return;
+  void redis.del(`auth:tenant-owner-status:${adminId}`).catch(() => {});
+}
+
 export async function getRuntimeSessionValidity(token: string): Promise<boolean> {
   const redisKey = `session:${token}`;
   const shared = await redis.get(redisKey).catch(() => null);

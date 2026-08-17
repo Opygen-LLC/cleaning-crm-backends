@@ -25,6 +25,7 @@ import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { isWebsiteDomainRoutingReady, readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { presentWebsiteDomain } from "./websiteDomainLifecycle";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
+import { WebsiteEntitlementService } from "./websiteEntitlement.service";
 
 const getOwnedWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
@@ -244,7 +245,8 @@ const present = (domain: any) => presentWebsiteDomain(domain as any);
 const addDomain = async (payload: WebsiteDomainCreateInput, user: IRequestUser) => {
   assertCustomDomainsEnabled();
   WebsiteDomainProviderService.assertConfigured();
-  const website = await getOwnedWebsite(user);
+  const [website, entitlements] = await Promise.all([getOwnedWebsite(user), WebsiteEntitlementService.getForUser(user)]);
+  WebsiteEntitlementService.assertCustomDomainsAllowed(entitlements);
   const domain = normalizeDomain(payload.domain);
   if (WEBSITE_BASE_DOMAIN && (domain === WEBSITE_BASE_DOMAIN || domain.endsWith(`.${WEBSITE_BASE_DOMAIN}`))) {
     throw new AppError(status.BAD_REQUEST, "Platform subdomains cannot be added as custom domains");
@@ -282,10 +284,12 @@ const addDomain = async (payload: WebsiteDomainCreateInput, user: IRequestUser) 
     }
 
     const domainCount = await tx.websiteDomain.count({ where: { websiteId: website.id } });
-    if (domainCount >= WEBSITE_CUSTOM_DOMAIN_LIMIT_PER_SITE) {
+    const allowedDomainCount = Math.min(WEBSITE_CUSTOM_DOMAIN_LIMIT_PER_SITE, entitlements.customDomainLimit);
+    if (domainCount >= allowedDomainCount) {
       throw new AppError(
         status.CONFLICT,
-        `This website already has the maximum of ${WEBSITE_CUSTOM_DOMAIN_LIMIT_PER_SITE} custom domains`,
+        `Your current plan allows ${allowedDomainCount} custom domain${allowedDomainCount === 1 ? "" : "s"} for this website`,
+        { code: "WEBSITE_CUSTOM_DOMAIN_LIMIT", retryable: false },
       );
     }
 
@@ -308,18 +312,38 @@ const addDomain = async (payload: WebsiteDomainCreateInput, user: IRequestUser) 
 };
 
 const listDomains = async (user: IRequestUser) => {
-  const website = await getOwnedWebsite(user);
+  const [website, entitlements] = await Promise.all([
+    getOwnedWebsite(user),
+    WebsiteEntitlementService.getForUser(user),
+  ]);
   const domains = await prisma.websiteDomain.findMany({
     where: { websiteId: website.id },
     orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
   });
-  return domains.map(present);
+
+  const allowedReadyDomainIds = new Set(
+    entitlements.customDomains && entitlements.customDomainLimit > 0
+      ? domains
+          .filter((domain) => isWebsiteDomainRoutingReady(domain))
+          .slice(0, entitlements.customDomainLimit)
+          .map((domain) => domain.id)
+      : [],
+  );
+
+  return domains.map((domain) => ({
+    ...present(domain),
+    // Keep downgraded records/DNS configuration, but tell the dashboard which
+    // verified hostnames are currently inside the plan's routing allowance.
+    entitlementActive:
+      isWebsiteDomainRoutingReady(domain) && allowedReadyDomainIds.has(domain.id),
+  }));
 };
 
 const verifyDomain = async (domainId: string, user: IRequestUser) => {
   assertCustomDomainsEnabled();
   WebsiteDomainProviderService.assertConfigured();
-  const owned = await getOwnedDomain(domainId, user);
+  const [owned, entitlements] = await Promise.all([getOwnedDomain(domainId, user), WebsiteEntitlementService.getForUser(user)]);
+  WebsiteEntitlementService.assertCustomDomainsAllowed(entitlements);
 
   return withDomainVerificationLock(domainId, async () => {
     // Re-read after the distributed lock. Another API replica may have
@@ -495,7 +519,9 @@ const removeDomain = async (domainId: string, user: IRequestUser) => {
 
 const setPrimaryDomain = async (domainId: string, user: IRequestUser) => {
   assertCustomDomainsEnabled();
-  const { website } = await getOwnedDomain(domainId, user);
+  const [owned, entitlements] = await Promise.all([getOwnedDomain(domainId, user), WebsiteEntitlementService.getForUser(user)]);
+  WebsiteEntitlementService.assertCustomDomainsAllowed(entitlements);
+  const { website } = owned;
 
   const updated = await prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, `website-domain-primary:${website.id}`);

@@ -33,6 +33,10 @@ vi.mock("../lib/utils/createNotification", () => ({
     createNotification: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../middlewares/checkSubscription", () => ({
+    invalidateSubscriptionAccessCache: vi.fn().mockResolvedValue(undefined),
+}));
+
 // node-cron isn't exercised by runSubscriptionExpiryJob itself, but the module
 // calls cron.schedule at import time via scheduleSubscriptionExpiryJob's own
 // definition — mock it so importing this file never registers a real timer.
@@ -70,7 +74,7 @@ describe("runSubscriptionExpiryJob", () => {
 
     it("expires a lapsed paid subscription and notifies its admin", async () => {
         mockPrisma.subscription.findMany
-            .mockResolvedValueOnce([{ id: "sub-1", adminId: "admin-1" }]) // paid query
+            .mockResolvedValueOnce([{ id: "sub-1", adminId: "admin-1", admin: { userId: "user-1" } }]) // paid query
             .mockResolvedValueOnce([]); // trial query
 
         await runSubscriptionExpiryJob();
@@ -93,7 +97,7 @@ describe("runSubscriptionExpiryJob", () => {
     it("expires a lapsed trial and notifies its admin with trial-specific copy", async () => {
         mockPrisma.subscription.findMany
             .mockResolvedValueOnce([]) // paid query
-            .mockResolvedValueOnce([{ id: "sub-2", adminId: "admin-2" }]); // trial query
+            .mockResolvedValueOnce([{ id: "sub-2", adminId: "admin-2", admin: { userId: "user-2" } }]); // trial query
 
         await runSubscriptionExpiryJob();
 
@@ -113,10 +117,10 @@ describe("runSubscriptionExpiryJob", () => {
     it("handles both a paid expiry and a trial expiry in the same run independently", async () => {
         mockPrisma.subscription.findMany
             .mockResolvedValueOnce([
-                { id: "sub-paid-1", adminId: "admin-1" },
-                { id: "sub-paid-2", adminId: "admin-2" },
+                { id: "sub-paid-1", adminId: "admin-1", admin: { userId: "user-1" } },
+                { id: "sub-paid-2", adminId: "admin-2", admin: { userId: "user-2" } },
             ])
-            .mockResolvedValueOnce([{ id: "sub-trial-1", adminId: "admin-3" }]);
+            .mockResolvedValueOnce([{ id: "sub-trial-1", adminId: "admin-3", admin: { userId: "user-3" } }]);
 
         await runSubscriptionExpiryJob();
 
@@ -145,7 +149,7 @@ describe("runSubscriptionExpiryJob", () => {
                 isTrial: false,
                 currentPeriodEnd: { lt: expect.any(Date) },
             },
-            select: { id: true, adminId: true },
+            select: { id: true, adminId: true, admin: { select: { userId: true } } },
         });
     });
 
@@ -160,13 +164,13 @@ describe("runSubscriptionExpiryJob", () => {
                 isTrial: true,
                 trialEndsAt: { lt: expect.any(Date) },
             },
-            select: { id: true, adminId: true },
+            select: { id: true, adminId: true, admin: { select: { userId: true } } },
         });
     });
 
     it("still expires subscriptions even if pushing a notification for one of them fails", async () => {
         mockPrisma.subscription.findMany
-            .mockResolvedValueOnce([{ id: "sub-1", adminId: "admin-1" }])
+            .mockResolvedValueOnce([{ id: "sub-1", adminId: "admin-1", admin: { userId: "user-1" } }])
             .mockResolvedValueOnce([]);
         // createNotification failures are swallowed with .catch(() => {}) at the
         // call site specifically so a notification-delivery problem can never

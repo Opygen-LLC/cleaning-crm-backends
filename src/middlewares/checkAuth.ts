@@ -7,6 +7,7 @@ import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import {
     getRuntimeSessionValidity,
     getRuntimeTenantId,
+    getRuntimeTenantOwnerStatus,
     getRuntimeUserStatus,
 } from "../lib/cache/authRuntimeCache";
 import { privateResponseCache } from "./privateResponseCache";
@@ -77,6 +78,7 @@ export const checkAuth =
                 throw new AppError(
                     status.FORBIDDEN,
                     "Your account has been suspended. Please contact support.",
+                    { code: "ACCOUNT_SUSPENDED", retryable: false },
                 );
             }
 
@@ -95,6 +97,26 @@ export const checkAuth =
                 req.authRuntime?.adminId !== undefined
                     ? req.authRuntime.adminId
                     : await getRuntimeTenantId(tokenData.userId as string, role);
+
+            // Suspending a cleaning business must close the tenant, not just
+            // the owner's own token. Staff remain separate User rows, so also
+            // enforce the owning ADMIN account state for STAFF requests.
+            if (role === UserRole.STAFF && adminId) {
+                const ownerStatus = await getRuntimeTenantOwnerStatus(adminId);
+                if (ownerStatus === AccountStatus.SUSPENDED) {
+                    throw new AppError(
+                        status.FORBIDDEN,
+                        "Your business account has been suspended. Please contact support.",
+                        { code: "ACCOUNT_SUSPENDED", retryable: false },
+                    );
+                }
+                if (ownerStatus === AccountStatus.DELETED) {
+                    throw new AppError(status.FORBIDDEN, "This business account has been deleted.", {
+                        code: "ACCOUNT_DELETED",
+                        retryable: false,
+                    });
+                }
+            }
 
             // ── Optional session bookkeeping ────────────────────────────────
             // If the better-auth session cookie is present (same-origin / local

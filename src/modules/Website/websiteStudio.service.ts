@@ -6,6 +6,8 @@ import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteService } from "./website.service";
 import { parsePublishedSnapshot } from "./websiteSnapshot";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
+import { WebsiteEntitlementService } from "./websiteEntitlement.service";
+import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
 
 /**
  * Lightweight read model for Website Studio.
@@ -19,7 +21,7 @@ import { buildDefaultWebsiteSeo } from "./websiteSeo";
 const getStudio = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
 
-  const [website, business, bookingForms, estimateForms] = await Promise.all([
+  const [website, business, bookingForms, estimateForms, entitlements] = await Promise.all([
     WebsiteService.getWebsiteForAdmin(adminId),
     prisma.adminProfile.findUnique({
       where: { id: adminId },
@@ -44,6 +46,7 @@ const getStudio = async (user: IRequestUser) => {
       orderBy: [{ published: "desc" }, { updatedAt: "desc" }],
       take: 100,
     }),
+    WebsiteEntitlementService.getForAdminId(adminId),
   ]);
 
   const published = parsePublishedSnapshot(business?.businessWebsite?.publishedSnapshot);
@@ -66,6 +69,29 @@ const getStudio = async (user: IRequestUser) => {
     published?.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled),
   );
 
+  const allowedReadyDomainIds = new Set(
+    WEBSITE_CUSTOM_DOMAINS_ENABLED && entitlements.customDomains && entitlements.customDomainLimit > 0
+      ? website.domains
+          .filter((domain) => isWebsiteDomainRoutingReady(domain))
+          .slice(0, entitlements.customDomainLimit)
+          .map((domain) => domain.id)
+      : [],
+  );
+  const studioWebsite = {
+    ...website,
+    domains: website.domains.map((domain) => ({
+      ...domain,
+      entitlementActive:
+        isWebsiteDomainRoutingReady(domain) && allowedReadyDomainIds.has(domain.id),
+    })),
+    publicUrl:
+      WEBSITE_CUSTOM_DOMAINS_ENABLED &&
+      entitlements.customDomains &&
+      entitlements.customDomainLimit > 0
+        ? website.publicUrl
+        : website.platformUrl,
+  };
+
   const businessName = business?.businessName?.trim() || "Your cleaning business";
   const seoDefaults = buildDefaultWebsiteSeo({
     businessName,
@@ -74,7 +100,7 @@ const getStudio = async (user: IRequestUser) => {
   });
 
   return {
-    website,
+    website: studioWebsite,
     business: {
       name: businessName,
       city: business?.city?.trim() || null,
@@ -100,13 +126,24 @@ const getStudio = async (user: IRequestUser) => {
       publishedEstimateFormId: publishedEstimateForm?.id ?? null,
       publishedEstimateFormHeadline: publishedEstimateForm?.headline ?? null,
     },
-    templates: TemplateRegistry.list(),
+    templates: TemplateRegistry.list().map((template) => ({
+      ...template,
+      available: template.tier === "FREE" || entitlements.premiumTemplates,
+      lockedReason: template.tier === "PRO" && !entitlements.premiumTemplates
+        ? "Upgrade your plan to use premium website templates."
+        : null,
+    })),
     bookingForms,
     estimateForms,
     features: {
-      customDomainsEnabled: WEBSITE_CUSTOM_DOMAINS_ENABLED,
-      customDomainLimitPerSite: WEBSITE_CUSTOM_DOMAIN_LIMIT_PER_SITE,
+      customDomainsEnabled:
+        WEBSITE_CUSTOM_DOMAINS_ENABLED &&
+        entitlements.customDomains &&
+        entitlements.customDomainLimit > 0,
+      customDomainsDeploymentEnabled: WEBSITE_CUSTOM_DOMAINS_ENABLED,
+      customDomainLimitPerSite: Math.min(WEBSITE_CUSTOM_DOMAIN_LIMIT_PER_SITE, entitlements.customDomainLimit),
       customDomainProvider: WEBSITE_DOMAIN_PROVIDER.toUpperCase(),
+      entitlements,
     },
   };
 };

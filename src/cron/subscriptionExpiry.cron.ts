@@ -17,6 +17,7 @@ import { prisma } from "../lib/prisma/prisma";
 import { log, fail } from "./index.cron";
 import { createNotification } from "../lib/utils/createNotification";
 import { NotificationType } from "../generated/prisma/enums";
+import { invalidateSubscriptionAccessCache } from "../middlewares/checkSubscription";
 
 const JOB_NAME = "subscriptionExpiry";
 
@@ -42,7 +43,7 @@ export async function runSubscriptionExpiryJob(): Promise<void> {
             isTrial: false,
             currentPeriodEnd: { lt: now },
         },
-        select: { id: true, adminId: true },
+        select: { id: true, adminId: true, admin: { select: { userId: true } } },
     });
 
     if (paidToExpire.length > 0) {
@@ -51,7 +52,7 @@ export async function runSubscriptionExpiryJob(): Promise<void> {
             data: { status: "EXPIRED" },
         });
 
-        for (const { id, adminId } of paidToExpire) {
+        for (const { id, adminId, admin } of paidToExpire) {
             createNotification({
                 adminId,
                 type: NotificationType.SUBSCRIPTION,
@@ -60,6 +61,7 @@ export async function runSubscriptionExpiryJob(): Promise<void> {
                     "Your billing period has ended and your subscription has expired. Renew to restore access.",
                 relatedId: id,
             }).catch(() => {});
+            await invalidateSubscriptionAccessCache(admin.userId);
         }
     }
 
@@ -70,7 +72,7 @@ export async function runSubscriptionExpiryJob(): Promise<void> {
             isTrial: true,
             trialEndsAt: { lt: now },
         },
-        select: { id: true, adminId: true },
+        select: { id: true, adminId: true, admin: { select: { userId: true } } },
     });
 
     if (trialsToExpire.length > 0) {
@@ -79,7 +81,7 @@ export async function runSubscriptionExpiryJob(): Promise<void> {
             data: { status: "EXPIRED" },
         });
 
-        for (const { id, adminId } of trialsToExpire) {
+        for (const { id, adminId, admin } of trialsToExpire) {
             createNotification({
                 adminId,
                 type: NotificationType.SUBSCRIPTION,
@@ -88,6 +90,7 @@ export async function runSubscriptionExpiryJob(): Promise<void> {
                     "Your free trial has ended. Upgrade to a paid plan to keep using the platform.",
                 relatedId: id,
             }).catch(() => {});
+            await invalidateSubscriptionAccessCache(admin.userId);
         }
     }
 

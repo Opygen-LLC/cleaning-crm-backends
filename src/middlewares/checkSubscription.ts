@@ -66,6 +66,40 @@ const subscriptionCacheKey = (userId: string) => `sub:full:user:${userId}`;
 /** Clear the status/feature snapshot after an approved/cancelled plan mutation. */
 export async function invalidateSubscriptionAccessCache(userId: string) {
   await redis.del(subscriptionCacheKey(userId)).catch(() => {});
+
+  // Website entitlements are evaluated from the live subscription on public
+  // projection/host cache misses. Any plan/status mutation must therefore drop
+  // those caches immediately so a downgrade cannot keep premium domains,
+  // templates or SEO alive until TTL expiry.
+  try {
+    const adminId = await getRuntimeTenantId(userId, UserRole.ADMIN);
+    if (!adminId) return;
+    const website = await prisma.businessWebsite.findUnique({
+      where: { adminId },
+      select: {
+        id: true,
+        subdomain: true,
+        subdomainAliases: { select: { subdomain: true } },
+        domains: { select: { domain: true } },
+      },
+    });
+    if (!website) return;
+    const [{ WebsiteProjectionCacheService }, { WebsiteHostResolverService }] = await Promise.all([
+      import("../modules/Website/websiteProjectionCache.service"),
+      import("../modules/Website/websiteHostResolver.service"),
+    ]);
+    await Promise.all([
+      WebsiteProjectionCacheService.invalidateWebsite(website.id),
+      WebsiteHostResolverService.invalidateSubdomains([
+        website.subdomain,
+        ...website.subdomainAliases.map((alias) => alias.subdomain),
+      ]),
+      WebsiteHostResolverService.invalidateHosts(website.domains.map((domain) => domain.domain)),
+    ]);
+  } catch {
+    // Subscription state in Postgres is authoritative. Cache invalidation is
+    // best-effort; versioned/short TTL public caches self-heal if Redis is down.
+  }
 }
 
 async function getCachedSubscriptionForUser(
@@ -174,6 +208,7 @@ export const checkSubscription = async (
       throw new AppError(
         status.FORBIDDEN,
         "Your account has been suspended. Please contact support.",
+        { code: "ACCOUNT_SUSPENDED", retryable: false },
       );
     if (userStatus === AccountStatus.DELETED)
       throw new AppError(status.FORBIDDEN, "This account has been deleted.");
@@ -286,6 +321,12 @@ export function checkFeature(featureKey: string) {
       // Now shares the same 60s Redis-cached payload as checkSubscription.
       const sub = await getCachedSubscriptionForUser(userId);
       if (!sub) return next();
+
+      // Product invariant: Online Booking is part of the website acquisition
+      // core on every active plan. Older production STARTER rows may still
+      // contain the historical `included: false` flag, so do not let stale
+      // plan JSON lock the booking engine after this rollout.
+      if (normKey === "online booking") return next();
 
       const included = normalizeSubscriptionPlanFeatures(sub.features ?? []);
       const hasFeature = included.some(

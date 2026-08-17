@@ -33,6 +33,38 @@ import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
 import { presentWebsiteDomain } from "./websiteDomainLifecycle";
 import { WEBSITE_STATUS, statusAfterDraftMutation, type WebsiteLifecycleStatus } from "./websiteLifecycle";
 import { validateWebsitePageContent } from "./websiteContent";
+import { WebsiteEntitlementService, type WebsiteEntitlements } from "./websiteEntitlement.service";
+
+
+const assertEntitledWebsitePatch = (
+  payload: WebsiteUpdateInput,
+  current: { templateId: string; templateVersion: string },
+  entitlements: WebsiteEntitlements,
+) => {
+  if (payload.templateId !== undefined || payload.templateVersion !== undefined) {
+    const selection = buildTemplateSelectionPatch(payload, current);
+    if ("templateId" in selection) {
+      const template = TemplateRegistry.requireTemplate(selection.templateId, selection.templateVersion);
+      WebsiteEntitlementService.assertTemplateAllowed(template, entitlements);
+    }
+  }
+  if (typeof payload.socialImageUrl === "string" && payload.socialImageUrl.trim() && !entitlements.advancedSeo) {
+    throw new AppError(status.FORBIDDEN, "Social share image customization requires Advanced Website SEO.", {
+      code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false,
+    });
+  }
+};
+
+const assertEntitledPagePatch = (payload: WebsitePageUpdateInput, entitlements: WebsiteEntitlements) => {
+  const addsAdvancedSeo =
+    (typeof payload.seoTitle === "string" && payload.seoTitle.trim().length > 0) ||
+    (typeof payload.seoDescription === "string" && payload.seoDescription.trim().length > 0);
+  if (addsAdvancedSeo && !entitlements.advancedSeo) {
+    throw new AppError(status.FORBIDDEN, "Page-specific SEO overrides require Advanced Website SEO.", {
+      code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false,
+    });
+  }
+};
 
 const getWebsiteOrThrow = async (adminId: string, db: any = prisma) => {
   const website = await db.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
@@ -481,7 +513,7 @@ const getWebsite = async (user: IRequestUser) => {
 
 const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const current = await getWebsiteOrThrow(adminId);
+  const [current, entitlements] = await Promise.all([getWebsiteOrThrow(adminId), WebsiteEntitlementService.getForAdminId(adminId)]);
 
   return prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
@@ -501,6 +533,7 @@ const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) =>
       assertOwnedForm(adminId, payload.primaryEstimateFormId, "estimate", tx),
     ]);
     await assertManagedBrandReferences(lockedCurrent.id, payload, lockedCurrent, tx);
+    assertEntitledWebsitePatch(payload, lockedCurrent, entitlements);
     const data = prepareWebsitePatch(payload, lockedCurrent);
 
     await ensurePublishedSnapshotBeforeDraftMutationTx(tx, lockedCurrent.id);
@@ -524,7 +557,8 @@ const listPages = async (user: IRequestUser) => {
 
 const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const website = await getWebsiteOrThrow(adminId);
+  const [website, entitlements] = await Promise.all([getWebsiteOrThrow(adminId), WebsiteEntitlementService.getForAdminId(adminId)]);
+  assertEntitledPagePatch(payload, entitlements);
   const page = await prisma.websitePage.findFirst({
     where: { id: pageId, websiteId: website.id },
     select: { id: true, kind: true },
@@ -556,7 +590,7 @@ const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user:
 
 const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const current = await getWebsiteOrThrow(adminId);
+  const [current, entitlements] = await Promise.all([getWebsiteOrThrow(adminId), WebsiteEntitlementService.getForAdminId(adminId)]);
   const websitePatch = payload.website ?? {};
   const expectedRevisionNumber = payload.expectedRevisionNumber;
 
@@ -582,6 +616,8 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
       assertOwnedForm(adminId, websitePatch.primaryEstimateFormId, "estimate", tx),
     ]);
     await assertManagedBrandReferences(lockedCurrent.id, websitePatch, lockedCurrent, tx);
+    assertEntitledWebsitePatch(websitePatch, lockedCurrent, entitlements);
+    for (const page of payload.pages ?? []) assertEntitledPagePatch(page, entitlements);
 
     await ensurePublishedSnapshotBeforeDraftMutationTx(tx, lockedCurrent.id);
 
@@ -623,14 +659,18 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
 
 const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const current = await getWebsiteOrThrow(adminId);
+  const [current, entitlements] = await Promise.all([getWebsiteOrThrow(adminId), WebsiteEntitlementService.getForAdminId(adminId)]);
 
   const website = await prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
     const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
     const draft = await loadDraftSnapshot(current.id, tx);
     assertLifecycleAllowsPublish(draft.status as WebsiteLifecycleStatus);
-    TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
+    const publishTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
+    WebsiteEntitlementService.assertTemplateAllowed(publishTemplate, entitlements);
+    if (draft.socialImageUrl && !entitlements.advancedSeo) {
+      throw new AppError(status.FORBIDDEN, "Remove the custom social share image or upgrade to Advanced Website SEO before publishing.", { code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false });
+    }
     validateDraftPageContent(draft);
     if (!draft.pages.some((page: any) => page.kind === "HOME" && page.isEnabled)) {
       throw new AppError(status.CONFLICT, "Enable the Home page before publishing the website");
@@ -685,7 +725,7 @@ const REQUIRED_ONBOARDING_STEPS = ONBOARDING_STEPS.map((step) => step.key);
  */
 const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const current = await getWebsiteOrThrow(adminId);
+  const [current, entitlements] = await Promise.all([getWebsiteOrThrow(adminId), WebsiteEntitlementService.getForAdminId(adminId)]);
 
   const result = await prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
@@ -814,7 +854,11 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
       : null;
 
     const draft = bookingFormId ? await loadDraftSnapshot(current.id, tx) : preflightDraft;
-    TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
+    const launchTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
+    WebsiteEntitlementService.assertTemplateAllowed(launchTemplate, entitlements);
+    if (draft.socialImageUrl && !entitlements.advancedSeo) {
+      throw new AppError(status.FORBIDDEN, "Remove the custom social share image or upgrade to Advanced Website SEO before launching.", { code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false });
+    }
     validateDraftPageContent(draft);
 
     if (!draft.pages.some((page: any) => page.kind === "HOME" && page.isEnabled)) {

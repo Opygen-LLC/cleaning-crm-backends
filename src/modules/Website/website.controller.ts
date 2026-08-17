@@ -16,6 +16,7 @@ import { WebsiteAcquisitionService } from "./websiteAcquisition.service";
 import { WEBSITE_ANALYTICS_EVENT, WebsiteAnalyticsService } from "./websiteAnalytics.service";
 import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
 import AppError from "../../errorHelper/AppError";
+import { WebsiteEntitlementService } from "./websiteEntitlement.service";
 
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
@@ -73,7 +74,16 @@ const uploadContentAsset = catchAsync(async (req, res) => {
   return created(res, "Website content asset uploaded successfully", await WebsiteService.uploadContentAsset(req.file, slot, req.user));
 });
 const deleteAsset = catchAsync(async (req, res) => ok(res, "Website asset deleted successfully", await WebsiteService.deleteAsset(paramStr(req.params.assetId), req.user)));
-const listTemplates = catchAsync(async (_req, res) => ok(res, "Website templates retrieved successfully", TemplateRegistry.list()));
+const listTemplates = catchAsync(async (req, res) => {
+  const entitlements = await WebsiteEntitlementService.getForUser(req.user);
+  return ok(res, "Website templates retrieved successfully", TemplateRegistry.list().map((template) => ({
+    ...template,
+    available: template.tier === "FREE" || entitlements.premiumTemplates,
+    lockedReason: template.tier === "PRO" && !entitlements.premiumTemplates
+      ? "Upgrade your plan to use premium website templates."
+      : null,
+  })));
+});
 const addDomain = catchAsync(async (req, res) => created(res, "Website domain added successfully", await DomainService.addDomain(req.body, req.user)));
 const listDomains = catchAsync(async (req, res) => ok(res, "Website domains retrieved successfully", await DomainService.listDomains(req.user)));
 const verifyDomain = catchAsync(async (req, res) => ok(res, "Website domain verification checked successfully", await DomainService.verifyDomain(paramStr(req.params.domainId), req.user)));
@@ -236,6 +246,8 @@ const reportPublicWebsiteError = catchAsync(async (req, res) => {
 
 const getWebsiteAnalytics = catchAsync(async (req, res) => {
   const days = Number(req.query.days ?? 30);
+  const entitlements = await WebsiteEntitlementService.getForUser(req.user);
+  WebsiteEntitlementService.assertAnalyticsWindow(days, entitlements);
   const data = await WebsiteAnalyticsService.getSummary(req.user, days);
   // Redis is the shared cache of record for these aggregates. Never let a CDN
   // or shared HTTP proxy cache one tenant's authenticated dashboard payload.

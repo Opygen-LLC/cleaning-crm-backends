@@ -14,8 +14,9 @@ import { prisma } from "../../lib/prisma/prisma";
 import { normalizeSubdomain } from "./websiteIdentity";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { getCanonicalWebsiteHost } from "./websiteCanonicalHost";
+import { deriveWebsiteEntitlements, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
 
-const ROUTE_CACHE_VERSION = 7 as const;
+const ROUTE_CACHE_VERSION = 8 as const;
 const CACHE_NAMESPACE = `site-route:v${ROUTE_CACHE_VERSION}`;
 const SUBDOMAIN_KEY_PREFIX = `${CACHE_NAMESPACE}:subdomain:`;
 const HOST_KEY_PREFIX = `${CACHE_NAMESPACE}:host:`;
@@ -27,6 +28,7 @@ export type WebsiteHostAvailability = "live" | "unpublished" | "suspended";
 export interface WebsiteRouteResolution {
   version: typeof ROUTE_CACHE_VERSION;
   websiteId: string;
+  businessName: string;
   requestedSubdomain: string;
   canonicalSubdomain: string;
   isAlias: boolean;
@@ -126,6 +128,10 @@ const normalizeHost = (value: string): string => {
   return ascii;
 };
 
+
+const hasCustomDomainRouting = (entitlements: ReturnType<typeof deriveWebsiteEntitlements>) =>
+  WEBSITE_CUSTOM_DOMAINS_ENABLED && entitlements.customDomains && entitlements.customDomainLimit > 0;
+
 const websiteAvailability = (websiteStatus: string, accountStatus: string): WebsiteHostAvailability => {
   if (websiteStatus === "SUSPENDED" || accountStatus === "SUSPENDED" || accountStatus === "DELETED") {
     return "suspended";
@@ -182,7 +188,11 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
       id: true,
       subdomain: true,
       status: true,
-      admin: { select: { user: { select: { status: true } } } },
+      admin: { select: {
+        businessName: true,
+        user: { select: { status: true } },
+        subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
+      } },
       domains: {
         where: { ...readyWebsiteDomainWhere, isPrimary: true } as any,
         select: { domain: true },
@@ -195,11 +205,14 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
     const resolved: WebsiteRouteResolution = {
       version: ROUTE_CACHE_VERSION,
       websiteId: website.id,
+      businessName: website.admin.businessName,
       requestedSubdomain: subdomain,
       canonicalSubdomain: website.subdomain,
       isAlias: false,
       redirectCode: null,
-      primaryCustomHost: WEBSITE_CUSTOM_DOMAINS_ENABLED ? website.domains[0]?.domain ?? null : null,
+      primaryCustomHost: hasCustomDomainRouting(deriveWebsiteEntitlements(website.admin.subscription[0] as any))
+        ? website.domains[0]?.domain ?? null
+        : null,
       availability: websiteAvailability(website.status, website.admin.user.status),
     };
     await safeSet(key, resolved);
@@ -215,7 +228,11 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
         select: {
           subdomain: true,
           status: true,
-          admin: { select: { user: { select: { status: true } } } },
+          admin: { select: {
+        businessName: true,
+        user: { select: { status: true } },
+        subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
+      } },
           domains: {
             where: { ...readyWebsiteDomainWhere, isPrimary: true } as any,
             select: { domain: true },
@@ -234,6 +251,7 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
   const resolved: WebsiteRouteResolution = {
     version: ROUTE_CACHE_VERSION,
     websiteId: alias.websiteId,
+    businessName: alias.website.admin.businessName,
     requestedSubdomain: subdomain,
     canonicalSubdomain: alias.website.subdomain,
     isAlias: true,
@@ -241,7 +259,9 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
     // Fail closed to 308 even if an older row was manually created with a
     // different code.
     redirectCode: 308,
-    primaryCustomHost: WEBSITE_CUSTOM_DOMAINS_ENABLED ? alias.website.domains[0]?.domain ?? null : null,
+    primaryCustomHost: hasCustomDomainRouting(deriveWebsiteEntitlements(alias.website.admin.subscription[0] as any))
+      ? alias.website.domains[0]?.domain ?? null
+      : null,
     availability: websiteAvailability(alias.website.status, alias.website.admin.user.status),
   };
   await safeSet(key, resolved);
@@ -255,19 +275,25 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
   const domain = await prisma.websiteDomain.findFirst({
     where: { domain: host, ...readyWebsiteDomainWhere } as any,
     select: {
+      id: true,
       websiteId: true,
       domain: true,
       status: true,
+      isPrimary: true,
+      createdAt: true,
       website: {
         select: {
           subdomain: true,
           status: true,
-          admin: { select: { user: { select: { status: true } } } },
+          admin: { select: {
+        businessName: true,
+        user: { select: { status: true } },
+        subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
+      } },
           domains: {
-            where: { ...readyWebsiteDomainWhere, isPrimary: true } as any,
-            select: { domain: true },
-            orderBy: { createdAt: "asc" },
-            take: 1,
+            where: { ...readyWebsiteDomainWhere } as any,
+            select: { id: true, domain: true, isPrimary: true, createdAt: true },
+            orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
           },
         },
       },
@@ -278,13 +304,35 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
     throw new AppError(status.NOT_FOUND, "Website host not found");
   }
 
-  const primaryCustomHost = WEBSITE_CUSTOM_DOMAINS_ENABLED ? domain.website.domains[0]?.domain ?? null : null;
+  const entitlements = deriveWebsiteEntitlements(domain.website.admin.subscription[0] as any);
+  if (!hasCustomDomainRouting(entitlements)) {
+    // A downgrade must remove premium routing immediately without deleting the
+    // verified domain record. Upgrading later restores it without DNS setup.
+    throw new AppError(status.NOT_FOUND, "Website host not found");
+  }
+
+  // Domain-count entitlements apply to routing as well as creation. On a
+  // downgrade retain all verified records/DNS configuration, but only route
+  // the primary domain plus the oldest additional verified aliases up to the
+  // plan limit. Making another retained domain primary intentionally moves it
+  // into the active allowance without destructive cleanup.
+  const allowedDomainIds = new Set(
+    domain.website.domains
+      .slice(0, entitlements.customDomainLimit)
+      .map((item) => item.id),
+  );
+  if (!allowedDomainIds.has(domain.id)) {
+    throw new AppError(status.NOT_FOUND, "Website host not found");
+  }
+
+  const primaryCustomHost = domain.website.domains.find((item) => item.isPrimary)?.domain ?? null;
   const canonicalHost = getCanonicalWebsiteHost(domain.website.subdomain, primaryCustomHost) ?? domain.domain;
   const shouldRedirect = canonicalHost !== host;
 
   return {
     version: ROUTE_CACHE_VERSION,
     websiteId: domain.websiteId,
+    businessName: domain.website.admin.businessName,
     requestedSubdomain: domain.website.subdomain,
     canonicalSubdomain: domain.website.subdomain,
     isAlias: shouldRedirect,

@@ -11,6 +11,7 @@ import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service"
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
+import { deriveWebsiteEntitlements, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
 
 interface ResolvedWebsite {
   websiteId: string;
@@ -69,6 +70,7 @@ const loadProjectionSource = async (websiteId: string) => {
           brandColor: true,
           currency: true,
           user: { select: { email: true, status: true } },
+          subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
           serviceCatalogs: {
             where: { status: "ACTIVE" as any },
             select: {
@@ -198,14 +200,22 @@ const projectWebsite = (
 
   const config = snapshot.website;
   const pages = snapshot.pages.filter((page) => page.isEnabled);
-  const template = TemplateRegistry.get(config.templateId, config.templateVersion);
-  if (!template) throw new AppError(status.SERVICE_UNAVAILABLE, "Website template version is unavailable");
+  const entitlements = deriveWebsiteEntitlements(website.admin.subscription[0] as any);
+  const requestedTemplate = TemplateRegistry.get(config.templateId, config.templateVersion);
+  if (!requestedTemplate) throw new AppError(status.SERVICE_UNAVAILABLE, "Website template version is unavailable");
+  // Subscription downgrade changes presentation only; CRM/content/domain rows are
+  // never destroyed. Upgrading restores the selected premium template.
+  const template = requestedTemplate.tier === "PRO" && !entitlements.premiumTemplates
+    ? TemplateRegistry.requireTemplate("clean-modern", "1.0.0")
+    : requestedTemplate;
 
   // Canonical SEO and canonical routing share the exact same primary-domain
   // decision. Phase 17 guarantees that isPrimary is only retained on a
   // routing-ready custom domain (and automatically promotes the first healthy
   // domain), while additional healthy domains remain aliases.
-  const primaryDomain = website.domains.find((domain) => domain.isPrimary)?.domain ?? null;
+  const primaryDomain = entitlements.customDomains && entitlements.customDomainLimit > 0
+    ? website.domains.find((domain) => domain.isPrimary)?.domain ?? null
+    : null;
   const canonicalUrl = getCanonicalWebsiteOrigin(website.subdomain, primaryDomain);
 
   const defaultSeo = buildDefaultWebsiteSeo({
@@ -264,8 +274,8 @@ const projectWebsite = (
       path: page.slug,
       title: page.title,
       content: page.content,
-      seoTitle: page.seoTitle,
-      seoDescription: page.seoDescription,
+      seoTitle: entitlements.advancedSeo ? page.seoTitle : null,
+      seoDescription: entitlements.advancedSeo ? page.seoDescription : null,
     })),
     services: website.admin.serviceCatalogs.map(projectCanonicalService),
     reviews: website.admin.reviews.map((review) => ({
@@ -309,7 +319,7 @@ const projectWebsite = (
     seo: {
       title: config.metaTitle?.trim() || defaultSeo.title,
       description: config.metaDescription?.trim() || defaultSeo.description,
-      socialImageUrl: config.socialImageUrl,
+      socialImageUrl: entitlements.advancedSeo ? config.socialImageUrl : null,
       indexSite: options.mode === "preview" ? false : config.indexSite,
       canonicalUrl,
     },

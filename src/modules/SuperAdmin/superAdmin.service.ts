@@ -40,6 +40,7 @@ import type {
 } from "./superAdmin.validation";
 import { invalidateSubscriptionAccessCache } from "../../middlewares/checkSubscription";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
+import { invalidateRuntimeAuth, invalidateRuntimeTenantOwnerStatus } from "../../lib/cache/authRuntimeCache";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -75,6 +76,14 @@ const invalidateAdminWebsiteRouting = async (adminProfileId: string | null | und
         // cache cleanup is best-effort; the public projection still re-checks
         // account status and the short routing TTL self-heals if this lookup fails.
     }
+};
+
+const invalidateAdminSubscriptionState = async (adminProfileId: string) => {
+    const owner = await prisma.adminProfile.findUnique({
+        where: { id: adminProfileId },
+        select: { userId: true },
+    });
+    if (owner?.userId) await invalidateSubscriptionAccessCache(owner.userId);
 };
 
 // ─── Activity Logs ────────────────────────────────────────────────────────────
@@ -507,6 +516,9 @@ const suspendAdminAccount = async (adminId: string) => {
         data: { status: AccountStatus.SUSPENDED },
         select: { id: true, name: true, email: true, status: true },
     });
+    invalidateRuntimeAuth(adminId);
+    invalidateRuntimeTenantOwnerStatus(admin.admin?.id);
+    await invalidateSubscriptionAccessCache(adminId);
     await Promise.all([
         WebsiteProjectionCacheService.invalidateAdminWebsite(admin.admin?.id),
         invalidateAdminWebsiteRouting(admin.admin?.id),
@@ -529,6 +541,9 @@ const activateAdminAccount = async (adminId: string) => {
         data: { status: AccountStatus.ACTIVE },
         select: { id: true, name: true, email: true, status: true },
     });
+    invalidateRuntimeAuth(adminId);
+    invalidateRuntimeTenantOwnerStatus(admin.admin?.id);
+    await invalidateSubscriptionAccessCache(adminId);
     await Promise.all([
         WebsiteProjectionCacheService.invalidateAdminWebsite(admin.admin?.id),
         invalidateAdminWebsiteRouting(admin.admin?.id),
@@ -1337,6 +1352,7 @@ const cancelSubscription = async (subscriptionId: string) => {
         relatedId: updated.id,
     }).catch(() => {});
 
+    await invalidateAdminSubscriptionState(sub.adminId);
     return updated;
 };
 
@@ -1472,6 +1488,7 @@ const grantManualPayment = async (
         relatedId: updatedSub.id,
     }).catch(() => {});
 
+    await invalidateAdminSubscriptionState(sub.adminId);
     return { billingRecord, subscription: updatedSub };
 };
 
@@ -1508,6 +1525,7 @@ const suspendSubscription = async (subscriptionId: string) => {
         relatedId: updated.id,
     }).catch(() => {});
 
+    await invalidateAdminSubscriptionState(sub.adminId);
     return updated;
 };
 
@@ -1547,6 +1565,7 @@ const reactivateSubscription = async (subscriptionId: string) => {
         relatedId: updated.id,
     }).catch(() => {});
 
+    await invalidateAdminSubscriptionState(sub.adminId);
     return updated;
 };
 
@@ -1608,6 +1627,7 @@ const extendTrial = async (subscriptionId: string, days: number) => {
         relatedId: updated.id,
     }).catch(() => {});
 
+    await invalidateAdminSubscriptionState(sub.adminId);
     return updated;
 };
 
@@ -1752,6 +1772,10 @@ const refundBillingRecord = async (id: string) => {
             : "A payment on your account has been refunded.",
         relatedId: record.id,
     }).catch(() => {});
+
+    if (shouldSuspend) {
+        await invalidateAdminSubscriptionState(sub.adminId);
+    }
 
     return updatedBilling;
 };

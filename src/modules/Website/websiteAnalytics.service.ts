@@ -62,7 +62,7 @@ const SUMMARY_CACHE_VERSION = 1 as const;
 const SUMMARY_CACHE_PREFIX = `website-analytics-summary:v${SUMMARY_CACHE_VERSION}:`;
 const SUMMARY_CACHE_TTL_SECONDS = 45;
 
-const normalizeDays = (requestedDays: number) => Math.min(Math.max(Math.trunc(requestedDays) || 30, 1), 90);
+const normalizeDays = (requestedDays: number) => Math.min(Math.max(Math.trunc(requestedDays) || 30, 1), 730);
 
 const sanitizePath = (value: string | null | undefined): string => {
   const raw = (value || "/").trim();

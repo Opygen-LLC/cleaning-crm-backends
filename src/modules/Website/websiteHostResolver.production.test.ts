@@ -41,7 +41,7 @@ describe("production tenant host routing", () => {
       id: "website-1",
       subdomain: "sparkle",
       status: "PUBLISHED",
-      admin: { user: { status: "ACTIVE" } },
+      admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
       domains: [],
     });
 
@@ -60,7 +60,7 @@ describe("production tenant host routing", () => {
       website: {
         subdomain: "sparkle-london",
         status: "PUBLISHED",
-        admin: { user: { status: "ACTIVE" } },
+        admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
         domains: [],
       },
     });
@@ -74,15 +74,20 @@ describe("production tenant host routing", () => {
 
   it("redirects a non-primary verified custom domain to the selected canonical custom host", async () => {
     prismaMock.websiteDomain.findFirst.mockResolvedValue({
+      id: "domain-old",
       websiteId: "website-1",
       domain: "old.example.com",
       status: "VERIFIED",
       isPrimary: false,
+      createdAt: new Date("2026-01-02T00:00:00.000Z"),
       website: {
         subdomain: "sparkle",
         status: "PUBLISHED",
-        admin: { user: { status: "ACTIVE" } },
-        domains: [{ domain: "www.example.com" }],
+        admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [{ status: "ACTIVE", isTrial: false, currentPeriodEnd: new Date(Date.now() + 86_400_000), subscriptionPlan: { name: "PRO", features: [] } }] },
+        domains: [
+          { id: "domain-primary", domain: "www.example.com", isPrimary: true, createdAt: new Date("2026-01-01T00:00:00.000Z") },
+          { id: "domain-old", domain: "old.example.com", isPrimary: false, createdAt: new Date("2026-01-02T00:00:00.000Z") },
+        ],
       },
     });
 
@@ -93,13 +98,46 @@ describe("production tenant host routing", () => {
     expect(result.canonicalHost).toBe("www.example.com");
   });
 
+  it("keeps verified domains beyond the downgraded plan limit stored but unroutable", async () => {
+    prismaMock.websiteDomain.findFirst.mockResolvedValue({
+      id: "domain-extra",
+      websiteId: "website-1",
+      domain: "extra.example.com",
+      status: "VERIFIED",
+      isPrimary: false,
+      createdAt: new Date("2026-01-02T00:00:00.000Z"),
+      website: {
+        subdomain: "sparkle",
+        status: "PUBLISHED",
+        admin: {
+          businessName: "Sparkle Cleaning",
+          user: { status: "ACTIVE" },
+          subscription: [{
+            status: "ACTIVE",
+            isTrial: false,
+            currentPeriodEnd: new Date(Date.now() + 86_400_000),
+            subscriptionPlan: { name: "GROWTH", features: [] },
+          }],
+        },
+        domains: [
+          { id: "domain-primary", domain: "www.example.com", isPrimary: true, createdAt: new Date("2026-01-01T00:00:00.000Z") },
+          { id: "domain-extra", domain: "extra.example.com", isPrimary: false, createdAt: new Date("2026-01-02T00:00:00.000Z") },
+        ],
+      },
+    });
+
+    await expect(WebsiteHostResolverService.resolveHost("extra.example.com")).rejects.toMatchObject({
+      statusCode: 404,
+    });
+  });
+
   it("fails closed for an unverified/unknown custom host", async () => {
     prismaMock.websiteDomain.findFirst.mockResolvedValue({
       websiteId: "website-1",
       domain: "unverified.example.com",
       status: "PENDING",
       isPrimary: false,
-      website: { subdomain: "sparkle", status: "PUBLISHED", admin: { user: { status: "ACTIVE" } }, domains: [] },
+      website: { subdomain: "sparkle", status: "PUBLISHED", admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] }, domains: [] },
     });
 
     await expect(WebsiteHostResolverService.resolveHost("unverified.example.com")).rejects.toMatchObject({
@@ -112,7 +150,7 @@ describe("production tenant host routing", () => {
       id: "website-1",
       subdomain: "sparkle",
       status: "PUBLISHED",
-      admin: { user: { status: "ACTIVE" } },
+      admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [{ status: "ACTIVE", isTrial: false, currentPeriodEnd: new Date(Date.now() + 86_400_000), subscriptionPlan: { name: "GROWTH", features: [] } }] },
       domains: [{ domain: "www.example.com" }],
     });
 
@@ -127,7 +165,7 @@ describe("production tenant host routing", () => {
       id: "website-1",
       subdomain: "bio-cleaning",
       status: "PUBLISHED",
-      admin: { user: { status: "ACTIVE" } },
+      admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
       domains: [],
     });
 
@@ -144,7 +182,7 @@ describe("production tenant host routing", () => {
     });
 
     expect(redisMock.set).toHaveBeenCalledWith(
-      expect.stringContaining("site-route:v7:host:missing.sites.example.com"),
+      expect.stringContaining("site-route:v8:host:missing.sites.example.com"),
       expect.stringContaining('"notFound":true'),
       "EX",
       10,
@@ -153,8 +191,9 @@ describe("production tenant host routing", () => {
 
   it("serves a cached host route without querying the database", async () => {
     redisMock.get.mockResolvedValue(JSON.stringify({
-      version: 7,
+      version: 8,
       websiteId: "website-1",
+      businessName: "Sparkle Cleaning",
       requestedSubdomain: "sparkle",
       canonicalSubdomain: "sparkle",
       isAlias: false,
@@ -203,8 +242,9 @@ describe("production tenant host routing", () => {
     redisMock.get.mockImplementation(async (key: string) => {
       if (key.includes("sparkle.sites.example.com")) {
         return JSON.stringify({
-          version: 7,
+          version: 8,
           websiteId: "website-a",
+          businessName: "Sparkle Cleaning",
           requestedSubdomain: "sparkle",
           canonicalSubdomain: "sparkle",
           isAlias: false,
@@ -223,7 +263,7 @@ describe("production tenant host routing", () => {
       id: "website-b",
       subdomain: "fresh",
       status: "PUBLISHED",
-      admin: { user: { status: "ACTIVE" } },
+      admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
       domains: [],
     });
 
@@ -240,7 +280,7 @@ describe("production tenant host routing", () => {
       id: "website-draft",
       subdomain: "draft-cleaner",
       status: "DRAFT",
-      admin: { user: { status: "ACTIVE" } },
+      admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
       domains: [],
     });
 
@@ -253,12 +293,13 @@ describe("production tenant host routing", () => {
       id: "website-suspended",
       subdomain: "paused-cleaner",
       status: "PUBLISHED",
-      admin: { user: { status: "SUSPENDED" } },
+      admin: { businessName: "Paused Cleaning", user: { status: "SUSPENDED" }, subscription: [] },
       domains: [],
     });
 
     const result = await WebsiteHostResolverService.resolveHost("paused-cleaner.sites.example.com");
     expect(result.availability).toBe("suspended");
+    expect(result.businessName).toBe("Paused Cleaning");
   });
 
 });
