@@ -115,6 +115,12 @@ export const WEBSITE_ROUTE_NEGATIVE_CACHE_TTL_SECONDS: number = Math.min(60, Mat
 export const WEBSITE_ROUTE_CACHE_JITTER_RATIO: number = Math.min(0.4, Math.max(0,
     Number(process.env.WEBSITE_ROUTE_CACHE_JITTER_RATIO) || 0.15,
 ));
+export const WEBSITE_ROUTE_REBUILD_LOCK_SECONDS: number = Math.min(10, Math.max(1,
+    Number(process.env.WEBSITE_ROUTE_REBUILD_LOCK_SECONDS) || 3,
+));
+export const WEBSITE_ROUTE_WAIT_FOR_FILL_MS: number = Math.min(2_000, Math.max(100,
+    Number(process.env.WEBSITE_ROUTE_WAIT_FOR_FILL_MS) || 600,
+));
 
 // Phase 7 custom-domain provider integration. `vercel` registers the tenant
 // hostname on the frontend Vercel project and lets Vercel manage certificates.
@@ -149,4 +155,6 @@ export const WEBSITE_ANALYTICS_RETENTION_DAYS: number = Math.min(730, Math.max(3
 export const WEBSITE_PROJECTION_CACHE_TTL_SECONDS: number = Math.min(1800, Math.max(30, Number(process.env.WEBSITE_PROJECTION_CACHE_TTL_SECONDS) || 180));
 export const WEBSITE_PROJECTION_CACHE_JITTER_RATIO: number = Math.min(0.4, Math.max(0, Number(process.env.WEBSITE_PROJECTION_CACHE_JITTER_RATIO) || 0.15));
 export const WEBSITE_PROJECTION_REBUILD_LOCK_SECONDS: number = Math.min(30, Math.max(2, Number(process.env.WEBSITE_PROJECTION_REBUILD_LOCK_SECONDS) || 8));
+export const WEBSITE_PROJECTION_STALE_TTL_SECONDS: number = Math.min(7200, Math.max(120, Number(process.env.WEBSITE_PROJECTION_STALE_TTL_SECONDS) || 900));
+export const WEBSITE_PROJECTION_WAIT_FOR_FILL_MS: number = Math.min(3_000, Math.max(100, Number(process.env.WEBSITE_PROJECTION_WAIT_FOR_FILL_MS) || 1_200));
 export const WEBSITE_ERROR_DEDUPE_TTL_SECONDS: number = Math.min(3600, Math.max(10, Number(process.env.WEBSITE_ERROR_DEDUPE_TTL_SECONDS) || 120));

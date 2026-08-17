@@ -255,6 +255,15 @@ const getWebsiteAnalytics = catchAsync(async (req, res) => {
   return ok(res, "Website analytics retrieved successfully", data);
 });
 
+const getPublicWebsiteById = catchAsync(async (req, res) => {
+  const data = await PublicWebsiteService.getPublicWebsiteById(paramStr(req.params.websiteId));
+  // This endpoint is used by the Next.js server after the edge host resolver
+  // has already produced websiteId. Redis remains the cache of record; do not
+  // allow downstream shared caches to outlive CRM invalidation.
+  res.setHeader("Cache-Control", "no-store");
+  return ok(res, "Public website retrieved successfully", data);
+});
+
 const getPublicWebsite = catchAsync(async (req, res) => {
   const data = await PublicWebsiteService.getPublicWebsite(paramStr(req.params.identifier));
   // The server-side Redis projection is the cache of record. Do not allow a
@@ -309,5 +318,6 @@ export const websiteController = {
   trackPublicWebsiteAnalytics,
   reportPublicWebsiteError,
   getWebsiteAnalytics,
+  getPublicWebsiteById,
   getPublicWebsite,
 };

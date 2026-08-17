@@ -6,12 +6,14 @@ import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { TemplateRegistry } from "./templateRegistry";
-import { buildPublishedSnapshot, parsePublishedSnapshot, parseRevisionSnapshotAsPublished, selectPublishedIntegrationFormId, type WebsitePublishedSnapshotV1 } from "./websiteSnapshot";
+import { buildPublishedSnapshot, parsePublishedSnapshot, parseRevisionSnapshotAsPublished, type WebsitePublishedSnapshotV1 } from "./websiteSnapshot";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { deriveWebsiteEntitlements, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
+
+const WEBSITE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface ResolvedWebsite {
   websiteId: string;
@@ -130,6 +132,11 @@ const loadProjectionSource = async (websiteId: string) => {
 
   if (!website) throw new AppError(status.NOT_FOUND, "Website not found");
 
+  // Remember the one-to-one admin → website mapping in Redis so subsequent CRM
+  // mutations can invalidate the public projection without first querying the
+  // BusinessWebsite table. This is best-effort and never affects correctness.
+  await WebsiteProjectionCacheService.rememberAdminWebsite(website.adminId, website.id);
+
   // Keep the review list bounded for payload size, but calculate the public
   // aggregate across every published tenant review so businesses with >50
   // reviews never display an incorrect rating/count. This is only paid on a
@@ -235,6 +242,7 @@ const projectWebsite = (
 
   return {
     website: {
+      id: website.id,
       subdomain: website.subdomain,
       publishedAt: website.publishedAt,
       // Preview deliberately uses the public projection contract so the exact
@@ -327,6 +335,7 @@ const projectWebsite = (
 };
 
 const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: string | null = null) => {
+  if (!WEBSITE_ID_PATTERN.test(websiteId)) throw new AppError(status.NOT_FOUND, "Website not found");
   type PublicProjection = ReturnType<typeof projectWebsite>;
   const canonical = await WebsiteProjectionCacheService.getOrLoad<PublicProjection>(
     websiteId,
@@ -350,57 +359,16 @@ const getPublicWebsite = async (identifier: string) => {
 };
 
 
-const loadPublishedIntegrationSource = async (identifier: string) => {
-  const resolved = await resolveIdentifier(identifier);
-  const website = await prisma.businessWebsite.findUnique({
-    where: { id: resolved.websiteId },
-    select: {
-      id: true,
-      adminId: true,
-      status: true,
-      publishedSnapshot: true,
-      primaryBookingFormId: true,
-      primaryEstimateFormId: true,
-      estimateEnabled: true,
-      bookingEnabled: true,
-      bookingShowAvailableSlots: true,
-      bookingShowPrices: true,
-      subdomain: true,
-      pages: { select: { kind: true, isEnabled: true } },
-      admin: { select: { businessName: true, user: { select: { status: true } } } },
-    },
-  });
-
-  if (!website) throw new AppError(status.NOT_FOUND, "Website not found");
-  if (website.status === "SUSPENDED" || website.admin.user.status !== "ACTIVE") {
-    throw new AppError(status.SERVICE_UNAVAILABLE, "Website temporarily unavailable");
-  }
-  if (website.status !== "PUBLISHED") {
-    throw new AppError(status.NOT_FOUND, "Website not found");
-  }
-
-  return website;
+const requireProjectionAdminId = async (websiteId: string) => {
+  const adminId = await WebsiteProjectionCacheService.getAdminIdForWebsite(websiteId);
+  if (!adminId) throw new AppError(status.NOT_FOUND, "Website not found");
+  return adminId;
 };
 
 const resolvePublicBookingIntegration = async (identifier: string) => {
-  const website = await loadPublishedIntegrationSource(identifier);
-
-  const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
-  const formId = selectPublishedIntegrationFormId(publishedSnapshot, website.primaryBookingFormId, "booking");
-  const bookingEnabled = publishedSnapshot
-    ? publishedSnapshot.website.bookingEnabled
-    : website.bookingEnabled;
-  const showAvailableSlots = publishedSnapshot
-    ? publishedSnapshot.website.bookingShowAvailableSlots
-    : website.bookingShowAvailableSlots;
-  const showPrices = publishedSnapshot
-    ? publishedSnapshot.website.bookingShowPrices
-    : website.bookingShowPrices;
-  const bookPageEnabled = publishedSnapshot
-    ? publishedSnapshot.pages.some((page) => page.kind === "BOOK" && page.isEnabled)
-    : website.pages.some((page) => page.kind === "BOOK" && page.isEnabled);
-
-  if (!bookingEnabled || !formId || !bookPageEnabled) {
+  const site = await getPublicWebsite(identifier);
+  const bookPageEnabled = site.pages.some((page) => page.kind === "BOOK");
+  if (!site.booking || !site.bookingPreferences.enabled || !bookPageEnabled) {
     throw new AppError(status.NOT_FOUND, "Online booking is not available on this website.", {
       code: "WEBSITE_BOOKING_UNAVAILABLE",
       retryable: false,
@@ -408,26 +376,18 @@ const resolvePublicBookingIntegration = async (identifier: string) => {
   }
 
   return {
-    websiteId: website.id,
-    adminId: website.adminId,
-    formId,
-    showAvailableSlots,
-    showPrices,
+    websiteId: site.website.id,
+    adminId: await requireProjectionAdminId(site.website.id),
+    formId: site.booking.formId,
+    showAvailableSlots: site.bookingPreferences.showAvailableSlots,
+    showPrices: site.bookingPreferences.showPrices,
   };
 };
 
 const resolvePublicEstimateIntegration = async (identifier: string) => {
-  const website = await loadPublishedIntegrationSource(identifier);
-  const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
-  const formId = selectPublishedIntegrationFormId(publishedSnapshot, website.primaryEstimateFormId, "estimate");
-  const estimateEnabled = publishedSnapshot
-    ? publishedSnapshot.website.estimateEnabled
-    : website.estimateEnabled;
-  const estimatePageEnabled = publishedSnapshot
-    ? publishedSnapshot.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled)
-    : website.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled);
-
-  if (!estimateEnabled || !formId || !estimatePageEnabled) {
+  const site = await getPublicWebsite(identifier);
+  const estimatePageEnabled = site.pages.some((page) => page.kind === "ESTIMATE");
+  if (!site.estimate || !estimatePageEnabled) {
     throw new AppError(status.NOT_FOUND, "Online estimates are not available on this website.", {
       code: "WEBSITE_ESTIMATE_UNAVAILABLE",
       retryable: false,
@@ -435,19 +395,15 @@ const resolvePublicEstimateIntegration = async (identifier: string) => {
   }
 
   return {
-    websiteId: website.id,
-    adminId: website.adminId,
-    formId,
+    websiteId: site.website.id,
+    adminId: await requireProjectionAdminId(site.website.id),
+    formId: site.estimate.formId,
   };
 };
 
 const resolvePublicContactIntegration = async (identifier: string) => {
-  const website = await loadPublishedIntegrationSource(identifier);
-  const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
-  const contactPageEnabled = publishedSnapshot
-    ? publishedSnapshot.pages.some((page) => page.kind === "CONTACT" && page.isEnabled)
-    : website.pages.some((page) => page.kind === "CONTACT" && page.isEnabled);
-
+  const site = await getPublicWebsite(identifier);
+  const contactPageEnabled = site.pages.some((page) => page.kind === "CONTACT");
   if (!contactPageEnabled) {
     throw new AppError(status.NOT_FOUND, "Contact is not available on this website.", {
       code: "WEBSITE_CONTACT_UNAVAILABLE",
@@ -456,10 +412,10 @@ const resolvePublicContactIntegration = async (identifier: string) => {
   }
 
   return {
-    websiteId: website.id,
-    adminId: website.adminId,
-    subdomain: website.subdomain,
-    businessName: website.admin.businessName,
+    websiteId: site.website.id,
+    adminId: await requireProjectionAdminId(site.website.id),
+    subdomain: site.website.subdomain,
+    businessName: site.business.name,
   };
 };
 

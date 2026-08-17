@@ -21,8 +21,14 @@ const router = Router();
 router.get("/resolve-subdomain/:subdomain", publicHostResolveRateLimit, websiteController.resolvePublicSubdomain);
 router.get("/resolve-host/:host", publicHostResolveRateLimit, websiteController.resolvePublicHost);
 
-// Website-scoped booking integration. These routes intentionally resolve the
-// published website's primaryBookingFormId on every request, then delegate to
+// Phase 23 hot path: the frontend proxy already resolved host → websiteId.
+// Fetch the Redis projection directly instead of resolving the same subdomain
+// a second time during the Next.js server render. The service still enforces
+// PUBLISHED/account status on cache misses, and UUIDs expose no private data.
+router.get("/by-id/:websiteId", publicReadRateLimit, websiteController.getPublicWebsiteById);
+
+// Website-scoped booking integration. Phase 23 resolves feature/form selection
+// from the Redis public projection, then delegates live slot/submission work to
 // the existing BookingForm engine. Legacy /booking-form/public/:slug routes
 // remain available for previously shared links.
 router.get(

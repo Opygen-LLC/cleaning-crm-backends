@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import { domainToASCII } from "node:url";
 import status from "http-status";
@@ -8,6 +9,8 @@ import {
   WEBSITE_ROUTE_CACHE_JITTER_RATIO,
   WEBSITE_ROUTE_CACHE_TTL_SECONDS,
   WEBSITE_ROUTE_NEGATIVE_CACHE_TTL_SECONDS,
+  WEBSITE_ROUTE_REBUILD_LOCK_SECONDS,
+  WEBSITE_ROUTE_WAIT_FOR_FILL_MS,
 } from "../../config/ENV";
 import redis from "../../config/redis";
 import { prisma } from "../../lib/prisma/prisma";
@@ -16,10 +19,12 @@ import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { getCanonicalWebsiteHost } from "./websiteCanonicalHost";
 import { deriveWebsiteEntitlements, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
 
-const ROUTE_CACHE_VERSION = 8 as const;
+const ROUTE_CACHE_VERSION = 9 as const;
 const CACHE_NAMESPACE = `site-route:v${ROUTE_CACHE_VERSION}`;
 const SUBDOMAIN_KEY_PREFIX = `${CACHE_NAMESPACE}:subdomain:`;
 const HOST_KEY_PREFIX = `${CACHE_NAMESPACE}:host:`;
+const LOCK_KEY_PREFIX = `${CACHE_NAMESPACE}:lock:`;
+const GENERATION_KEY_PREFIX = `${CACHE_NAMESPACE}:generation:`;
 const DOMAIN_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export type WebsiteHostRouteKind = "platform_subdomain" | "subdomain_alias" | "custom_domain";
@@ -52,6 +57,8 @@ type NegativeCacheEntry = {
 
 const subdomainCacheKey = (subdomain: string) => `${SUBDOMAIN_KEY_PREFIX}${subdomain}`;
 const hostCacheKey = (host: string) => `${HOST_KEY_PREFIX}${host}`;
+const routeLockKey = (cacheKey: string) => `${LOCK_KEY_PREFIX}${cacheKey}`;
+const routeGenerationKey = (cacheKey: string) => `${GENERATION_KEY_PREFIX}${cacheKey}`;
 
 const jitteredTtl = (base: number) => {
   if (!WEBSITE_ROUTE_CACHE_JITTER_RATIO) return base;
@@ -70,30 +77,121 @@ const safeGet = async <T>(key: string): Promise<T | null> => {
   }
 };
 
-const safeSet = async (key: string, value: unknown, ttlSeconds = WEBSITE_ROUTE_CACHE_TTL_SECONDS) => {
+const getRouteGeneration = async (cacheKey: string): Promise<number | null> => {
   try {
-    await redis.set(key, JSON.stringify(value), "EX", jitteredTtl(ttlSeconds));
+    const raw = await redis.get(routeGenerationKey(cacheKey));
+    if (!raw) return 0;
+    const generation = Number(raw);
+    return Number.isSafeInteger(generation) && generation >= 0 ? generation : 0;
   } catch {
-    // Redis is a cache only. Database resolution remains authoritative.
+    return null;
   }
 };
 
-const safeDelete = async (keys: string[]) => {
-  if (!keys.length) return;
+const safeSetForGeneration = async (
+  cacheKey: string,
+  value: unknown,
+  generation: number,
+  ttlSeconds = WEBSITE_ROUTE_CACHE_TTL_SECONDS,
+): Promise<boolean | null> => {
   try {
-    await redis.del(...keys);
+    const result = await redis.eval(
+      `
+        local current = redis.call('GET', KEYS[2])
+        if not current then current = '0' end
+        if current ~= ARGV[1] then return 0 end
+        redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+        return 1
+      `,
+      2,
+      cacheKey,
+      routeGenerationKey(cacheKey),
+      String(generation),
+      JSON.stringify(value),
+      String(jitteredTtl(ttlSeconds)),
+    );
+    return Number(result) === 1;
   } catch {
-    // Cache invalidation failures must never make a successful mutation fail.
+    return null;
   }
 };
 
-const cacheNotFound = async (key: string, identity: string) => {
+const invalidateCacheKeys = async (keys: string[]) => {
+  const unique = [...new Set(keys)];
+  for (const key of unique) {
+    try {
+      await redis.eval(
+        `
+          redis.call('INCR', KEYS[2])
+          redis.call('DEL', KEYS[1], KEYS[3])
+          return 1
+        `,
+        3,
+        key,
+        routeGenerationKey(key),
+        routeLockKey(key),
+      );
+    } catch {
+      // Redis is an acceleration layer. The short TTL remains the fallback.
+    }
+  }
+};
+
+const acquireRouteLock = async (cacheKey: string): Promise<{ token: string | null; redisAvailable: boolean }> => {
+  const token = randomUUID();
+  try {
+    const result = await redis.set(
+      routeLockKey(cacheKey),
+      token,
+      "EX",
+      WEBSITE_ROUTE_REBUILD_LOCK_SECONDS,
+      "NX",
+    );
+    return { token: result === "OK" ? token : null, redisAvailable: true };
+  } catch {
+    return { token: null, redisAvailable: false };
+  }
+};
+
+const releaseRouteLock = async (cacheKey: string, token: string): Promise<void> => {
+  try {
+    await redis.eval(
+      `
+        if redis.call('GET', KEYS[1]) == ARGV[1] then
+          return redis.call('DEL', KEYS[1])
+        end
+        return 0
+      `,
+      1,
+      routeLockKey(cacheKey),
+      token,
+    );
+  } catch {
+    // lock TTL handles cleanup
+  }
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const waitForRouteFill = async <T>(reader: () => Promise<T | null>): Promise<T | null> => {
+  const startedAt = Date.now();
+  let delay = 15;
+  while (Date.now() - startedAt < WEBSITE_ROUTE_WAIT_FOR_FILL_MS) {
+    await sleep(delay);
+    const value = await reader();
+    if (value) return value;
+    delay = Math.min(100, Math.round(delay * 1.7));
+  }
+  return null;
+};
+
+const cacheNotFound = async (key: string, identity: string, generation: number): Promise<boolean | null> => {
   const entry: NegativeCacheEntry = {
     version: ROUTE_CACHE_VERSION,
     notFound: true,
     key: identity,
   };
-  await safeSet(key, entry, WEBSITE_ROUTE_NEGATIVE_CACHE_TTL_SECONDS);
+  return safeSetForGeneration(key, entry, generation, WEBSITE_ROUTE_NEGATIVE_CACHE_TTL_SECONDS);
 };
 
 const isNegativeCacheHit = (value: unknown, identity: string): value is NegativeCacheEntry => {
@@ -159,29 +257,23 @@ const platformSubdomainFromHost = (host: string): string | null => {
  * current BusinessWebsite row, so repeated renames never build database-level
  * redirect chains. Both hits and short-lived misses are cached in Redis.
  */
-const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> => {
-  let subdomain: string;
-  try {
-    subdomain = normalizeSubdomain(input);
-  } catch {
-    throw new AppError(status.NOT_FOUND, "Website not found");
-  }
-
-  const key = subdomainCacheKey(subdomain);
+const readSubdomainCache = async (key: string, subdomain: string): Promise<WebsiteRouteResolution | null> => {
   const cached = await safeGet<WebsiteRouteResolution | NegativeCacheEntry>(key);
   if (isNegativeCacheHit(cached, subdomain)) {
     throw new AppError(status.NOT_FOUND, "Website not found");
   }
   if (
     cached &&
-    !isNegativeCacheHit(cached, subdomain) &&
     cached.version === ROUTE_CACHE_VERSION &&
     "requestedSubdomain" in cached &&
     cached.requestedSubdomain === subdomain
   ) {
     return cached as WebsiteRouteResolution;
   }
+  return null;
+};
 
+const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRouteResolution | null> => {
   const website = await prisma.businessWebsite.findUnique({
     where: { subdomain },
     select: {
@@ -202,7 +294,7 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
     },
   });
   if (website) {
-    const resolved: WebsiteRouteResolution = {
+    return {
       version: ROUTE_CACHE_VERSION,
       websiteId: website.id,
       businessName: website.admin.businessName,
@@ -215,24 +307,21 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
         : null,
       availability: websiteAvailability(website.status, website.admin.user.status),
     };
-    await safeSet(key, resolved);
-    return resolved;
   }
 
   const alias = await prisma.websiteSubdomainAlias.findUnique({
     where: { subdomain },
     select: {
       websiteId: true,
-      redirectCode: true,
       website: {
         select: {
           subdomain: true,
           status: true,
           admin: { select: {
-        businessName: true,
-        user: { select: { status: true } },
-        subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
-      } },
+            businessName: true,
+            user: { select: { status: true } },
+            subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
+          } },
           domains: {
             where: { ...readyWebsiteDomainWhere, isPrimary: true } as any,
             select: { domain: true },
@@ -243,29 +332,85 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
       },
     },
   });
-  if (!alias) {
-    await cacheNotFound(key, subdomain);
-    throw new AppError(status.NOT_FOUND, "Website not found");
-  }
+  if (!alias) return null;
 
-  const resolved: WebsiteRouteResolution = {
+  return {
     version: ROUTE_CACHE_VERSION,
     websiteId: alias.websiteId,
     businessName: alias.website.admin.businessName,
     requestedSubdomain: subdomain,
     canonicalSubdomain: alias.website.subdomain,
     isAlias: true,
-    // Historical free-subdomain aliases always redirect permanently to the current canonical host.
-    // Fail closed to 308 even if an older row was manually created with a
-    // different code.
     redirectCode: 308,
     primaryCustomHost: hasCustomDomainRouting(deriveWebsiteEntitlements(alias.website.admin.subscription[0] as any))
       ? alias.website.domains[0]?.domain ?? null
       : null,
     availability: websiteAvailability(alias.website.status, alias.website.admin.user.status),
   };
-  await safeSet(key, resolved);
-  return resolved;
+};
+
+/**
+ * Resolve one tenant label to its website. Cache misses are serialized across
+ * app instances and writes are generation-guarded, so a rename/suspension that
+ * invalidates Redis cannot be overwritten by an older in-flight SQL result.
+ */
+const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> => {
+  let subdomain: string;
+  try {
+    subdomain = normalizeSubdomain(input);
+  } catch {
+    throw new AppError(status.NOT_FOUND, "Website not found");
+  }
+
+  const key = subdomainCacheKey(subdomain);
+  const cached = await readSubdomainCache(key, subdomain);
+  if (cached) return cached;
+
+  const lock = await acquireRouteLock(key);
+  if (!lock.redisAvailable) {
+    const direct = await loadSubdomainFromDatabase(subdomain);
+    if (!direct) throw new AppError(status.NOT_FOUND, "Website not found");
+    return direct;
+  }
+
+  if (!lock.token) {
+    const filled = await waitForRouteFill(() => readSubdomainCache(key, subdomain));
+    if (filled) return filled;
+  }
+
+  const token = lock.token;
+  try {
+    if (token) {
+      const filled = await readSubdomainCache(key, subdomain);
+      if (filled) return filled;
+    }
+
+    const generation = await getRouteGeneration(key);
+    const loaded = await loadSubdomainFromDatabase(subdomain);
+    if (generation === null) {
+      if (!loaded) throw new AppError(status.NOT_FOUND, "Website not found");
+      return loaded;
+    }
+
+    if (!loaded) {
+      const stored = await cacheNotFound(key, subdomain, generation);
+      if (stored === false) {
+        const latest = await loadSubdomainFromDatabase(subdomain);
+        if (latest) return latest;
+      }
+      throw new AppError(status.NOT_FOUND, "Website not found");
+    }
+
+    const stored = await safeSetForGeneration(key, loaded, generation);
+    if (stored === false) {
+      const latest = await loadSubdomainFromDatabase(subdomain);
+      if (!latest) throw new AppError(status.NOT_FOUND, "Website not found");
+      return latest;
+    }
+    return loaded;
+  } finally {
+    if (token) await releaseRouteLock(key, token);
+  }
 };
 
 const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> => {
@@ -351,58 +496,86 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
  * canonical host-routing read path used by free subdomains, old aliases and
  * verified custom domains.
  */
-const resolveHost = async (input: string): Promise<WebsiteHostResolution> => {
-  const host = normalizeHost(input);
-  const key = hostCacheKey(host);
+const readHostCache = async (key: string, host: string): Promise<WebsiteHostResolution | null> => {
   const cached = await safeGet<WebsiteHostResolution | NegativeCacheEntry>(key);
   if (isNegativeCacheHit(cached, host)) {
     throw new AppError(status.NOT_FOUND, "Website host not found");
   }
   if (
     cached &&
-    !isNegativeCacheHit(cached, host) &&
     cached.version === ROUTE_CACHE_VERSION &&
     "requestedHost" in cached &&
     cached.requestedHost === host
   ) {
     return cached as WebsiteHostResolution;
   }
+  return null;
+};
 
+const loadHostFromDatabase = async (host: string): Promise<WebsiteHostResolution> => {
+  const platformSubdomain = platformSubdomainFromHost(host);
+  if (platformSubdomain) {
+    const route = await resolveSubdomain(platformSubdomain);
+    const canonicalHost = getCanonicalWebsiteHost(route.canonicalSubdomain, route.primaryCustomHost);
+    if (!canonicalHost) throw new AppError(status.NOT_FOUND, "Website host not found");
+    const shouldRedirect = canonicalHost !== host;
+    return {
+      ...route,
+      isAlias: shouldRedirect,
+      redirectCode: shouldRedirect ? 308 : null,
+      requestedHost: host,
+      canonicalHost,
+      routeKind: route.requestedSubdomain !== route.canonicalSubdomain
+        ? "subdomain_alias"
+        : "platform_subdomain",
+      customDomain: route.primaryCustomHost,
+    };
+  }
+  return resolveCustomHost(host);
+};
+
+/**
+ * Resolve a full request host for the frontend proxy. A distributed Redis lock
+ * collapses cold-host stampedes, while per-key generations prevent an older DB
+ * result from repopulating a route after suspension/domain/subdomain changes.
+ */
+const resolveHost = async (input: string): Promise<WebsiteHostResolution> => {
+  const host = normalizeHost(input);
+  const key = hostCacheKey(host);
+  const cached = await readHostCache(key, host);
+  if (cached) return cached;
+
+  const lock = await acquireRouteLock(key);
+  if (!lock.redisAvailable) return loadHostFromDatabase(host);
+
+  if (!lock.token) {
+    const filled = await waitForRouteFill(() => readHostCache(key, host));
+    if (filled) return filled;
+  }
+
+  const token = lock.token;
   try {
-    const platformSubdomain = platformSubdomainFromHost(host);
-    let resolved: WebsiteHostResolution;
-    if (platformSubdomain) {
-      const route = await resolveSubdomain(platformSubdomain);
-      const canonicalHost = getCanonicalWebsiteHost(
-        route.canonicalSubdomain,
-        route.primaryCustomHost,
-      );
-      if (!canonicalHost) {
-        throw new AppError(status.NOT_FOUND, "Website host not found");
-      }
-      const shouldRedirect = canonicalHost !== host;
-      resolved = {
-        ...route,
-        isAlias: shouldRedirect,
-        redirectCode: shouldRedirect ? 308 : null,
-        requestedHost: host,
-        canonicalHost,
-        routeKind: route.requestedSubdomain !== route.canonicalSubdomain
-          ? "subdomain_alias"
-          : "platform_subdomain",
-        customDomain: route.primaryCustomHost,
-      };
-    } else {
-      resolved = await resolveCustomHost(host);
+    if (token) {
+      const filled = await readHostCache(key, host);
+      if (filled) return filled;
     }
 
-    await safeSet(key, resolved);
-    return resolved;
-  } catch (error) {
-    if (error instanceof AppError && error.statusCode === status.NOT_FOUND) {
-      await cacheNotFound(key, host);
+    const generation = await getRouteGeneration(key);
+    try {
+      const loaded = await loadHostFromDatabase(host);
+      if (generation === null) return loaded;
+      const stored = await safeSetForGeneration(key, loaded, generation);
+      if (stored === false) return loadHostFromDatabase(host);
+      return loaded;
+    } catch (error) {
+      if (error instanceof AppError && error.statusCode === status.NOT_FOUND && generation !== null) {
+        const stored = await cacheNotFound(key, host, generation);
+        if (stored === false) return loadHostFromDatabase(host);
+      }
+      throw error;
     }
-    throw error;
+  } finally {
+    if (token) await releaseRouteLock(key, token);
   }
 };
 
@@ -415,7 +588,7 @@ const invalidateSubdomains = async (labels: Array<string | null | undefined>) =>
     if (WEBSITE_BASE_DOMAIN) result.push(hostCacheKey(`${label}.${WEBSITE_BASE_DOMAIN}`));
     return result;
   });
-  await safeDelete([...new Set(keys)]);
+  await invalidateCacheKeys(keys);
 };
 
 const invalidateHosts = async (hosts: Array<string | null | undefined>) => {
@@ -429,7 +602,7 @@ const invalidateHosts = async (hosts: Array<string | null | undefined>) => {
       // resolved through normalizeHost anyway.
     }
   }
-  await safeDelete([...new Set(keys)]);
+  await invalidateCacheKeys(keys);
 };
 
 export const WebsiteHostResolverService = {

@@ -5,6 +5,7 @@ const { redisMock, prismaMock } = vi.hoisted(() => ({
     get: vi.fn(),
     set: vi.fn(),
     del: vi.fn(),
+    eval: vi.fn(),
   },
   prismaMock: {
     businessWebsite: { findUnique: vi.fn() },
@@ -20,6 +21,8 @@ vi.mock("../../config/ENV", () => ({
   WEBSITE_ROUTE_CACHE_TTL_SECONDS: 300,
   WEBSITE_ROUTE_NEGATIVE_CACHE_TTL_SECONDS: 10,
   WEBSITE_ROUTE_CACHE_JITTER_RATIO: 0,
+  WEBSITE_ROUTE_REBUILD_LOCK_SECONDS: 3,
+  WEBSITE_ROUTE_WAIT_FOR_FILL_MS: 100,
 }));
 vi.mock("../../lib/prisma/prisma", () => ({ prisma: prismaMock }));
 
@@ -30,6 +33,7 @@ beforeEach(() => {
   redisMock.get.mockResolvedValue(null);
   redisMock.set.mockResolvedValue("OK");
   redisMock.del.mockResolvedValue(1);
+  redisMock.eval.mockResolvedValue(1);
   prismaMock.businessWebsite.findUnique.mockResolvedValue(null);
   prismaMock.websiteSubdomainAlias.findUnique.mockResolvedValue(null);
   prismaMock.websiteDomain.findFirst.mockResolvedValue(null);
@@ -181,17 +185,20 @@ describe("production tenant host routing", () => {
       statusCode: 404,
     });
 
-    expect(redisMock.set).toHaveBeenCalledWith(
-      expect.stringContaining("site-route:v8:host:missing.sites.example.com"),
+    expect(redisMock.eval).toHaveBeenCalledWith(
+      expect.stringContaining("current ~= ARGV[1]"),
+      2,
+      expect.stringContaining("site-route:v9:host:missing.sites.example.com"),
+      expect.stringContaining("site-route:v9:generation:"),
+      "0",
       expect.stringContaining('"notFound":true'),
-      "EX",
-      10,
+      "10",
     );
   });
 
   it("serves a cached host route without querying the database", async () => {
     redisMock.get.mockResolvedValue(JSON.stringify({
-      version: 8,
+      version: 9,
       websiteId: "website-1",
       businessName: "Sparkle Cleaning",
       requestedSubdomain: "sparkle",
@@ -242,7 +249,7 @@ describe("production tenant host routing", () => {
     redisMock.get.mockImplementation(async (key: string) => {
       if (key.includes("sparkle.sites.example.com")) {
         return JSON.stringify({
-          version: 8,
+          version: 9,
           websiteId: "website-a",
           businessName: "Sparkle Cleaning",
           requestedSubdomain: "sparkle",
