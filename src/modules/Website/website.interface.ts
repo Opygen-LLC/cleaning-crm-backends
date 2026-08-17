@@ -70,3 +70,29 @@ export interface WebsiteAssetCreateInput {
 export interface WebsiteDomainCreateInput {
   domain: string;
 }
+
+export type WebsiteBrandAssetKind = "logo" | "favicon";
+
+export interface WebsiteBrandUploadSignatureInput {
+  kind: WebsiteBrandAssetKind;
+  fileName: string;
+  mimeType: string;
+  bytes: number;
+}
+
+export interface WebsiteBrandUploadFinalizeInput {
+  kind: WebsiteBrandAssetKind;
+  publicId: string;
+}
+
+export interface WebsiteManagedBrandAssetInput {
+  kind: WebsiteBrandAssetKind;
+  publicId: string;
+  url: string;
+  mimeType: string;
+  width: number;
+  height: number;
+  bytes: number;
+  folder: string;
+  metadata: Record<string, unknown>;
+}

@@ -6,6 +6,7 @@ import { PublicWebsiteService } from "./publicWebsite.service";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteService } from "./website.service";
 import { WebsiteStudioService } from "./websiteStudio.service";
+import { WebsiteAssetService } from "./websiteAsset.service";
 import { WebsiteBookingProvisioningService } from "./websiteBookingProvisioning.service";
 import { SubdomainService } from "./subdomain.service";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
@@ -46,6 +47,12 @@ const updatePage = catchAsync(async (req, res) => ok(res, "Website page updated 
 const listRevisions = catchAsync(async (req, res) => ok(res, "Website revisions retrieved successfully", await WebsiteService.listRevisions(req.user)));
 const getRevision = catchAsync(async (req, res) => ok(res, "Website revision retrieved successfully", await WebsiteService.getRevision(paramStr(req.params.revisionId), req.user)));
 const listAssets = catchAsync(async (req, res) => ok(res, "Website assets retrieved successfully", await WebsiteService.listAssets(req.user)));
+const requestBrandUploadSignature = catchAsync(async (req, res) =>
+  ok(res, "Website brand upload authorized", await WebsiteAssetService.requestBrandUploadSignature(req.body, req.user)),
+);
+const finalizeBrandUpload = catchAsync(async (req, res) =>
+  created(res, "Website brand asset uploaded successfully", await WebsiteAssetService.finalizeBrandUpload(req.body, req.user)),
+);
 const registerAsset = catchAsync(async (req, res) => created(res, "Website asset registered successfully", await WebsiteService.registerAsset(req.body, req.user)));
 const uploadBrandAsset = catchAsync(async (req, res) => {
   if (!req.file) throw new AppError(status.BAD_REQUEST, "Image file is required");
@@ -240,6 +247,8 @@ export const websiteController = {
   listRevisions,
   getRevision,
   listAssets,
+  requestBrandUploadSignature,
+  finalizeBrandUpload,
   registerAsset,
   uploadBrandAsset,
   uploadContentAsset,

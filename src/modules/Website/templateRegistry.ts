@@ -4,13 +4,19 @@ import status from "http-status";
 export type WebsiteTemplateTier = "FREE" | "PRO";
 
 export interface WebsiteTemplateDefinition {
+  /** Stable runtime identifier. Persisted separately from version. */
   id: string;
+  /** Immutable semantic version. Existing tenants never auto-upgrade. */
   version: string;
+  /** Convenience key used by clients/runtime registries. */
+  key: string;
   name: string;
   description: string;
   tier: WebsiteTemplateTier;
   schemaVersion: number;
   thumbnail: string | null;
+  bestFor: readonly string[];
+  highlights: readonly string[];
   capabilities: {
     booking: boolean;
     estimate: boolean;
@@ -20,30 +26,64 @@ export interface WebsiteTemplateDefinition {
   };
 }
 
-const rawDefinitions: WebsiteTemplateDefinition[] = [
+type RawWebsiteTemplateDefinition = Omit<WebsiteTemplateDefinition, "key">;
+
+const COMMON_CAPABILITIES = Object.freeze({
+  booking: true,
+  estimate: true,
+  reviews: true,
+  serviceAreas: true,
+  customDomain: true,
+});
+
+const rawDefinitions: RawWebsiteTemplateDefinition[] = [
   {
-    id: "clean-modern", version: "1.0.0", name: "Clean Modern",
-    description: "Bright, conversion-focused design for residential cleaning businesses.",
-    tier: "FREE", schemaVersion: 1, thumbnail: null,
-    capabilities: { booking: true, estimate: true, reviews: true, serviceAreas: true, customDomain: true },
+    id: "clean-modern",
+    version: "1.0.0",
+    name: "Clean Modern",
+    description: "Bright, friendly and conversion-focused for residential cleaning businesses.",
+    tier: "FREE",
+    schemaVersion: 1,
+    thumbnail: null,
+    bestFor: ["Residential cleaning", "Small cleaning businesses"],
+    highlights: ["Bright service-led layout", "Strong online booking CTA", "Reviews and service areas"],
+    capabilities: COMMON_CAPABILITIES,
   },
   {
-    id: "premium-home", version: "1.0.0", name: "Premium Home",
-    description: "A polished, premium presentation for high-end home cleaning services.",
-    tier: "FREE", schemaVersion: 1, thumbnail: null,
-    capabilities: { booking: true, estimate: true, reviews: true, serviceAreas: true, customDomain: true },
+    id: "premium-home",
+    version: "1.0.0",
+    name: "Premium Home",
+    description: "Editorial, image-forward presentation for premium and luxury home cleaning.",
+    tier: "FREE",
+    schemaVersion: 1,
+    thumbnail: null,
+    bestFor: ["Premium home cleaning", "Luxury residential services"],
+    highlights: ["Large imagery", "Elegant typography", "Review-led trust"],
+    capabilities: COMMON_CAPABILITIES,
   },
   {
-    id: "commercial-pro", version: "1.0.0", name: "Commercial Pro",
-    description: "A confident business-first layout for office and commercial cleaning providers.",
-    tier: "FREE", schemaVersion: 1, thumbnail: null,
-    capabilities: { booking: true, estimate: true, reviews: true, serviceAreas: true, customDomain: true },
+    id: "commercial-pro",
+    version: "1.0.0",
+    name: "Commercial Pro",
+    description: "Structured business-first website for office and commercial cleaning providers.",
+    tier: "FREE",
+    schemaVersion: 1,
+    thumbnail: null,
+    bestFor: ["Office cleaning", "Schools", "Warehouses", "Commercial buildings"],
+    highlights: ["Commercial service focus", "Estimate-first conversion", "Contract-ready presentation"],
+    capabilities: COMMON_CAPABILITIES,
   },
   {
-    id: "local-cleaning", version: "1.0.0", name: "Local Cleaning",
-    description: "A simple local-services layout focused on trust, service areas and fast booking.",
-    tier: "FREE", schemaVersion: 1, thumbnail: null,
-    capabilities: { booking: true, estimate: true, reviews: true, serviceAreas: true, customDomain: true },
+    id: "local-cleaning",
+    version: "1.0.0",
+    name: "Local Cleaning",
+    description: "Fast local-services layout focused on prices, trust, coverage and booking.",
+    tier: "FREE",
+    schemaVersion: 1,
+    thumbnail: null,
+    bestFor: ["Local cleaning companies", "Owner-operated teams", "High-volume bookings"],
+    highlights: ["Visible service prices", "Service-area emphasis", "Persistent booking actions"],
+    capabilities: COMMON_CAPABILITIES,
   },
 ];
 
@@ -64,11 +104,16 @@ const compareVersions = (left: string, right: string): number => {
   return 0;
 };
 
-const freezeDefinition = (definition: WebsiteTemplateDefinition): Readonly<WebsiteTemplateDefinition> =>
-  Object.freeze({
+const freezeDefinition = (definition: RawWebsiteTemplateDefinition): Readonly<WebsiteTemplateDefinition> => {
+  const key = `${definition.id}@${definition.version}`;
+  return Object.freeze({
     ...definition,
+    key,
+    bestFor: Object.freeze([...definition.bestFor]),
+    highlights: Object.freeze([...definition.highlights]),
     capabilities: Object.freeze({ ...definition.capabilities }),
   });
+};
 
 const definitions = rawDefinitions.map((definition) => {
   if (!definition.id.trim()) throw new Error("Website template registry contains an empty template id");
@@ -83,9 +128,8 @@ const byKey = new Map<string, Readonly<WebsiteTemplateDefinition>>();
 const latestById = new Map<string, Readonly<WebsiteTemplateDefinition>>();
 
 for (const definition of definitions) {
-  const key = `${definition.id}@${definition.version}`;
-  if (byKey.has(key)) throw new Error(`Duplicate website template registry entry: ${key}`);
-  byKey.set(key, definition);
+  if (byKey.has(definition.key)) throw new Error(`Duplicate website template registry entry: ${definition.key}`);
+  byKey.set(definition.key, definition);
 
   const currentLatest = latestById.get(definition.id);
   if (!currentLatest || compareVersions(definition.version, currentLatest.version) > 0) {
@@ -95,6 +139,8 @@ for (const definition of definitions) {
 
 const cloneDefinition = (item: Readonly<WebsiteTemplateDefinition>): WebsiteTemplateDefinition => ({
   ...item,
+  bestFor: [...item.bestFor],
+  highlights: [...item.highlights],
   capabilities: { ...item.capabilities },
 });
 

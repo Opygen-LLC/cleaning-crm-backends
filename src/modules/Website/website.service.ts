@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import logger from "../../lib/logger";
@@ -11,6 +12,7 @@ import type { IRequestUser } from "../../types/requestUser.interface";
 import { ONBOARDING_STEPS } from "../Admin/admin.constant";
 import type {
   WebsiteAssetCreateInput,
+  WebsiteManagedBrandAssetInput,
   WebsiteCreateInput,
   WebsiteDraftSaveInput,
   WebsitePageUpdateInput,
@@ -19,6 +21,7 @@ import type {
 } from "./website.interface";
 import { assertSafeHttpsUrl, normalizeSubdomain } from "./websiteIdentity";
 import { TemplateRegistry } from "./templateRegistry";
+import { buildTemplateSelectionPatch } from "./templateSelection";
 import { WebsiteProvisioningService } from "./websiteProvisioning.service";
 import { WebsiteBookingProvisioningService } from "./websiteBookingProvisioning.service";
 import { PublicWebsiteService } from "./publicWebsite.service";
@@ -33,6 +36,37 @@ const getWebsiteOrThrow = async (adminId: string, db: any = prisma) => {
   const website = await db.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
   return website;
+};
+
+
+const isManagedBrandAsset = (asset: { metadata: unknown } | null, kind: "logo" | "favicon") => {
+  if (!asset?.metadata || typeof asset.metadata !== "object" || Array.isArray(asset.metadata)) return false;
+  const metadata = asset.metadata as Record<string, unknown>;
+  return metadata.provider === "cloudinary" && metadata.kind === "brand" && metadata.slot === kind && metadata.immutable === true;
+};
+
+const assertManagedBrandReferences = async (
+  websiteId: string,
+  payload: WebsiteUpdateInput,
+  current: { logo?: string | null; favicon?: string | null },
+  db: any,
+) => {
+  for (const kind of ["logo", "favicon"] as const) {
+    const next = payload[kind];
+    if (next === undefined || next === null || next === current[kind]) continue;
+    const safeUrl = assertSafeHttpsUrl(next, kind === "logo" ? "Logo URL" : "Favicon URL");
+    if (!safeUrl) continue;
+    const asset = await db.websiteAsset.findFirst({
+      where: { websiteId, url: safeUrl },
+      select: { metadata: true },
+    });
+    if (!isManagedBrandAsset(asset, kind)) {
+      throw new AppError(status.BAD_REQUEST, `Upload the ${kind} through Website Branding instead of pasting an external URL`, {
+        code: "WEBSITE_MANAGED_ASSET_REQUIRED",
+        retryable: false,
+      });
+    }
+  }
 };
 
 const assertOwnedForm = async (
@@ -234,18 +268,7 @@ const prepareWebsitePatch = (
   payload: WebsiteUpdateInput,
   current: { templateId: string; templateVersion: string },
 ) => {
-  let templatePatch: Record<string, unknown> = {};
-  if (payload.templateId !== undefined || payload.templateVersion !== undefined) {
-    const template = TemplateRegistry.requireTemplate(
-      payload.templateId ?? current.templateId,
-      payload.templateVersion ?? (payload.templateId ? undefined : current.templateVersion),
-    );
-    templatePatch = {
-      templateId: template.id,
-      templateVersion: template.version,
-      schemaVersion: template.schemaVersion,
-    };
-  }
+  const templatePatch = buildTemplateSelectionPatch(payload, current);
 
   const { templateId: _templateId, templateVersion: _templateVersion, ...rest } = payload;
   return {
@@ -309,7 +332,7 @@ const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) =>
     // applying a templateVersion patch against stale templateId data.
     const lockedCurrent = await tx.businessWebsite.findFirst({
       where: { id: current.id, adminId },
-      select: { id: true, status: true, templateId: true, templateVersion: true },
+      select: { id: true, status: true, templateId: true, templateVersion: true, logo: true, favicon: true },
     });
     if (!lockedCurrent) throw new AppError(status.NOT_FOUND, "Business website not found");
     assertLifecycleAllowsDraftMutation(lockedCurrent.status as WebsiteLifecycleStatus);
@@ -318,6 +341,7 @@ const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) =>
       assertOwnedForm(adminId, payload.primaryBookingFormId, "booking", tx),
       assertOwnedForm(adminId, payload.primaryEstimateFormId, "estimate", tx),
     ]);
+    await assertManagedBrandReferences(lockedCurrent.id, payload, lockedCurrent, tx);
     const data = prepareWebsitePatch(payload, lockedCurrent);
 
     await ensurePublishedSnapshotBeforeDraftMutationTx(tx, lockedCurrent.id);
@@ -387,7 +411,7 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
 
     const lockedCurrent = await tx.businessWebsite.findFirst({
       where: { id: current.id, adminId },
-      select: { id: true, status: true, templateId: true, templateVersion: true },
+      select: { id: true, status: true, templateId: true, templateVersion: true, logo: true, favicon: true },
     });
     if (!lockedCurrent) throw new AppError(status.NOT_FOUND, "Business website not found");
     assertLifecycleAllowsDraftMutation(lockedCurrent.status as WebsiteLifecycleStatus);
@@ -398,6 +422,7 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
       assertOwnedForm(adminId, websitePatch.primaryBookingFormId, "booking", tx),
       assertOwnedForm(adminId, websitePatch.primaryEstimateFormId, "estimate", tx),
     ]);
+    await assertManagedBrandReferences(lockedCurrent.id, websitePatch, lockedCurrent, tx);
 
     await ensurePublishedSnapshotBeforeDraftMutationTx(tx, lockedCurrent.id);
 
@@ -737,6 +762,60 @@ const getRevision = async (revisionId: string, user: IRequestUser) => {
   return revision;
 };
 
+const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  const website = await getWebsiteOrThrow(adminId);
+
+  return prisma.$transaction(async (tx: any) => {
+    await acquireTextTransactionAdvisoryLock(tx, website.id);
+    const locked = await tx.businessWebsite.findFirst({
+      where: { id: website.id, adminId },
+      select: { id: true, status: true, templateId: true, templateVersion: true, logo: true, favicon: true },
+    });
+    if (!locked) throw new AppError(status.NOT_FOUND, "Business website not found");
+    assertLifecycleAllowsDraftMutation(locked.status as WebsiteLifecycleStatus);
+
+    const asset = await tx.websiteAsset.upsert({
+      where: { websiteId_publicId: { websiteId: website.id, publicId: payload.publicId } },
+      create: {
+        websiteId: website.id,
+        publicId: payload.publicId,
+        url: payload.url,
+        mimeType: payload.mimeType,
+        width: payload.width,
+        height: payload.height,
+        bytes: payload.bytes,
+        altText: payload.kind === "logo" ? "Business logo" : "Website favicon",
+        folder: payload.folder,
+        metadata: payload.metadata as any,
+      },
+      update: {
+        url: payload.url,
+        mimeType: payload.mimeType,
+        width: payload.width,
+        height: payload.height,
+        bytes: payload.bytes,
+        metadata: payload.metadata as any,
+      },
+    });
+
+    const currentUrl = payload.kind === "logo" ? locked.logo : locked.favicon;
+    if (currentUrl !== payload.url) {
+      await ensurePublishedSnapshotBeforeDraftMutationTx(tx, website.id);
+      await tx.businessWebsite.update({
+        where: { id: website.id },
+        data: {
+          [payload.kind]: payload.url,
+          ...draftLifecyclePatch(locked.status as WebsiteLifecycleStatus),
+        },
+      });
+      await createRevisionSnapshot(tx, website.id, user.id, `${payload.kind === "logo" ? "Logo" : "Favicon"} uploaded`);
+    }
+
+    return { asset, website: await loadWebsiteDetails(website.id, tx) };
+  });
+};
+
 const listAssets = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await getWebsiteOrThrow(adminId);
@@ -749,7 +828,14 @@ const registerAsset = async (payload: WebsiteAssetCreateInput, user: IRequestUse
   const url = assertSafeHttpsUrl(payload.url, "Asset URL");
   if (!url) throw new AppError(status.BAD_REQUEST, "Asset URL is required");
   return prisma.websiteAsset.create({
-    data: { ...payload, url, websiteId: website.id, metadata: (payload.metadata ?? {}) as any },
+    data: {
+      ...payload,
+      url,
+      websiteId: website.id,
+      // Legacy external asset registration remains available for non-brand
+      // content, but can never impersonate a managed tenant brand upload.
+      metadata: { provider: "external", kind: "legacy" } as any,
+    },
   });
 };
 
@@ -761,53 +847,52 @@ const uploadBrandAsset = async (
 ) => {
   const adminId = await getAdminId(user);
   const website = await getWebsiteOrThrow(adminId);
-  if (!file?.buffer || !file.mimetype.toLowerCase().startsWith("image/")) {
-    throw new AppError(status.BAD_REQUEST, "Upload a valid image file");
+  if (!file?.buffer || !["image/jpeg", "image/png", "image/webp", "image/avif"].includes(file.mimetype.toLowerCase())) {
+    throw new AppError(status.BAD_REQUEST, "Upload a JPEG, PNG, WEBP, or AVIF image");
   }
+  const maxBytes = kind === "favicon" ? 2 * 1024 * 1024 : 5 * 1024 * 1024;
+  if (file.size > maxBytes) throw new AppError(status.BAD_REQUEST, `${kind === "logo" ? "Logo" : "Favicon"} file is too large`);
 
-  const folder = `Cleaning-CRM/websites/${website.id}`;
-  const publicId = `${kind}`;
+  // Backward-compatible server upload for older clients. New clients use the
+  // signed direct-to-Cloudinary flow. The unique public ID is essential: never
+  // overwrite the asset referenced by the currently published snapshot.
+  const folder = `Cleaning-CRM/websites/${website.id}/brand`;
+  const publicId = `${kind}-${randomUUID()}`;
   const uploaded = await uploadToCloudinary(file.buffer, {
     folder,
     public_id: publicId,
-    overwrite: true,
+    overwrite: false,
     transformation: kind === "favicon"
-      ? [{ width: 256, height: 256, crop: "limit" }]
-      : [{ width: 1200, height: 1200, crop: "limit", quality: "auto", fetch_format: "auto" }],
+      ? [{ width: 512, height: 512, crop: "limit", quality: "auto:good" }]
+      : [{ width: 1600, height: 1600, crop: "limit", quality: "auto:good" }],
   });
-  if (!uploaded?.secure_url || !uploaded?.public_id) {
+  if (!uploaded?.secure_url || !uploaded?.public_id || !uploaded?.width || !uploaded?.height) {
     throw new AppError(status.BAD_GATEWAY, "Image storage did not return a usable asset");
   }
+  if (kind === "favicon") {
+    const ratio = uploaded.width / uploaded.height;
+    if (uploaded.width < 32 || uploaded.height < 32 || ratio < 0.8 || ratio > 1.25) {
+      throw new AppError(status.BAD_REQUEST, "Favicon must be at least 32×32 and approximately square");
+    }
+  } else {
+    const ratio = uploaded.width / uploaded.height;
+    if (uploaded.width < 64 || uploaded.height < 24 || ratio < 0.1 || ratio > 10) {
+      throw new AppError(status.BAD_REQUEST, "Logo dimensions or aspect ratio are not supported");
+    }
+  }
 
-  const asset = await prisma.websiteAsset.upsert({
-    where: { websiteId_publicId: { websiteId: website.id, publicId: uploaded.public_id } },
-    create: {
-      websiteId: website.id,
-      publicId: uploaded.public_id,
-      url: uploaded.secure_url,
-      mimeType: `image/${uploaded.format ?? "webp"}`,
-      width: uploaded.width ?? null,
-      height: uploaded.height ?? null,
-      bytes: uploaded.bytes ?? file.size ?? null,
-      altText: kind === "logo" ? "Business logo" : "Website favicon",
-      folder,
-      metadata: { kind },
-    },
-    update: {
-      url: uploaded.secure_url,
-      mimeType: `image/${uploaded.format ?? "webp"}`,
-      width: uploaded.width ?? null,
-      height: uploaded.height ?? null,
-      bytes: uploaded.bytes ?? file.size ?? null,
-      metadata: { kind },
-    },
-  });
-
-  const websitePatch: WebsiteUpdateInput = kind === "logo"
-    ? { logo: uploaded.secure_url }
-    : { favicon: uploaded.secure_url };
-  await updateWebsite(websitePatch, user);
-  return asset;
+  const result = await attachManagedBrandAsset({
+    kind,
+    publicId: uploaded.public_id,
+    url: uploaded.secure_url,
+    mimeType: `image/${uploaded.format === "jpg" ? "jpeg" : (uploaded.format ?? "webp")}`,
+    width: uploaded.width,
+    height: uploaded.height,
+    bytes: uploaded.bytes ?? file.size,
+    folder,
+    metadata: { provider: "cloudinary", kind: "brand", slot: kind, immutable: true, legacyDirectUpload: true },
+  }, user);
+  return result.asset;
 };
 
 const CONTENT_ASSET_SLOTS = new Set(["about-image"]);
@@ -889,6 +974,7 @@ export const WebsiteService = {
   updatePage,
   listRevisions,
   getRevision,
+  attachManagedBrandAsset,
   listAssets,
   registerAsset,
   uploadBrandAsset,

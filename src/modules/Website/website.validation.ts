@@ -56,6 +56,19 @@ const publishWebsite = z.object({
   expectedRevisionNumber: z.number().int().min(0).optional(),
 }).strict().default({});
 
+
+const brandUploadSignature = z.object({
+  kind: z.enum(["logo", "favicon"]),
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.enum(["image/jpeg", "image/png", "image/webp", "image/avif"]),
+  bytes: z.number().int().positive().max(5 * 1024 * 1024),
+}).strict();
+
+const brandUploadFinalize = z.object({
+  kind: z.enum(["logo", "favicon"]),
+  publicId: z.string().trim().min(1).max(512),
+}).strict();
+
 const createAsset = z.object({
   publicId: z.string().trim().min(1).max(255),
   url: z.string().url().max(2048),
@@ -108,6 +121,8 @@ export const websiteValidation = {
   saveDraft,
   publishWebsite,
   createAsset,
+  brandUploadSignature,
+  brandUploadFinalize,
   addDomain,
   renameSubdomain,
   configureWebsiteBooking,

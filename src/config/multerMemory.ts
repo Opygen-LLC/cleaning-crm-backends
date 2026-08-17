@@ -4,6 +4,7 @@ const ALLOWED_UPLOAD_TYPES = new Set([
     "image/jpeg",
     "image/png",
     "image/webp",
+    "image/avif",
     "image/gif",
     "image/heic",
     "image/heif",
@@ -24,7 +25,7 @@ export const multerMemory = multer({
         }
 
         const error = new multer.MulterError("LIMIT_UNEXPECTED_FILE", file.fieldname);
-        error.message = "Unsupported file type. Upload JPEG, PNG, WEBP, GIF, HEIC/HEIF, or PDF files only.";
+        error.message = "Unsupported file type. Upload JPEG, PNG, WEBP, AVIF, GIF, HEIC/HEIF, or PDF files only.";
         callback(error);
     },
 });
