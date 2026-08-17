@@ -1,5 +1,6 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
+import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { DEFAULT_WEBSITE_PAGES, RESERVED_WEBSITE_SUBDOMAINS } from "./website.constant";
 import type { WebsiteCreateInput } from "./website.interface";
 import { normalizeSubdomain } from "./websiteIdentity";
@@ -57,7 +58,7 @@ export const reserveWebsiteSubdomainTx = async (
   businessName: string,
   adminId: string,
 ): Promise<string> => {
-  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${WEBSITE_SUBDOMAIN_RESERVATION_LOCK}))`;
+  await acquireTextTransactionAdvisoryLock(db, WEBSITE_SUBDOMAIN_RESERVATION_LOCK);
 
   const base = buildWebsiteSubdomainBase(businessName, adminId);
   if (!(await isSubdomainTaken(db, base))) return base;
@@ -150,12 +151,12 @@ export const createWebsiteForAdminTx = async (
   payload: WebsiteCreateInput,
   createdByUserId: string | null = null,
 ) => {
-  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${adminProvisioningLock(adminId)}))`;
+  await acquireTextTransactionAdvisoryLock(db, adminProvisioningLock(adminId));
   const existing = await db.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
   if (existing) throw new AppError(status.CONFLICT, "This business already has a website");
 
   const subdomain = normalizeSubdomain(payload.subdomain);
-  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${WEBSITE_SUBDOMAIN_RESERVATION_LOCK}))`;
+  await acquireTextTransactionAdvisoryLock(db, WEBSITE_SUBDOMAIN_RESERVATION_LOCK);
   if (await isSubdomainTaken(db, subdomain)) {
     throw new AppError(status.CONFLICT, "That subdomain is already in use");
   }
@@ -178,7 +179,7 @@ export const provisionDefaultWebsiteForAdminTx = async (
     createdByUserId?: string | null;
   },
 ) => {
-  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${adminProvisioningLock(input.adminId)}))`;
+  await acquireTextTransactionAdvisoryLock(db, adminProvisioningLock(input.adminId));
   const existing = await db.businessWebsite.findUnique({ where: { adminId: input.adminId }, select: { id: true } });
   if (existing) {
     return { created: false, website: await loadWebsiteSnapshot(db, existing.id) };

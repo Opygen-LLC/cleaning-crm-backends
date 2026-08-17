@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma/prisma";
+import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { FRONTEND_URL } from "../../config/ENV";
 import AppError from "../../errorHelper/AppError";
@@ -76,7 +77,7 @@ const submitPublicReview = async (token: string, payload: ISubmitPublicReview) =
     const tokenLockKey = `review-token:${token}`;
     return prisma.$transaction(async (tx) => {
         // Serialize all submissions for the same public token across instances.
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${tokenLockKey}, 0::bigint))`;
+        await acquireExtendedTextTransactionAdvisoryLock(tx, tokenLockKey);
 
         const reviewToken = await tx.reviewToken.findUnique({
             where: { token },

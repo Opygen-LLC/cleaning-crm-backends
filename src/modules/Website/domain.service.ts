@@ -8,6 +8,7 @@ import {
   WEBSITE_DOMAIN_PROVIDER,
 } from "../../config/ENV";
 import { prisma } from "../../lib/prisma/prisma";
+import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import type { WebsiteDomainCreateInput } from "./website.interface";
@@ -140,7 +141,7 @@ const addDomain = async (payload: WebsiteDomainCreateInput, user: IRequestUser) 
   return prisma.$transaction(async (tx: any) => {
     // Serialize claims for the hostname. Unverified claims expire so another
     // tenant cannot indefinitely squat a customer-owned domain in our DB.
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`website-domain:${domain}`}))`;
+    await acquireTextTransactionAdvisoryLock(tx, `website-domain:${domain}`);
     const existing = await tx.websiteDomain.findUnique({
       where: { domain },
       select: { id: true, websiteId: true, status: true, createdAt: true },
@@ -275,7 +276,7 @@ const setPrimaryDomain = async (domainId: string, user: IRequestUser) => {
   }
 
   const updated = await prisma.$transaction(async (tx: any) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${website.id}))`;
+    await acquireTextTransactionAdvisoryLock(tx, website.id);
     await tx.websiteDomain.updateMany({
       where: { websiteId: website.id, isPrimary: true },
       data: { isPrimary: false },

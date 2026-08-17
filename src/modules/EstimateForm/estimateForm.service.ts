@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma/prisma";
+import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
@@ -989,7 +990,7 @@ const submitPublicEstimateFormFor = async (
     const submission = await prisma.$transaction(async (tx) => {
         if (idempotencyKey) {
             const idempotencyLockKey = `estimate-idempotency:${form.id}:${idempotencyKey}`;
-            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${idempotencyLockKey}, 0::bigint))`;
+            await acquireExtendedTextTransactionAdvisoryLock(tx, idempotencyLockKey);
             const existing = await tx.estimateFormSubmission.findFirst({ where: { formId: form.id, idempotencyKey } });
             if (existing) return existing;
         }

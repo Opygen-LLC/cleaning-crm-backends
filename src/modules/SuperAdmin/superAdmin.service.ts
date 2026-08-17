@@ -9,6 +9,7 @@ import {
 } from "../../generated/prisma/enums";
 import { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
+import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { IPaginationOptions } from "../../interface/query.interface";
 import {
     IActivityLogFilters,
@@ -1880,10 +1881,10 @@ const approvePaymentProof = async (
 
         const lockKey = `subscription-checkout:${sub.id}`;
         const result = await prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+            await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
             if (checkout.couponId) {
                 const couponLockKey = `subscription-coupon:${checkout.couponId}`;
-                await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${couponLockKey}, 0::bigint))`;
+                await acquireExtendedTextTransactionAdvisoryLock(tx, couponLockKey);
             }
 
             const freshBilling = await tx.billingHistory.findUnique({
@@ -2082,7 +2083,7 @@ const rejectPaymentProof = async (
     const checkoutRetryUntil = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     const lockKey = `subscription-checkout:${record.subscriptionId}`;
     const updatedBilling = await prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+        await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
         const freshBilling = await tx.billingHistory.findUnique({ where: { id: billingId } });
         if (!freshBilling || freshBilling.status !== "PENDING") {
             throw new AppError(status.CONFLICT, "This payment proof has already been reviewed.", {

@@ -8,6 +8,7 @@ import {
     SubscriptionStatus,
 } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
+import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { Decimal } from "@prisma/client/runtime/client";
 import { getPlatformConfig } from "../../lib/utils/platformConfig";
@@ -265,7 +266,7 @@ const changePlan = async (
 
     const lockKey = `subscription-checkout:${current.id}`;
     return prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+        await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
 
         // A checkout only reserves pricing/coupon capacity for a bounded time.
         // Under-review proofs are never auto-expired while a super-admin is
@@ -334,7 +335,7 @@ const changePlan = async (
         let couponDiscountValue = 0;
         if (coupon) {
             const couponLockKey = `subscription-coupon:${coupon.id}`;
-            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${couponLockKey}, 0::bigint))`;
+            await acquireExtendedTextTransactionAdvisoryLock(tx, couponLockKey);
 
             const freshCoupon = await tx.coupon.findUnique({ where: { id: coupon.id } });
             if (
@@ -427,7 +428,7 @@ const cancelPendingPlanChange = async (user: IRequestUser) => {
 
     const lockKey = `subscription-checkout:${current.id}`;
     return prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+        await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
         const pending = await tx.pendingPlanChange.findFirst({
             where: {
                 subscriptionId: current.id,
@@ -606,7 +607,7 @@ const submitPaymentProof = async (
 
         const lockKey = `subscription-checkout:${sub.id}`;
         const result = await prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+            await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
             const fresh = await tx.pendingPlanChange.findUnique({
                 where: { id: checkout.id },
                 include: { targetPlan: { include: { subscriptionPlan: true } } },

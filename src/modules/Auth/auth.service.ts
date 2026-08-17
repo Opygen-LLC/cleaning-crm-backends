@@ -60,6 +60,22 @@ const register = async ({
             trialDays: platformConfig.defaultTrialDays,
         });
 
+        // Only create/send the verification OTP after all tenant-owned records
+        // have committed. Email delivery itself is non-critical: if the mail
+        // provider is temporarily unavailable the account remains valid and the
+        // existing resend-OTP endpoint can be used from the verification page.
+        try {
+            await auth.api.sendVerificationOTP({
+                body: { email, type: "email-verification" },
+            });
+        } catch (verificationError) {
+            logger.error("Registration succeeded but verification OTP dispatch failed", {
+                userId: data.user.id,
+                email,
+                error: verificationError,
+            });
+        }
+
         return {
             user: data.user,
             ...provisioned,

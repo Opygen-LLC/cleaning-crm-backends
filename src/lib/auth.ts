@@ -48,7 +48,13 @@ export const auth = betterAuth({
         requireEmailVerification: true,
     },
     emailVerification: {
-        sendOnSignUp: true,
+        // Registration has a second, tenant-provisioning transaction after
+        // Better Auth creates the credential user. Sending the OTP here would
+        // race ahead of that transaction and can email a code for a user that
+        // is subsequently compensated/deleted if provisioning fails. The
+        // registration service triggers the OTP only after provisioning
+        // commits successfully.
+        sendOnSignUp: false,
         sendOnSignIn: true,
         autoSignInAfterVerification: true,
     },

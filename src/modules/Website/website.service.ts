@@ -2,6 +2,7 @@ import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import { WEBSITE_BASE_DOMAIN } from "../../config/ENV";
 import { prisma } from "../../lib/prisma/prisma";
+import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import type {
@@ -118,7 +119,7 @@ const createRevisionSnapshot = async (
   createdByUserId: string | null,
   reason: string,
 ) => {
-  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${websiteId}))`;
+  await acquireTextTransactionAdvisoryLock(db, websiteId);
   const latest = await db.websiteRevision.aggregate({
     where: { websiteId },
     _max: { revisionNumber: true },
@@ -227,7 +228,7 @@ const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) =>
   const data = prepareWebsitePatch(payload, current);
 
   return prisma.$transaction(async (tx: any) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${current.id}))`;
+    await acquireTextTransactionAdvisoryLock(tx, current.id);
     await ensurePublishedSnapshotBeforeDraftMutationTx(tx, current.id);
     await tx.businessWebsite.update({ where: { id: current.id }, data });
     await createRevisionSnapshot(tx, current.id, user.id, "Website settings updated");
@@ -254,7 +255,7 @@ const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user:
   if (!page) throw new AppError(status.NOT_FOUND, "Website page not found");
 
   return prisma.$transaction(async (tx: any) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${website.id}))`;
+    await acquireTextTransactionAdvisoryLock(tx, website.id);
     await ensurePublishedSnapshotBeforeDraftMutationTx(tx, website.id);
     const updated = await tx.websitePage.update({ where: { id: pageId }, data: payload as any });
     await createRevisionSnapshot(tx, website.id, user.id, `Page updated: ${pageId}`);
@@ -278,7 +279,7 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
   }
 
   return prisma.$transaction(async (tx: any) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${current.id}))`;
+    await acquireTextTransactionAdvisoryLock(tx, current.id);
     await ensurePublishedSnapshotBeforeDraftMutationTx(tx, current.id);
 
     if (uniquePageIds.length) {
@@ -311,7 +312,7 @@ const publishWebsite = async (user: IRequestUser) => {
   const current = await getWebsiteOrThrow(adminId);
 
   const website = await prisma.$transaction(async (tx: any) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${current.id}))`;
+    await acquireTextTransactionAdvisoryLock(tx, current.id);
     const draft = await loadDraftSnapshot(current.id, tx);
     TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     if (!draft.pages.some((page: any) => page.kind === "HOME" && page.isEnabled)) {

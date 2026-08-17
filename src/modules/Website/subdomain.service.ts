@@ -2,6 +2,7 @@ import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import { WEBSITE_BASE_DOMAIN } from "../../config/ENV";
 import { prisma } from "../../lib/prisma/prisma";
+import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { normalizeSubdomain } from "./websiteIdentity";
@@ -79,8 +80,8 @@ const rename = async (input: string, user: IRequestUser) => {
   }
 
   const result = await prisma.$transaction(async (tx: any) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${owned.id}))`;
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${WEBSITE_SUBDOMAIN_RESERVATION_LOCK}))`;
+    await acquireTextTransactionAdvisoryLock(tx, owned.id);
+    await acquireTextTransactionAdvisoryLock(tx, WEBSITE_SUBDOMAIN_RESERVATION_LOCK);
 
     // Re-read after both locks; another request may have renamed this website
     // while this request was waiting.

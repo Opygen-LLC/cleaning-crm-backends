@@ -1,5 +1,6 @@
 import { randomBytes } from "crypto";
 import { prisma } from "../../lib/prisma/prisma";
+import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
@@ -548,7 +549,7 @@ const updateSubmissionStatus = async (
         const slotLockKey = `booking-slot:${submission.formId}:${date}:${submission.timeSlot}`;
 
         return prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${slotLockKey}, 0::bigint))`;
+            await acquireExtendedTextTransactionAdvisoryLock(tx, slotLockKey);
             const occupied = await tx.bookingFormSubmission.count({
                 where: {
                     formId: submission.formId,
@@ -864,14 +865,14 @@ const submitPublicBookingFormBySelector = async (
     return prisma.$transaction(async (tx) => {
         if (idempotencyKey) {
             const idempotencyLockKey = `booking-idempotency:${form.id}:${idempotencyKey}`;
-            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${idempotencyLockKey}, 0::bigint))`;
+            await acquireExtendedTextTransactionAdvisoryLock(tx, idempotencyLockKey);
             const existing = await tx.bookingFormSubmission.findFirst({
                 where: { formId: form.id, idempotencyKey },
             });
             if (existing) return existing;
         }
 
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${slotLockKey}, 0::bigint))`;
+        await acquireExtendedTextTransactionAdvisoryLock(tx, slotLockKey);
 
         const existingCount = await tx.bookingFormSubmission.count({
             where: {

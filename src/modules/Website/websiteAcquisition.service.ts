@@ -3,6 +3,7 @@ import AppError from "../../errorHelper/AppError";
 import { ServiceStatus } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
+import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { PublicWebsiteService } from "./publicWebsite.service";
 
 export interface PublicWebsiteContactPayload {
@@ -29,7 +30,7 @@ const appendBoundedNote = (existing: string | null, incoming: string) => {
 const generateLeadRef = async (tx: Prisma.TransactionClient): Promise<string> => {
   // Lead.leadRef is globally unique. Serialize the existing sequential ref
   // generator so a burst of public enquiries cannot race on the same value.
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('lead-ref-sequence', 0::bigint))`;
+  await acquireExtendedTextTransactionAdvisoryLock(tx, "lead-ref-sequence");
   const rows = await tx.$queryRaw<Array<{ maxNumber: string }>>`
     SELECT COALESCE(MAX((regexp_match("leadRef", '([0-9]+)$'))[1]::bigint), 0)::text AS "maxNumber"
     FROM "lead"
@@ -61,7 +62,7 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
     // This complements @@unique([email, adminId]) and also protects older rows
     // whose email casing predates normalized public capture.
     const lockKey = `website-contact:${integration.adminId}:${email}`;
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+    await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
 
     const service = payload.serviceCatalogId
       ? await tx.serviceCatalog.findFirst({
