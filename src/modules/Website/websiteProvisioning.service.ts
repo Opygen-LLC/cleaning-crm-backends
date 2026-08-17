@@ -101,6 +101,7 @@ const createInitialRevisionTx = async (
   db: Prisma.TransactionClient,
   websiteId: string,
   createdByUserId: string | null,
+  reason = "Website provisioned",
 ) => {
   const snapshot = await loadWebsiteSnapshot(db, websiteId);
   await db.websiteRevision.create({
@@ -108,7 +109,7 @@ const createInitialRevisionTx = async (
       websiteId,
       revisionNumber: 1,
       snapshot: JSON.parse(JSON.stringify(snapshot)),
-      reason: "Website provisioned",
+      reason,
       createdByUserId,
     },
   });
@@ -120,6 +121,7 @@ const createWebsiteRecordTx = async (
   subdomain: string,
   payload: Omit<WebsiteCreateInput, "subdomain">,
   createdByUserId: string | null,
+  initialRevisionReason = "Website provisioned",
 ) => {
   const template = TemplateRegistry.requireTemplate(
     payload.templateId ?? DEFAULT_WEBSITE_SETTINGS.templateId,
@@ -163,7 +165,7 @@ const createWebsiteRecordTx = async (
     select: { id: true },
   });
 
-  await createInitialRevisionTx(db, website.id, createdByUserId);
+  await createInitialRevisionTx(db, website.id, createdByUserId, initialRevisionReason);
   return loadWebsiteSnapshot(db, website.id);
 };
 
@@ -200,6 +202,7 @@ export const provisionDefaultWebsiteForAdminTx = async (
     adminId: string;
     businessName: string;
     createdByUserId?: string | null;
+    initialRevisionReason?: string;
   },
 ) => {
   await acquireTextTransactionAdvisoryLock(db, adminProvisioningLock(input.adminId));
@@ -215,6 +218,7 @@ export const provisionDefaultWebsiteForAdminTx = async (
     subdomain,
     {},
     input.createdByUserId ?? null,
+    input.initialRevisionReason ?? "Website provisioned",
   );
 
   return { created: true, website };
@@ -229,6 +233,7 @@ export const provisionDefaultWebsiteForAdmin = async (input: {
   adminId: string;
   businessName: string;
   createdByUserId?: string | null;
+  initialRevisionReason?: string;
 }) => {
   const result = await prisma.$transaction(
     (tx: Prisma.TransactionClient) => provisionDefaultWebsiteForAdminTx(tx, input),

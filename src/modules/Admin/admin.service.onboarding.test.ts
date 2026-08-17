@@ -67,6 +67,41 @@ describe("website-first onboarding status", () => {
     expect(result.isComplete).toBe(true);
     expect(result.completedCount).toBe(5);
     expect(result.steps.every((step) => step.completed)).toBe(true);
+    expect(result.websiteSetupOffer).toBeNull();
+  });
+
+  it("offers an unpublished backfilled website to an already-onboarded customer", async () => {
+    db.adminProfile.findUnique.mockResolvedValue({
+      ...statusRow([], new Date("2026-08-17T00:00:00Z")),
+      businessWebsite: {
+        status: "PROVISIONED",
+        subdomain: "bio-cleaning",
+        publishedAt: null,
+      },
+    });
+
+    const result = await adminService.getOnboardingStatus(USER_ID);
+
+    expect(result.isComplete).toBe(true);
+    expect(result.websiteSetupOffer).toEqual({
+      status: "PROVISIONED",
+      subdomain: "bio-cleaning",
+    });
+  });
+
+  it("does not show the setup offer after the website has been published", async () => {
+    db.adminProfile.findUnique.mockResolvedValue({
+      ...statusRow([], new Date("2026-08-17T00:00:00Z")),
+      businessWebsite: {
+        status: "PUBLISHED",
+        subdomain: "bio-cleaning",
+        publishedAt: new Date("2026-08-17T12:00:00Z"),
+      },
+    });
+
+    const result = await adminService.getOnboardingStatus(USER_ID);
+
+    expect(result.websiteSetupOffer).toBeNull();
   });
 
   it("rejects completing services before business information", async () => {

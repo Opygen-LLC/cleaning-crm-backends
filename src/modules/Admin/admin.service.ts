@@ -346,6 +346,11 @@ interface GettingStartedResult {
   steps: GettingStartedStepResult[];
 }
 
+interface WebsiteSetupOffer {
+  status: "PROVISIONED" | "DRAFT";
+  subdomain: string;
+}
+
 interface OnboardingStatusResult {
   isComplete: boolean;
   completedCount: number;
@@ -353,6 +358,14 @@ interface OnboardingStatusResult {
   skippedCount: number;
   steps: OnboardingStepResult[];
   gettingStarted: GettingStartedResult;
+  /**
+   * Existing customers may have completed CRM onboarding years before the
+   * website feature existed. Phase 21 backfills an unpublished website for
+   * them without resetting onboarding. This compact offer lets the dashboard
+   * surface that website setup opportunity from the already-cached onboarding
+   * request instead of adding another dashboard API call.
+   */
+  websiteSetupOffer: WebsiteSetupOffer | null;
 }
 
 const REQUIRED_SETUP_KEYS = ONBOARDING_STEPS.map((step) => step.key);
@@ -387,6 +400,13 @@ const getOnboardingStatus = async (
       id: true,
       onboardingCompletedAt: true,
       onboardingCompletedSteps: true,
+      businessWebsite: {
+        select: {
+          status: true,
+          subdomain: true,
+          publishedAt: true,
+        },
+      },
     },
   });
 
@@ -453,6 +473,23 @@ const getOnboardingStatus = async (
     (step) => step.completed,
   ).length;
 
+  // Do not force legacy customers through the five-step registration wizard
+  // again. If their old CRM onboarding is already complete and Phase 21 has
+  // provisioned an unpublished site, show a dedicated website setup offer on
+  // the dashboard. New registrations have onboardingCompletedAt=null and keep
+  // using the normal wizard instead.
+  const websiteSetupOffer: WebsiteSetupOffer | null =
+    admin.onboardingCompletedAt &&
+    admin.businessWebsite &&
+    !admin.businessWebsite.publishedAt &&
+    (admin.businessWebsite.status === WEBSITE_STATUS.PROVISIONED ||
+      admin.businessWebsite.status === WEBSITE_STATUS.DRAFT)
+      ? {
+          status: admin.businessWebsite.status,
+          subdomain: admin.businessWebsite.subdomain,
+        }
+      : null;
+
   return {
     isComplete,
     completedCount,
@@ -465,6 +502,7 @@ const getOnboardingStatus = async (
       totalCount: gettingStartedSteps.length,
       steps: gettingStartedSteps,
     },
+    websiteSetupOffer,
   };
 };
 

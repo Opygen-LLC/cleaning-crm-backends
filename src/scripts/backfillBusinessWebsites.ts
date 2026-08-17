@@ -7,6 +7,7 @@ const DEFAULT_BATCH_SIZE = 100;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const MAX_BATCH_SIZE = 500;
 const MAX_FAILURE_SAMPLES = 50;
+export const LEGACY_WEBSITE_INITIAL_REVISION_REASON = "Existing customer website provisioned";
 
 export interface WebsiteBackfillOptions {
   dryRun: boolean;
@@ -67,6 +68,7 @@ const provisionWithRetry = async (
         adminId: admin.id,
         businessName: admin.businessName,
         createdByUserId: admin.userId,
+        initialRevisionReason: LEGACY_WEBSITE_INITIAL_REVISION_REASON,
       });
     } catch (error) {
       lastError = error;
@@ -84,10 +86,15 @@ const provisionWithRetry = async (
 };
 
 /**
- * Idempotent data migration for pre-Phase-2 cleaning businesses.
+ * Phase 21 idempotent data migration for existing Cleaning CRM customers.
  *
+ * Safety properties:
  * - Only AdminProfiles without a BusinessWebsite are selected.
  * - Every tenant is provisioned in its own transaction.
+ * - Provisioning creates the default template/pages and Revision #1, but never
+ *   publishes: status remains PROVISIONED and publishedSnapshot stays null.
+ * - Subdomain allocation uses the same advisory-locked allocator as new
+ *   registrations, so a backfill worker cannot steal another tenant's hostname.
  * - Cursor pagination prevents one failing tenant from causing an infinite
  *   loop in the current run.
  * - A rerun naturally retries only tenants that still have no website.
@@ -106,8 +113,8 @@ export const runWebsiteBackfill = async (
     const admins = await prisma.adminProfile.findMany({
       where: {
         businessWebsite: { is: null },
-        ...(cursor ? { id: { gt: cursor } } : {}),
       },
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       select: {
         id: true,
         userId: true,
@@ -124,7 +131,7 @@ export const runWebsiteBackfill = async (
       scanned += 1;
 
       if (options.dryRun) {
-        process.stdout.write(`[dry-run] Missing website: admin ${admin.id}\n`);
+        process.stdout.write(`[dry-run] Missing website: admin ${admin.id} (${admin.businessName})\n`);
         continue;
       }
 
@@ -133,7 +140,7 @@ export const runWebsiteBackfill = async (
         if (result.created) {
           created += 1;
           process.stdout.write(
-            `Provisioned website for admin ${admin.id} at subdomain ${result.website.subdomain}\n`,
+            `Provisioned unpublished website for admin ${admin.id} at subdomain ${result.website.subdomain}\n`,
           );
         } else {
           // A concurrent registration/repair worker may have provisioned the

@@ -20,7 +20,10 @@
     "migrate:phase2-websites": "pnpm run backfill:websites",
     "backfill:websites:dry-run": "tsx src/scripts/backfillBusinessWebsites.ts --dry-run",
     "backfill:websites:prod": "node dist/backfillBusinessWebsites.js",
-    "migrate:phase2-websites:prod": "node dist/backfillBusinessWebsites.js"
+    "migrate:phase2-websites:prod": "node dist/backfillBusinessWebsites.js",
+    "migrate:phase21-existing-websites": "pnpm run backfill:websites",
+    "migrate:phase21-existing-websites:dry-run": "pnpm run backfill:websites:dry-run",
+    "migrate:phase21-existing-websites:prod": "node dist/backfillBusinessWebsites.js"
   },
   "keywords": [],
   "author": "opygen",
