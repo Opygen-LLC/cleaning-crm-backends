@@ -11,9 +11,10 @@ router.use(isAdmin);
 
 router.post("/", zodValidate(websiteValidation.createWebsite, ValidationProperty.BODY), websiteController.createWebsite);
 router.get("/me", websiteController.getWebsite);
+router.get("/studio", websiteController.getStudio);
 router.patch("/me", zodValidate(websiteValidation.updateWebsite, ValidationProperty.BODY), websiteController.updateWebsite);
 router.put("/draft", zodValidate(websiteValidation.saveDraft, ValidationProperty.BODY), websiteController.saveDraft);
-router.post("/publish", websiteController.publishWebsite);
+router.post("/publish", zodValidate(websiteValidation.publishWebsite, ValidationProperty.BODY), websiteController.publishWebsite);
 router.get("/preview", websiteController.previewWebsite);
 router.get("/pages", websiteController.listPages);
 router.patch("/pages/:pageId", zodValidate(websiteValidation.updatePage, ValidationProperty.BODY), websiteController.updatePage);

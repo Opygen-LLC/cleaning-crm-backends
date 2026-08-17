@@ -5,6 +5,7 @@ import { DomainService } from "./domain.service";
 import { PublicWebsiteService } from "./publicWebsite.service";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteService } from "./website.service";
+import { WebsiteStudioService } from "./websiteStudio.service";
 import { SubdomainService } from "./subdomain.service";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { bookingFormService } from "../BookingForm/bookingForm.service";
@@ -20,9 +21,13 @@ const paramStr = (val: string | string[] | undefined): string => (Array.isArray(
 
 const createWebsite = catchAsync(async (req, res) => created(res, "Website created successfully", await WebsiteService.createWebsite(req.body, req.user)));
 const getWebsite = catchAsync(async (req, res) => ok(res, "Website retrieved successfully", await WebsiteService.getWebsite(req.user)));
+const getStudio = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return ok(res, "Website Studio retrieved successfully", await WebsiteStudioService.getStudio(req.user));
+});
 const updateWebsite = catchAsync(async (req, res) => ok(res, "Website updated successfully", await WebsiteService.updateWebsite(req.body, req.user)));
 const saveDraft = catchAsync(async (req, res) => ok(res, "Website draft saved successfully", await WebsiteService.saveDraft(req.body, req.user)));
-const publishWebsite = catchAsync(async (req, res) => ok(res, "Website published successfully", await WebsiteService.publishWebsite(req.user)));
+const publishWebsite = catchAsync(async (req, res) => ok(res, "Website published successfully", await WebsiteService.publishWebsite(req.body ?? {}, req.user)));
 const previewWebsite = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
   return ok(res, "Website preview retrieved successfully", await PublicWebsiteService.getPreviewWebsite(req.user));
@@ -202,6 +207,7 @@ const getPublicWebsite = catchAsync(async (req, res) => {
 export const websiteController = {
   createWebsite,
   getWebsite,
+  getStudio,
   updateWebsite,
   saveDraft,
   publishWebsite,

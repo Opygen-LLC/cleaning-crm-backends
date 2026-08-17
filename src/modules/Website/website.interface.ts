@@ -38,8 +38,21 @@ export interface WebsiteDraftPageInput extends WebsitePageUpdateInput {
 }
 
 export interface WebsiteDraftSaveInput {
+  /**
+   * Optimistic concurrency guard used by Website Studio. Legacy callers may
+   * omit it; Studio always sends the revision it loaded.
+   */
+  expectedRevisionNumber?: number;
   website?: WebsiteUpdateInput;
   pages?: WebsiteDraftPageInput[];
+}
+
+export interface WebsitePublishInput {
+  /**
+   * Prevent publishing a draft that changed in another browser/tab after the
+   * editor last saved. Optional for backward compatibility with old clients.
+   */
+  expectedRevisionNumber?: number;
 }
 
 export interface WebsiteAssetCreateInput {

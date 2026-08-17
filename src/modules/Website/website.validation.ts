@@ -43,12 +43,17 @@ const pagePatch = z.object({
 const updatePage = pagePatch;
 
 const saveDraft = z.object({
+  expectedRevisionNumber: z.number().int().min(0).optional(),
   website: websitePatch.optional(),
   pages: z.array(pagePatch.extend({ id: z.string().uuid() })).max(50).optional(),
 }).strict().refine(
   (value) => Boolean(value.website && Object.keys(value.website).length) || Boolean(value.pages?.length),
   "Draft contains no changes",
 );
+
+const publishWebsite = z.object({
+  expectedRevisionNumber: z.number().int().min(0).optional(),
+}).strict().default({});
 
 const createAsset = z.object({
   publicId: z.string().trim().min(1).max(255),
@@ -95,6 +100,7 @@ export const websiteValidation = {
   updateWebsite,
   updatePage,
   saveDraft,
+  publishWebsite,
   createAsset,
   addDomain,
   renameSubdomain,

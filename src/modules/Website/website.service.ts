@@ -10,6 +10,7 @@ import type {
   WebsiteCreateInput,
   WebsiteDraftSaveInput,
   WebsitePageUpdateInput,
+  WebsitePublishInput,
   WebsiteUpdateInput,
 } from "./website.interface";
 import { assertSafeHttpsUrl } from "./websiteIdentity";
@@ -20,7 +21,7 @@ import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 
 const getWebsiteOrThrow = async (adminId: string, db: any = prisma) => {
-  const website = await db.businessWebsite.findUnique({ where: { adminId } });
+  const website = await db.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
   return website;
 };
@@ -79,9 +80,9 @@ const loadDraftSnapshot = async (websiteId: string, db: any) => {
   return website;
 };
 
-const loadWebsiteDetails = async (websiteId: string, db: any = prisma) => {
+const loadWebsiteDetailsWhere = async (where: { id: string } | { adminId: string }, db: any = prisma) => {
   const website = await db.businessWebsite.findUnique({
-    where: { id: websiteId },
+    where,
     include: {
       pages: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
       domains: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] },
@@ -94,7 +95,7 @@ const loadWebsiteDetails = async (websiteId: string, db: any = prisma) => {
   if (!website) throw new AppError(status.NOT_FOUND, "Business website not found");
 
   const latest = await db.websiteRevision.aggregate({
-    where: { websiteId },
+    where: { websiteId: website.id },
     _max: { revisionNumber: true },
   });
   const draftRevisionNumber = latest._max.revisionNumber ?? 0;
@@ -113,22 +114,49 @@ const loadWebsiteDetails = async (websiteId: string, db: any = prisma) => {
   };
 };
 
+const loadWebsiteDetails = (websiteId: string, db: any = prisma) =>
+  loadWebsiteDetailsWhere({ id: websiteId }, db);
+
+const loadWebsiteDetailsForAdmin = (adminId: string, db: any = prisma) =>
+  loadWebsiteDetailsWhere({ adminId }, db);
+
+const getLatestRevisionNumber = async (db: any, websiteId: string): Promise<number> => {
+  const latest = await db.websiteRevision.aggregate({
+    where: { websiteId },
+    _max: { revisionNumber: true },
+  });
+  return latest._max.revisionNumber ?? 0;
+};
+
+const assertExpectedRevision = async (
+  db: any,
+  websiteId: string,
+  expectedRevisionNumber: number | undefined,
+): Promise<number> => {
+  const currentRevisionNumber = await getLatestRevisionNumber(db, websiteId);
+  if (expectedRevisionNumber !== undefined && expectedRevisionNumber !== currentRevisionNumber) {
+    throw new AppError(status.CONFLICT, "This website draft changed in another session. Reload Website Studio before saving again.", {
+      code: "WEBSITE_DRAFT_CONFLICT",
+      retryable: false,
+    });
+  }
+  return currentRevisionNumber;
+};
+
 const createRevisionSnapshot = async (
   db: any,
   websiteId: string,
   createdByUserId: string | null,
   reason: string,
+  baseRevisionNumber?: number,
 ) => {
   await acquireTextTransactionAdvisoryLock(db, websiteId);
-  const latest = await db.websiteRevision.aggregate({
-    where: { websiteId },
-    _max: { revisionNumber: true },
-  });
+  const currentRevisionNumber = baseRevisionNumber ?? await getLatestRevisionNumber(db, websiteId);
   const snapshot = await loadDraftSnapshot(websiteId, db);
   return db.websiteRevision.create({
     data: {
       websiteId,
-      revisionNumber: (latest._max.revisionNumber ?? 0) + 1,
+      revisionNumber: currentRevisionNumber + 1,
       snapshot: JSON.parse(JSON.stringify(snapshot)) as any,
       reason,
       createdByUserId,
@@ -217,10 +245,11 @@ const createWebsite = async (payload: WebsiteCreateInput, user: IRequestUser) =>
   return createWebsiteForAdmin(adminId, payload, user.id);
 };
 
+const getWebsiteForAdmin = async (adminId: string) => loadWebsiteDetailsForAdmin(adminId);
+
 const getWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const website = await getWebsiteOrThrow(adminId);
-  return loadWebsiteDetails(website.id);
+  return getWebsiteForAdmin(adminId);
 };
 
 const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) => {
@@ -283,6 +312,7 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
   const adminId = await getAdminId(user);
   const current = await getWebsiteOrThrow(adminId);
   const websitePatch = payload.website ?? {};
+  const expectedRevisionNumber = payload.expectedRevisionNumber;
 
   const uniquePageIds = [...new Set((payload.pages ?? []).map((page) => page.id))];
   if (uniquePageIds.length !== (payload.pages ?? []).length) {
@@ -297,6 +327,8 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
       select: { id: true, templateId: true, templateVersion: true },
     });
     if (!lockedCurrent) throw new AppError(status.NOT_FOUND, "Business website not found");
+
+    const baseRevisionNumber = await assertExpectedRevision(tx, lockedCurrent.id, expectedRevisionNumber);
 
     await Promise.all([
       assertOwnedForm(adminId, websitePatch.primaryBookingFormId, "booking", tx),
@@ -325,17 +357,18 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
       await tx.websitePage.update({ where: { id }, data: data as any });
     }
 
-    await createRevisionSnapshot(tx, lockedCurrent.id, user.id, "Draft saved");
+    await createRevisionSnapshot(tx, lockedCurrent.id, user.id, "Draft saved", baseRevisionNumber);
     return loadWebsiteDetails(lockedCurrent.id, tx);
   });
 };
 
-const publishWebsite = async (user: IRequestUser) => {
+const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const current = await getWebsiteOrThrow(adminId);
 
   const website = await prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
+    const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
     const draft = await loadDraftSnapshot(current.id, tx);
     TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     if (!draft.pages.some((page: any) => page.kind === "HOME" && page.isEnabled)) {
@@ -350,7 +383,7 @@ const publishWebsite = async (user: IRequestUser) => {
       assertOwnedForm(adminId, draft.primaryEstimateFormId, "estimate", tx),
     ]);
 
-    const revision = await createRevisionSnapshot(tx, current.id, user.id, "Website published");
+    const revision = await createRevisionSnapshot(tx, current.id, user.id, "Website published", baseRevisionNumber);
     const publishedSnapshot = buildPublishedSnapshot(draft);
     await tx.businessWebsite.update({
       where: { id: current.id },
@@ -425,6 +458,7 @@ export const WebsiteService = {
   createWebsite,
   createWebsiteForAdmin,
   getWebsite,
+  getWebsiteForAdmin,
   updateWebsite,
   saveDraft,
   publishWebsite,
