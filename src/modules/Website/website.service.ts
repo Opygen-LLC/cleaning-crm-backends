@@ -17,6 +17,7 @@ import type {
   WebsiteDraftSaveInput,
   WebsitePageUpdateInput,
   WebsitePublishInput,
+  WebsiteRevisionRestoreInput,
   WebsiteUpdateInput,
 } from "./website.interface";
 import { assertSafeHttpsUrl, normalizeSubdomain } from "./websiteIdentity";
@@ -25,7 +26,7 @@ import { buildTemplateSelectionPatch } from "./templateSelection";
 import { WebsiteProvisioningService } from "./websiteProvisioning.service";
 import { WebsiteBookingProvisioningService } from "./websiteBookingProvisioning.service";
 import { PublicWebsiteService } from "./publicWebsite.service";
-import { buildPublishedSnapshot, parsePublishedSnapshot } from "./websiteSnapshot";
+import { buildPublishedSnapshot, parsePublishedSnapshot, parseRevisionSnapshotAsPublished } from "./websiteSnapshot";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
@@ -76,6 +77,77 @@ const assertManagedBrandReferences = async (
         retryable: false,
       });
     }
+  }
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * Asset deletion removes only the WebsiteAsset row; immutable Cloudinary
+ * resources remain available so historical revisions can still be recovered.
+ * Rehydrate only brand assets that were already recorded inside this tenant's
+ * own revision snapshot and still carry the Phase-8 immutable metadata.
+ */
+const rehydrateManagedBrandAssetsFromRevision = async (
+  websiteId: string,
+  rawSnapshot: unknown,
+  target: Pick<WebsiteUpdateInput, "logo" | "favicon" | "socialImageUrl">,
+  db: any,
+) => {
+  if (!isRecord(rawSnapshot) || !Array.isArray(rawSnapshot.assets)) return;
+
+  for (const { kind, field, label } of MANAGED_IMAGE_FIELDS) {
+    const targetUrl = target[field];
+    if (!targetUrl) continue;
+    const safeTargetUrl = assertSafeHttpsUrl(targetUrl, `${label[0].toUpperCase()}${label.slice(1)} URL`);
+    if (!safeTargetUrl) continue;
+
+    const existing = await db.websiteAsset.findFirst({
+      where: { websiteId, url: safeTargetUrl },
+      select: { metadata: true },
+    });
+    if (isManagedBrandAsset(existing, kind)) continue;
+
+    const historical = rawSnapshot.assets.find((candidate: unknown) => {
+      if (!isRecord(candidate) || candidate.url !== safeTargetUrl) return false;
+      return isManagedBrandAsset({ metadata: candidate.metadata }, kind);
+    });
+    if (!isRecord(historical)) continue;
+
+    const publicId = typeof historical.publicId === "string" ? historical.publicId : "";
+    const mimeType = typeof historical.mimeType === "string" ? historical.mimeType : "";
+    const folder = typeof historical.folder === "string" ? historical.folder : "";
+    if (!publicId || !mimeType.startsWith("image/") || !folder) continue;
+
+    const publicIdOwner = await db.websiteAsset.findUnique({
+      where: { websiteId_publicId: { websiteId, publicId } },
+      select: { url: true, metadata: true },
+    });
+    if (publicIdOwner) {
+      if (publicIdOwner.url !== safeTargetUrl || !isManagedBrandAsset(publicIdOwner, kind)) {
+        throw new AppError(status.CONFLICT, "A historical website asset no longer matches its immutable tenant record", {
+          code: "WEBSITE_REVISION_ASSET_CONFLICT",
+          retryable: false,
+        });
+      }
+      continue;
+    }
+
+    await db.websiteAsset.create({
+      data: {
+        websiteId,
+        publicId,
+        url: safeTargetUrl,
+        mimeType,
+        width: typeof historical.width === "number" ? historical.width : null,
+        height: typeof historical.height === "number" ? historical.height : null,
+        bytes: typeof historical.bytes === "number" ? historical.bytes : null,
+        altText: typeof historical.altText === "string" ? historical.altText : null,
+        folder,
+        metadata: historical.metadata as any,
+      },
+    });
   }
 };
 
@@ -839,13 +911,29 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
 
 const listRevisions = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const website = await getWebsiteOrThrow(adminId);
-  return prisma.websiteRevision.findMany({
+  const website = await prisma.businessWebsite.findUnique({
+    where: { adminId },
+    select: { id: true, publishedRevisionNumber: true },
+  });
+  if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
+
+  const revisions = await prisma.websiteRevision.findMany({
     where: { websiteId: website.id },
     select: { id: true, revisionNumber: true, reason: true, createdByUserId: true, createdAt: true },
     orderBy: { revisionNumber: "desc" },
-    take: 50,
+    take: 100,
   });
+  const latestRevisionNumber = revisions[0]?.revisionNumber ?? 0;
+  return revisions.map((revision) => ({
+    ...revision,
+    isCurrentDraft: revision.revisionNumber === latestRevisionNumber,
+    isCurrentPublished: revision.revisionNumber === website.publishedRevisionNumber,
+    kind: /publish|launch/i.test(revision.reason ?? "")
+      ? "PUBLISHED"
+      : /^Restored revision #/i.test(revision.reason ?? "")
+        ? "RESTORED"
+        : "DRAFT",
+  }));
 };
 
 const getRevision = async (revisionId: string, user: IRequestUser) => {
@@ -854,6 +942,155 @@ const getRevision = async (revisionId: string, user: IRequestUser) => {
   const revision = await prisma.websiteRevision.findFirst({ where: { id: revisionId, websiteId: website.id } });
   if (!revision) throw new AppError(status.NOT_FOUND, "Website revision not found");
   return revision;
+};
+
+const restoreRevision = async (revisionId: string, payload: WebsiteRevisionRestoreInput, user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  const website = await getWebsiteOrThrow(adminId);
+
+  return prisma.$transaction(async (tx: any) => {
+    await acquireTextTransactionAdvisoryLock(tx, website.id);
+
+    const current = await tx.businessWebsite.findFirst({
+      where: { id: website.id, adminId },
+      select: {
+        id: true,
+        status: true,
+        templateId: true,
+        templateVersion: true,
+        logo: true,
+        favicon: true,
+        socialImageUrl: true,
+      },
+    });
+    if (!current) throw new AppError(status.NOT_FOUND, "Business website not found");
+    assertLifecycleAllowsDraftMutation(current.status as WebsiteLifecycleStatus);
+
+    const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
+    const revision = await tx.websiteRevision.findFirst({
+      where: { id: revisionId, websiteId: current.id },
+      select: { id: true, revisionNumber: true, snapshot: true },
+    });
+    if (!revision) throw new AppError(status.NOT_FOUND, "Website revision not found");
+
+    const restored = parseRevisionSnapshotAsPublished(revision.snapshot);
+    if (!restored) {
+      throw new AppError(status.UNPROCESSABLE_ENTITY, "This historical revision cannot be restored safely", {
+        code: "WEBSITE_REVISION_INVALID",
+        retryable: false,
+      });
+    }
+
+    TemplateRegistry.requireTemplate(restored.website.templateId, restored.website.templateVersion);
+    validateDraftPageContent(restored);
+
+    const pageIds = new Set<string>();
+    const pageSlugs = new Set<string>();
+    for (const page of restored.pages) {
+      if (pageIds.has(page.id) || pageSlugs.has(page.slug)) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "This revision contains duplicate website pages and cannot be restored safely", {
+          code: "WEBSITE_REVISION_INVALID",
+          retryable: false,
+        });
+      }
+      pageIds.add(page.id);
+      pageSlugs.add(page.slug);
+    }
+
+    await Promise.all([
+      assertOwnedForm(adminId, restored.website.primaryBookingFormId, "booking", tx),
+      assertOwnedForm(adminId, restored.website.primaryEstimateFormId, "estimate", tx),
+    ]);
+    await rehydrateManagedBrandAssetsFromRevision(
+      current.id,
+      revision.snapshot,
+      {
+        logo: restored.website.logo,
+        favicon: restored.website.favicon,
+        socialImageUrl: restored.website.socialImageUrl,
+      },
+      tx,
+    );
+    await assertManagedBrandReferences(
+      current.id,
+      {
+        logo: restored.website.logo,
+        favicon: restored.website.favicon,
+        socialImageUrl: restored.website.socialImageUrl,
+      },
+      current,
+      tx,
+    );
+
+    // Preserve the currently-live immutable snapshot before replacing the
+    // working draft. Restore is intentionally a draft-only operation.
+    await ensurePublishedSnapshotBeforeDraftMutationTx(tx, current.id);
+
+    await tx.businessWebsite.update({
+      where: { id: current.id },
+      data: {
+        templateId: restored.website.templateId,
+        templateVersion: restored.website.templateVersion,
+        schemaVersion: restored.website.schemaVersion,
+        primaryColor: restored.website.primaryColor,
+        secondaryColor: restored.website.secondaryColor,
+        accentColor: restored.website.accentColor,
+        font: restored.website.font,
+        logo: restored.website.logo,
+        favicon: restored.website.favicon,
+        primaryBookingFormId: restored.website.primaryBookingFormId,
+        primaryEstimateFormId: restored.website.primaryEstimateFormId,
+        bookingEnabled: restored.website.bookingEnabled,
+        bookingShowHeaderCta: restored.website.bookingShowHeaderCta,
+        bookingShowServiceCtas: restored.website.bookingShowServiceCtas,
+        bookingShowHomeCta: restored.website.bookingShowHomeCta,
+        bookingShowAvailableSlots: restored.website.bookingShowAvailableSlots,
+        bookingShowPrices: restored.website.bookingShowPrices,
+        estimateEnabled: restored.website.estimateEnabled,
+        metaTitle: restored.website.metaTitle,
+        metaDescription: restored.website.metaDescription,
+        socialImageUrl: restored.website.socialImageUrl,
+        indexSite: restored.website.indexSite,
+        ...draftLifecyclePatch(current.status as WebsiteLifecycleStatus),
+      },
+    });
+
+    // Rebuild the page set exactly as it existed in the selected revision.
+    // The transaction preserves the previous draft as the current/latest
+    // revision, so even pages removed by this restore can be recovered again.
+    await tx.websitePage.deleteMany({ where: { websiteId: current.id } });
+    if (restored.pages.length) {
+      await tx.websitePage.createMany({
+        data: restored.pages.map((page) => ({
+          id: page.id,
+          websiteId: current.id,
+          kind: page.kind,
+          slug: page.slug,
+          title: page.title,
+          content: JSON.parse(JSON.stringify(page.content ?? {})),
+          seoTitle: page.seoTitle,
+          seoDescription: page.seoDescription,
+          showInNavigation: page.showInNavigation,
+          isEnabled: page.isEnabled,
+          sortOrder: page.sortOrder,
+        })) as any,
+      });
+    }
+
+    const createdRevision = await createRevisionSnapshot(
+      tx,
+      current.id,
+      user.id,
+      `Restored revision #${revision.revisionNumber}`,
+      baseRevisionNumber,
+    );
+
+    return {
+      restoredFrom: { id: revision.id, revisionNumber: revision.revisionNumber },
+      newRevisionNumber: createdRevision.revisionNumber,
+      website: await loadWebsiteDetails(current.id, tx),
+    };
+  });
 };
 
 const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, user: IRequestUser) => {
@@ -1093,6 +1330,7 @@ export const WebsiteService = {
   updatePage,
   listRevisions,
   getRevision,
+  restoreRevision,
   attachManagedBrandAsset,
   listAssets,
   registerAsset,

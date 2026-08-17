@@ -63,6 +63,10 @@ const publishWebsite = z.object({
   expectedRevisionNumber: z.number().int().min(0).optional(),
 }).strict().default({});
 
+const restoreRevision = z.object({
+  expectedRevisionNumber: z.number().int().min(0).optional(),
+}).strict().default({});
+
 
 const brandUploadSignature = z.object({
   kind: z.enum(["logo", "favicon", "social"]),
@@ -138,6 +142,7 @@ export const websiteValidation = {
   updatePage,
   saveDraft,
   publishWebsite,
+  restoreRevision,
   createAsset,
   brandUploadSignature,
   brandUploadFinalize,

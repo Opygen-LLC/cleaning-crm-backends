@@ -6,7 +6,7 @@ import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { TemplateRegistry } from "./templateRegistry";
-import { buildPublishedSnapshot, parsePublishedSnapshot, selectPublishedIntegrationFormId } from "./websiteSnapshot";
+import { buildPublishedSnapshot, parsePublishedSnapshot, parseRevisionSnapshotAsPublished, selectPublishedIntegrationFormId, type WebsitePublishedSnapshotV1 } from "./websiteSnapshot";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
@@ -181,7 +181,7 @@ const currentDraftAsPublishedSnapshot = (website: any) => buildPublishedSnapshot
 
 const projectWebsite = (
   source: Awaited<ReturnType<typeof loadProjectionSource>>,
-  options: { mode: "public" | "preview"; aliasRedirectSubdomain?: string | null },
+  options: { mode: "public" | "preview"; aliasRedirectSubdomain?: string | null; snapshotOverride?: WebsitePublishedSnapshotV1 | null },
 ) => {
   const { website, reviewSummary } = source;
 
@@ -192,9 +192,9 @@ const projectWebsite = (
     if (website.status !== "PUBLISHED") throw new AppError(status.NOT_FOUND, "Website not found");
   }
 
-  const snapshot = options.mode === "preview"
+  const snapshot = options.snapshotOverride ?? (options.mode === "preview"
     ? currentDraftAsPublishedSnapshot(website)
-    : parsePublishedSnapshot(website.publishedSnapshot) ?? currentDraftAsPublishedSnapshot(website);
+    : parsePublishedSnapshot(website.publishedSnapshot) ?? currentDraftAsPublishedSnapshot(website));
 
   const config = snapshot.website;
   const pages = snapshot.pages.filter((page) => page.isEnabled);
@@ -464,6 +464,32 @@ const getPreviewWebsite = async (user: IRequestUser) => {
   return projectWebsite(source, { mode: "preview" });
 };
 
+const getRevisionPreviewWebsite = async (revisionId: string, user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
+  if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
+
+  const revision = await prisma.websiteRevision.findFirst({
+    where: { id: revisionId, websiteId: website.id },
+    select: { id: true, revisionNumber: true, snapshot: true },
+  });
+  if (!revision) throw new AppError(status.NOT_FOUND, "Website revision not found");
+
+  const snapshot = parseRevisionSnapshotAsPublished(revision.snapshot);
+  if (!snapshot) {
+    throw new AppError(status.UNPROCESSABLE_ENTITY, "This historical revision cannot be previewed safely", {
+      code: "WEBSITE_REVISION_INVALID",
+      retryable: false,
+    });
+  }
+
+  const source = await loadProjectionSource(website.id);
+  if (source.website.admin.user.status !== "ACTIVE") {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Website preview is unavailable for this account");
+  }
+  return projectWebsite(source, { mode: "preview", snapshotOverride: snapshot });
+};
+
 export const PublicWebsiteService = {
   resolveIdentifier,
   getPublicWebsiteById,
@@ -472,4 +498,5 @@ export const PublicWebsiteService = {
   resolvePublicEstimateIntegration,
   resolvePublicContactIntegration,
   getPreviewWebsite,
+  getRevisionPreviewWebsite,
 };

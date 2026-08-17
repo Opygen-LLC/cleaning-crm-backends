@@ -237,3 +237,19 @@ export const selectPublishedIntegrationFormId = (
     ? snapshot.website.primaryBookingFormId
     : snapshot.website.primaryEstimateFormId;
 };
+
+
+/**
+ * WebsiteRevision.snapshot stores the full draft row shape rather than the
+ * compact published snapshot envelope. Convert it through the same canonical
+ * V1 builder/parser used by the public runtime so preview/restore never trusts
+ * arbitrary JSON from the database.
+ */
+export const parseRevisionSnapshotAsPublished = (value: unknown): WebsitePublishedSnapshotV1 | null => {
+  if (!isRecord(value)) return null;
+  try {
+    return parsePublishedSnapshot(buildPublishedSnapshot(value as unknown as DraftWebsiteLike));
+  } catch {
+    return null;
+  }
+};

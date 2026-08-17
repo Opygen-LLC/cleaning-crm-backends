@@ -46,6 +46,13 @@ const listPages = catchAsync(async (req, res) => ok(res, "Website pages retrieve
 const updatePage = catchAsync(async (req, res) => ok(res, "Website page updated successfully", await WebsiteService.updatePage(paramStr(req.params.pageId), req.body, req.user)));
 const listRevisions = catchAsync(async (req, res) => ok(res, "Website revisions retrieved successfully", await WebsiteService.listRevisions(req.user)));
 const getRevision = catchAsync(async (req, res) => ok(res, "Website revision retrieved successfully", await WebsiteService.getRevision(paramStr(req.params.revisionId), req.user)));
+const previewRevision = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return ok(res, "Website revision preview retrieved successfully", await PublicWebsiteService.getRevisionPreviewWebsite(paramStr(req.params.revisionId), req.user));
+});
+const restoreRevision = catchAsync(async (req, res) =>
+  ok(res, "Website revision restored to draft successfully", await WebsiteService.restoreRevision(paramStr(req.params.revisionId), req.body ?? {}, req.user)),
+);
 const listAssets = catchAsync(async (req, res) => ok(res, "Website assets retrieved successfully", await WebsiteService.listAssets(req.user)));
 const requestBrandUploadSignature = catchAsync(async (req, res) =>
   ok(res, "Website brand upload authorized", await WebsiteAssetService.requestBrandUploadSignature(req.body, req.user)),
@@ -261,6 +268,8 @@ export const websiteController = {
   updatePage,
   listRevisions,
   getRevision,
+  previewRevision,
+  restoreRevision,
   listAssets,
   requestBrandUploadSignature,
   finalizeBrandUpload,

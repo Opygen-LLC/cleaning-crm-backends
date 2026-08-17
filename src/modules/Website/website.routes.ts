@@ -37,6 +37,12 @@ router.get("/preview", websiteController.previewWebsite);
 router.get("/pages", websiteController.listPages);
 router.patch("/pages/:pageId", zodValidate(websiteValidation.updatePage, ValidationProperty.BODY), websiteController.updatePage);
 router.get("/revisions", websiteController.listRevisions);
+router.get("/revisions/:revisionId/preview", websiteController.previewRevision);
+router.post(
+  "/revisions/:revisionId/restore",
+  zodValidate(websiteValidation.restoreRevision, ValidationProperty.BODY),
+  websiteController.restoreRevision,
+);
 router.get("/revisions/:revisionId", websiteController.getRevision);
 router.get("/templates", websiteController.listTemplates);
 router.get("/analytics", websiteController.getWebsiteAnalytics);

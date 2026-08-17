@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPublishedSnapshot, parsePublishedSnapshot, selectPublishedIntegrationFormId } from "./websiteSnapshot";
+import { buildPublishedSnapshot, parsePublishedSnapshot, parseRevisionSnapshotAsPublished, selectPublishedIntegrationFormId } from "./websiteSnapshot";
 
 describe("website published snapshots", () => {
   const draft = {
@@ -119,6 +119,25 @@ describe("website published snapshots", () => {
     expect(selectPublishedIntegrationFormId(snapshot, "draft-booking-form", "booking")).toBeNull();
     expect(selectPublishedIntegrationFormId(snapshot, "draft-estimate-form", "estimate")).toBeNull();
     expect(selectPublishedIntegrationFormId(null, "legacy-booking-form", "booking")).toBe("legacy-booking-form");
+  });
+
+  it("converts a stored WebsiteRevision draft snapshot through the public V1 contract", () => {
+    const revisionSnapshot = {
+      id: "website-1",
+      adminId: "admin-1",
+      subdomain: "bio-cleaning",
+      status: "PUBLISHED",
+      domains: [{ domain: "www.biocleaning.co.uk", verificationToken: "must-not-leak" }],
+      assets: [{ publicId: "asset-1" }],
+      ...draft,
+    };
+
+    const parsed = parseRevisionSnapshotAsPublished(revisionSnapshot);
+    expect(parsed?.website.templateId).toBe("clean-modern");
+    expect(parsed?.pages[0].content).toEqual({ heroTitle: "Hello" });
+    expect(parsed).not.toHaveProperty("domains");
+    expect(parsed).not.toHaveProperty("assets");
+    expect(parsed).not.toHaveProperty("subdomain");
   });
 
   it("deep-copies page content", () => {

@@ -62,6 +62,14 @@ export interface WebsitePublishInput {
   expectedRevisionNumber?: number;
 }
 
+export interface WebsiteRevisionRestoreInput {
+  /**
+   * Optimistic concurrency guard. A restore is a destructive draft mutation,
+   * so never apply it over edits made in another tab/session.
+   */
+  expectedRevisionNumber?: number;
+}
+
 export interface WebsiteAssetCreateInput {
   publicId: string;
   url: string;
