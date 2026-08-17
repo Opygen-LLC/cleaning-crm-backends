@@ -55,8 +55,11 @@ model BookingFormService {
   form             BookingForm     @relation(fields: [formId], references: [id], onDelete: Cascade)
   serviceCatalog   ServiceCatalog? @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
 
-  @@unique([formId, serviceType])
+  // Canonical catalog identity is unique per form. Legacy-only uniqueness is
+  // enforced by a partial unique index in the Phase 5 migration so distinct
+  // catalog services may share the same compatibility ServiceType.
   @@unique([formId, serviceCatalogId])
+  @@index([formId, serviceType])
   @@index([serviceCatalogId])
   @@map("booking_form_service")
 }
@@ -147,8 +150,11 @@ model EstimateFormService {
   form             EstimateForm    @relation(fields: [formId], references: [id], onDelete: Cascade)
   serviceCatalog   ServiceCatalog? @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
 
-  @@unique([formId, serviceType])
+  // Canonical catalog identity is unique per form. Legacy-only uniqueness is
+  // enforced by a partial unique index in the Phase 5 migration so distinct
+  // catalog services may share the same compatibility ServiceType.
   @@unique([formId, serviceCatalogId])
+  @@index([formId, serviceType])
   @@index([serviceCatalogId])
   @@map("estimate_form_service")
 }

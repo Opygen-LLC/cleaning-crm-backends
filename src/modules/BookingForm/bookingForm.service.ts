@@ -263,6 +263,10 @@ const resolveFormServices = async (adminId: string, services: FormServiceInput[]
         };
     });
 
+    // Canonical IDs define uniqueness for catalog-backed rows. Two distinct
+    // catalog services are allowed to share the same legacy ServiceType; that
+    // enum is only a compatibility hint. Legacy-only rows still remain unique
+    // by ServiceType through the identity key below and the partial DB index.
     const identityKeys = resolved
         .map((service) => service.serviceCatalogId
             ? `catalog:${service.serviceCatalogId}`
@@ -270,14 +274,11 @@ const resolveFormServices = async (adminId: string, services: FormServiceInput[]
                 ? `legacy:${service.serviceType}`
                 : null)
         .filter((key): key is string => !!key);
-    const legacyKeys = resolved
-        .map((service) => service.serviceType ? `legacy:${service.serviceType}` : null)
-        .filter((key): key is string => !!key);
-    if (new Set(identityKeys).size !== identityKeys.length || new Set(legacyKeys).size !== legacyKeys.length) {
+    if (new Set(identityKeys).size !== identityKeys.length) {
         throw new AppError(status.UNPROCESSABLE_ENTITY, "A service can only be added to a booking form once", {
             code: "DUPLICATE_BOOKING_FORM_SERVICE",
             retryable: false,
-            fieldErrors: { services: "Remove duplicate or ambiguous legacy services before saving." },
+            fieldErrors: { services: "Remove the duplicate service before saving." },
         });
     }
 
@@ -665,7 +666,9 @@ const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelecto
     // Canonical public projection: internal AdminProfile data is removed from
     // the response. Legacy serviceType stays alongside canonical serviceCatalogId.
     const publicServices = form.services
-        .filter((entry) => entry.serviceCatalog ? entry.serviceCatalog.status === ServiceStatus.ACTIVE : !!entry.serviceType)
+        .filter((entry) => entry.serviceCatalog
+            ? entry.serviceCatalog.adminId === form.adminId && entry.serviceCatalog.status === ServiceStatus.ACTIVE
+            : !!entry.serviceType)
         .map((entry) => ({
             id: entry.id,
             enabled: entry.enabled,
@@ -785,7 +788,15 @@ const submitPublicBookingFormBySelector = async (
                 select: {
                     serviceType: true, serviceCatalogId: true,
                     serviceCatalog: {
-                        select: { id: true, serviceName: true, basePriceGbp: true, duration: true, status: true, legacyServiceType: true },
+                        select: {
+                            id: true,
+                            adminId: true,
+                            serviceName: true,
+                            basePriceGbp: true,
+                            duration: true,
+                            status: true,
+                            legacyServiceType: true,
+                        },
                     },
                 },
             },
@@ -836,12 +847,32 @@ const submitPublicBookingFormBySelector = async (
         });
     }
 
-    const selectedService = form.services.find((entry) => {
-        if (payload.serviceCatalogId) return entry.serviceCatalogId === payload.serviceCatalogId;
-        return !!payload.serviceType && entry.serviceType === payload.serviceType;
-    });
+    const matchingServices = payload.serviceCatalogId
+        ? form.services.filter((entry) => entry.serviceCatalogId === payload.serviceCatalogId)
+        : form.services.filter((entry) => {
+            if (!payload.serviceType) return false;
+            return entry.serviceType === payload.serviceType
+                || entry.serviceCatalog?.legacyServiceType === payload.serviceType;
+        });
+
+    // Modern website clients submit serviceCatalogId and therefore resolve one
+    // exact row. Old clients may still submit only ServiceType; once multiple
+    // catalog services share that enum the request is ambiguous and must fail
+    // closed instead of silently booking the first service in database order.
+    if (!payload.serviceCatalogId && payload.serviceType && matchingServices.length > 1) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "Please choose a specific service.", {
+            code: "BOOKING_SERVICE_AMBIGUOUS",
+            retryable: false,
+            fieldErrors: { serviceCatalogId: "Refresh the booking page and choose a specific service." },
+        });
+    }
+
+    const selectedService = matchingServices[0];
     const catalog = selectedService?.serviceCatalog;
-    if (!selectedService || (catalog && catalog.status !== ServiceStatus.ACTIVE)) {
+    if (
+        !selectedService
+        || (catalog && (catalog.adminId !== form.adminId || catalog.status !== ServiceStatus.ACTIVE))
+    ) {
         throw new AppError(status.UNPROCESSABLE_ENTITY, "That service is no longer available for online booking.", {
             code: "BOOKING_SERVICE_UNAVAILABLE",
             retryable: false,
