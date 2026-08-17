@@ -30,6 +30,8 @@ beforeEach(() => {
   });
   prismaMock.adminProfile.findUnique.mockResolvedValue({
     businessName: "Bio Cleaning",
+    city: "London",
+    businessDescription: null,
     businessWebsite: { status: "PUBLISHED", publishedSnapshot: null },
   });
   prismaMock.bookingForm.findMany.mockResolvedValue([]);
@@ -41,20 +43,23 @@ describe("WebsiteStudioService.getStudio", () => {
   it("returns the business display name with the single Website workspace bootstrap", async () => {
     const result = await WebsiteStudioService.getStudio({ id: "user-1" } as never);
 
-    expect(result.business).toEqual({ name: "Bio Cleaning" });
+    expect(result.business).toEqual({ name: "Bio Cleaning", city: "London" });
+    expect(result.seoDefaults.title).toBe("Bio Cleaning | Professional Cleaning in London");
     expect(result.website).toEqual(expect.objectContaining({ id: "website-1", subdomain: "bio-cleaning" }));
     expect(result.features.customDomainsEnabled).toBe(true);
     expect(prismaMock.adminProfile.findUnique).toHaveBeenCalledWith({
       where: { id: "admin-1" },
       select: {
         businessName: true,
+        city: true,
+        businessDescription: true,
         businessWebsite: { select: { status: true, publishedSnapshot: true } },
       },
     });
   });
 
   it("uses a safe label when a legacy profile has a blank business name", async () => {
-    prismaMock.adminProfile.findUnique.mockResolvedValue({ businessName: "   ", businessWebsite: null });
+    prismaMock.adminProfile.findUnique.mockResolvedValue({ businessName: "   ", city: null, businessDescription: null, businessWebsite: null });
 
     const result = await WebsiteStudioService.getStudio({ id: "user-1" } as never);
 

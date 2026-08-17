@@ -25,7 +25,7 @@ import { buildTemplateSelectionPatch } from "./templateSelection";
 import { WebsiteProvisioningService } from "./websiteProvisioning.service";
 import { WebsiteBookingProvisioningService } from "./websiteBookingProvisioning.service";
 import { PublicWebsiteService } from "./publicWebsite.service";
-import { buildPublishedSnapshot } from "./websiteSnapshot";
+import { buildPublishedSnapshot, parsePublishedSnapshot } from "./websiteSnapshot";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
@@ -39,7 +39,16 @@ const getWebsiteOrThrow = async (adminId: string, db: any = prisma) => {
 };
 
 
-const isManagedBrandAsset = (asset: { metadata: unknown } | null, kind: "logo" | "favicon") => {
+const MANAGED_IMAGE_FIELDS = [
+  { kind: "logo", field: "logo", label: "logo" },
+  { kind: "favicon", field: "favicon", label: "favicon" },
+  { kind: "social", field: "socialImageUrl", label: "social share image" },
+] as const;
+
+type ManagedImageKind = (typeof MANAGED_IMAGE_FIELDS)[number]["kind"];
+type ManagedImageField = (typeof MANAGED_IMAGE_FIELDS)[number]["field"];
+
+const isManagedBrandAsset = (asset: { metadata: unknown } | null, kind: ManagedImageKind) => {
   if (!asset?.metadata || typeof asset.metadata !== "object" || Array.isArray(asset.metadata)) return false;
   const metadata = asset.metadata as Record<string, unknown>;
   return metadata.provider === "cloudinary" && metadata.kind === "brand" && metadata.slot === kind && metadata.immutable === true;
@@ -48,20 +57,20 @@ const isManagedBrandAsset = (asset: { metadata: unknown } | null, kind: "logo" |
 const assertManagedBrandReferences = async (
   websiteId: string,
   payload: WebsiteUpdateInput,
-  current: { logo?: string | null; favicon?: string | null },
+  current: Partial<Record<ManagedImageField, string | null>>,
   db: any,
 ) => {
-  for (const kind of ["logo", "favicon"] as const) {
-    const next = payload[kind];
-    if (next === undefined || next === null || next === current[kind]) continue;
-    const safeUrl = assertSafeHttpsUrl(next, kind === "logo" ? "Logo URL" : "Favicon URL");
+  for (const { kind, field, label } of MANAGED_IMAGE_FIELDS) {
+    const next = payload[field];
+    if (next === undefined || next === null || next === current[field]) continue;
+    const safeUrl = assertSafeHttpsUrl(next, `${label[0].toUpperCase()}${label.slice(1)} URL`);
     if (!safeUrl) continue;
     const asset = await db.websiteAsset.findFirst({
       where: { websiteId, url: safeUrl },
       select: { metadata: true },
     });
     if (!isManagedBrandAsset(asset, kind)) {
-      throw new AppError(status.BAD_REQUEST, `Upload the ${kind} through Website Branding instead of pasting an external URL`, {
+      throw new AppError(status.BAD_REQUEST, `Upload the ${label} through Website Studio instead of pasting an external URL`, {
         code: "WEBSITE_MANAGED_ASSET_REQUIRED",
         retryable: false,
       });
@@ -407,7 +416,7 @@ const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) =>
     // applying a templateVersion patch against stale templateId data.
     const lockedCurrent = await tx.businessWebsite.findFirst({
       where: { id: current.id, adminId },
-      select: { id: true, status: true, templateId: true, templateVersion: true, logo: true, favicon: true },
+      select: { id: true, status: true, templateId: true, templateVersion: true, logo: true, favicon: true, socialImageUrl: true },
     });
     if (!lockedCurrent) throw new AppError(status.NOT_FOUND, "Business website not found");
     assertLifecycleAllowsDraftMutation(lockedCurrent.status as WebsiteLifecycleStatus);
@@ -486,7 +495,7 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
 
     const lockedCurrent = await tx.businessWebsite.findFirst({
       where: { id: current.id, adminId },
-      select: { id: true, status: true, templateId: true, templateVersion: true, logo: true, favicon: true },
+      select: { id: true, status: true, templateId: true, templateVersion: true, logo: true, favicon: true, socialImageUrl: true },
     });
     if (!lockedCurrent) throw new AppError(status.NOT_FOUND, "Business website not found");
     assertLifecycleAllowsDraftMutation(lockedCurrent.status as WebsiteLifecycleStatus);
@@ -852,7 +861,7 @@ const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, u
     await acquireTextTransactionAdvisoryLock(tx, website.id);
     const locked = await tx.businessWebsite.findFirst({
       where: { id: website.id, adminId },
-      select: { id: true, status: true, templateId: true, templateVersion: true, logo: true, favicon: true },
+      select: { id: true, status: true, templateId: true, templateVersion: true, logo: true, favicon: true, socialImageUrl: true },
     });
     if (!locked) throw new AppError(status.NOT_FOUND, "Business website not found");
     assertLifecycleAllowsDraftMutation(locked.status as WebsiteLifecycleStatus);
@@ -867,7 +876,7 @@ const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, u
         width: payload.width,
         height: payload.height,
         bytes: payload.bytes,
-        altText: payload.kind === "logo" ? "Business logo" : "Website favicon",
+        altText: payload.kind === "logo" ? "Business logo" : payload.kind === "favicon" ? "Website favicon" : "Social share image",
         folder: payload.folder,
         metadata: payload.metadata as any,
       },
@@ -881,17 +890,19 @@ const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, u
       },
     });
 
-    const currentUrl = payload.kind === "logo" ? locked.logo : locked.favicon;
+    const targetField = payload.kind === "social" ? "socialImageUrl" : payload.kind;
+    const currentUrl = targetField === "logo" ? locked.logo : targetField === "favicon" ? locked.favicon : locked.socialImageUrl;
     if (currentUrl !== payload.url) {
       await ensurePublishedSnapshotBeforeDraftMutationTx(tx, website.id);
       await tx.businessWebsite.update({
         where: { id: website.id },
         data: {
-          [payload.kind]: payload.url,
+          [targetField]: payload.url,
           ...draftLifecyclePatch(locked.status as WebsiteLifecycleStatus),
         },
       });
-      await createRevisionSnapshot(tx, website.id, user.id, `${payload.kind === "logo" ? "Logo" : "Favicon"} uploaded`);
+      const reason = payload.kind === "logo" ? "Logo uploaded" : payload.kind === "favicon" ? "Favicon uploaded" : "Social share image uploaded";
+      await createRevisionSnapshot(tx, website.id, user.id, reason);
     }
 
     return { asset, website: await loadWebsiteDetails(website.id, tx) };
@@ -1033,12 +1044,35 @@ const uploadContentAsset = async (
 
 const deleteAsset = async (assetId: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const website = await getWebsiteOrThrow(adminId);
+  const website = await prisma.businessWebsite.findUnique({
+    where: { adminId },
+    select: {
+      id: true,
+      logo: true,
+      favicon: true,
+      socialImageUrl: true,
+      publishedSnapshot: true,
+    },
+  });
+  if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
   const asset = await prisma.websiteAsset.findFirst({
     where: { id: assetId, websiteId: website.id },
-    select: { id: true },
+    select: { id: true, url: true },
   });
   if (!asset) throw new AppError(status.NOT_FOUND, "Website asset not found");
+
+  const published = parsePublishedSnapshot(website.publishedSnapshot);
+  const referencedByDraft = [website.logo, website.favicon, website.socialImageUrl].includes(asset.url);
+  const referencedByPublished = published
+    ? [published.website.logo, published.website.favicon, published.website.socialImageUrl].includes(asset.url)
+    : false;
+  if (referencedByDraft || referencedByPublished) {
+    throw new AppError(status.CONFLICT, "Remove or replace this image in Website Studio and publish the change before deleting the asset", {
+      code: "WEBSITE_ASSET_IN_USE",
+      retryable: false,
+    });
+  }
+
   await prisma.websiteAsset.delete({ where: { id: assetId } });
   return { id: assetId, deleted: true };
 };

@@ -27,6 +27,9 @@ const ALLOWED_FORMATS = new Set(["jpg", "jpeg", "png", "webp", "avif"]);
 const LIMITS: Record<WebsiteBrandAssetKind, { maxBytes: number; maxWidth: number; maxHeight: number; minWidth: number; minHeight: number }> = {
   logo: { maxBytes: 5 * 1024 * 1024, maxWidth: 1600, maxHeight: 1600, minWidth: 64, minHeight: 24 },
   favicon: { maxBytes: 2 * 1024 * 1024, maxWidth: 512, maxHeight: 512, minWidth: 32, minHeight: 32 },
+  // 1200×630 is the canonical OpenGraph target, but accept a sensible source
+  // range and generate immutable share-safe derivatives during finalization.
+  social: { maxBytes: 5 * 1024 * 1024, maxWidth: 4000, maxHeight: 3000, minWidth: 600, minHeight: 315 },
 };
 const SIGNATURE_TTL_SECONDS = 10 * 60;
 
@@ -40,6 +43,16 @@ const folderFor = (websiteId: string) => `Cleaning-CRM/websites/${websiteId}/bra
 const publicIdPrefix = (kind: WebsiteBrandAssetKind) => `${kind}-`;
 
 const eagerFor = (kind: WebsiteBrandAssetKind) => {
+  if (kind === "social") {
+    return [600, 1200].flatMap((width) => {
+      const height = Math.round(width * 630 / 1200);
+      return [
+        `c_fill,g_auto,w_${width},h_${height},q_auto:good,f_jpg`,
+        `c_fill,g_auto,w_${width},h_${height},q_auto:good,f_webp`,
+        `c_fill,g_auto,w_${width},h_${height},q_auto:good,f_avif`,
+      ];
+    }).join("|");
+  }
   const widths = kind === "favicon" ? [64, 128, 256] : [128, 256, 512, 1024];
   return widths.flatMap((width) => [
     `c_limit,w_${width},q_auto:good,f_webp`,
@@ -54,7 +67,8 @@ const assertDeclaredUpload = (input: WebsiteBrandUploadSignatureInput) => {
   }
   const limit = LIMITS[input.kind];
   if (!Number.isFinite(input.bytes) || input.bytes <= 0 || input.bytes > limit.maxBytes) {
-    throw new AppError(status.BAD_REQUEST, `${input.kind === "logo" ? "Logo" : "Favicon"} must be smaller than ${Math.round(limit.maxBytes / 1024 / 1024)} MB`);
+    const label = input.kind === "logo" ? "Logo" : input.kind === "favicon" ? "Favicon" : "Social share image";
+    throw new AppError(status.BAD_REQUEST, `${label} must be smaller than ${Math.round(limit.maxBytes / 1024 / 1024)} MB`);
   }
 };
 
@@ -76,14 +90,15 @@ const assertResourceDimensions = (kind: WebsiteBrandAssetKind, resource: any) =>
   const limit = LIMITS[kind];
 
   if (!ALLOWED_FORMATS.has(format)) throw new AppError(status.BAD_REQUEST, "Unsupported image format");
+  const label = kind === "logo" ? "Logo" : kind === "favicon" ? "Favicon" : "Social share image";
   if (!width || !height || width < limit.minWidth || height < limit.minHeight) {
-    throw new AppError(status.BAD_REQUEST, `${kind === "logo" ? "Logo" : "Favicon"} dimensions are too small`);
+    throw new AppError(status.BAD_REQUEST, `${label} dimensions are too small`);
   }
   if (width > limit.maxWidth || height > limit.maxHeight) {
-    throw new AppError(status.BAD_REQUEST, `${kind === "logo" ? "Logo" : "Favicon"} dimensions are too large`);
+    throw new AppError(status.BAD_REQUEST, `${label} dimensions are too large`);
   }
   if (!bytes || bytes > limit.maxBytes) {
-    throw new AppError(status.BAD_REQUEST, `${kind === "logo" ? "Logo" : "Favicon"} file is too large`);
+    throw new AppError(status.BAD_REQUEST, `${label} file is too large`);
   }
   const ratio = width / height;
   if (kind === "favicon" && (ratio < 0.8 || ratio > 1.25)) {
@@ -92,14 +107,28 @@ const assertResourceDimensions = (kind: WebsiteBrandAssetKind, resource: any) =>
   if (kind === "logo" && (ratio < 0.1 || ratio > 10)) {
     throw new AppError(status.BAD_REQUEST, "Logo aspect ratio is not supported");
   }
+  if (kind === "social" && (ratio < 1.35 || ratio > 2.2)) {
+    throw new AppError(status.BAD_REQUEST, "Social share image should use a landscape aspect ratio close to 1200×630");
+  }
   return { width, height, bytes, format };
 };
 
-const variantUrl = (publicId: string, width: number, format: "webp" | "avif" | "png") =>
+const variantUrl = (
+  publicId: string,
+  width: number,
+  format: "webp" | "avif" | "png" | "jpg",
+  options: { height?: number; crop?: "limit" | "fill"; gravity?: "auto" } = {},
+) =>
   cloudinaryUpload.url(publicId, {
     secure: true,
     format,
-    transformation: [{ width, crop: "limit", quality: format === "png" ? undefined : "auto:good" }],
+    transformation: [{
+      width,
+      ...(options.height ? { height: options.height } : {}),
+      crop: options.crop ?? "limit",
+      ...(options.gravity ? { gravity: options.gravity } : {}),
+      quality: format === "png" ? undefined : "auto:good",
+    }],
   });
 
 const requestBrandUploadSignature = async (input: WebsiteBrandUploadSignatureInput, user: IRequestUser) => {
@@ -187,19 +216,36 @@ const finalizeBrandUpload = async (input: WebsiteBrandUploadFinalizeInput, user:
           webp: { 64: variantUrl(normalizedPublicId, 64, "webp"), 128: variantUrl(normalizedPublicId, 128, "webp"), 256: variantUrl(normalizedPublicId, 256, "webp") },
           avif: { 64: variantUrl(normalizedPublicId, 64, "avif"), 128: variantUrl(normalizedPublicId, 128, "avif"), 256: variantUrl(normalizedPublicId, 256, "avif") },
         }
-      : {
-          webp: { 128: variantUrl(normalizedPublicId, 128, "webp"), 256: variantUrl(normalizedPublicId, 256, "webp"), 512: variantUrl(normalizedPublicId, 512, "webp"), 1024: variantUrl(normalizedPublicId, 1024, "webp") },
-          avif: { 128: variantUrl(normalizedPublicId, 128, "avif"), 256: variantUrl(normalizedPublicId, 256, "avif"), 512: variantUrl(normalizedPublicId, 512, "avif"), 1024: variantUrl(normalizedPublicId, 1024, "avif") },
-        };
+      : input.kind === "social"
+        ? {
+            jpg: {
+              600: variantUrl(normalizedPublicId, 600, "jpg", { height: 315, crop: "fill", gravity: "auto" }),
+              1200: variantUrl(normalizedPublicId, 1200, "jpg", { height: 630, crop: "fill", gravity: "auto" }),
+            },
+            webp: {
+              600: variantUrl(normalizedPublicId, 600, "webp", { height: 315, crop: "fill", gravity: "auto" }),
+              1200: variantUrl(normalizedPublicId, 1200, "webp", { height: 630, crop: "fill", gravity: "auto" }),
+            },
+            avif: {
+              600: variantUrl(normalizedPublicId, 600, "avif", { height: 315, crop: "fill", gravity: "auto" }),
+              1200: variantUrl(normalizedPublicId, 1200, "avif", { height: 630, crop: "fill", gravity: "auto" }),
+            },
+          }
+        : {
+            webp: { 128: variantUrl(normalizedPublicId, 128, "webp"), 256: variantUrl(normalizedPublicId, 256, "webp"), 512: variantUrl(normalizedPublicId, 512, "webp"), 1024: variantUrl(normalizedPublicId, 1024, "webp") },
+            avif: { 128: variantUrl(normalizedPublicId, 128, "avif"), 256: variantUrl(normalizedPublicId, 256, "avif"), 512: variantUrl(normalizedPublicId, 512, "avif"), 1024: variantUrl(normalizedPublicId, 1024, "avif") },
+          };
     const primaryUrl = input.kind === "favicon"
       ? variantUrl(normalizedPublicId, 256, "png")
-      : variantUrl(normalizedPublicId, 512, "webp");
+      : input.kind === "social"
+        ? variantUrl(normalizedPublicId, 1200, "jpg", { height: 630, crop: "fill", gravity: "auto" })
+        : variantUrl(normalizedPublicId, 512, "webp");
 
     return WebsiteService.attachManagedBrandAsset({
       kind: input.kind,
       publicId: normalizedPublicId,
       url: primaryUrl,
-      mimeType: `image/${format === "jpg" ? "jpeg" : format}`,
+      mimeType: input.kind === "social" ? "image/jpeg" : `image/${format === "jpg" ? "jpeg" : format}`,
       width,
       height,
       bytes,

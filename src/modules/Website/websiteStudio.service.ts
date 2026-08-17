@@ -5,6 +5,7 @@ import type { IRequestUser } from "../../types/requestUser.interface";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteService } from "./website.service";
 import { parsePublishedSnapshot } from "./websiteSnapshot";
+import { buildDefaultWebsiteSeo } from "./websiteSeo";
 
 /**
  * Lightweight read model for Website Studio.
@@ -24,6 +25,8 @@ const getStudio = async (user: IRequestUser) => {
       where: { id: adminId },
       select: {
         businessName: true,
+        city: true,
+        businessDescription: true,
         businessWebsite: {
           select: { status: true, publishedSnapshot: true },
         },
@@ -63,11 +66,20 @@ const getStudio = async (user: IRequestUser) => {
     published?.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled),
   );
 
+  const businessName = business?.businessName?.trim() || "Your cleaning business";
+  const seoDefaults = buildDefaultWebsiteSeo({
+    businessName,
+    city: business?.city ?? null,
+    businessDescription: business?.businessDescription ?? null,
+  });
+
   return {
     website,
     business: {
-      name: business?.businessName?.trim() || "Your cleaning business",
+      name: businessName,
+      city: business?.city?.trim() || null,
     },
+    seoDefaults,
     booking: {
       live: Boolean(
         business?.businessWebsite?.status === "PUBLISHED" &&

@@ -65,14 +65,14 @@ const publishWebsite = z.object({
 
 
 const brandUploadSignature = z.object({
-  kind: z.enum(["logo", "favicon"]),
+  kind: z.enum(["logo", "favicon", "social"]),
   fileName: z.string().trim().min(1).max(255),
   mimeType: z.enum(["image/jpeg", "image/png", "image/webp", "image/avif"]),
   bytes: z.number().int().positive().max(5 * 1024 * 1024),
 }).strict();
 
 const brandUploadFinalize = z.object({
-  kind: z.enum(["logo", "favicon"]),
+  kind: z.enum(["logo", "favicon", "social"]),
   publicId: z.string().trim().min(1).max(512),
 }).strict();
 

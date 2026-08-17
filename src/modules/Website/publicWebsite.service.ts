@@ -10,6 +10,7 @@ import { TemplateRegistry } from "./templateRegistry";
 import { buildPublishedSnapshot, parsePublishedSnapshot, selectPublishedIntegrationFormId } from "./websiteSnapshot";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
+import { buildDefaultWebsiteSeo } from "./websiteSeo";
 
 interface ResolvedWebsite {
   websiteId: string;
@@ -212,6 +213,12 @@ const projectWebsite = (
       ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}`
       : null;
 
+  const defaultSeo = buildDefaultWebsiteSeo({
+    businessName: website.admin.businessName,
+    city: website.admin.city,
+    businessDescription: website.admin.businessDescription,
+  });
+
   const selectedBookingForm = config.primaryBookingFormId
     ? website.admin.bookingForms.find((form) => form.id === config.primaryBookingFormId) ?? null
     : null;
@@ -305,9 +312,9 @@ const projectWebsite = (
         }
       : null,
     seo: {
-      title: config.metaTitle ?? website.admin.businessName,
-      description: config.metaDescription,
-      socialImageUrl: config.socialImageUrl ?? config.logo ?? website.admin.businessLogo ?? null,
+      title: config.metaTitle?.trim() || defaultSeo.title,
+      description: config.metaDescription?.trim() || defaultSeo.description,
+      socialImageUrl: config.socialImageUrl,
       indexSite: options.mode === "preview" ? false : config.indexSite,
       canonicalUrl,
     },

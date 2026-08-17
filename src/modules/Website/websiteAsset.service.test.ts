@@ -122,3 +122,57 @@ describe("WebsiteAssetService signed brand uploads", () => {
     expect(cloudinaryMock.uploader.destroy).toHaveBeenCalledWith(publicId, expect.objectContaining({ invalidate: true }));
   });
 });
+
+describe("WebsiteAssetService SEO social-image uploads", () => {
+  it("generates a crawler-friendly 1200x630 immutable social image plus modern variants", async () => {
+    const publicId = "Cleaning-CRM/websites/website-1/brand/social-upload-token";
+    cloudinaryMock.api.resource.mockResolvedValue({
+      public_id: publicId,
+      secure_url: "https://res.cloudinary.com/demo/image/upload/social.png",
+      format: "png",
+      width: 1600,
+      height: 900,
+      bytes: 420_000,
+      context: {
+        custom: {
+          website_id: "website-1",
+          asset_kind: "social",
+          expires_at: String(Math.floor(Date.now() / 1000) + 300),
+        },
+      },
+    });
+
+    await WebsiteAssetService.finalizeBrandUpload({ kind: "social", publicId }, { id: "user-1" } as never);
+
+    const persisted = websiteServiceMock.attachManagedBrandAsset.mock.calls[0][0];
+    expect(persisted.kind).toBe("social");
+    expect(persisted.mimeType).toBe("image/jpeg");
+    expect(persisted.url).toContain("/jpg/1200");
+    expect(persisted.metadata.variants.jpg[1200]).toContain("/jpg/1200");
+    expect(persisted.metadata.variants.webp[1200]).toContain("/webp/1200");
+    expect(persisted.metadata.variants.avif[1200]).toContain("/avif/1200");
+  });
+
+  it("rejects portrait social images", async () => {
+    const publicId = "Cleaning-CRM/websites/website-1/brand/social-portrait";
+    cloudinaryMock.api.resource.mockResolvedValue({
+      public_id: publicId,
+      secure_url: "https://res.cloudinary.com/demo/image/upload/social.png",
+      format: "png",
+      width: 800,
+      height: 1000,
+      bytes: 200_000,
+      context: {
+        custom: {
+          website_id: "website-1",
+          asset_kind: "social",
+          expires_at: String(Math.floor(Date.now() / 1000) + 300),
+        },
+      },
+    });
+
+    await expect(WebsiteAssetService.finalizeBrandUpload({ kind: "social", publicId }, { id: "user-1" } as never))
+      .rejects.toThrow("landscape aspect ratio");
+    expect(cloudinaryMock.uploader.destroy).toHaveBeenCalled();
+  });
+});

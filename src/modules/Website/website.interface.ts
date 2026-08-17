@@ -78,7 +78,7 @@ export interface WebsiteDomainCreateInput {
   domain: string;
 }
 
-export type WebsiteBrandAssetKind = "logo" | "favicon";
+export type WebsiteBrandAssetKind = "logo" | "favicon" | "social";
 
 export interface WebsiteBrandUploadSignatureInput {
   kind: WebsiteBrandAssetKind;
