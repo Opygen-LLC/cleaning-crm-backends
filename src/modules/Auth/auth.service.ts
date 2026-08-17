@@ -25,6 +25,192 @@ import logger from "../../lib/logger";
 const MAX_SESSIONS = 3;
 
 const REGISTRATION_COMPENSATION_ATTEMPTS = 3;
+const REGISTRATION_PERSISTENCE_ATTEMPTS = 4;
+const REGISTRATION_PERSISTENCE_DELAY_MS = 35;
+// An auth-only, unverified ADMIN row can be left behind if an older process
+// crashed after Better Auth committed but before tenant provisioning started.
+// Never recycle a fresh row: that could belong to a concurrent registration.
+const ABANDONED_REGISTRATION_AGE_MS = 60_000;
+
+type RegistrationAuthUser = {
+    id: string;
+    email: string;
+    emailVerified: boolean;
+    role: UserRole;
+    createdAt: Date;
+    admin: { id: string } | null;
+    staff: { id: string } | null;
+};
+
+const registrationAuthUserSelect = {
+    id: true,
+    email: true,
+    emailVerified: true,
+    role: true,
+    createdAt: true,
+    admin: { select: { id: true } },
+    staff: { select: { id: true } },
+} as const;
+
+const sleep = (ms: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const registrationEmailUnavailable = () =>
+    new AppError(
+        status.CONFLICT,
+        "Unable to create an account with this email. If you already have an account, sign in or reset your password.",
+        {
+            code: "REGISTRATION_EMAIL_UNAVAILABLE",
+            retryable: false,
+            fieldErrors: {
+                email: "This email cannot be used for a new account. Sign in or reset your password if it is yours.",
+            },
+        },
+    );
+
+const findPersistedRegistrationUserById = async (
+    userId: string,
+): Promise<RegistrationAuthUser | null> => {
+    for (let attempt = 1; attempt <= REGISTRATION_PERSISTENCE_ATTEMPTS; attempt += 1) {
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: registrationAuthUserSelect,
+        });
+
+        if (user) return user;
+
+        if (attempt < REGISTRATION_PERSISTENCE_ATTEMPTS) {
+            await sleep(REGISTRATION_PERSISTENCE_DELAY_MS * attempt);
+        }
+    }
+
+    return null;
+};
+
+const findRegistrationUserByEmail = async (
+    email: string,
+): Promise<RegistrationAuthUser | null> =>
+    prisma.user.findUnique({
+        where: { email },
+        select: registrationAuthUserSelect,
+    });
+
+const recoverAbandonedRegistrationUser = async (
+    user: RegistrationAuthUser,
+): Promise<boolean> => {
+    if (
+        user.role !== UserRole.ADMIN ||
+        user.emailVerified ||
+        user.admin ||
+        user.staff ||
+        Date.now() - user.createdAt.getTime() < ABANDONED_REGISTRATION_AGE_MS
+    ) {
+        return false;
+    }
+
+    const cutoff = new Date(Date.now() - ABANDONED_REGISTRATION_AGE_MS);
+    const deleted = await prisma.user.deleteMany({
+        where: {
+            id: user.id,
+            email: user.email,
+            role: UserRole.ADMIN,
+            emailVerified: false,
+            createdAt: { lte: cutoff },
+            admin: null,
+            staff: null,
+        },
+    });
+
+    if (deleted.count > 0) {
+        logger.warn("Recovered abandoned registration auth record before retry", {
+            userId: user.id,
+            email: user.email,
+        });
+        return true;
+    }
+
+    return false;
+};
+
+/**
+ * Better Auth 1.5+ intentionally returns a synthetic success user when
+ * requireEmailVerification is enabled and the email already exists. That
+ * synthetic id must never be used as an AdminProfile foreign key. Prove the
+ * returned id exists in our PostgreSQL User table before tenant provisioning.
+ *
+ * If the synthetic response points at an old auth-only, unverified ADMIN row
+ * left by a crashed registration, remove that abandoned row and retry once.
+ * Fresh rows are never recycled, which keeps concurrent signups safe.
+ */
+const createPersistedRegistrationUser = async (input: {
+    name: string;
+    email: string;
+    password: string;
+}) => {
+    const signUp = async () =>
+        auth.api.signUpEmail({
+            body: input,
+        }).catch((err) => {
+            // Older Better Auth versions returned USER_ALREADY_EXISTS. Keep the
+            // mapping for rolling deployments even though current versions use
+            // a synthetic success response when verification is required.
+            if (err?.body?.code === "USER_ALREADY_EXISTS") {
+                throw registrationEmailUnavailable();
+            }
+            throw err;
+        });
+
+    for (let signupAttempt = 1; signupAttempt <= 2; signupAttempt += 1) {
+        const data = await signUp();
+
+        if (!data.user?.id) {
+            throw new AppError(status.BAD_REQUEST, "Failed to register user.", {
+                code: "AUTH_USER_CREATION_FAILED",
+                retryable: true,
+            });
+        }
+
+        const persisted = await findPersistedRegistrationUserById(data.user.id);
+        if (persisted) {
+            if (persisted.email.toLowerCase() !== input.email.toLowerCase()) {
+                logger.error("Better Auth returned a persisted user with an unexpected email", {
+                    userId: data.user.id,
+                });
+                throw new AppError(
+                    status.INTERNAL_SERVER_ERROR,
+                    "Registration identity verification failed. Please try again.",
+                    { code: "AUTH_USER_IDENTITY_MISMATCH", retryable: true },
+                );
+            }
+            return data;
+        }
+
+        // The returned id is not in PostgreSQL. With verification required this
+        // is normally Better Auth's enumeration-protection synthetic response.
+        const existing = await findRegistrationUserByEmail(input.email);
+        if (!existing) {
+            throw new AppError(
+                status.SERVICE_UNAVAILABLE,
+                "Your authentication account was not committed. Please try again.",
+                { code: "AUTH_USER_NOT_PERSISTED", retryable: true },
+            );
+        }
+
+        if (signupAttempt === 1 && await recoverAbandonedRegistrationUser(existing)) {
+            continue;
+        }
+
+        throw registrationEmailUnavailable();
+    }
+
+    // The loop either returns a persisted user or throws. Keep a fail-closed
+    // guard for future refactors/type narrowing.
+    throw new AppError(
+        status.SERVICE_UNAVAILABLE,
+        "Registration could not be completed. Please try again.",
+        { code: "REGISTRATION_RETRY_REQUIRED", retryable: true },
+    );
+};
 
 /**
  * Better Auth creates User/Account rows before tenant provisioning starts.
@@ -65,20 +251,14 @@ const register = async ({
         );
     }
 
-    const data = await auth.api
-        .signUpEmail({
-            body: { name, email, password },
-        })
-        .catch((err) => {
-            if (err?.body?.code === "USER_ALREADY_EXISTS") {
-                throw new AppError(status.BAD_REQUEST, "User already exists.");
-            }
-            throw err;
-        });
-
-    if (!data.user?.id) {
-        throw new AppError(status.BAD_REQUEST, "Failed to register user.");
-    }
+    // Better Auth may return a synthetic user for an existing email when
+    // requireEmailVerification=true. Never provision tenant rows from that
+    // response until the returned id is proven to exist in PostgreSQL.
+    const data = await createPersistedRegistrationUser({
+        name,
+        email,
+        password,
+    });
 
     try {
         const provisioned = await AccountProvisioningService.provisionRegisteredAdmin({
