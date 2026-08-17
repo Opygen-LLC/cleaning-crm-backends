@@ -1,3 +1,17 @@
+export const DEFAULT_WEBSITE_SETTINGS = Object.freeze({
+  templateId: "clean-modern",
+  primaryColor: "#0F766E",
+  secondaryColor: "#0F172A",
+  accentColor: "#14B8A6",
+  font: null as string | null,
+  logo: null as string | null,
+  favicon: null as string | null,
+  metaTitle: null as string | null,
+  metaDescription: null as string | null,
+  socialImageUrl: null as string | null,
+  indexSite: true,
+});
+
 export const RESERVED_WEBSITE_SUBDOMAINS = new Set([
   "www", "admin", "api", "app", "dashboard", "support", "billing",
   "login", "register", "mail", "static", "assets", "cdn", "status",

@@ -103,6 +103,29 @@ const getOnboardingStatus = catchAsync(async (req, res) => {
   });
 });
 
+
+const completeOnboardingStep = catchAsync(async (req, res) => {
+  const userId = req.user.id;
+  const result = await adminService.completeOnboardingStep(userId, req.body.step);
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Onboarding step completed successfully",
+    data: result,
+  });
+});
+
+const skipWebsiteOnboardingSetup = catchAsync(async (req, res) => {
+  const userId = req.user.id;
+  const result = await adminService.skipWebsiteOnboardingSetup(userId);
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Website setup defaults selected successfully",
+    data: result,
+  });
+});
+
 const finalizeOnboardingSetup = catchAsync(async (req, res) => {
   const userId = req.user.id;
   const result = await adminService.finalizeOnboardingSetup(userId);
@@ -144,6 +167,8 @@ export const adminController = {
   deleteWorkLocation,
   getAdminUsage,
   getOnboardingStatus,
+  completeOnboardingStep,
+  skipWebsiteOnboardingSetup,
   finalizeOnboardingSetup,
   skipOnboardingStep,
   skipAllOnboarding,

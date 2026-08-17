@@ -319,7 +319,7 @@ const getAdminUsage = async (userId: string): Promise<AdminUsageResponse> => {
   };
 };
 
-// ─── Three-step account setup + Getting Started checklist ─────────────────────
+// ─── Five-step website-first onboarding + Getting Started checklist ───────────
 
 interface OnboardingStepResult {
   key: OnboardingStepKey;
@@ -345,36 +345,33 @@ interface OnboardingStatusResult {
   isComplete: boolean;
   completedCount: number;
   totalCount: number;
-  /** Kept as zero for backwards compatibility with Phase 1 clients. */
   skippedCount: number;
   steps: OnboardingStepResult[];
   gettingStarted: GettingStartedResult;
 }
 
-interface SetupCompletionFlags {
-  business_profile: boolean;
-  service: boolean;
-  service_area: boolean;
-  team: boolean;
-  client: boolean;
-  booking: boolean;
-  online_booking: boolean;
-}
+const REQUIRED_SETUP_KEYS = ONBOARDING_STEPS.map((step) => step.key);
 
 const isLegacySkippable = (
   step: string,
 ): step is LegacySkippableOnboardingStepKey =>
   (SKIPPABLE_ONBOARDING_STEPS as readonly string[]).includes(step);
 
+const normalizeCompletedSetupSteps = (
+  persisted: string[],
+  onboardingCompletedAt: Date | null,
+): Set<OnboardingStepKey> => {
+  if (onboardingCompletedAt) return new Set(REQUIRED_SETUP_KEYS);
+  const allowed = new Set<string>(REQUIRED_SETUP_KEYS);
+  return new Set(
+    persisted.filter((step): step is OnboardingStepKey => allowed.has(step)),
+  );
+};
+
 /**
- * Return one compact source of truth for both:
- *  - the required three-step account setup, and
- *  - the optional Getting Started checklist shown inside the dashboard.
- *
- * Once onboardingCompletedAt has been stamped, the first three flags are
- * trusted as complete so dashboard loads only need the four optional count
- * queries. This avoids re-counting services/locations forever while still
- * keeping the optional checklist based on real CRM data.
+ * Compact source of truth for the five-step website-first setup and the
+ * optional dashboard checklist. Defaults exist from registration, therefore
+ * explicit step progress is persisted instead of inferred from default values.
  */
 const getOnboardingStatus = async (
   userId: string,
@@ -384,11 +381,7 @@ const getOnboardingStatus = async (
     select: {
       id: true,
       onboardingCompletedAt: true,
-      businessName: true,
-      city: true,
-      country: true,
-      mobileNumber: true,
-      businessType: true,
+      onboardingCompletedSteps: true,
     },
   });
 
@@ -399,106 +392,56 @@ const getOnboardingStatus = async (
     });
   }
 
-  let flags: SetupCompletionFlags;
+  const completed = normalizeCompletedSetupSteps(
+    admin.onboardingCompletedSteps,
+    admin.onboardingCompletedAt,
+  );
 
-  if (admin.onboardingCompletedAt) {
-    const [teamCount, clientCount, bookingCount, publishedBookingFormCount] =
-      await Promise.all([
-        prisma.staffProfile.count({
-          where: { adminId: admin.id, status: "ACTIVE" },
-        }),
-        prisma.client.count({
-          where: { adminId: admin.id, status: "ACTIVE" },
-        }),
-        prisma.booking.count({ where: { adminId: admin.id } }),
-        prisma.bookingForm.count({
-          where: { adminId: admin.id, published: true },
-        }),
-      ]);
-
-    flags = {
-      business_profile: true,
-      service: true,
-      service_area: true,
-      team: teamCount > 0,
-      client: clientCount > 0,
-      booking: bookingCount > 0,
-      online_booking: publishedBookingFormCount > 0,
-    };
-  } else {
-    // Business name is collected during registration. The setup step only
-    // requires the operational details needed by the rest of the CRM; street
-    // address and postcode are deliberately optional to keep first-run setup
-    // quick for mobile/service-area businesses.
-    const businessProfileComplete = Boolean(
-      admin.businessName?.trim() &&
-        admin.businessType?.trim() &&
-        admin.mobileNumber?.trim() &&
-        admin.city?.trim() &&
-        admin.country,
-    );
-
-    const [
-      serviceCount,
-      serviceAreaCount,
-      teamCount,
-      clientCount,
-      bookingCount,
-      publishedBookingFormCount,
-    ] = await Promise.all([
-      prisma.serviceCatalog.count({ where: { adminId: admin.id } }),
-      prisma.workLocation.count({ where: { adminId: admin.id } }),
-      prisma.staffProfile.count({
-        where: { adminId: admin.id, status: "ACTIVE" },
-      }),
-      prisma.client.count({
-        where: { adminId: admin.id, status: "ACTIVE" },
-      }),
-      prisma.booking.count({ where: { adminId: admin.id } }),
-      prisma.bookingForm.count({
-        where: { adminId: admin.id, published: true },
-      }),
-    ]);
-
-    flags = {
-      business_profile: businessProfileComplete,
-      service: serviceCount > 0,
-      service_area: serviceAreaCount > 0,
-      team: teamCount > 0,
-      client: clientCount > 0,
-      booking: bookingCount > 0,
-      online_booking: publishedBookingFormCount > 0,
-    };
-  }
+  // The setup wizard only consumes the five required steps. Avoid five extra
+  // CRM count queries on every step save/refetch; optional checklist counts are
+  // only needed once the owner can actually enter the dashboard.
+  const [serviceAreaCount, teamCount, clientCount, bookingCount, publishedBookingFormCount] =
+    admin.onboardingCompletedAt
+      ? await Promise.all([
+          prisma.workLocation.count({ where: { adminId: admin.id } }),
+          prisma.staffProfile.count({ where: { adminId: admin.id, status: "ACTIVE" } }),
+          prisma.client.count({ where: { adminId: admin.id, status: "ACTIVE" } }),
+          prisma.booking.count({ where: { adminId: admin.id } }),
+          prisma.bookingForm.count({ where: { adminId: admin.id, published: true } }),
+        ])
+      : [0, 0, 0, 0, 0];
 
   const steps: OnboardingStepResult[] = ONBOARDING_STEPS.map((step) => {
-    const completed = flags[step.key];
+    const isCompleted = completed.has(step.key);
     return {
       key: step.key,
       label: step.label,
-      status: completed ? "completed" : "pending",
-      completed,
+      status: isCompleted ? "completed" : "pending",
+      completed: isCompleted,
     };
   });
 
   const completedCount = steps.filter((step) => step.completed).length;
-  const isComplete = completedCount === steps.length;
+  const isComplete = Boolean(admin.onboardingCompletedAt);
 
-  // Stamp once, when all three required setup steps exist for real. This is
-  // the only persisted setup state needed; optional checklist items remain
-  // live and may naturally change over time.
-  if (isComplete && !admin.onboardingCompletedAt) {
-    await prisma.adminProfile.update({
-      where: { id: admin.id },
-      data: { onboardingCompletedAt: new Date() },
-    });
-  }
+  const optionalFlags: Record<
+    Exclude<GettingStartedStepKey, OnboardingStepKey>,
+    boolean
+  > = {
+    service_area: serviceAreaCount > 0,
+    team: teamCount > 0,
+    client: clientCount > 0,
+    booking: bookingCount > 0,
+    online_booking: publishedBookingFormCount > 0,
+  };
 
   const gettingStartedSteps: GettingStartedStepResult[] =
     GETTING_STARTED_STEPS.map((step) => ({
       key: step.key,
       label: step.label,
-      completed: flags[step.key],
+      completed: REQUIRED_SETUP_KEYS.includes(step.key as OnboardingStepKey)
+        ? completed.has(step.key as OnboardingStepKey)
+        : optionalFlags[step.key as keyof typeof optionalFlags],
     }));
 
   const gettingStartedCompletedCount = gettingStartedSteps.filter(
@@ -520,41 +463,162 @@ const getOnboardingStatus = async (
   };
 };
 
+/** Persist one setup milestone after its underlying resource has been saved. */
+const completeOnboardingStep = async (
+  userId: string,
+  step: OnboardingStepKey,
+): Promise<OnboardingStatusResult> => {
+  const admin = await prisma.adminProfile.findUnique({
+    where: { userId },
+    select: {
+      id: true,
+      onboardingCompletedAt: true,
+      onboardingCompletedSteps: true,
+    },
+  });
+
+  if (!admin) {
+    throw new AppError(status.NOT_FOUND, "Admin profile not found", {
+      code: "ADMIN_PROFILE_NOT_FOUND",
+      retryable: false,
+    });
+  }
+
+  if (admin.onboardingCompletedAt) return getOnboardingStatus(userId);
+
+  const stepIndex = REQUIRED_SETUP_KEYS.indexOf(step);
+  if (stepIndex === -1) {
+    throw new AppError(status.BAD_REQUEST, "Unknown onboarding step", {
+      code: "INVALID_ONBOARDING_STEP",
+      retryable: false,
+    });
+  }
+
+  const completed = normalizeCompletedSetupSteps(
+    admin.onboardingCompletedSteps,
+    admin.onboardingCompletedAt,
+  );
+
+  const missingPrevious = REQUIRED_SETUP_KEYS
+    .slice(0, stepIndex)
+    .find((key) => !completed.has(key));
+  if (missingPrevious) {
+    throw new AppError(status.CONFLICT, "Complete the previous setup step first.", {
+      code: "ONBOARDING_STEP_OUT_OF_ORDER",
+      retryable: false,
+      fieldErrors: { [missingPrevious]: "Complete this step first" },
+    });
+  }
+
+  if (step === "services") {
+    const serviceCount = await prisma.serviceCatalog.count({
+      where: { adminId: admin.id },
+    });
+    if (serviceCount === 0) {
+      throw new AppError(status.CONFLICT, "Add at least one service before continuing.", {
+        code: "ONBOARDING_SERVICE_REQUIRED",
+        retryable: false,
+        fieldErrors: { services: "Add at least one service" },
+      });
+    }
+  }
+
+  if (!completed.has(step)) {
+    await prisma.adminProfile.update({
+      where: { id: admin.id },
+      data: { onboardingCompletedSteps: { push: step } },
+    });
+  }
+
+  return getOnboardingStatus(userId);
+};
+
 /**
- * Called once after the third setup screen is saved. It re-validates setup
- * from database state and gives the client a deterministic finish action
- * without requiring a status refetch after every individual setup step.
+ * Used by "Skip setup and use defaults". It deliberately does not stamp
+ * onboardingCompletedAt; the frontend publishes the already-provisioned site
+ * first and only then calls finalize, so a publication failure cannot leave a
+ * supposedly-finished account with no live website.
  */
+const skipWebsiteOnboardingSetup = async (
+  userId: string,
+): Promise<OnboardingStatusResult> => {
+  const admin = await prisma.adminProfile.findUnique({
+    where: { userId },
+    select: { id: true, onboardingCompletedAt: true },
+  });
+  if (!admin) {
+    throw new AppError(status.NOT_FOUND, "Admin profile not found", {
+      code: "ADMIN_PROFILE_NOT_FOUND",
+      retryable: false,
+    });
+  }
+
+  if (!admin.onboardingCompletedAt) {
+    await prisma.adminProfile.update({
+      where: { id: admin.id },
+      data: { onboardingCompletedSteps: [...REQUIRED_SETUP_KEYS] },
+    });
+  }
+
+  return getOnboardingStatus(userId);
+};
+
+/** Called only after the website has successfully published. */
 const finalizeOnboardingSetup = async (
   userId: string,
 ): Promise<OnboardingStatusResult> => {
-  const result = await getOnboardingStatus(userId);
+  const admin = await prisma.adminProfile.findUnique({
+    where: { userId },
+    select: {
+      id: true,
+      onboardingCompletedAt: true,
+      onboardingCompletedSteps: true,
+      businessWebsite: { select: { status: true, publishedAt: true } },
+    },
+  });
 
-  if (!result.isComplete) {
-    const fieldErrors: Record<string, string> = {};
-    for (const step of result.steps) {
-      if (!step.completed) {
-        fieldErrors[step.key] = `${step.label} is not complete`;
-      }
-    }
-
-    throw new AppError(
-      status.CONFLICT,
-      "Complete the three required setup steps before entering the dashboard.",
-      {
-        code: "ACCOUNT_SETUP_INCOMPLETE",
-        retryable: false,
-        fieldErrors,
-      },
-    );
+  if (!admin) {
+    throw new AppError(status.NOT_FOUND, "Admin profile not found", {
+      code: "ADMIN_PROFILE_NOT_FOUND",
+      retryable: false,
+    });
   }
 
-  return result;
+  if (!admin.onboardingCompletedAt) {
+    const completed = normalizeCompletedSetupSteps(
+      admin.onboardingCompletedSteps,
+      admin.onboardingCompletedAt,
+    );
+    const missing = REQUIRED_SETUP_KEYS.filter((key) => !completed.has(key));
+
+    if (missing.length > 0) {
+      throw new AppError(status.CONFLICT, "Complete the five setup steps before entering the dashboard.", {
+        code: "ACCOUNT_SETUP_INCOMPLETE",
+        retryable: false,
+        fieldErrors: Object.fromEntries(missing.map((key) => [key, "This step is not complete"])),
+      });
+    }
+
+    if (admin.businessWebsite?.status !== "PUBLISHED" || !admin.businessWebsite.publishedAt) {
+      throw new AppError(status.CONFLICT, "Launch your website before finishing setup.", {
+        code: "WEBSITE_NOT_PUBLISHED",
+        retryable: true,
+        fieldErrors: { template: "Launch the website to finish setup" },
+      });
+    }
+
+    await prisma.adminProfile.update({
+      where: { id: admin.id },
+      data: { onboardingCompletedAt: new Date() },
+    });
+  }
+
+  return getOnboardingStatus(userId);
 };
 
 // ─── Legacy skip endpoints ───────────────────────────────────────────────────
 // Kept temporarily so an older deployed frontend does not crash while clients
-// roll forward. Skip choices no longer affect the three-step setup or the new
+// roll forward. Skip choices no longer affect the five-step setup or the new
 // Getting Started checklist, which is always derived from real data.
 const skipOnboardingStep = async (
   userId: string,
@@ -626,6 +690,8 @@ export const adminService = {
   createAdmin,
   getAdminUsage,
   getOnboardingStatus,
+  completeOnboardingStep,
+  skipWebsiteOnboardingSetup,
   finalizeOnboardingSetup,
   skipOnboardingStep,
   skipAllOnboarding,

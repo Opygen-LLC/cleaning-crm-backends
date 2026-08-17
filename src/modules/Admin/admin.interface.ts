@@ -5,6 +5,7 @@ export interface UpdateAdminPayload {
   businessLogo?: string;
   businessType?: string;
   businessEmail?: string;
+  businessDescription?: string;
   website?: string;
   brandColor?: string;
   currency?: Currency;
@@ -32,11 +33,14 @@ export interface UpdateWorkLocationPayload {
 
 export type OnboardingStepKey =
   | "business_profile"
-  | "service"
-  | "service_area";
+  | "services"
+  | "branding"
+  | "website_address"
+  | "template";
 
 export type GettingStartedStepKey =
   | OnboardingStepKey
+  | "service_area"
   | "team"
   | "client"
   | "booking"
@@ -49,3 +53,7 @@ export interface SkipOnboardingStepPayload {
 }
 
 export type OnboardingStepStatus = "completed" | "pending";
+
+export interface CompleteOnboardingStepPayload {
+  step: OnboardingStepKey;
+}

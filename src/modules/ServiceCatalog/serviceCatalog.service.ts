@@ -32,6 +32,66 @@ const createServiceCatalog = async (
   return created;
 };
 
+
+const bulkUpsertServiceCatalogs = async (
+  payloads: IServiceCatalogCreate[],
+  user: IRequestUser,
+) => {
+  const adminId = await getAdminId(user);
+  const normalized = payloads.map((payload) => ({
+    ...payload,
+    serviceName: payload.serviceName.trim(),
+    legacyServiceType: payload.legacyServiceType === undefined
+      ? inferLegacyServiceType(payload.serviceName)
+      : payload.legacyServiceType,
+    addOns: payload.addOns ? (payload.addOns as any) : [],
+  }));
+
+  const seen = new Set<string>();
+  for (const item of normalized) {
+    const key = item.serviceName.toLocaleLowerCase("en-GB");
+    if (seen.has(key)) {
+      throw new AppError(status.BAD_REQUEST, `Duplicate service in setup: ${item.serviceName}`);
+    }
+    seen.add(key);
+  }
+
+  // PostgreSQL's default unique comparison is case-sensitive. Resolve existing
+  // services case-insensitively first so a resumed setup cannot accidentally
+  // create both "Standard Cleaning" and "standard cleaning" for one tenant.
+  const existing = await prisma.serviceCatalog.findMany({
+    where: { adminId },
+    select: { id: true, serviceName: true },
+  });
+  const existingByName = new Map(
+    existing.map((item) => [item.serviceName.toLocaleLowerCase("en-GB"), item]),
+  );
+
+  const result = await prisma.$transaction(async (tx) =>
+    Promise.all(normalized.map((payload) => {
+      const current = existingByName.get(payload.serviceName.toLocaleLowerCase("en-GB"));
+      const data = {
+        serviceName: payload.serviceName,
+        description: payload.description,
+        basePriceGbp: payload.basePriceGbp,
+        duration: payload.duration,
+        category: payload.category,
+        ...(payload.status !== undefined ? { status: payload.status } : {}),
+        onlineBookingEnabled: payload.onlineBookingEnabled ?? true,
+        legacyServiceType: payload.legacyServiceType,
+        addOns: payload.addOns,
+      };
+
+      return current
+        ? tx.serviceCatalog.update({ where: { id: current.id }, data })
+        : tx.serviceCatalog.create({ data: { ...data, adminId } });
+    })),
+  );
+
+  await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+  return result;
+};
+
 const getAllServiceCatalogs = async (
   filters: IServiceCatalogFilters,
   user: IRequestUser,
@@ -102,6 +162,7 @@ const deleteServiceCatalog = async (id: string, user: IRequestUser) => {
 
 export const serviceCatalogService = {
   createServiceCatalog,
+  bulkUpsertServiceCatalogs,
   getAllServiceCatalogs,
   getServiceCatalogById,
   updateServiceCatalog,

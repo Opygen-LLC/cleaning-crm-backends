@@ -1,13 +1,3 @@
-// ─── PHASE 3 NOTE ─────────────────────────────────────────────────────────────
-// admin.routes.ts is UNCHANGED from the original — the GET /api/v1/admin/usage
-// route was already registered here in Phase 2.  The Phase 3 change is purely
-// in admin.service.ts (richer response payload) and admin.controller.ts.
-//
-// This file is included in the diff zip only so reviewers can see the full
-// module, but you do not need to deploy it if you have already deployed the
-// Phase 2 version.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { Router } from "express";
 import { adminController } from "./admin.controller";
 import {
@@ -67,6 +57,19 @@ router.get(
   "/onboarding-status",
   checkAuth(UserRole.ADMIN),
   adminController.getOnboardingStatus,
+);
+
+router.post(
+  "/onboarding-status/step",
+  checkAuth(UserRole.ADMIN),
+  zodValidate(adminValidation.completeOnboardingStep, ValidationProperty.BODY),
+  adminController.completeOnboardingStep,
+);
+
+router.post(
+  "/onboarding-status/skip-setup",
+  checkAuth(UserRole.ADMIN),
+  adminController.skipWebsiteOnboardingSetup,
 );
 
 router.post(

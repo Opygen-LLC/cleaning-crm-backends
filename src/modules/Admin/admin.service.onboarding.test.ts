@@ -1,15 +1,8 @@
-/**
- * Regression coverage for the Phase 2 three-step account setup and the
- * dashboard Getting Started checklist. Prisma is mocked; no database needed.
- */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../lib/prisma/prisma", () => ({
   prisma: {
-    adminProfile: {
-      findUnique: vi.fn(),
-      update: vi.fn(),
-    },
+    adminProfile: { findUnique: vi.fn(), update: vi.fn() },
     serviceCatalog: { count: vi.fn() },
     workLocation: { count: vi.fn() },
     staffProfile: { count: vi.fn() },
@@ -22,11 +15,8 @@ vi.mock("../../lib/prisma/prisma", () => ({
 import { prisma } from "../../lib/prisma/prisma";
 import { adminService } from "./admin.service";
 
-const mockPrisma = prisma as unknown as {
-  adminProfile: {
-    findUnique: ReturnType<typeof vi.fn>;
-    update: ReturnType<typeof vi.fn>;
-  };
+const db = prisma as unknown as {
+  adminProfile: { findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
   serviceCatalog: { count: ReturnType<typeof vi.fn> };
   workLocation: { count: ReturnType<typeof vi.fn> };
   staffProfile: { count: ReturnType<typeof vi.fn> };
@@ -37,140 +27,112 @@ const mockPrisma = prisma as unknown as {
 
 const USER_ID = "user-1";
 const ADMIN_ID = "admin-1";
+const STEPS = ["business_profile", "services", "branding", "website_address", "template"];
 
-function makeAdminRow(overrides: Partial<{
-  onboardingCompletedAt: Date | null;
-  businessProfileComplete: boolean;
-  skippedSteps: string[];
-}> = {}) {
-  const complete = overrides.businessProfileComplete ?? true;
-  return {
-    id: ADMIN_ID,
-    onboardingCompletedAt: overrides.onboardingCompletedAt ?? null,
-    businessName: "Sparkle Co",
-    city: complete ? "Manchester" : null,
-    country: complete ? "UNITED_KINGDOM" : null,
-    mobileNumber: complete ? "+447700900123" : null,
-    businessType: complete ? "Residential" : null,
-    skippedSteps: overrides.skippedSteps ?? [],
-  };
-}
+const statusRow = (completed: string[] = [], finished: Date | null = null) => ({
+  id: ADMIN_ID,
+  onboardingCompletedAt: finished,
+  onboardingCompletedSteps: completed,
+});
 
-function setCounts(counts: Partial<{
-  service: number;
-  serviceArea: number;
-  team: number;
-  client: number;
-  booking: number;
-  onlineBooking: number;
-}> = {}) {
-  mockPrisma.serviceCatalog.count.mockResolvedValue(counts.service ?? 0);
-  mockPrisma.workLocation.count.mockResolvedValue(counts.serviceArea ?? 0);
-  mockPrisma.staffProfile.count.mockResolvedValue(counts.team ?? 0);
-  mockPrisma.client.count.mockResolvedValue(counts.client ?? 0);
-  mockPrisma.booking.count.mockResolvedValue(counts.booking ?? 0);
-  mockPrisma.bookingForm.count.mockResolvedValue(counts.onlineBooking ?? 0);
-}
+const optionalCounts = () => {
+  db.workLocation.count.mockResolvedValue(0);
+  db.staffProfile.count.mockResolvedValue(0);
+  db.client.count.mockResolvedValue(0);
+  db.booking.count.mockResolvedValue(0);
+  db.bookingForm.count.mockResolvedValue(0);
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
-  setCounts();
+  optionalCounts();
+  db.serviceCatalog.count.mockResolvedValue(1);
 });
 
-describe("three-step account setup", () => {
-  it("returns exactly three required setup steps and seven Getting Started items", async () => {
-    mockPrisma.adminProfile.findUnique.mockResolvedValue(
-      makeAdminRow({ businessProfileComplete: false }),
-    );
-
+describe("website-first onboarding status", () => {
+  it("returns the five explicit setup steps", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(statusRow(["business_profile"]));
     const result = await adminService.getOnboardingStatus(USER_ID);
 
-    expect(result.steps.map((step) => step.key)).toEqual([
-      "business_profile",
-      "service",
-      "service_area",
-    ]);
-    expect(result.totalCount).toBe(3);
+    expect(result.steps.map((step) => step.key)).toEqual(STEPS);
+    expect(result.totalCount).toBe(5);
+    expect(result.completedCount).toBe(1);
     expect(result.isComplete).toBe(false);
-    expect(result.gettingStarted.totalCount).toBe(7);
-    expect(result.gettingStarted.steps.map((step) => step.key)).toEqual([
-      "business_profile",
-      "service",
-      "service_area",
-      "team",
-      "client",
-      "booking",
-      "online_booking",
-    ]);
   });
 
-  it("finishes setup after business + service + service area even when optional CRM tasks are untouched", async () => {
-    mockPrisma.adminProfile.findUnique.mockResolvedValue(makeAdminRow());
-    setCounts({ service: 1, serviceArea: 1 });
-
+  it("treats an already completed legacy tenant as fully complete", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(statusRow([], new Date("2026-08-17T00:00:00Z")));
     const result = await adminService.getOnboardingStatus(USER_ID);
 
     expect(result.isComplete).toBe(true);
-    expect(result.completedCount).toBe(3);
-    expect(result.gettingStarted.completedCount).toBe(3);
-    expect(result.gettingStarted.isComplete).toBe(false);
-    expect(mockPrisma.adminProfile.update).toHaveBeenCalledWith({
+    expect(result.completedCount).toBe(5);
+    expect(result.steps.every((step) => step.completed)).toBe(true);
+  });
+
+  it("rejects completing services before business information", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(statusRow([]));
+
+    await expect(adminService.completeOnboardingStep(USER_ID, "services")).rejects.toMatchObject({
+      statusCode: 409,
+      code: "ONBOARDING_STEP_OUT_OF_ORDER",
+    });
+  });
+
+  it("requires at least one ServiceCatalog record before completing services", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(statusRow(["business_profile"]));
+    db.serviceCatalog.count.mockResolvedValue(0);
+
+    await expect(adminService.completeOnboardingStep(USER_ID, "services")).rejects.toMatchObject({
+      statusCode: 409,
+      code: "ONBOARDING_SERVICE_REQUIRED",
+    });
+  });
+
+  it("marks every setup step for skip without stamping completion before publish", async () => {
+    db.adminProfile.findUnique
+      .mockResolvedValueOnce({ id: ADMIN_ID, onboardingCompletedAt: null })
+      .mockResolvedValueOnce(statusRow(STEPS));
+    db.adminProfile.update.mockResolvedValue({});
+
+    const result = await adminService.skipWebsiteOnboardingSetup(USER_ID);
+
+    expect(db.adminProfile.update).toHaveBeenCalledWith({
       where: { id: ADMIN_ID },
-      data: { onboardingCompletedAt: expect.any(Date) },
+      data: { onboardingCompletedSteps: STEPS },
     });
+    expect(result.completedCount).toBe(5);
+    expect(result.isComplete).toBe(false);
   });
+});
 
-  it("once setup is stamped, skips service/location recounts and checks only optional live progress", async () => {
-    mockPrisma.adminProfile.findUnique.mockResolvedValue(
-      makeAdminRow({ onboardingCompletedAt: new Date("2026-08-13T00:00:00Z") }),
-    );
-    setCounts({ team: 1, client: 1, booking: 1, onlineBooking: 1 });
-
-    const result = await adminService.getOnboardingStatus(USER_ID);
-
-    expect(result.isComplete).toBe(true);
-    expect(result.gettingStarted.isComplete).toBe(true);
-    expect(mockPrisma.serviceCatalog.count).not.toHaveBeenCalled();
-    expect(mockPrisma.workLocation.count).not.toHaveBeenCalled();
-    expect(mockPrisma.staffProfile.count).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.bookingForm.count).toHaveBeenCalledWith({
-      where: { adminId: ADMIN_ID, published: true },
+describe("onboarding finalization", () => {
+  it("requires a published website before stamping completion", async () => {
+    db.adminProfile.findUnique.mockResolvedValue({
+      ...statusRow(STEPS),
+      businessWebsite: { status: "DRAFT", publishedAt: null },
     });
-  });
-
-  it("finalize rejects an incomplete setup with a stable error code and field errors", async () => {
-    mockPrisma.adminProfile.findUnique.mockResolvedValue(makeAdminRow());
-    setCounts({ service: 1, serviceArea: 0 });
 
     await expect(adminService.finalizeOnboardingSetup(USER_ID)).rejects.toMatchObject({
       statusCode: 409,
-      code: "ACCOUNT_SETUP_INCOMPLETE",
-      fieldErrors: {
-        service_area: expect.any(String),
-      },
+      code: "WEBSITE_NOT_PUBLISHED",
     });
   });
 
-  it("finalize succeeds when the three required records exist", async () => {
-    mockPrisma.adminProfile.findUnique.mockResolvedValue(makeAdminRow());
-    setCounts({ service: 1, serviceArea: 1 });
+  it("stamps completion after all steps and a successful website publish", async () => {
+    db.adminProfile.findUnique
+      .mockResolvedValueOnce({
+        ...statusRow(STEPS),
+        businessWebsite: { status: "PUBLISHED", publishedAt: new Date("2026-08-17T10:00:00Z") },
+      })
+      .mockResolvedValueOnce(statusRow(STEPS, new Date("2026-08-17T10:01:00Z")));
+    db.adminProfile.update.mockResolvedValue({});
 
     const result = await adminService.finalizeOnboardingSetup(USER_ID);
 
+    expect(db.adminProfile.update).toHaveBeenCalledWith({
+      where: { id: ADMIN_ID },
+      data: { onboardingCompletedAt: expect.any(Date) },
+    });
     expect(result.isComplete).toBe(true);
-    expect(result.steps.every((step) => step.completed)).toBe(true);
-  });
-});
-
-describe("legacy skip compatibility", () => {
-  it("keeps old optional skip calls idempotent without affecting the new setup contract", async () => {
-    mockPrisma.adminProfile.findUnique.mockResolvedValue(
-      makeAdminRow({ skippedSteps: ["team"] }),
-    );
-
-    const result = await adminService.skipOnboardingStep(USER_ID, "team");
-
-    expect(result).toEqual({ step: "team", skipped: true, deprecated: true });
-    expect(mockPrisma.adminProfile.update).not.toHaveBeenCalled();
   });
 });

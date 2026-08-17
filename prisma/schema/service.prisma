@@ -6,6 +6,7 @@ model ServiceCatalog {
   duration     String
   category     String
   status       ServiceStatus @default(ACTIVE)
+  onlineBookingEnabled Boolean @default(true)
   // Phase 0 compatibility: optional mapping to the legacy hard-coded enum.
   // New/custom catalog services may intentionally leave this null.
   legacyServiceType ServiceType?

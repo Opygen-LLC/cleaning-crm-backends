@@ -4,7 +4,7 @@ import AppError from "../../errorHelper/AppError";
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { PROVISIONING_TRANSACTION_OPTIONS } from "../../lib/prisma/transactionPolicy";
-import { DEFAULT_WEBSITE_PAGES, RESERVED_WEBSITE_SUBDOMAINS } from "./website.constant";
+import { DEFAULT_WEBSITE_PAGES, DEFAULT_WEBSITE_SETTINGS, RESERVED_WEBSITE_SUBDOMAINS } from "./website.constant";
 import type { WebsiteCreateInput } from "./website.interface";
 import { normalizeSubdomain } from "./websiteIdentity";
 import { TemplateRegistry } from "./templateRegistry";
@@ -122,7 +122,7 @@ const createWebsiteRecordTx = async (
   createdByUserId: string | null,
 ) => {
   const template = TemplateRegistry.requireTemplate(
-    payload.templateId ?? "clean-modern",
+    payload.templateId ?? DEFAULT_WEBSITE_SETTINGS.templateId,
     payload.templateVersion,
   );
 
@@ -134,6 +134,16 @@ const createWebsiteRecordTx = async (
       templateId: template.id,
       templateVersion: template.version,
       schemaVersion: template.schemaVersion,
+      primaryColor: DEFAULT_WEBSITE_SETTINGS.primaryColor,
+      secondaryColor: DEFAULT_WEBSITE_SETTINGS.secondaryColor,
+      accentColor: DEFAULT_WEBSITE_SETTINGS.accentColor,
+      font: DEFAULT_WEBSITE_SETTINGS.font,
+      logo: DEFAULT_WEBSITE_SETTINGS.logo,
+      favicon: DEFAULT_WEBSITE_SETTINGS.favicon,
+      metaTitle: DEFAULT_WEBSITE_SETTINGS.metaTitle,
+      metaDescription: DEFAULT_WEBSITE_SETTINGS.metaDescription,
+      socialImageUrl: DEFAULT_WEBSITE_SETTINGS.socialImageUrl,
+      indexSite: DEFAULT_WEBSITE_SETTINGS.indexSite,
       primaryBookingFormId: payload.primaryBookingFormId ?? null,
       primaryEstimateFormId: payload.primaryEstimateFormId ?? null,
       pages: {

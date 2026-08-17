@@ -19,6 +19,17 @@ const createServiceCatalog = catchAsync(async (req, res) => {
   });
 });
 
+
+const bulkUpsertServiceCatalogs = catchAsync(async (req, res) => {
+  const result = await serviceCatalogService.bulkUpsertServiceCatalogs(req.body, req.user);
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Services saved successfully",
+    data: result,
+  });
+});
+
 const getAllServiceCatalogs = catchAsync(async (req, res) => {
   const filters: IServiceCatalogFilters = {
     searchTerm: req.query.searchTerm as string,
@@ -84,6 +95,7 @@ const deleteServiceCatalog = catchAsync(async (req, res) => {
 
 export const serviceCatalogController = {
   createServiceCatalog,
+  bulkUpsertServiceCatalogs,
   getAllServiceCatalogs,
   getServiceCatalogById,
   updateServiceCatalog,

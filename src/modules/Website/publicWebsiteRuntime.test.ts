@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_WEBSITE_PAGES } from "./website.constant";
+import { DEFAULT_WEBSITE_PAGES, DEFAULT_WEBSITE_SETTINGS } from "./website.constant";
 import { TemplateRegistry } from "./templateRegistry";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 
@@ -49,6 +49,22 @@ describe("Phase 3 public website runtime contract", () => {
     expect(service.serviceCatalogId).toBe("service-1");
     expect(service.basePrice).toBe(125);
     expect(service.basePriceGbp).toBe(125);
+  });
+
+  it("keeps the Phase 1 automatic website defaults explicit and deterministic", () => {
+    expect(DEFAULT_WEBSITE_SETTINGS).toEqual({
+      templateId: "clean-modern",
+      primaryColor: "#0F766E",
+      secondaryColor: "#0F172A",
+      accentColor: "#14B8A6",
+      font: null,
+      logo: null,
+      favicon: null,
+      metaTitle: null,
+      metaDescription: null,
+      socialImageUrl: null,
+      indexSite: true,
+    });
   });
 
   it("registers Clean Modern as the first public runtime template", () => {

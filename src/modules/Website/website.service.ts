@@ -4,6 +4,7 @@ import { WEBSITE_BASE_DOMAIN, WEBSITE_CUSTOM_DOMAINS_ENABLED } from "../../confi
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { uploadToCloudinary } from "../../lib/utils/cloudinary";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import type {
   WebsiteAssetCreateInput,
@@ -497,6 +498,63 @@ const registerAsset = async (payload: WebsiteAssetCreateInput, user: IRequestUse
   });
 };
 
+
+const uploadBrandAsset = async (
+  file: Express.Multer.File,
+  kind: "logo" | "favicon",
+  user: IRequestUser,
+) => {
+  const adminId = await getAdminId(user);
+  const website = await getWebsiteOrThrow(adminId);
+  if (!file?.buffer || !file.mimetype.toLowerCase().startsWith("image/")) {
+    throw new AppError(status.BAD_REQUEST, "Upload a valid image file");
+  }
+
+  const folder = `Cleaning-CRM/websites/${website.id}`;
+  const publicId = `${kind}`;
+  const uploaded = await uploadToCloudinary(file.buffer, {
+    folder,
+    public_id: publicId,
+    overwrite: true,
+    transformation: kind === "favicon"
+      ? [{ width: 256, height: 256, crop: "limit" }]
+      : [{ width: 1200, height: 1200, crop: "limit", quality: "auto", fetch_format: "auto" }],
+  });
+  if (!uploaded?.secure_url || !uploaded?.public_id) {
+    throw new AppError(status.BAD_GATEWAY, "Image storage did not return a usable asset");
+  }
+
+  const asset = await prisma.websiteAsset.upsert({
+    where: { websiteId_publicId: { websiteId: website.id, publicId: uploaded.public_id } },
+    create: {
+      websiteId: website.id,
+      publicId: uploaded.public_id,
+      url: uploaded.secure_url,
+      mimeType: `image/${uploaded.format ?? "webp"}`,
+      width: uploaded.width ?? null,
+      height: uploaded.height ?? null,
+      bytes: uploaded.bytes ?? file.size ?? null,
+      altText: kind === "logo" ? "Business logo" : "Website favicon",
+      folder,
+      metadata: { kind },
+    },
+    update: {
+      url: uploaded.secure_url,
+      mimeType: `image/${uploaded.format ?? "webp"}`,
+      width: uploaded.width ?? null,
+      height: uploaded.height ?? null,
+      bytes: uploaded.bytes ?? file.size ?? null,
+      metadata: { kind },
+    },
+  });
+
+  const websitePatch: WebsiteUpdateInput = kind === "logo"
+    ? { logo: uploaded.secure_url }
+    : { favicon: uploaded.secure_url };
+  await updateWebsite(websitePatch, user);
+  return asset;
+};
+
 const deleteAsset = async (assetId: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await getWebsiteOrThrow(adminId);
@@ -523,5 +581,6 @@ export const WebsiteService = {
   getRevision,
   listAssets,
   registerAsset,
+  uploadBrandAsset,
   deleteAsset,
 };

@@ -4,6 +4,8 @@ import { checkAuth } from "../../middlewares/checkAuth";
 import { ValidationProperty, zodValidate } from "../../middlewares/validations/zodValidation.middleware";
 import { websiteController } from "./website.controller";
 import { websiteValidation } from "./website.validation";
+import { multerMemory } from "../../config/multerMemory";
+import { convertHeicToPng } from "../../middlewares/convertHeicToPngMiddleware";
 
 const router = Router();
 const isAdmin = checkAuth(UserRole.ADMIN);
@@ -24,6 +26,7 @@ router.get("/templates", websiteController.listTemplates);
 router.get("/analytics", websiteController.getWebsiteAnalytics);
 router.get("/assets", websiteController.listAssets);
 router.post("/assets", zodValidate(websiteValidation.createAsset, ValidationProperty.BODY), websiteController.registerAsset);
+router.post("/assets/upload", multerMemory.single("asset"), convertHeicToPng, websiteController.uploadBrandAsset);
 router.delete("/assets/:assetId", websiteController.deleteAsset);
 router.get("/subdomain/availability/:subdomain", websiteController.getSubdomainAvailability);
 router.patch(

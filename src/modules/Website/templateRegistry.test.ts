@@ -13,6 +13,15 @@ describe("TemplateRegistry", () => {
     expect(TemplateRegistry.requireTemplate("clean-modern").version).toBe("1.0.0");
   });
 
+  it("exposes every Phase 2 onboarding template as a versioned runtime contract", () => {
+    expect(TemplateRegistry.list().map((template) => template.id).sort()).toEqual([
+      "clean-modern",
+      "commercial-pro",
+      "local-cleaning",
+      "premium-home",
+    ]);
+  });
+
   it("rejects unknown versions rather than silently upgrading tenants", () => {
     expect(() => TemplateRegistry.requireTemplate("clean-modern", "9.9.9")).toThrow();
   });

@@ -12,6 +12,7 @@ export interface IServiceCatalogCreate {
     duration: string;
     category: string;
     status?: ServiceStatus;
+    onlineBookingEnabled?: boolean;
     addOns?: IServiceAddOn[];
     legacyServiceType?: ServiceType | null;
 }
@@ -23,6 +24,7 @@ export interface IServiceCatalogUpdate {
     duration?: string;
     category?: string;
     status?: ServiceStatus;
+    onlineBookingEnabled?: boolean;
     addOns?: IServiceAddOn[];
     legacyServiceType?: ServiceType | null;
 }

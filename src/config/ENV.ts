@@ -89,10 +89,10 @@ export const MAPBOX_ACCESS_TOKEN: string | undefined =
     process.env.MAPBOX_ACCESS_TOKEN;
 
 // ─── Business websites ──────────────────────────────────────────────────────
-// Phase 2 stores/reserves only the tenant subdomain label, so registration and
-// the website backfill do not require host routing to be enabled yet. Set
-// WEBSITE_BASE_DOMAIN before Phase 6 exposes tenant hostnames publicly; Phase 7
-// uses WEBSITE_CNAME_TARGET for custom-domain DNS instructions.
+// Phase 1 registration always reserves the tenant subdomain label and returns
+// it to the client. Set WEBSITE_BASE_DOMAIN to also return a complete publicUrl
+// such as https://bio-cleaning.sites.example.com. The label itself remains
+// safely provisioned even when wildcard routing is not enabled in local dev.
 export const WEBSITE_BASE_DOMAIN: string | undefined = process.env.WEBSITE_BASE_DOMAIN
     ?.trim()
     .toLowerCase()

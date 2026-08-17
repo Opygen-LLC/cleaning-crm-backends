@@ -13,6 +13,7 @@ import { estimateFormService } from "../EstimateForm/estimateForm.service";
 import { WebsiteAcquisitionService } from "./websiteAcquisition.service";
 import { WEBSITE_ANALYTICS_EVENT, WebsiteAnalyticsService } from "./websiteAnalytics.service";
 import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
+import AppError from "../../errorHelper/AppError";
 
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
@@ -38,6 +39,12 @@ const listRevisions = catchAsync(async (req, res) => ok(res, "Website revisions 
 const getRevision = catchAsync(async (req, res) => ok(res, "Website revision retrieved successfully", await WebsiteService.getRevision(paramStr(req.params.revisionId), req.user)));
 const listAssets = catchAsync(async (req, res) => ok(res, "Website assets retrieved successfully", await WebsiteService.listAssets(req.user)));
 const registerAsset = catchAsync(async (req, res) => created(res, "Website asset registered successfully", await WebsiteService.registerAsset(req.body, req.user)));
+const uploadBrandAsset = catchAsync(async (req, res) => {
+  if (!req.file) throw new AppError(status.BAD_REQUEST, "Image file is required");
+  const kind = req.body.kind === "favicon" ? "favicon" : req.body.kind === "logo" ? "logo" : null;
+  if (!kind) throw new AppError(status.BAD_REQUEST, "Asset kind must be logo or favicon");
+  return created(res, "Website brand asset uploaded successfully", await WebsiteService.uploadBrandAsset(req.file, kind, req.user));
+});
 const deleteAsset = catchAsync(async (req, res) => ok(res, "Website asset deleted successfully", await WebsiteService.deleteAsset(paramStr(req.params.assetId), req.user)));
 const listTemplates = catchAsync(async (_req, res) => ok(res, "Website templates retrieved successfully", TemplateRegistry.list()));
 const addDomain = catchAsync(async (req, res) => created(res, "Website domain added successfully", await DomainService.addDomain(req.body, req.user)));
@@ -218,6 +225,7 @@ export const websiteController = {
   getRevision,
   listAssets,
   registerAsset,
+  uploadBrandAsset,
   deleteAsset,
   listTemplates,
   addDomain,

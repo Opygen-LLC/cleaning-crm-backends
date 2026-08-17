@@ -1,5 +1,6 @@
 import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
+import { WEBSITE_BASE_DOMAIN } from "../../config/ENV";
 import { PROVISIONING_TRANSACTION_OPTIONS } from "../../lib/prisma/transactionPolicy";
 import { adminService } from "../Admin/admin.service";
 import { subscriptionService } from "../Subscription/subscription.service";
@@ -16,7 +17,7 @@ export interface ProvisionRegisteredAdminInput {
  * Creates every tenant-owned record required by a fresh registration in one
  * database transaction.
  *
- * Ordering is intentional and is the Phase-2 contract:
+ * Ordering is intentional and is the Phase-1 registration contract:
  *   AdminProfile
  *     -> reserve unique subdomain
  *     -> BusinessWebsite + default pages + revision #1
@@ -62,7 +63,23 @@ const provisionRegisteredAdmin = async (input: ProvisionRegisteredAdminInput) =>
   // that may exist for the newly reserved label. Routing cache is never part
   // of the registration transaction/source of truth.
   await WebsiteHostResolverService.invalidateSubdomains([result.website.subdomain]);
-  return result;
+
+  // Registration exposes only the stable website identity. Do not leak the
+  // full draft snapshot/pages/revisions from the provisioning transaction.
+  // WEBSITE_BASE_DOMAIN is optional in local development, so publicUrl is null
+  // until wildcard website hosting is configured.
+  return {
+    adminProfile: result.admin,
+    subscription: result.subscription,
+    website: {
+      id: result.website.id,
+      subdomain: result.website.subdomain,
+      status: result.website.status,
+      publicUrl: WEBSITE_BASE_DOMAIN
+        ? `https://${result.website.subdomain}.${WEBSITE_BASE_DOMAIN}`
+        : null,
+    },
+  };
 };
 
 export const AccountProvisioningService = {

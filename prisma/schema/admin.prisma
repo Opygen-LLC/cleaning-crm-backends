@@ -14,11 +14,14 @@ model AdminProfile {
   country               Country?
   businessEmail         String?
   businessType          String?
+  businessDescription   String?
   website               String?
-  /// Set once the required three-step account setup (business details, first
-  /// service and service area) is satisfied. Optional Getting Started items
-  /// are derived from live CRM data and do not affect this timestamp.
-  onboardingCompletedAt DateTime?
+  /// Persisted completion for the five-step website-first onboarding wizard.
+  /// Defaults are provisioned at registration, so completion cannot be inferred
+  /// from website values alone; this array makes resume/refresh deterministic.
+  onboardingCompletedSteps String[]                @default([])
+  /// Set only after the user launches the website or explicitly skips setup.
+  onboardingCompletedAt    DateTime?
   /// Legacy compatibility for the previous six-step onboarding flow. New
   /// clients do not write or read this field for setup/checklist progress.
   skippedSteps          String[]                @default([])

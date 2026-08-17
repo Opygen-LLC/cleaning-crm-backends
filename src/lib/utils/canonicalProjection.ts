@@ -8,6 +8,7 @@ export const projectPublicBusiness = (admin: {
     businessLogo?: string | null;
     mobileNumber?: string | null;
     businessEmail?: string | null;
+    businessDescription?: string | null;
     address?: string | null;
     city?: string | null;
     zipcode?: string | null;
@@ -20,6 +21,7 @@ export const projectPublicBusiness = (admin: {
     logoUrl: admin.businessLogo ?? null,
     phone: admin.mobileNumber ?? "",
     email: admin.businessEmail ?? admin.user?.email ?? "",
+    description: admin.businessDescription ?? null,
     address: admin.address ?? null,
     city: admin.city ?? null,
     postcode: admin.zipcode ?? null,
@@ -37,6 +39,7 @@ export const projectCanonicalService = (service: {
     category: string;
     addOns?: unknown;
     legacyServiceType?: unknown | null;
+    onlineBookingEnabled?: boolean;
 }) => ({
     id: service.id,
     serviceCatalogId: service.id,
@@ -50,4 +53,5 @@ export const projectCanonicalService = (service: {
     category: service.category,
     addOns: service.addOns ?? [],
     legacyServiceType: service.legacyServiceType ?? null,
+    onlineBookingEnabled: service.onlineBookingEnabled ?? true,
 });

@@ -22,20 +22,28 @@ export interface WebsiteTemplateDefinition {
 
 const rawDefinitions: WebsiteTemplateDefinition[] = [
   {
-    id: "clean-modern",
-    version: "1.0.0",
-    name: "Clean Modern",
-    description: "Fast, conversion-focused cleaning business website template.",
-    tier: "FREE",
-    schemaVersion: 1,
-    thumbnail: null,
-    capabilities: {
-      booking: true,
-      estimate: true,
-      reviews: true,
-      serviceAreas: true,
-      customDomain: true,
-    },
+    id: "clean-modern", version: "1.0.0", name: "Clean Modern",
+    description: "Bright, conversion-focused design for residential cleaning businesses.",
+    tier: "FREE", schemaVersion: 1, thumbnail: null,
+    capabilities: { booking: true, estimate: true, reviews: true, serviceAreas: true, customDomain: true },
+  },
+  {
+    id: "premium-home", version: "1.0.0", name: "Premium Home",
+    description: "A polished, premium presentation for high-end home cleaning services.",
+    tier: "FREE", schemaVersion: 1, thumbnail: null,
+    capabilities: { booking: true, estimate: true, reviews: true, serviceAreas: true, customDomain: true },
+  },
+  {
+    id: "commercial-pro", version: "1.0.0", name: "Commercial Pro",
+    description: "A confident business-first layout for office and commercial cleaning providers.",
+    tier: "FREE", schemaVersion: 1, thumbnail: null,
+    capabilities: { booking: true, estimate: true, reviews: true, serviceAreas: true, customDomain: true },
+  },
+  {
+    id: "local-cleaning", version: "1.0.0", name: "Local Cleaning",
+    description: "A simple local-services layout focused on trust, service areas and fast booking.",
+    tier: "FREE", schemaVersion: 1, thumbnail: null,
+    capabilities: { booking: true, estimate: true, reviews: true, serviceAreas: true, customDomain: true },
   },
 ];
 

@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+
+vi.mock("../../config/ENV", () => ({
+  WEBSITE_BASE_DOMAIN: "sites.example.com",
+}));
+
 vi.mock("../../lib/prisma/prisma", () => ({
   prisma: {
     $transaction: mocks.transaction,
@@ -54,11 +59,14 @@ beforeEach(() => {
   mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => callback(mocks.tx));
   mocks.createAdmin.mockImplementation(async () => {
     mocks.order.push("admin");
-    return { id: "admin-1" };
+    return { id: "admin-1", businessName: "Sparkle Cleaning" };
   });
   mocks.provisionWebsite.mockImplementation(async () => {
     mocks.order.push("website");
-    return { created: true, website: { id: "website-1", subdomain: "sparkle" } };
+    return {
+      created: true,
+      website: { id: "website-1", subdomain: "sparkle", status: "PROVISIONED" },
+    };
   });
   mocks.createTrial.mockImplementation(async () => {
     mocks.order.push("trial");
@@ -90,7 +98,16 @@ describe("AccountProvisioningService", () => {
       db: mocks.tx,
       trialDays: 14,
     });
-    expect(result.website.id).toBe("website-1");
+    expect(result).toEqual({
+      adminProfile: { id: "admin-1", businessName: "Sparkle Cleaning" },
+      subscription: { id: "subscription-1" },
+      website: {
+        id: "website-1",
+        subdomain: "sparkle",
+        status: "PROVISIONED",
+        publicUrl: "https://sparkle.sites.example.com",
+      },
+    });
     expect(mocks.invalidateSubdomains).toHaveBeenCalledWith(["sparkle"]);
   });
 

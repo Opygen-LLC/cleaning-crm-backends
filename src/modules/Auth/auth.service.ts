@@ -105,7 +105,9 @@ const register = async ({
 
         return {
             user: data.user,
-            ...provisioned,
+            adminProfile: provisioned.adminProfile,
+            subscription: provisioned.subscription,
+            website: provisioned.website,
         };
     } catch (error) {
         // Better Auth is outside the tenant transaction. Remove its User row

@@ -20,6 +20,17 @@ router.post(
   serviceCatalogController.createServiceCatalog,
 );
 
+
+router.post(
+  "/bulk",
+  checkAuth(UserRole.ADMIN),
+  zodValidate(
+    serviceCatalogValidation.bulkCreateServiceCatalog,
+    ValidationProperty.BODY,
+  ),
+  serviceCatalogController.bulkUpsertServiceCatalogs,
+);
+
 router.get(
   "/",
   checkAuth(UserRole.ADMIN, UserRole.STAFF),
