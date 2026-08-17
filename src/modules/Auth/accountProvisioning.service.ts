@@ -1,4 +1,6 @@
+import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
+import { PROVISIONING_TRANSACTION_OPTIONS } from "../../lib/prisma/transactionPolicy";
 import { adminService } from "../Admin/admin.service";
 import { subscriptionService } from "../Subscription/subscription.service";
 import { WebsiteProvisioningService } from "../Website/websiteProvisioning.service";
@@ -11,29 +13,49 @@ export interface ProvisionRegisteredAdminInput {
 
 /**
  * Creates every tenant-owned record required by a fresh registration in one
- * database transaction. The Better Auth user is created before this function;
- * callers must compensate by deleting that user if this transaction fails.
+ * database transaction.
+ *
+ * Ordering is intentional and is the Phase-2 contract:
+ *   AdminProfile
+ *     -> reserve unique subdomain
+ *     -> BusinessWebsite + default pages + revision #1
+ *     -> trial subscription
+ *
+ * Subdomain reservation is protected by transaction-scoped advisory locks in
+ * WebsiteProvisioningService, so the reservation cannot escape if a later
+ * website/trial write fails. Better Auth's User/Account rows are created before
+ * this transaction; auth.service compensates those external writes if this
+ * function rejects.
  */
 const provisionRegisteredAdmin = async (input: ProvisionRegisteredAdminInput) => {
-  return prisma.$transaction(async (tx: any) => {
-    const admin = await adminService.createAdmin(
-      { userId: input.userId, businessName: input.businessName },
-      tx,
-    );
+  return prisma.$transaction(
+    async (tx: Prisma.TransactionClient) => {
+      const admin = await adminService.createAdmin(
+        { userId: input.userId, businessName: input.businessName },
+        tx,
+      );
 
-    const { website } = await WebsiteProvisioningService.provisionDefaultWebsiteForAdminTx(tx, {
-      adminId: admin.id,
-      businessName: input.businessName,
-      createdByUserId: input.userId,
-    });
+      const { website } = await WebsiteProvisioningService.provisionDefaultWebsiteForAdminTx(
+        tx,
+        {
+          adminId: admin.id,
+          businessName: input.businessName,
+          createdByUserId: input.userId,
+        },
+      );
 
-    const subscription = await subscriptionService.createTrialSubscription(admin.id, {
-      db: tx,
-      trialDays: input.trialDays,
-    });
+      // Keep trial creation inside the same transaction. If the default plan is
+      // misconfigured or the subscription write fails, AdminProfile + website +
+      // pages + revision + subdomain allocation are all rolled back together.
+      const subscription = await subscriptionService.createTrialSubscription(admin.id, {
+        db: tx,
+        trialDays: input.trialDays,
+      });
 
-    return { admin, website, subscription };
-  });
+      return { admin, website, subscription };
+    },
+    PROVISIONING_TRANSACTION_OPTIONS,
+  );
 };
 
 export const AccountProvisioningService = {

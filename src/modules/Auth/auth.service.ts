@@ -24,6 +24,33 @@ import logger from "../../lib/logger";
 //? Max sessions per user
 const MAX_SESSIONS = 3;
 
+const REGISTRATION_COMPENSATION_ATTEMPTS = 3;
+
+/**
+ * Better Auth creates User/Account rows before tenant provisioning starts.
+ * Prisma cannot include that library call in the same transaction, so a failed
+ * tenant transaction needs a compensating delete. deleteMany is deliberately
+ * idempotent (missing user = success), and a few bounded retries protect signup
+ * from leaving an email permanently claimed after a transient DB failure.
+ */
+const compensateFailedRegistrationUser = async (userId: string): Promise<boolean> => {
+    for (let attempt = 1; attempt <= REGISTRATION_COMPENSATION_ATTEMPTS; attempt += 1) {
+        try {
+            await prisma.user.deleteMany({ where: { id: userId } });
+            return true;
+        } catch (rollbackError) {
+            logger.error("Failed to compensate Better Auth user after provisioning failure", {
+                userId,
+                attempt,
+                attempts: REGISTRATION_COMPENSATION_ATTEMPTS,
+                rollbackError,
+            });
+        }
+    }
+
+    return false;
+};
+
 const register = async ({
     businessName,
     name,
@@ -81,24 +108,25 @@ const register = async ({
             ...provisioned,
         };
     } catch (error) {
-        // Better Auth creates User/Account outside Prisma's tenant transaction.
-        // Compensate that external write if any tenant-owned provisioning step
-        // fails so the email is not left claimed by a partial registration.
-        await prisma.user.delete({ where: { id: data.user.id } }).catch((rollbackError) => {
-            logger.error("Failed to compensate Better Auth user after registration provisioning failure", {
-                userId: data.user.id,
-                rollbackError,
-            });
-        });
+        // Better Auth is outside the tenant transaction. Remove its User row
+        // (Account/Session rows cascade) so a failed signup can be retried with
+        // the same email and cannot leave an auth-only orphan.
+        const compensated = await compensateFailedRegistrationUser(data.user.id);
+
         logger.error("Registration provisioning failed", {
             userId: data.user.id,
             email,
+            compensated,
             error,
         });
 
         throw new AppError(
             status.INTERNAL_SERVER_ERROR,
             "Registration failed. Please try again.",
+            {
+                code: "REGISTRATION_PROVISIONING_FAILED",
+                retryable: compensated,
+            },
         );
     }
 };

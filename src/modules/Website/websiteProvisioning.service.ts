@@ -1,6 +1,9 @@
 import status from "http-status";
+import type { Prisma } from "../../generated/prisma/client";
 import AppError from "../../errorHelper/AppError";
+import { prisma } from "../../lib/prisma/prisma";
 import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
+import { PROVISIONING_TRANSACTION_OPTIONS } from "../../lib/prisma/transactionPolicy";
 import { DEFAULT_WEBSITE_PAGES, RESERVED_WEBSITE_SUBDOMAINS } from "./website.constant";
 import type { WebsiteCreateInput } from "./website.interface";
 import { normalizeSubdomain } from "./websiteIdentity";
@@ -39,7 +42,7 @@ export const buildWebsiteSubdomainBase = (businessName: string, adminId: string)
   return normalizeSubdomain(base);
 };
 
-const isSubdomainTaken = async (db: any, subdomain: string) => {
+const isSubdomainTaken = async (db: Prisma.TransactionClient, subdomain: string) => {
   const [website, alias] = await Promise.all([
     db.businessWebsite.findUnique({ where: { subdomain }, select: { id: true } }),
     db.websiteSubdomainAlias.findUnique({ where: { subdomain }, select: { id: true } }),
@@ -54,7 +57,7 @@ const isSubdomainTaken = async (db: any, subdomain: string) => {
  * candidate between the availability check and the INSERT.
  */
 export const reserveWebsiteSubdomainTx = async (
-  db: any,
+  db: Prisma.TransactionClient,
   businessName: string,
   adminId: string,
 ): Promise<string> => {
@@ -79,7 +82,7 @@ export const reserveWebsiteSubdomainTx = async (
   throw new AppError(status.CONFLICT, "Unable to reserve a unique website subdomain");
 };
 
-const loadWebsiteSnapshot = async (db: any, websiteId: string) => {
+const loadWebsiteSnapshot = async (db: Prisma.TransactionClient, websiteId: string) => {
   const website = await db.businessWebsite.findUnique({
     where: { id: websiteId },
     include: {
@@ -93,7 +96,7 @@ const loadWebsiteSnapshot = async (db: any, websiteId: string) => {
 };
 
 const createInitialRevisionTx = async (
-  db: any,
+  db: Prisma.TransactionClient,
   websiteId: string,
   createdByUserId: string | null,
 ) => {
@@ -110,7 +113,7 @@ const createInitialRevisionTx = async (
 };
 
 const createWebsiteRecordTx = async (
-  db: any,
+  db: Prisma.TransactionClient,
   adminId: string,
   subdomain: string,
   payload: Omit<WebsiteCreateInput, "subdomain">,
@@ -146,7 +149,7 @@ const createWebsiteRecordTx = async (
 
 /** Explicit website creation used by the protected Phase-1 API. */
 export const createWebsiteForAdminTx = async (
-  db: any,
+  db: Prisma.TransactionClient,
   adminId: string,
   payload: WebsiteCreateInput,
   createdByUserId: string | null = null,
@@ -172,7 +175,7 @@ export const createWebsiteForAdminTx = async (
  * created atomically inside the caller's transaction.
  */
 export const provisionDefaultWebsiteForAdminTx = async (
-  db: any,
+  db: Prisma.TransactionClient,
   input: {
     adminId: string;
     businessName: string;
@@ -197,9 +200,25 @@ export const provisionDefaultWebsiteForAdminTx = async (
   return { created: true, website };
 };
 
+/**
+ * Standalone idempotent provisioning entry point for migrations/repair jobs.
+ * Registration intentionally uses the Tx variant so website + trial can share
+ * one transaction.
+ */
+export const provisionDefaultWebsiteForAdmin = async (input: {
+  adminId: string;
+  businessName: string;
+  createdByUserId?: string | null;
+}) =>
+  prisma.$transaction(
+    (tx: Prisma.TransactionClient) => provisionDefaultWebsiteForAdminTx(tx, input),
+    PROVISIONING_TRANSACTION_OPTIONS,
+  );
+
 export const WebsiteProvisioningService = {
   createWebsiteForAdminTx,
   provisionDefaultWebsiteForAdminTx,
+  provisionDefaultWebsiteForAdmin,
   reserveWebsiteSubdomainTx,
   buildWebsiteSubdomainBase,
 };
