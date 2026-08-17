@@ -25,6 +25,7 @@ model ServiceCatalog {
   jobs                    Job[]
   recurringSchedules      RecurringSchedule[]
   checklistTemplates      ChecklistTemplate[]
+  leads                    Lead[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

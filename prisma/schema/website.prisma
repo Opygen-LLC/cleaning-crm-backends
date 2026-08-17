@@ -40,6 +40,9 @@ model BusinessWebsite {
   subdomainAliases        WebsiteSubdomainAlias[]
   assets                   WebsiteAsset[]
   analyticsEvents          WebsiteAnalyticsEvent[]
+  acquisitionLeads          Lead[]                      @relation("WebsiteAcquisitionLead")
+  bookingSubmissions        BookingFormSubmission[]     @relation("WebsiteAcquisitionBookingSubmission")
+  estimateSubmissions       EstimateFormSubmission[]    @relation("WebsiteAcquisitionEstimateSubmission")
 
   @@index([status])
   @@index([templateId, templateVersion])

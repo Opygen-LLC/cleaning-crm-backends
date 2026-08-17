@@ -9,6 +9,7 @@ const createLeadSchema = z.object({
     estimatedMax: z.number().min(0).optional().default(0),
     notes: z.string().optional(),
     sourceRef: z.string().optional(),
+    serviceCatalogId: z.string().uuid().optional(),
 });
 
 const updateLeadSchema = z.object({
@@ -20,6 +21,7 @@ const updateLeadSchema = z.object({
     estimatedMax: z.number().min(0).optional(),
     notes: z.string().optional(),
     sourceRef: z.string().optional(),
+    serviceCatalogId: z.string().uuid().optional(),
 });
 
 const updateLeadStageSchema = z.object({

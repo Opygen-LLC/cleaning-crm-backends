@@ -8,24 +8,8 @@ import { Lead, Prisma } from "../../generated/prisma/client";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
 import { leadFilterableFields, leadSearchableFields } from "./lead.constant";
 import { LeadStage } from "../../generated/prisma/enums";
-
-// ─── Helper: generate a sequential lead ref ───────────────────────────────────
-
-const generateLeadRef = async (): Promise<string> => {
-    const agg = await prisma.lead.aggregate({
-        _max: { leadRef: true },
-    });
-
-    const lastRef = agg._max.leadRef;
-    if (lastRef) {
-        const parts = lastRef.split("-");
-        const lastNum = parseInt(parts[parts.length - 1], 10);
-        if (!isNaN(lastNum)) {
-            return `LEAD-${String(lastNum + 1).padStart(4, "0")}`;
-        }
-    }
-    return "LEAD-0001";
-};
+import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
+import { allocateLeadRef } from "./leadRef.service";
 
 // ─── Resolve admin profile ────────────────────────────────────────────────────
 
@@ -39,6 +23,24 @@ const resolveAdminProfile = async (user: IRequestUser) => {
     }
 
     return adminProfile;
+};
+
+type LeadServiceDb = Pick<Prisma.TransactionClient, "serviceCatalog">;
+
+const resolveTenantService = async (db: LeadServiceDb, adminId: string, serviceCatalogId?: string) => {
+    if (!serviceCatalogId) return null;
+    const service = await db.serviceCatalog.findFirst({
+        where: { id: serviceCatalogId, adminId },
+        select: { id: true, serviceName: true },
+    });
+    if (!service) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "Selected service is not available for this business", {
+            code: "LEAD_SERVICE_INVALID",
+            retryable: false,
+            fieldErrors: { serviceCatalogId: "Choose a service from this business." },
+        });
+    }
+    return service;
 };
 
 const STAGE_MAP_TO_DB: Record<string, LeadStage> = {
@@ -80,22 +82,49 @@ function serializeLead(
 
 const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
     const adminProfile = await resolveAdminProfile(user);
+    const email = payload.email.trim().toLowerCase();
 
-    const leadRef = await generateLeadRef();
+    const lead = await prisma.$transaction(async (tx) => {
+        // Website acquisition and manual CRM entry share this email lock, so
+        // case variants cannot race into duplicate tenant leads.
+        await acquireExtendedTextTransactionAdvisoryLock(
+            tx,
+            `lead-email:${adminProfile.id}:${email}`,
+        );
 
-    const lead = await prisma.lead.create({
-        data: {
-            leadRef,
-            name: payload.name,
-            email: payload.email,
-            phone: payload.phone,
-            serviceInterest: payload.serviceInterest,
-            estimatedMin: payload.estimatedMin ?? 0,
-            estimatedMax: payload.estimatedMax ?? 0,
-            notes: payload.notes,
-            sourceRef: payload.sourceRef,
-            adminId: adminProfile.id,
-        },
+        const existing = await tx.lead.findFirst({
+            where: {
+                adminId: adminProfile.id,
+                email: { equals: email, mode: "insensitive" },
+            },
+            select: { id: true },
+        });
+        if (existing) {
+            throw new AppError(status.CONFLICT, "A lead with this email already exists", {
+                code: "LEAD_EMAIL_EXISTS",
+                retryable: false,
+                fieldErrors: { email: "A lead with this email already exists." },
+            });
+        }
+
+        const service = await resolveTenantService(tx, adminProfile.id, payload.serviceCatalogId);
+        const leadRef = await allocateLeadRef(tx);
+
+        return tx.lead.create({
+            data: {
+                leadRef,
+                name: payload.name.trim(),
+                email,
+                phone: payload.phone?.trim() || undefined,
+                serviceInterest: service?.serviceName ?? payload.serviceInterest.trim(),
+                serviceCatalogId: service?.id ?? null,
+                estimatedMin: payload.estimatedMin ?? 0,
+                estimatedMax: payload.estimatedMax ?? 0,
+                notes: payload.notes,
+                sourceRef: payload.sourceRef,
+                adminId: adminProfile.id,
+            },
+        });
     });
 
     return serializeLead(lead as Lead & Record<string, unknown>);
@@ -147,6 +176,8 @@ const getLeadById = async (id: string, user: IRequestUser) => {
             stage: true,
             notes: true,
             sourceRef: true,
+            serviceCatalogId: true,
+            sourceWebsiteId: true,
             adminId: true,
             createdAt: true,
             updatedAt: true,
@@ -176,9 +207,20 @@ const updateLead = async (
         );
     }
 
+    const service = await resolveTenantService(prisma, adminProfile.id, payload.serviceCatalogId);
+    const { serviceCatalogId: _serviceCatalogId, ...payloadWithoutCatalogId } = payload;
+    const updateData: Prisma.LeadUpdateInput = { ...payloadWithoutCatalogId };
+    if (service) {
+        updateData.serviceCatalog = { connect: { id: service.id } };
+        updateData.serviceInterest = service.serviceName;
+    } else if (payload.serviceInterest !== undefined) {
+        // Free-text/legacy service edits must not retain a stale canonical FK.
+        updateData.serviceCatalog = { disconnect: true };
+    }
+
     const lead = await prisma.lead.update({
         where: { id },
-        data: payload,
+        data: updateData,
     });
 
     return serializeLead(lead as Lead & Record<string, unknown>);

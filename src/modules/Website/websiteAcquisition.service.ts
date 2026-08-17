@@ -1,10 +1,12 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import { ServiceStatus } from "../../generated/prisma/enums";
-import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { PublicWebsiteService } from "./publicWebsite.service";
+import { bookingFormService } from "../BookingForm/bookingForm.service";
+import { estimateFormService } from "../EstimateForm/estimateForm.service";
+import { allocateLeadRef } from "../Lead/leadRef.service";
 
 export interface PublicWebsiteContactPayload {
   name: string;
@@ -27,18 +29,48 @@ const appendBoundedNote = (existing: string | null, incoming: string) => {
   return combined.slice(combined.length - MAX_LEAD_NOTES);
 };
 
-const generateLeadRef = async (tx: Prisma.TransactionClient): Promise<string> => {
-  // Lead.leadRef is globally unique. Serialize the existing sequential ref
-  // generator so a burst of public enquiries cannot race on the same value.
-  await acquireExtendedTextTransactionAdvisoryLock(tx, "lead-ref-sequence");
-  const rows = await tx.$queryRaw<Array<{ maxNumber: string }>>`
-    SELECT COALESCE(MAX((regexp_match("leadRef", '([0-9]+)$'))[1]::bigint), 0)::text AS "maxNumber"
-    FROM "lead"
-    WHERE "leadRef" ~ '[0-9]+$'
-  `;
-  const lastNumber = Number.parseInt(rows[0]?.maxNumber ?? "0", 10);
-  const nextNumber = Number.isFinite(lastNumber) ? lastNumber + 1 : 1;
-  return `LEAD-${String(nextNumber).padStart(4, "0")}`;
+
+type WebsiteBookingPayload = Parameters<typeof bookingFormService.submitPublicBookingFormById>[2];
+type WebsiteEstimatePayload = Parameters<typeof estimateFormService.submitPublicEstimateFormById>[2];
+
+const submitBooking = async (
+  identifier: string,
+  payload: WebsiteBookingPayload,
+  idempotencyKey?: string,
+) => {
+  const integration = await PublicWebsiteService.resolvePublicBookingIntegration(identifier);
+  const submission = await bookingFormService.submitPublicBookingFormById(
+    integration.formId,
+    integration.adminId,
+    payload,
+    idempotencyKey,
+    integration.websiteId,
+  );
+  return {
+    submission,
+    _websiteId: integration.websiteId,
+    _formId: integration.formId,
+  };
+};
+
+const submitEstimate = async (
+  identifier: string,
+  payload: WebsiteEstimatePayload,
+  idempotencyKey?: string,
+) => {
+  const integration = await PublicWebsiteService.resolvePublicEstimateIntegration(identifier);
+  const submission = await estimateFormService.submitPublicEstimateFormById(
+    integration.formId,
+    integration.adminId,
+    payload,
+    idempotencyKey,
+    integration.websiteId,
+  );
+  return {
+    submission,
+    _websiteId: integration.websiteId,
+    _formId: integration.formId,
+  };
 };
 
 const submitContact = async (identifier: string, payload: PublicWebsiteContactPayload) => {
@@ -61,7 +93,7 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
     // Serialize submissions for the same tenant/email across all app instances.
     // This complements @@unique([email, adminId]) and also protects older rows
     // whose email casing predates normalized public capture.
-    const lockKey = `website-contact:${integration.adminId}:${email}`;
+    const lockKey = `lead-email:${integration.adminId}:${email}`;
     await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
 
     const service = payload.serviceCatalogId
@@ -104,8 +136,17 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
           name,
           email,
           ...(phone ? { phone } : {}),
-          ...(service ? { serviceInterest: service.serviceName } : {}),
+          ...(service ? {
+            serviceInterest: service.serviceName,
+            serviceCatalogId: service.id,
+          } : {}),
           sourceRef: existing.sourceRef || sourceRef,
+          // Preserve an earlier non-website acquisition source. If this lead
+          // had no source yet, keep a stable website FK in addition to the
+          // human-readable sourceRef snapshot.
+          ...(!existing.sourceRef && !existing.sourceWebsiteId
+            ? { sourceWebsiteId: integration.websiteId }
+            : {}),
           notes: appendBoundedNote(existing.notes, note),
         },
         select: { leadRef: true },
@@ -113,7 +154,7 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
       return { accepted: true, leadRef: updated.leadRef, merged: true, _websiteId: integration.websiteId };
     }
 
-    const leadRef = await generateLeadRef(tx);
+    const leadRef = await allocateLeadRef(tx);
     const created = await tx.lead.create({
       data: {
         leadRef,
@@ -125,6 +166,8 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
         estimatedMax: 0,
         notes: note,
         sourceRef,
+        serviceCatalogId: service?.id ?? null,
+        sourceWebsiteId: integration.websiteId,
         adminId: integration.adminId,
       },
       select: { leadRef: true },
@@ -134,4 +177,8 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
   });
 };
 
-export const WebsiteAcquisitionService = { submitContact };
+export const WebsiteAcquisitionService = {
+  submitContact,
+  submitBooking,
+  submitEstimate,
+};

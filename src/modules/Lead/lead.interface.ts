@@ -7,6 +7,7 @@ export interface CreateLeadPayload {
     estimatedMax?: number;
     notes?: string;
     sourceRef?: string;
+    serviceCatalogId?: string;
 }
 
 export interface UpdateLeadPayload {
@@ -18,4 +19,5 @@ export interface UpdateLeadPayload {
     estimatedMax?: number;
     notes?: string;
     sourceRef?: string;
+    serviceCatalogId?: string;
 }

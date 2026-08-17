@@ -26,6 +26,6 @@ describe("public website projection cache", () => {
   it("invalidates the tenant website cache after CRM mutations", async () => {
     prismaMock.businessWebsite.findUnique.mockResolvedValue({ id: "website-1" });
     await WebsiteProjectionCacheService.invalidateAdminWebsite("admin-1");
-    expect(redisMock.del).toHaveBeenCalledWith("site-projection:website-1");
+    expect(redisMock.del).toHaveBeenCalledWith("site-projection:v3:website-1");
   });
 });

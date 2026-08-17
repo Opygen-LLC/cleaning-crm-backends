@@ -84,18 +84,17 @@ const getPublicWebsiteBookingSlots = catchAsync(async (req, res) => {
 });
 
 const submitPublicWebsiteBooking = catchAsync(async (req, res) => {
-  const integration = await PublicWebsiteService.resolvePublicBookingIntegration(paramStr(req.params.identifier));
-  const data = await bookingFormService.submitPublicBookingFormById(
-    integration.formId,
-    integration.adminId,
+  const result = await WebsiteAcquisitionService.submitBooking(
+    paramStr(req.params.identifier),
     req.body,
     req.get("Idempotency-Key") ?? undefined,
   );
+  const data = result.submission;
   void WebsiteAnalyticsService.trackConversion(
-    integration.websiteId,
+    result._websiteId,
     WEBSITE_ANALYTICS_EVENT.BOOKING_REQUEST,
     "/book",
-    { formId: integration.formId },
+    { formId: result._formId, submissionRef: data.ref },
   ).catch(() => {});
   res.setHeader("Cache-Control", "no-store");
   return sendResponse(res, {
@@ -125,18 +124,17 @@ const calculatePublicWebsiteEstimate = catchAsync(async (req, res) => {
 });
 
 const submitPublicWebsiteEstimate = catchAsync(async (req, res) => {
-  const integration = await PublicWebsiteService.resolvePublicEstimateIntegration(paramStr(req.params.identifier));
-  const data = await estimateFormService.submitPublicEstimateFormById(
-    integration.formId,
-    integration.adminId,
+  const result = await WebsiteAcquisitionService.submitEstimate(
+    paramStr(req.params.identifier),
     req.body,
     req.get("Idempotency-Key") ?? undefined,
   );
+  const data = result.submission;
   void WebsiteAnalyticsService.trackConversion(
-    integration.websiteId,
+    result._websiteId,
     WEBSITE_ANALYTICS_EVENT.ESTIMATE_REQUEST,
     "/estimate",
-    { formId: integration.formId },
+    { formId: result._formId, submissionRef: data.ref },
   ).catch(() => {});
   res.setHeader("Cache-Control", "no-store");
   return sendResponse(res, {
@@ -155,7 +153,7 @@ const submitPublicWebsiteContact = catchAsync(async (req, res) => {
       _websiteId,
       WEBSITE_ANALYTICS_EVENT.CONTACT_SUBMITTED,
       "/contact",
-      { merged: data.merged },
+      { merged: data.merged, leadRef: data.leadRef },
     ).catch(() => {});
   }
   res.setHeader("Cache-Control", "no-store");

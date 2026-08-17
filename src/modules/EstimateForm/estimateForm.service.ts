@@ -659,19 +659,17 @@ const getSubmissions = async (
         if (!form) throw new AppError(status.NOT_FOUND, "Estimate form not found");
     }
 
-    // Get all formIds for this admin to scope the query
-    const adminFormIds = formId
-        ? [formId]
-        : (await prisma.estimateForm.findMany({
-            where:  { adminId },
-            select: { id: true },
-        })).map((f) => f.id);
-
     return new QueryBuilder(prisma.estimateFormSubmission, queryParams, {
         searchableFields: ["ref", "name", "email", "phone"],
         filterableFields: ["status", "serviceType", "serviceCatalogId"],
     })
-        .where({ formId: { in: adminFormIds } })
+        // Scope through the owning form directly. This avoids fetching every
+        // tenant form id before the submissions query and keeps isolation in
+        // the database predicate.
+        .where({
+            ...(formId ? { formId } : {}),
+            form: { adminId },
+        } as Prisma.EstimateFormSubmissionWhereInput)
         .search()
         .filter()
         .sort()
@@ -752,7 +750,7 @@ const publicFormSelect = {
 
 type PublicEstimateFormLocator =
     | { kind: "slug"; slug: string }
-    | { kind: "id"; id: string; adminId: string };
+    | { kind: "id"; id: string; adminId: string; sourceWebsiteId?: string };
 
 const loadPublishedPublicForm = async (locator: PublicEstimateFormLocator) => {
     const form = await prisma.estimateForm.findFirst({
@@ -1003,6 +1001,7 @@ const submitPublicEstimateFormFor = async (
                 priceSnapshot: canonicalService.priceSnapshot,
                 durationSnapshot: canonicalService.durationSnapshot,
                 idempotencyKey: idempotencyKey ?? null,
+                sourceWebsiteId: locator.kind === "id" ? locator.sourceWebsiteId ?? null : null,
                 bedrooms: payload.bedrooms, bathrooms: payload.bathrooms, addOnIds: requestedIds,
                 postcode: payload.postcode.trim(), city: payload.city?.trim() || undefined,
                 name: contact.name, email: contact.email, phone: contact.phone,
@@ -1049,7 +1048,8 @@ const submitPublicEstimateFormById = async (
         answers?: Record<string, string>;
     },
     idempotencyKey?: string,
-) => submitPublicEstimateFormFor({ kind: "id", id, adminId }, payload, idempotencyKey);
+    sourceWebsiteId?: string,
+) => submitPublicEstimateFormFor({ kind: "id", id, adminId, sourceWebsiteId }, payload, idempotencyKey);
 
 // ─── Export ───────────────────────────────────────────────────────────────────
 

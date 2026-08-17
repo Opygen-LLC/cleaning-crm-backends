@@ -605,6 +605,9 @@ type PublicBookingFormSelector = {
     slug?: string;
     formId?: string;
     adminId?: string;
+    // Internal acquisition attribution. Never populated from public request
+    // bodies; Website routes obtain it from the resolved BusinessWebsite.
+    sourceWebsiteId?: string;
 };
 
 const publicBookingFormWhere = (selector: PublicBookingFormSelector) => {
@@ -953,6 +956,7 @@ const submitPublicBookingFormBySelector = async (
                 priceSnapshot: canonicalService.priceSnapshot,
                 durationSnapshot: canonicalService.durationSnapshot,
                 idempotencyKey: idempotencyKey ?? null,
+                sourceWebsiteId: selector.sourceWebsiteId ?? null,
                 date: dateStart,
                 timeSlot: payload.timeSlot,
                 name: payload.name,
@@ -989,7 +993,8 @@ const submitPublicBookingFormById = (
     adminId: string,
     payload: IPublicBookingSubmission,
     idempotencyKey?: string,
-) => submitPublicBookingFormBySelector({ formId, adminId }, payload, idempotencyKey);
+    sourceWebsiteId?: string,
+) => submitPublicBookingFormBySelector({ formId, adminId, sourceWebsiteId }, payload, idempotencyKey);
 
 // ─── Export ───────────────────────────────────────────────────────────────────
 

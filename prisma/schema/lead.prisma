@@ -10,15 +10,25 @@ model Lead {
     stage           LeadStage @default(NEW)
     notes           String?
     sourceRef       String?
+    // Canonical service identity for CRM acquisition. serviceInterest remains
+    // a display snapshot/legacy compatibility field.
+    serviceCatalogId String?
+    // Stable website attribution survives subdomain/domain renames. Legacy
+    // sourceRef remains for human-readable/history compatibility.
+    sourceWebsiteId  String?
 
     adminId String
-    admin   AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+    admin          AdminProfile      @relation(fields: [adminId], references: [id], onDelete: Cascade)
+    serviceCatalog ServiceCatalog?   @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
+    sourceWebsite  BusinessWebsite?  @relation("WebsiteAcquisitionLead", fields: [sourceWebsiteId], references: [id], onDelete: SetNull)
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
     @@unique([email, adminId])
     @@index([adminId])
+    @@index([adminId, serviceCatalogId])
+    @@index([sourceWebsiteId, createdAt])
     @@index([stage])
     @@map("lead")
 }

@@ -82,7 +82,9 @@ const loadProjectionSource = async (websiteId: string) => {
             take: 200,
           },
           reviews: {
-            where: { isPublished: true, staffId: null },
+            // A website testimonial must satisfy both moderation fields. This
+            // fails closed if historical/manual rows ever drift out of sync.
+            where: { isPublished: true, status: "published", staffId: null },
             select: {
               id: true,
               clientName: true,
@@ -130,6 +132,7 @@ const loadProjectionSource = async (websiteId: string) => {
     where: {
       adminId: website.adminId,
       isPublished: true,
+      status: "published",
       staffId: null,
     },
     _avg: { rating: true },

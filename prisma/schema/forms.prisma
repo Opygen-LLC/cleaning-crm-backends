@@ -77,6 +77,9 @@ model BookingFormSubmission {
   idempotencyKey      String?
   convertedBookingId  String?              @unique
   convertedAt         DateTime?
+  // Stable source attribution for submissions created through a BusinessWebsite.
+  // Legacy/direct public form links leave this null.
+  sourceWebsiteId     String?
   date                DateTime
   timeSlot    String
   name        String
@@ -90,9 +93,11 @@ model BookingFormSubmission {
   form        BookingForm          @relation(fields: [formId], references: [id], onDelete: Cascade)
   serviceCatalog ServiceCatalog?   @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
   convertedBooking Booking?         @relation("BookingFormSubmissionConversion", fields: [convertedBookingId], references: [id], onDelete: SetNull)
+  sourceWebsite BusinessWebsite?    @relation("WebsiteAcquisitionBookingSubmission", fields: [sourceWebsiteId], references: [id], onDelete: SetNull)
 
   @@index([formId, status])
   @@index([serviceCatalogId])
+  @@index([sourceWebsiteId, createdAt])
   @@unique([formId, idempotencyKey])
   @@map("booking_form_submission")
 }
@@ -181,6 +186,8 @@ model EstimateFormSubmission {
   priceSnapshot       Decimal?                 @db.Decimal(10, 2)
   durationSnapshot    String?
   idempotencyKey      String?
+  // Stable source attribution for submissions created through a BusinessWebsite.
+  sourceWebsiteId     String?
   bedrooms            Int
   bathrooms   Int
   addOnIds    String[]
@@ -198,9 +205,11 @@ model EstimateFormSubmission {
   createdAt   DateTime                 @default(now())
   form        EstimateForm             @relation(fields: [formId], references: [id], onDelete: Cascade)
   serviceCatalog ServiceCatalog?       @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
+  sourceWebsite BusinessWebsite?        @relation("WebsiteAcquisitionEstimateSubmission", fields: [sourceWebsiteId], references: [id], onDelete: SetNull)
 
   @@index([formId, status])
   @@index([serviceCatalogId])
+  @@index([sourceWebsiteId, createdAt])
   @@unique([formId, idempotencyKey])
   @@map("estimate_form_submission")
 }
