@@ -17,8 +17,12 @@ import { WebsiteService } from "./website.service";
 const getStudio = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
 
-  const [website, bookingForms, estimateForms] = await Promise.all([
+  const [website, business, bookingForms, estimateForms] = await Promise.all([
     WebsiteService.getWebsiteForAdmin(adminId),
+    prisma.adminProfile.findUnique({
+      where: { id: adminId },
+      select: { businessName: true },
+    }),
     prisma.bookingForm.findMany({
       where: { adminId },
       select: { id: true, slug: true, published: true, headline: true },
@@ -35,6 +39,9 @@ const getStudio = async (user: IRequestUser) => {
 
   return {
     website,
+    business: {
+      name: business?.businessName?.trim() || "Your cleaning business",
+    },
     templates: TemplateRegistry.list(),
     bookingForms,
     estimateForms,
