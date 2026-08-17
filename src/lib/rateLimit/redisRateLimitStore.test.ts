@@ -22,7 +22,12 @@ describe("RedisRateLimitStore", () => {
     const result = await store.increment("203.0.113.10");
 
     expect(result.totalHits).toBe(3);
-    expect(result.resetTime.getTime()).toBeGreaterThan(Date.now());
+    const resetTime = result.resetTime;
+    expect(resetTime).toBeInstanceOf(Date);
+    if (!resetTime) {
+      throw new Error("RedisRateLimitStore.increment() did not return resetTime");
+    }
+    expect(resetTime.getTime()).toBeGreaterThan(Date.now());
     const evalArgs = redisMock.eval.mock.calls[0] ?? [];
     expect(String(evalArgs[2])).not.toContain("203.0.113.10");
   });
