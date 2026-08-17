@@ -1,6 +1,5 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
-import { WEBSITE_BASE_DOMAIN, WEBSITE_CUSTOM_DOMAINS_ENABLED } from "../../config/ENV";
 import { prisma } from "../../lib/prisma/prisma";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
@@ -11,6 +10,7 @@ import { buildPublishedSnapshot, parsePublishedSnapshot, selectPublishedIntegrat
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
+import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 
 interface ResolvedWebsite {
   websiteId: string;
@@ -201,17 +201,12 @@ const projectWebsite = (
   const template = TemplateRegistry.get(config.templateId, config.templateVersion);
   if (!template) throw new AppError(status.SERVICE_UNAVAILABLE, "Website template version is unavailable");
 
-  // Only an explicitly selected verified custom domain becomes canonical.
-  // Merely connecting/verifying an additional hostname must not change SEO or
-  // redirect behavior until the owner intentionally makes it primary.
-  const primaryDomain = WEBSITE_CUSTOM_DOMAINS_ENABLED
-    ? website.domains.find((domain) => domain.isPrimary)?.domain ?? null
-    : null;
-  const canonicalUrl = primaryDomain
-    ? `https://${primaryDomain}`
-    : WEBSITE_BASE_DOMAIN
-      ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}`
-      : null;
+  // Canonical SEO and canonical routing share the exact same primary-domain
+  // decision. Phase 17 guarantees that isPrimary is only retained on a
+  // routing-ready custom domain (and automatically promotes the first healthy
+  // domain), while additional healthy domains remain aliases.
+  const primaryDomain = website.domains.find((domain) => domain.isPrimary)?.domain ?? null;
+  const canonicalUrl = getCanonicalWebsiteOrigin(website.subdomain, primaryDomain);
 
   const defaultSeo = buildDefaultWebsiteSeo({
     businessName: website.admin.businessName,

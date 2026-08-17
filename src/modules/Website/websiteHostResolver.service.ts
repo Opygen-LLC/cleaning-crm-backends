@@ -13,8 +13,9 @@ import redis from "../../config/redis";
 import { prisma } from "../../lib/prisma/prisma";
 import { normalizeSubdomain } from "./websiteIdentity";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
+import { getCanonicalWebsiteHost } from "./websiteCanonicalHost";
 
-const ROUTE_CACHE_VERSION = 6 as const;
+const ROUTE_CACHE_VERSION = 7 as const;
 const CACHE_NAMESPACE = `site-route:v${ROUTE_CACHE_VERSION}`;
 const SUBDOMAIN_KEY_PREFIX = `${CACHE_NAMESPACE}:subdomain:`;
 const HOST_KEY_PREFIX = `${CACHE_NAMESPACE}:host:`;
@@ -278,10 +279,7 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
   }
 
   const primaryCustomHost = WEBSITE_CUSTOM_DOMAINS_ENABLED ? domain.website.domains[0]?.domain ?? null : null;
-  const platformHost = WEBSITE_BASE_DOMAIN
-    ? `${domain.website.subdomain}.${WEBSITE_BASE_DOMAIN}`
-    : null;
-  const canonicalHost = primaryCustomHost ?? platformHost ?? domain.domain;
+  const canonicalHost = getCanonicalWebsiteHost(domain.website.subdomain, primaryCustomHost) ?? domain.domain;
   const shouldRedirect = canonicalHost !== host;
 
   return {
@@ -327,8 +325,13 @@ const resolveHost = async (input: string): Promise<WebsiteHostResolution> => {
     let resolved: WebsiteHostResolution;
     if (platformSubdomain) {
       const route = await resolveSubdomain(platformSubdomain);
-      const canonicalHost = route.primaryCustomHost
-        ?? `${route.canonicalSubdomain}.${WEBSITE_BASE_DOMAIN}`;
+      const canonicalHost = getCanonicalWebsiteHost(
+        route.canonicalSubdomain,
+        route.primaryCustomHost,
+      );
+      if (!canonicalHost) {
+        throw new AppError(status.NOT_FOUND, "Website host not found");
+      }
       const shouldRedirect = canonicalHost !== host;
       resolved = {
         ...route,

@@ -122,13 +122,29 @@ describe("production tenant host routing", () => {
     expect(result.canonicalHost).toBe("www.example.com");
   });
 
+  it("falls back to the free subdomain when no routing-ready primary custom domain is returned", async () => {
+    prismaMock.businessWebsite.findUnique.mockResolvedValue({
+      id: "website-1",
+      subdomain: "bio-cleaning",
+      status: "PUBLISHED",
+      admin: { user: { status: "ACTIVE" } },
+      domains: [],
+    });
+
+    const result = await WebsiteHostResolverService.resolveHost("bio-cleaning.sites.example.com");
+
+    expect(result.redirectCode).toBeNull();
+    expect(result.canonicalHost).toBe("bio-cleaning.sites.example.com");
+    expect(result.primaryCustomHost).toBeNull();
+  });
+
   it("caches unknown wildcard hosts briefly so repeated probes do not hit Postgres", async () => {
     await expect(WebsiteHostResolverService.resolveHost("missing.sites.example.com")).rejects.toMatchObject({
       statusCode: 404,
     });
 
     expect(redisMock.set).toHaveBeenCalledWith(
-      expect.stringContaining("site-route:v6:host:missing.sites.example.com"),
+      expect.stringContaining("site-route:v7:host:missing.sites.example.com"),
       expect.stringContaining('"notFound":true'),
       "EX",
       10,
@@ -137,7 +153,7 @@ describe("production tenant host routing", () => {
 
   it("serves a cached host route without querying the database", async () => {
     redisMock.get.mockResolvedValue(JSON.stringify({
-      version: 6,
+      version: 7,
       websiteId: "website-1",
       requestedSubdomain: "sparkle",
       canonicalSubdomain: "sparkle",
@@ -187,7 +203,7 @@ describe("production tenant host routing", () => {
     redisMock.get.mockImplementation(async (key: string) => {
       if (key.includes("sparkle.sites.example.com")) {
         return JSON.stringify({
-          version: 6,
+          version: 7,
           websiteId: "website-a",
           requestedSubdomain: "sparkle",
           canonicalSubdomain: "sparkle",
