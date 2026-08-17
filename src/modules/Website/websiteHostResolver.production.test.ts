@@ -9,13 +9,14 @@ const { redisMock, prismaMock } = vi.hoisted(() => ({
   prismaMock: {
     businessWebsite: { findUnique: vi.fn() },
     websiteSubdomainAlias: { findUnique: vi.fn() },
-    websiteDomain: { findUnique: vi.fn() },
+    websiteDomain: { findFirst: vi.fn() },
   },
 }));
 
 vi.mock("../../config/redis", () => ({ default: redisMock }));
 vi.mock("../../config/ENV", () => ({
   WEBSITE_BASE_DOMAIN: "sites.example.com",
+  WEBSITE_CUSTOM_DOMAINS_ENABLED: true,
   WEBSITE_ROUTE_CACHE_TTL_SECONDS: 300,
   WEBSITE_ROUTE_NEGATIVE_CACHE_TTL_SECONDS: 10,
   WEBSITE_ROUTE_CACHE_JITTER_RATIO: 0,
@@ -31,7 +32,7 @@ beforeEach(() => {
   redisMock.del.mockResolvedValue(1);
   prismaMock.businessWebsite.findUnique.mockResolvedValue(null);
   prismaMock.websiteSubdomainAlias.findUnique.mockResolvedValue(null);
-  prismaMock.websiteDomain.findUnique.mockResolvedValue(null);
+  prismaMock.websiteDomain.findFirst.mockResolvedValue(null);
 });
 
 describe("production tenant host routing", () => {
@@ -67,7 +68,7 @@ describe("production tenant host routing", () => {
   });
 
   it("redirects a non-primary verified custom domain to the selected canonical custom host", async () => {
-    prismaMock.websiteDomain.findUnique.mockResolvedValue({
+    prismaMock.websiteDomain.findFirst.mockResolvedValue({
       websiteId: "website-1",
       domain: "old.example.com",
       status: "VERIFIED",
@@ -86,7 +87,7 @@ describe("production tenant host routing", () => {
   });
 
   it("fails closed for an unverified/unknown custom host", async () => {
-    prismaMock.websiteDomain.findUnique.mockResolvedValue({
+    prismaMock.websiteDomain.findFirst.mockResolvedValue({
       websiteId: "website-1",
       domain: "unverified.example.com",
       status: "PENDING",
@@ -118,7 +119,7 @@ describe("production tenant host routing", () => {
     });
 
     expect(redisMock.set).toHaveBeenCalledWith(
-      expect.stringContaining("site-route:v4:host:missing.sites.example.com"),
+      expect.stringContaining("site-route:v5:host:missing.sites.example.com"),
       expect.stringContaining('"notFound":true'),
       "EX",
       10,
@@ -127,7 +128,7 @@ describe("production tenant host routing", () => {
 
   it("serves a cached host route without querying the database", async () => {
     redisMock.get.mockResolvedValue(JSON.stringify({
-      version: 4,
+      version: 5,
       websiteId: "website-1",
       requestedSubdomain: "sparkle",
       canonicalSubdomain: "sparkle",
@@ -144,7 +145,7 @@ describe("production tenant host routing", () => {
     expect(result.websiteId).toBe("website-1");
     expect(prismaMock.businessWebsite.findUnique).not.toHaveBeenCalled();
     expect(prismaMock.websiteSubdomainAlias.findUnique).not.toHaveBeenCalled();
-    expect(prismaMock.websiteDomain.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.websiteDomain.findFirst).not.toHaveBeenCalled();
   });
 
 });

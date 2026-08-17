@@ -119,6 +119,17 @@ export const WEBSITE_ROUTE_CACHE_JITTER_RATIO: number = Math.min(0.4, Math.max(0
 // hostname on the frontend Vercel project and lets Vercel manage certificates.
 // `manual` keeps DNS verification in-app but assumes TLS/routing is managed by
 // external infrastructure. Never infer a Vercel project from the runtime.
+export const WEBSITE_CUSTOM_DOMAINS_ENABLED: boolean =
+    process.env.WEBSITE_CUSTOM_DOMAINS_ENABLED?.trim().toLowerCase() === "true";
+export const WEBSITE_CUSTOM_DOMAIN_LIMIT_PER_SITE: number = Math.min(25, Math.max(1,
+    Number(process.env.WEBSITE_CUSTOM_DOMAIN_LIMIT_PER_SITE) || 10,
+));
+export const WEBSITE_DOMAIN_VERIFY_LOCK_SECONDS: number = Math.min(180, Math.max(30,
+    Number(process.env.WEBSITE_DOMAIN_VERIFY_LOCK_SECONDS) || 90,
+));
+export const WEBSITE_TLS_PROBE_TIMEOUT_MS: number = Math.min(10_000, Math.max(1_000,
+    Number(process.env.WEBSITE_TLS_PROBE_TIMEOUT_MS) || 4_000,
+));
 export const WEBSITE_DOMAIN_PROVIDER: "vercel" | "manual" =
     process.env.WEBSITE_DOMAIN_PROVIDER?.trim().toLowerCase() === "vercel"
         ? "vercel"

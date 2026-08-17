@@ -4,6 +4,7 @@ import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import {
   WEBSITE_BASE_DOMAIN,
+  WEBSITE_CUSTOM_DOMAINS_ENABLED,
   WEBSITE_ROUTE_CACHE_JITTER_RATIO,
   WEBSITE_ROUTE_CACHE_TTL_SECONDS,
   WEBSITE_ROUTE_NEGATIVE_CACHE_TTL_SECONDS,
@@ -11,8 +12,9 @@ import {
 import redis from "../../config/redis";
 import { prisma } from "../../lib/prisma/prisma";
 import { normalizeSubdomain } from "./websiteIdentity";
+import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 
-const ROUTE_CACHE_VERSION = 4 as const;
+const ROUTE_CACHE_VERSION = 5 as const;
 const CACHE_NAMESPACE = `site-route:v${ROUTE_CACHE_VERSION}`;
 const SUBDOMAIN_KEY_PREFIX = `${CACHE_NAMESPACE}:subdomain:`;
 const HOST_KEY_PREFIX = `${CACHE_NAMESPACE}:host:`;
@@ -169,7 +171,7 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
       id: true,
       subdomain: true,
       domains: {
-        where: { status: "VERIFIED" as any, isPrimary: true },
+        where: { ...readyWebsiteDomainWhere, isPrimary: true } as any,
         select: { domain: true },
         orderBy: { createdAt: "asc" },
         take: 1,
@@ -184,7 +186,7 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
       canonicalSubdomain: website.subdomain,
       isAlias: false,
       redirectCode: null,
-      primaryCustomHost: website.domains[0]?.domain ?? null,
+      primaryCustomHost: WEBSITE_CUSTOM_DOMAINS_ENABLED ? website.domains[0]?.domain ?? null : null,
     };
     await safeSet(key, resolved);
     return resolved;
@@ -199,7 +201,7 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
         select: {
           subdomain: true,
           domains: {
-            where: { status: "VERIFIED" as any, isPrimary: true },
+            where: { ...readyWebsiteDomainWhere, isPrimary: true } as any,
             select: { domain: true },
             orderBy: { createdAt: "asc" },
             take: 1,
@@ -223,15 +225,18 @@ const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> 
     // Fail closed to 308 even if an older row was manually created with a
     // different code.
     redirectCode: 308,
-    primaryCustomHost: alias.website.domains[0]?.domain ?? null,
+    primaryCustomHost: WEBSITE_CUSTOM_DOMAINS_ENABLED ? alias.website.domains[0]?.domain ?? null : null,
   };
   await safeSet(key, resolved);
   return resolved;
 };
 
 const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> => {
-  const domain = await prisma.websiteDomain.findUnique({
-    where: { domain: host },
+  if (!WEBSITE_CUSTOM_DOMAINS_ENABLED) {
+    throw new AppError(status.NOT_FOUND, "Website host not found");
+  }
+  const domain = await prisma.websiteDomain.findFirst({
+    where: { domain: host, ...readyWebsiteDomainWhere } as any,
     select: {
       websiteId: true,
       domain: true,
@@ -240,7 +245,7 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
         select: {
           subdomain: true,
           domains: {
-            where: { status: "VERIFIED" as any, isPrimary: true },
+            where: { ...readyWebsiteDomainWhere, isPrimary: true } as any,
             select: { domain: true },
             orderBy: { createdAt: "asc" },
             take: 1,
@@ -250,11 +255,11 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
     },
   });
 
-  if (!domain || domain.status !== "VERIFIED") {
+  if (!domain) {
     throw new AppError(status.NOT_FOUND, "Website host not found");
   }
 
-  const primaryCustomHost = domain.website.domains[0]?.domain ?? null;
+  const primaryCustomHost = WEBSITE_CUSTOM_DOMAINS_ENABLED ? domain.website.domains[0]?.domain ?? null : null;
   const platformHost = WEBSITE_BASE_DOMAIN
     ? `${domain.website.subdomain}.${WEBSITE_BASE_DOMAIN}`
     : null;

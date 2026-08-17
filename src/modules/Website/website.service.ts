@@ -1,6 +1,6 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
-import { WEBSITE_BASE_DOMAIN } from "../../config/ENV";
+import { WEBSITE_BASE_DOMAIN, WEBSITE_CUSTOM_DOMAINS_ENABLED } from "../../config/ENV";
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
@@ -19,6 +19,7 @@ import { WebsiteProvisioningService } from "./websiteProvisioning.service";
 import { buildPublishedSnapshot } from "./websiteSnapshot";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
+import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
 
 const getWebsiteOrThrow = async (adminId: string, db: any = prisma) => {
   const website = await db.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
@@ -101,7 +102,9 @@ const loadWebsiteDetailsWhere = async (where: { id: string } | { adminId: string
   const draftRevisionNumber = latest._max.revisionNumber ?? 0;
   const { publishedSnapshot: _publishedSnapshot, ...safeWebsite } = website;
   const platformUrl = WEBSITE_BASE_DOMAIN ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}` : null;
-  const primaryDomain = website.domains.find((domain: any) => domain.isPrimary && domain.status === "VERIFIED")?.domain ?? null;
+  const primaryDomain = WEBSITE_CUSTOM_DOMAINS_ENABLED
+    ? website.domains.find((domain: any) => domain.isPrimary && isWebsiteDomainRoutingReady(domain))?.domain ?? null
+    : null;
   return {
     ...safeWebsite,
     platformUrl,

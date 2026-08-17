@@ -1,6 +1,6 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
-import { WEBSITE_BASE_DOMAIN } from "../../config/ENV";
+import { WEBSITE_BASE_DOMAIN, WEBSITE_CUSTOM_DOMAINS_ENABLED } from "../../config/ENV";
 import { prisma } from "../../lib/prisma/prisma";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
@@ -9,6 +9,7 @@ import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { TemplateRegistry } from "./templateRegistry";
 import { buildPublishedSnapshot, parsePublishedSnapshot } from "./websiteSnapshot";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
+import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 
 interface ResolvedWebsite {
   websiteId: string;
@@ -112,7 +113,7 @@ const loadProjectionSource = async (websiteId: string) => {
       },
       pages: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
       domains: {
-        where: { status: "VERIFIED" as any },
+        where: readyWebsiteDomainWhere as any,
         select: { domain: true, isPrimary: true },
         orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
       },
@@ -189,7 +190,9 @@ const projectWebsite = (
   // Only an explicitly selected verified custom domain becomes canonical.
   // Merely connecting/verifying an additional hostname must not change SEO or
   // redirect behavior until the owner intentionally makes it primary.
-  const primaryDomain = website.domains.find((domain) => domain.isPrimary)?.domain ?? null;
+  const primaryDomain = WEBSITE_CUSTOM_DOMAINS_ENABLED
+    ? website.domains.find((domain) => domain.isPrimary)?.domain ?? null
+    : null;
   const canonicalUrl = primaryDomain
     ? `https://${primaryDomain}`
     : WEBSITE_BASE_DOMAIN

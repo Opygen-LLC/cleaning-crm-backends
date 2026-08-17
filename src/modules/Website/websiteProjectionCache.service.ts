@@ -1,8 +1,8 @@
 import redis from "../../config/redis";
 import { prisma } from "../../lib/prisma/prisma";
 
-const CACHE_VERSION = 1 as const;
-const KEY_PREFIX = "site-projection:";
+const CACHE_VERSION = 2 as const;
+const KEY_PREFIX = `site-projection:v${CACHE_VERSION}:`;
 const DEFAULT_TTL_SECONDS = Math.max(
   30,
   Number(process.env.WEBSITE_PROJECTION_CACHE_TTL_SECONDS) || 120,

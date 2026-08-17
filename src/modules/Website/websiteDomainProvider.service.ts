@@ -7,6 +7,7 @@ import {
   VERCEL_TEAM_ID,
   WEBSITE_CNAME_TARGET,
   WEBSITE_DOMAIN_PROVIDER,
+  WEBSITE_TLS_PROBE_TIMEOUT_MS,
 } from "../../config/ENV";
 
 export type WebsiteProviderName = "VERCEL" | "MANUAL";
@@ -111,6 +112,19 @@ const assertVercelConfig = () => {
   }
 };
 
+const assertConfigured = () => {
+  if (WEBSITE_DOMAIN_PROVIDER === "vercel") {
+    assertVercelConfig();
+    return;
+  }
+  if (!WEBSITE_CNAME_TARGET) {
+    throw new AppError(
+      status.SERVICE_UNAVAILABLE,
+      "Manual custom-domain hosting requires WEBSITE_CNAME_TARGET before domains can be connected.",
+    );
+  }
+};
+
 const vercelRequest = async <T>(path: string, init: RequestInit = {}, allow404 = false): Promise<T | null> => {
   assertVercelConfig();
   const controller = new AbortController();
@@ -161,7 +175,7 @@ const getVercelProjectDomain = async (domain: string): Promise<any | null> =>
 const addVercelProjectDomain = async (domain: string): Promise<any> => {
   assertVercelConfig();
   return vercelRequest<any>(
-    `/v10/projects/${encodeURIComponent(VERCEL_PROJECT_ID as string)}/domains${vercelQuery()}`,
+    `/v9/projects/${encodeURIComponent(VERCEL_PROJECT_ID as string)}/domains${vercelQuery()}`,
     { method: "POST", body: JSON.stringify({ name: domain }) },
   );
 };
@@ -213,6 +227,28 @@ const normalizeVercelChallenge = (challenge: any): ProviderDnsRecord | null => {
   return { type: "TXT", host, value, purpose: "provider_verification" };
 };
 
+const probeManagedHttps = async (domain: string): Promise<boolean> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), WEBSITE_TLS_PROBE_TIMEOUT_MS);
+  try {
+    // This probe is only called after Vercel reports `misconfigured === false`,
+    // so DNS already points at the provider. Any HTTP response proves that the
+    // TLS handshake/certificate for this hostname is valid; the application
+    // may legitimately answer 404 while the DB row is still pending.
+    await fetch(`https://${domain}/__cleancrm_tls_probe__`, {
+      method: "HEAD",
+      redirect: "manual",
+      signal: controller.signal,
+      headers: { "User-Agent": "CleaningCRM-DomainVerifier/1.0" },
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 const inspectVercel = async (domain: string, verify = false): Promise<WebsiteDomainProviderState> => {
   let projectDomain = await getVercelProjectDomain(domain);
   if (!projectDomain) {
@@ -246,15 +282,16 @@ const inspectVercel = async (domain: string, verify = false): Promise<WebsiteDom
 
   const verified = Boolean(projectDomain.verified);
   const routingConfigured = config?.misconfigured === false;
+  const tlsReady = verified && routingConfigured ? await probeManagedHttps(domain) : false;
   return {
     provider: "VERCEL",
     attached: true,
     verified,
     routingConfigured,
-    // Vercel automatically manages certificates for project domains once
-    // ownership and routing are valid. READY therefore means the project
-    // domain is both verified and no longer reported as misconfigured.
-    tlsStatus: verified && routingConfigured ? "READY" : "PROVISIONING",
+    // Vercel provisions certificates automatically, but provider verification
+    // and DNS correctness can become true before the certificate is actually
+    // usable. Confirm a real HTTPS handshake before exposing the hostname.
+    tlsStatus: tlsReady ? "READY" : "PROVISIONING",
     dnsRecords,
     message: routingConfigured ? null : "DNS routing is not configured yet",
     providerData: {
@@ -262,6 +299,8 @@ const inspectVercel = async (domain: string, verify = false): Promise<WebsiteDom
       misconfigured: config?.misconfigured ?? null,
       configuredBy: config?.configuredBy ?? null,
       nameservers: Array.isArray(config?.nameservers) ? config.nameservers : [],
+      tlsProbeOk: tlsReady,
+      tlsProbeAt: verified && routingConfigured ? new Date().toISOString() : null,
     },
   };
 };
@@ -293,6 +332,7 @@ const describeProviderError = (error: unknown): string => {
 };
 
 export const WebsiteDomainProviderService = {
+  assertConfigured,
   attach,
   verify,
   detach,

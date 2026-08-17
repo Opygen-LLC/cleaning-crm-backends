@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma/prisma";
+import { WEBSITE_CUSTOM_DOMAINS_ENABLED } from "../../config/ENV";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { TemplateRegistry } from "./templateRegistry";
@@ -37,6 +38,9 @@ const getStudio = async (user: IRequestUser) => {
     templates: TemplateRegistry.list(),
     bookingForms,
     estimateForms,
+    features: {
+      customDomainsEnabled: WEBSITE_CUSTOM_DOMAINS_ENABLED,
+    },
   };
 };
 
