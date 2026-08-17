@@ -13,7 +13,7 @@ const register = catchAsync(async (req, res) => {
     sendResponse(res, {
         httpStatusCode: httpStatus.CREATED,
         success: true,
-        message: "User Created Successful",
+        message: "Account and website created successfully",
         data: result,
     });
 });

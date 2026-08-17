@@ -32,7 +32,7 @@ const getMyLeaves = catchAsync(async (req, res) => {
 /** DELETE /api/v1/staff/leave/:id  — staff cancels a pending leave */
 const cancelLeave = catchAsync(async (req, res) => {
     const result = await staffLeaveService.cancelLeave(
-        req.user.id,
+        req.user,
         req.params.id as string,
     );
 
@@ -53,7 +53,7 @@ const getStaffLeaves = catchAsync(async (req, res) => {
         staffId: req.query.staffId as string | undefined,
     };
 
-    const result = await staffLeaveService.getStaffLeaves(req.user.id, query);
+    const result = await staffLeaveService.getStaffLeaves(req.user, query);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -66,7 +66,7 @@ const getStaffLeaves = catchAsync(async (req, res) => {
 /** PATCH /api/v1/staff/leave/:id/review  — admin approves or declines */
 const reviewLeave = catchAsync(async (req, res) => {
     const result = await staffLeaveService.reviewLeave(
-        req.user.id,
+        req.user,
         req.params.id as string,
         req.body,
     );

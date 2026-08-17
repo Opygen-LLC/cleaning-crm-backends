@@ -23,6 +23,7 @@ declare global {
             authRuntime?: {
                 userStatus?: string | null;
                 adminId?: string | null;
+                subscriptionFeatures?: import("../lib/utils/subscriptionPlanFeatures").SubscriptionPlanFeature[] | null;
             };
             // Set by checkPortalAuth.ts (resolvePortalClient /
             // checkAuthOrPortalClient) when the request is authenticated via

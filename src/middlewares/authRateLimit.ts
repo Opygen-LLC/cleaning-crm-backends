@@ -12,6 +12,12 @@ const baseOptions = {
     skipSuccessfulRequests: false,
 };
 
+export const registrationRateLimit = rateLimit({
+    ...baseOptions,
+    limit: 5,
+    message: jsonHandler("Too many account creation attempts. Please wait 15 minutes and try again."),
+});
+
 export const loginRateLimit = rateLimit({
     ...baseOptions,
     limit: 10,

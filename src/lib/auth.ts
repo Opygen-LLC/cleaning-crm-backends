@@ -48,12 +48,9 @@ export const auth = betterAuth({
         requireEmailVerification: true,
     },
     emailVerification: {
-        // Registration has a second, tenant-provisioning transaction after
-        // Better Auth creates the credential user. Sending the OTP here would
-        // race ahead of that transaction and can email a code for a user that
-        // is subsequently compensated/deleted if provisioning fails. The
-        // registration service triggers the OTP only after provisioning
-        // commits successfully.
+        // Registration persists the credential user and tenant records in one
+        // Prisma transaction, then a durable outbox worker requests the OTP.
+        // Better Auth must therefore never send automatically during sign-up.
         sendOnSignUp: false,
         sendOnSignIn: true,
         autoSignInAfterVerification: true,
@@ -97,17 +94,18 @@ export const auth = betterAuth({
                     }
 
                     if (user && !user.emailVerified) {
-                        waitUntil(
-                            sendEmailSafely({
-                                to: email,
-                                subject: "Verify your email",
-                                templateName: "otp",
-                                templateData: {
-                                    name: user.name,
-                                    otp,
-                                },
-                            }),
-                        );
+                        // Verification email delivery is executed by the durable
+                        // outbox worker. Await SMTP here so delivery errors bubble
+                        // back to the worker and the outbox row can retry safely.
+                        await sendEmail({
+                            to: email,
+                            subject: "Verify your email",
+                            templateName: "otp",
+                            templateData: {
+                                name: user.name,
+                                otp,
+                            },
+                        });
                     }
                 } else if (type === "forget-password") {
                     const user = await prisma.user.findUnique({

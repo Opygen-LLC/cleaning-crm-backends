@@ -16,14 +16,15 @@ import AppError from "../errorHelper/AppError";
 import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import { CookieUtils } from "../lib/utils/cookie";
 import redis from "../config/redis";
-import { singleFlight } from "../lib/utils/singleFlight";
 import {
   normalizeSubscriptionPlanFeatures,
   type SubscriptionPlanFeature,
 } from "../lib/utils/subscriptionPlanFeatures";
 import {
+  getRuntimeAdminAccessContext,
   getRuntimeTenantId,
-  getRuntimeUserStatus,
+  invalidateRuntimeAdminAccessContext,
+  type RuntimeAdminAccessContext,
 } from "../lib/cache/authRuntimeCache";
 
 function getAccessToken(req: Request): string | undefined {
@@ -66,6 +67,7 @@ const subscriptionCacheKey = (userId: string) => `sub:full:user:${userId}`;
 /** Clear the status/feature snapshot after an approved/cancelled plan mutation. */
 export async function invalidateSubscriptionAccessCache(userId: string) {
   await redis.del(subscriptionCacheKey(userId)).catch(() => {});
+  await invalidateRuntimeAdminAccessContext(userId);
 
   // Website entitlements are evaluated from the live subscription on public
   // projection/host cache misses. Any plan/status mutation must therefore drop
@@ -102,76 +104,36 @@ export async function invalidateSubscriptionAccessCache(userId: string) {
   }
 }
 
+const subscriptionFromContext = (context: RuntimeAdminAccessContext): CachedSubscriptionPayload => {
+  if (!context.adminId || !context.subscription) return null;
+  return {
+    adminId: context.adminId,
+    status: context.subscription.status,
+    isTrial: context.subscription.isTrial,
+    trialEndsAt: context.subscription.trialEndsAt,
+    currentPeriodEnd: context.subscription.currentPeriodEnd,
+    cancelAtPeriodEnd: context.subscription.cancelAtPeriodEnd,
+    features: normalizeSubscriptionPlanFeatures(context.subscription.features ?? []),
+  };
+};
+
 async function getCachedSubscriptionForUser(
   userId: string,
 ): Promise<CachedSubscriptionPayload> {
-  const cached = await redis
-    .get(subscriptionCacheKey(userId))
-    .catch(() => null);
-
+  const cached = await redis.get(subscriptionCacheKey(userId)).catch(() => null);
   if (cached !== null) {
     try {
       return JSON.parse(cached) as CachedSubscriptionPayload;
     } catch {
-      // fall through and reload from DB on a corrupt cache entry
+      // fall through and reload the combined admin access context
     }
   }
 
-  // PERF FIX (Phase 4, performance audit — cache stampede): this loader
-  // backs BOTH checkSubscription (router-level, every request) and
-  // checkFeature (per-route). On a cold/expired cache it's common for
-  // several requests for the same user to land within milliseconds of each
-  // other (e.g. a dashboard firing multiple feature-gated calls at once) —
-  // without this, each one independently repeated the same two uncached DB
-  // round trips (adminProfile + subscription+plan join) before any of them
-  // had a chance to populate Redis. singleFlight collapses all of that into
-  // a single DB round trip; every concurrent caller shares the same result.
-  return singleFlight(`sub:full:load:${userId}`, async () => {
-    const adminId = await getRuntimeTenantId(userId, UserRole.ADMIN);
-
-    let payload: CachedSubscriptionPayload = null;
-
-    if (adminId) {
-      const sub = await prisma.subscription.findFirst({
-        where: { adminId },
-        select: {
-          status: true,
-          isTrial: true,
-          trialEndsAt: true,
-          currentPeriodEnd: true,
-          cancelAtPeriodEnd: true,
-          subscriptionPlan: { select: { features: true } },
-        },
-        orderBy: { createdAt: "desc" },
-      });
-
-      if (sub) {
-        payload = {
-          adminId,
-          status: sub.status,
-          isTrial: sub.isTrial,
-          trialEndsAt: sub.trialEndsAt ? sub.trialEndsAt.toISOString() : null,
-          currentPeriodEnd: sub.currentPeriodEnd
-            ? sub.currentPeriodEnd.toISOString()
-            : null,
-          cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
-          features: normalizeSubscriptionPlanFeatures(
-            sub.subscriptionPlan?.features ?? [],
-          ),
-        };
-      }
-    }
-
-    await redis
-      .setex(
-        subscriptionCacheKey(userId),
-        SUBSCRIPTION_CACHE_TTL_SECONDS,
-        JSON.stringify(payload),
-      )
-      .catch(() => {});
-
-    return payload;
-  });
+  const payload = subscriptionFromContext(await getRuntimeAdminAccessContext(userId));
+  await redis
+    .setex(subscriptionCacheKey(userId), SUBSCRIPTION_CACHE_TTL_SECONDS, JSON.stringify(payload))
+    .catch(() => {});
+  return payload;
 }
 
 // ─── Status gate (mounted at router level) ────────────────────────────────────
@@ -198,11 +160,24 @@ export const checkSubscription = async (
     };
     if (role !== UserRole.ADMIN) return next();
 
-    // Resolve status first so suspended/deleted accounts never trigger any
-    // subscription or tenant query. On the normal warm path this is a Redis
-    // lookup against the shared Docker cache.
-    const userStatus = await getRuntimeUserStatus(userId);
-    req.authRuntime = { userStatus };
+    // One warm Redis GET / one cold joined DB query resolves status, tenant and
+    // subscription together. This removes the previous sequential
+    // status -> AdminProfile -> Subscription round trips.
+    const accessContext = await getRuntimeAdminAccessContext(userId);
+    const userStatus = accessContext.userStatus;
+    const sub = subscriptionFromContext(accessContext);
+    req.authRuntime = {
+      userStatus,
+      adminId: accessContext.adminId,
+      subscriptionFeatures: sub?.features ?? null,
+    };
+
+    // Keep the longer-lived subscription cache warm for middleware used in
+    // isolation (tests/background wiring) without putting the write on the
+    // request's critical path.
+    void redis
+      .setex(subscriptionCacheKey(userId), SUBSCRIPTION_CACHE_TTL_SECONDS, JSON.stringify(sub))
+      .catch(() => {});
 
     if (userStatus === AccountStatus.SUSPENDED)
       throw new AppError(
@@ -212,9 +187,6 @@ export const checkSubscription = async (
       );
     if (userStatus === AccountStatus.DELETED)
       throw new AppError(status.FORBIDDEN, "This account has been deleted.");
-
-    const sub = await getCachedSubscriptionForUser(userId);
-    req.authRuntime.adminId = sub?.adminId;
 
     // ── Subscription lookup ──────────────────────────────────────────────
     if (!sub) return next();
@@ -316,10 +288,13 @@ export function checkFeature(featureKey: string) {
       };
       if (role !== UserRole.ADMIN) return next();
 
-      // PERF FIX (Phase 1.3): was two uncached DB queries (adminProfile +
-      // subscription join) on every request to a feature-gated route.
-      // Now shares the same 60s Redis-cached payload as checkSubscription.
-      const sub = await getCachedSubscriptionForUser(userId);
+      // checkSubscription runs first on gated routes and already attached the
+      // feature list to this request. Reuse it instead of issuing a second
+      // Redis command; retain the cached fallback for standalone middleware use.
+      const requestFeatures = req.authRuntime?.subscriptionFeatures;
+      const sub = requestFeatures !== undefined
+        ? { features: requestFeatures }
+        : await getCachedSubscriptionForUser(userId);
       if (!sub) return next();
 
       // Product invariant: Online Booking is part of the website acquisition

@@ -19,7 +19,18 @@ import cookieParser from "cookie-parser";
 import { notFound } from "./middlewares/notFound";
 import { maintenanceModeGate } from "./middlewares/maintenanceMode";
 import path from "path";
-import { BETTER_AUTH_URL, FRONTEND_URL, NODE_ENV, TRUST_PROXY_HOPS, WEBSITE_BASE_DOMAIN } from "./config/ENV";
+import {
+  BETTER_AUTH_URL,
+  DB_POOL_CONNECTION_TIMEOUT_MS,
+  DB_POOL_IDLE_TIMEOUT_MS,
+  DB_POOL_MAX,
+  DB_POOL_MIN,
+  FRONTEND_URL,
+  NODE_ENV,
+  PERFORMANCE_METRICS_TOKEN,
+  TRUST_PROXY_HOPS,
+  WEBSITE_BASE_DOMAIN,
+} from "./config/ENV";
 import { WebsiteHostResolverService } from "./modules/Website/websiteHostResolver.service";
 
 import "../src/cron/staffStatus.cron";
@@ -40,6 +51,8 @@ import "../src/cron/websiteAnalyticsRetention.cron";
 import { scheduleSubscriptionExpiryJob } from "../src/cron/subscriptionExpiry.cron";
 import logRequestResponse from "./middlewares/logger.middleware";
 import { requestContext } from "./middlewares/requestContext";
+import { getPerformanceSnapshot } from "./lib/monitoring/performanceMetrics";
+import { getInfrastructureAlignment } from "./lib/monitoring/infrastructure";
 
 scheduleSubscriptionExpiryJob();
 
@@ -84,7 +97,7 @@ const authenticatedCors = cors({
     "Content-Type", "Authorization", "Cookie", "X-Requested-With", "Accept",
     "Origin", "Idempotency-Key", "X-Form-Started-At", "X-Turnstile-Token",
   ],
-  exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Response-Time"],
+  exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Response-Time", "Server-Timing"],
   origin: true,
   credentials: true,
 });
@@ -98,7 +111,7 @@ const publicWebsiteCors = cors({
     "Content-Type", "Accept", "Origin", "Idempotency-Key",
     "X-Form-Started-At", "X-Turnstile-Token",
   ],
-  exposedHeaders: ["X-Request-Id", "X-Response-Time"],
+  exposedHeaders: ["X-Request-Id", "X-Response-Time", "Server-Timing"],
   origin: true,
   credentials: false,
 });
@@ -158,34 +171,70 @@ app.use(async (req, res, next) => {
 app.use(compression());
 app.use(logRequestResponse);
 
-// ─── Health check ─────────────────────────────────────────────────────────────
-// Configure Railway / Render / Render healthcheck to hit GET /health.
-// Returns 200 when DB + Redis are reachable, 503 when either is down.
+// ─── Health / performance diagnostics ───────────────────────────────────────
+const safeDurationMs = (started: bigint) =>
+  Math.round((Number(process.hrtime.bigint() - started) / 1_000_000) * 10) / 10;
+
 app.get("/health", async (_req: Request, res: Response) => {
   let dbOk = false;
   let redisOk = false;
+  let databaseLatencyMs: number | null = null;
+  let redisLatencyMs: number | null = null;
 
-  try {
-    const { prisma } = await import("./lib/prisma/prisma");
-    await prisma.$queryRaw`SELECT 1`;
-    dbOk = true;
-  } catch {
-    /* db unavailable */
-  }
+  const dbCheck = (async () => {
+    const started = process.hrtime.bigint();
+    try {
+      const { prisma } = await import("./lib/prisma/prisma");
+      await prisma.$queryRaw`SELECT 1`;
+      dbOk = true;
+    } finally {
+      databaseLatencyMs = safeDurationMs(started);
+    }
+  })().catch(() => {});
 
-  try {
-    const redis = (await import("./config/redis")).default;
-    redisOk = (await redis.ping()) === "PONG";
-  } catch {
-    /* redis unavailable */
-  }
+  const redisCheck = (async () => {
+    const started = process.hrtime.bigint();
+    try {
+      const redis = (await import("./config/redis")).default;
+      redisOk = (await redis.ping()) === "PONG";
+    } finally {
+      redisLatencyMs = safeDurationMs(started);
+    }
+  })().catch(() => {});
+
+  await Promise.all([dbCheck, redisCheck]);
 
   const allOk = dbOk && redisOk;
   res.status(allOk ? 200 : 503).json({
     success: allOk,
     status: allOk ? "ok" : "degraded",
     timestamp: new Date().toISOString(),
-    checks: { database: dbOk, redis: redisOk },
+    checks: {
+      database: { ok: dbOk, latencyMs: databaseLatencyMs },
+      redis: { ok: redisOk, latencyMs: redisLatencyMs },
+    },
+    infrastructure: getInfrastructureAlignment(),
+  });
+});
+
+app.get("/health/performance", (req: Request, res: Response) => {
+  const supplied = req.get("x-monitoring-token") || req.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (NODE_ENV === "production" && (!PERFORMANCE_METRICS_TOKEN || supplied !== PERFORMANCE_METRICS_TOKEN)) {
+    return res.status(404).json({ success: false, message: "Not found" });
+  }
+
+  return res.status(200).json({
+    success: true,
+    data: {
+      ...getPerformanceSnapshot(),
+      infrastructure: getInfrastructureAlignment(),
+      databasePool: {
+        min: DB_POOL_MIN,
+        max: DB_POOL_MAX,
+        idleTimeoutMs: DB_POOL_IDLE_TIMEOUT_MS,
+        connectionTimeoutMs: DB_POOL_CONNECTION_TIMEOUT_MS,
+      },
+    },
   });
 });
 

@@ -7,6 +7,7 @@ const { prismaMock, txMock, cacheMock } = vi.hoisted(() => {
     bookingForm: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
     bookingFormService: { deleteMany: vi.fn(), createMany: vi.fn() },
     businessWebsite: { update: vi.fn() },
+    websitePage: { updateMany: vi.fn() },
   };
   return {
     txMock: tx,
@@ -64,6 +65,7 @@ beforeEach(() => {
   txMock.bookingFormService.deleteMany.mockResolvedValue({ count: 0 });
   txMock.bookingFormService.createMany.mockResolvedValue({ count: 1 });
   txMock.businessWebsite.update.mockResolvedValue({});
+  txMock.websitePage.updateMany.mockResolvedValue({ count: 1 });
   prismaMock.businessWebsite.findUnique.mockResolvedValue({
     primaryBookingFormId: "form-1",
     bookingEnabled: true,
@@ -116,6 +118,10 @@ describe("WebsiteBookingProvisioningService", () => {
       where: { id: "website-1" },
       data: expect.objectContaining({ primaryBookingFormId: "form-1", bookingEnabled: true, status: "DRAFT" }),
     }));
+    expect(txMock.websitePage.updateMany).toHaveBeenCalledWith({
+      where: { websiteId: "website-1", kind: "BOOK" },
+      data: { isEnabled: true, showInNavigation: true },
+    });
     expect(result.enabled).toBe(true);
     expect(result.primaryBookingFormId).toBe("form-1");
   });
@@ -149,6 +155,10 @@ describe("WebsiteBookingProvisioningService", () => {
     expect(txMock.businessWebsite.update).not.toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ primaryBookingFormId: null }),
     }));
+    expect(txMock.websitePage.updateMany).toHaveBeenCalledWith({
+      where: { websiteId: "website-1", kind: "BOOK" },
+      data: { isEnabled: false, showInNavigation: false },
+    });
   });
 
   it("requires an explicit choice when several published forms exist", async () => {

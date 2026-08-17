@@ -26,6 +26,15 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=
       - REDIS_DB=0
+      # Region labels are used by the Phase 1 startup guard. Redis is local to
+      # this app host; set APP_REGION/DATABASE_REGION in .env after colocating DB.
+      # Production must declare the actual deployment/database regions. The
+      # API refuses to start when they differ, preventing accidental return to
+      # the previous Mumbai <-> Virginia topology.
+      - APP_REGION=${APP_REGION:?APP_REGION must be set in production}
+      - DATABASE_REGION=${DATABASE_REGION:?DATABASE_REGION must be set in production}
+      - REDIS_REGION=local
+      - REQUIRE_COLOCATED_INFRA=true
       # Frontend URL for CORS whitelist
       - FRONTEND_URL=https://cleaningcrm.opygen.com
       - APP_URL=https://cleaningcrm.opygen.com

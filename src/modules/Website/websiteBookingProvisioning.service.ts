@@ -508,10 +508,16 @@ const configure = async (
     };
 
     if (!payload.enabled) {
-      await tx.businessWebsite.update({
-        where: { id: businessWebsite.id },
-        data: { bookingEnabled: false, status: nextWebsiteStatus, ...presentationPatch },
-      });
+      await Promise.all([
+        tx.businessWebsite.update({
+          where: { id: businessWebsite.id },
+          data: { bookingEnabled: false, status: nextWebsiteStatus, ...presentationPatch },
+        }),
+        tx.websitePage.updateMany({
+          where: { websiteId: businessWebsite.id, kind: "BOOK" },
+          data: { isEnabled: false, showInNavigation: false },
+        }),
+      ]);
       return;
     }
 
@@ -520,15 +526,21 @@ const configure = async (
       { id: admin.id, businessName: admin.businessName, businessWebsite },
       payload.bookingFormId,
     );
-    await tx.businessWebsite.update({
-      where: { id: businessWebsite.id },
-      data: {
-        primaryBookingFormId: targetForm.id,
-        bookingEnabled: true,
-        status: nextWebsiteStatus,
-        ...presentationPatch,
-      },
-    });
+    await Promise.all([
+      tx.businessWebsite.update({
+        where: { id: businessWebsite.id },
+        data: {
+          primaryBookingFormId: targetForm.id,
+          bookingEnabled: true,
+          status: nextWebsiteStatus,
+          ...presentationPatch,
+        },
+      }),
+      tx.websitePage.updateMany({
+        where: { websiteId: businessWebsite.id, kind: "BOOK" },
+        data: { isEnabled: true, showInNavigation: true },
+      }),
+    ]);
   });
 
   await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);

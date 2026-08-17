@@ -60,7 +60,7 @@ describe("Phase 3 public website runtime contract", () => {
       font: null,
       logo: null,
       favicon: null,
-      bookingEnabled: true,
+      bookingEnabled: false,
       bookingShowHeaderCta: true,
       bookingShowServiceCtas: true,
       bookingShowHomeCta: true,
@@ -71,6 +71,16 @@ describe("Phase 3 public website runtime contract", () => {
       metaDescription: null,
       socialImageUrl: null,
       indexSite: true,
+    });
+  });
+
+
+  it("keeps Book provisioned but disabled until booking is configured", () => {
+    const book = DEFAULT_WEBSITE_PAGES.find((page) => page.kind === "BOOK");
+    expect(book).toMatchObject({
+      slug: "/book",
+      isEnabled: false,
+      showInNavigation: false,
     });
   });
 

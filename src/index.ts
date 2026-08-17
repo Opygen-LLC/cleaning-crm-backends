@@ -6,6 +6,8 @@ import app from "./server";
 import http from "http";
 import logger from "./lib/logger";
 import { ErrorMonitor } from "./lib/monitoring/errorMonitor";
+import { assertInfrastructureAlignment, getInfrastructureAlignment } from "./lib/monitoring/infrastructure";
+import { startEmailOutboxWorker } from "./workers/emailOutbox.worker";
 
 
 process.on("unhandledRejection", (reason) => {
@@ -36,11 +38,18 @@ setUpSocketIO(server);
 
 function main() {
   try {
+    assertInfrastructureAlignment();
+    const infrastructure = getInfrastructureAlignment();
+    logger.info(
+      `[INFRA] app=${infrastructure.appRegion ?? "unknown"} db=${infrastructure.databaseRegion ?? "unknown"} redis=${infrastructure.redisRegion ?? "unknown"} aligned=${infrastructure.aligned}`,
+    );
+
     // Seeds are fire-and-forget after listen() to avoid blocking the first
     // request on two DB round-trips during cold-start (especially on Neon).
     // Both seed functions short-circuit when data already exists.
     server.listen(Number(port), backendIp, () => {
       logger.info(`Server is running at http://${backendIp}:${port}`);
+      startEmailOutboxWorker();
 
       seedSuperAdmin().catch((error) => {
         logger.error("Error seeding super admin", error);
@@ -51,6 +60,7 @@ function main() {
     });
   } catch (error) {
     logger.error("Error starting the server", error);
+    process.exitCode = 1;
   }
 }
 

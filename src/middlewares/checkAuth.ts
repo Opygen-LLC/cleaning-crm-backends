@@ -6,6 +6,7 @@ import { CookieUtils } from "../lib/utils/cookie";
 import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import {
     getRuntimeSessionValidity,
+    getRuntimeStaffAccessContext,
     getRuntimeTenantId,
     getRuntimeTenantOwnerStatus,
     getRuntimeUserStatus,
@@ -60,12 +61,27 @@ export const checkAuth =
                 throw new AppError(status.FORBIDDEN, "Forbidden access.");
             }
 
-            // checkSubscription runs before route-level auth on gated routes.
-            // Reuse its request-local result; otherwise use the shared Redis
-            // cache and fall back to Postgres on a miss.
-            const userStatus =
-                req.authRuntime?.userStatus ??
-                (await getRuntimeUserStatus(tokenData.userId as string));
+            // checkSubscription runs before route-level auth on gated ADMIN
+            // routes and already populated this context. STAFF requests skip the
+            // subscription gate, so resolve STAFF status + owning tenant with a
+            // single cached context instead of two sequential DB lookups.
+            const role = tokenData.role as UserRole;
+            let userStatus = req.authRuntime?.userStatus;
+            let adminId = req.authRuntime?.adminId;
+
+            if (role === UserRole.STAFF && (userStatus === undefined || adminId === undefined)) {
+                const staffContext = await getRuntimeStaffAccessContext(tokenData.userId as string);
+                if (userStatus === undefined) userStatus = staffContext.userStatus;
+                if (adminId === undefined) adminId = staffContext.adminId;
+                req.authRuntime = { ...req.authRuntime, userStatus, adminId };
+            } else {
+                if (userStatus === undefined) {
+                    userStatus = await getRuntimeUserStatus(tokenData.userId as string);
+                }
+                if (adminId === undefined) {
+                    adminId = await getRuntimeTenantId(tokenData.userId as string, role);
+                }
+            }
 
             if (!userStatus) {
                 throw new AppError(
@@ -88,15 +104,6 @@ export const checkAuth =
                     "This account has been deleted.",
                 );
             }
-
-            // Resolve both ADMIN and STAFF to the owning tenant. Besides
-            // removing repeated service queries, this gives the response
-            // cache a tenant namespace that mutations can invalidate safely.
-            const role = tokenData.role as UserRole;
-            const adminId =
-                req.authRuntime?.adminId !== undefined
-                    ? req.authRuntime.adminId
-                    : await getRuntimeTenantId(tokenData.userId as string, role);
 
             // Suspending a cleaning business must close the tenant, not just
             // the owner's own token. Staff remain separate User rows, so also

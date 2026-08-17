@@ -15,12 +15,6 @@ import { IRequestUser } from "../../types/requestUser.interface";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const requireAdminProfile = async (userId: string) => {
-  const admin = await prisma.adminProfile.findUnique({ where: { userId } });
-  if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-  return admin;
-};
-
 const previousPeriod = (from: Date, to: Date) => {
   const ms = to.getTime() - from.getTime();
   return { gte: new Date(from.getTime() - ms), lte: new Date(from.getTime()) };

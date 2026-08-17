@@ -1,6 +1,8 @@
 import Redis from "ioredis";
 import dotenv from "dotenv";
 import logger from "../lib/logger";
+import { recordRedisReadMetric } from "../lib/monitoring/performanceMetrics";
+import { recordTraceRedisCommand } from "../lib/monitoring/requestTrace";
 
 dotenv.config();
 
@@ -71,5 +73,55 @@ redis.on("connect", () => {
     }
     hasLoggedOutage = false;
 });
+
+
+// Instrument the cache read commands used throughout the application without
+// forcing every service to adopt a new Redis wrapper. This preserves the
+// existing ioredis API while providing global hit/miss/latency metrics.
+const instrumentRedisReads = () => {
+    const target = redis as any;
+
+    const wrapSingle = (command: "get" | "hget") => {
+        const original = target[command].bind(redis);
+        target[command] = async (...args: unknown[]) => {
+            const started = process.hrtime.bigint();
+            try {
+                const value = await original(...args);
+                const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+                recordTraceRedisCommand(durationMs);
+                recordRedisReadMetric({ durationMs, hits: value == null ? 0 : 1, misses: value == null ? 1 : 0 });
+                return value;
+            } catch (error) {
+                const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+                recordTraceRedisCommand(durationMs);
+                recordRedisReadMetric({ durationMs, hits: 0, misses: 0, error: true });
+                throw error;
+            }
+        };
+    };
+
+    const originalMget = target.mget.bind(redis);
+    target.mget = async (...args: unknown[]) => {
+        const started = process.hrtime.bigint();
+        try {
+            const values = await originalMget(...args) as Array<string | null>;
+            const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+            const hits = values.filter((value) => value != null).length;
+            recordTraceRedisCommand(durationMs);
+            recordRedisReadMetric({ durationMs, hits, misses: Math.max(0, values.length - hits) });
+            return values;
+        } catch (error) {
+            const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+            recordTraceRedisCommand(durationMs);
+            recordRedisReadMetric({ durationMs, hits: 0, misses: 0, error: true });
+            throw error;
+        }
+    };
+
+    wrapSingle("get");
+    wrapSingle("hget");
+};
+
+instrumentRedisReads();
 
 export default redis;

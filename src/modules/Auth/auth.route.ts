@@ -10,6 +10,7 @@ import { UserRole } from "../../generated/prisma/enums";
 import {
     loginRateLimit,
     otpRateLimit,
+    registrationRateLimit,
     passwordResetRateLimit,
 } from "../../middlewares/authRateLimit";
 
@@ -18,6 +19,7 @@ const router = Router();
 // Auth Routes
 router.post(
     "/register",
+    registrationRateLimit,
     zodValidate(authValidator.registerValidation, ValidationProperty.BODY),
     authController.register,
 );

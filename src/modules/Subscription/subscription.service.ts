@@ -14,6 +14,7 @@ import { Decimal } from "@prisma/client/runtime/client";
 import { getPlatformConfig } from "../../lib/utils/platformConfig";
 import { emitToSuperAdmins } from "../../config/socketio";
 import { invalidateSubscriptionAccessCache } from "../../middlewares/checkSubscription";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 
 // Fallback only — the real value is read from platform config
 // (super-admin → Settings → Platform Configuration → "Default trial days")
@@ -30,18 +31,8 @@ const CHECKOUT_TTL_MS = 24 * 60 * 60 * 1000;
 // `adminId: user.id` directly silently matches zero rows for any real
 // account and throws "No active subscription found."
 
-const resolveAdminProfileId = async (user: IRequestUser): Promise<string> => {
-    const adminProfile = await prisma.adminProfile.findFirst({
-        where: { userId: user.id },
-        select: { id: true },
-    });
-
-    if (!adminProfile) {
-        throw new AppError(status.NOT_FOUND, "Admin profile not found.");
-    }
-
-    return adminProfile.id;
-};
+const resolveAdminProfileId = async (user: IRequestUser): Promise<string> =>
+    getAdminId(user);
 
 // ─── Existing: get my subscription ───────────────────────────────────────────
 

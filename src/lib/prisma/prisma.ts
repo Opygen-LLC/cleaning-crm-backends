@@ -1,7 +1,16 @@
 import { PrismaPg } from "@prisma/adapter-pg";
-import { DATABASE_URL, DB_POOL_MAX, SLOW_QUERY_THRESHOLD_MS } from "../../config/ENV";
+import {
+    DATABASE_URL,
+    DB_POOL_CONNECTION_TIMEOUT_MS,
+    DB_POOL_IDLE_TIMEOUT_MS,
+    DB_POOL_MAX,
+    DB_POOL_MIN,
+    SLOW_QUERY_THRESHOLD_MS,
+} from "../../config/ENV";
 import { PrismaClient } from "../../generated/prisma/client";
 import logger from "../logger";
+import { recordDatabaseQueryMetric } from "../monitoring/performanceMetrics";
+import { getRequestTrace, recordTraceDatabaseQuery } from "../monitoring/requestTrace";
 
 if (!DATABASE_URL) {
     throw new Error(
@@ -67,13 +76,11 @@ const connectionString = DATABASE_URL.replace(
 const adapter = new PrismaPg({
     connectionString,
     max: DB_POOL_MAX,
-    min: Math.min(3, DB_POOL_MAX),
-    idleTimeoutMillis: 10 * 60_000, // 10 min — was 30s (shorter than the keep-alive interval, which defeated its own purpose)
-    // Raised from 20_000 -> 30_000: 20s could still time out during a slow
-    // Neon cold-start wake (3-8s just to resume compute, before the query
-    // itself even runs). 30s gives that headroom without masking genuine
-    // connection failures.
-    connectionTimeoutMillis: 30_000,
+    min: DB_POOL_MIN,
+    idleTimeoutMillis: DB_POOL_IDLE_TIMEOUT_MS, // 10 min — was 30s (shorter than the keep-alive interval, which defeated its own purpose)
+    // Configurable so the deployment can balance cold-start tolerance against
+    // fail-fast behaviour without changing code.
+    connectionTimeoutMillis: DB_POOL_CONNECTION_TIMEOUT_MS,
     keepAlive: true,
     keepAliveInitialDelayMillis: 10_000,
 });
@@ -90,8 +97,16 @@ const prisma = new PrismaClient({
 // file transport as the rest of the app) — use this to confirm the Phase
 // 2–4 fixes actually move the needle, and to catch regressions later.
 prisma.$on("query", (e: { query: string; params: string; duration: number }) => {
+    recordDatabaseQueryMetric(e.duration);
+    recordTraceDatabaseQuery(e.duration);
+
     if (e.duration > SLOW_QUERY_THRESHOLD_MS) {
-        logger.warn(`[SLOW QUERY ${e.duration}ms] ${e.query} -- params: ${e.params}`);
+        // Never log query parameters: they can contain email addresses, tokens,
+        // customer data or payment metadata. The normalized SQL shape plus the
+        // request id is enough to trace the slow endpoint safely.
+        const requestId = getRequestTrace()?.requestId ?? "background";
+        const normalizedQuery = e.query.replace(/\s+/g, " ").trim().slice(0, 1_500);
+        logger.warn(`[SLOW QUERY ${Math.round(e.duration * 10) / 10}ms] [${requestId}] ${normalizedQuery}`);
     }
 });
 

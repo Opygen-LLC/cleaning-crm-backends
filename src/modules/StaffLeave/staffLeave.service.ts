@@ -32,6 +32,8 @@ import AppError from "../../errorHelper/AppError";
 import status from "http-status";
 import { emitToAdmin, emitToStaff } from "../../config/socketio";
 import { createNotification } from "../../lib/utils/createNotification";
+import { IRequestUser } from "../../types/requestUser.interface";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -42,12 +44,6 @@ const requireStaffProfile = async (userId: string) => {
   });
   if (!staff) throw new AppError(status.NOT_FOUND, "Staff profile not found");
   return staff;
-};
-
-const requireAdminProfile = async (userId: string) => {
-  const admin = await prisma.adminProfile.findFirst({ where: { userId } });
-  if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-  return admin;
 };
 
 // ─── Staff: request leave ─────────────────────────────────────────────────────
@@ -176,14 +172,14 @@ const cancelLeave = async (userId: string, leaveId: string) => {
 // ─── Admin: get all leave requests ───────────────────────────────────────────
 
 const getStaffLeaves = async (
-  adminUserId: string,
+  adminUser: IRequestUser,
   query: { status?: string; staffId?: string },
 ) => {
-  const admin = await requireAdminProfile(adminUserId);
+  const adminId = await getAdminId(adminUser);
 
   const leaves = await prisma.staffLeave.findMany({
     where: {
-      staff: { adminId: admin.id },
+      staff: { adminId },
       ...(query.status ? { status: query.status as LeaveStatus } : {}),
       ...(query.staffId ? { staffId: query.staffId } : {}),
     },
@@ -221,11 +217,11 @@ const getStaffLeaves = async (
  *    the admin's LeaveApprovalsPage pending count refreshes without a reload.
  */
 const reviewLeave = async (
-  adminUserId: string,
+  adminUser: IRequestUser,
   leaveId: string,
   payload: { decision: "APPROVED" | "DECLINED"; adminNote?: string },
 ) => {
-  const admin = await requireAdminProfile(adminUserId);
+  const adminId = await getAdminId(adminUser);
 
   const leave = await prisma.staffLeave.findUnique({
     where: { id: leaveId },
@@ -235,7 +231,7 @@ const reviewLeave = async (
   });
 
   if (!leave) throw new AppError(status.NOT_FOUND, "Leave request not found");
-  if (leave.staff.adminId !== admin.id) {
+  if (leave.staff.adminId !== adminId) {
     throw new AppError(
       status.FORBIDDEN,
       "You can only review leave requests for your own staff",

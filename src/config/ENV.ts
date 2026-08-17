@@ -12,7 +12,13 @@ export const DATABASE_URL: string = process.env.DATABASE_URL as string;
 // size/plan for the actual ceiling and set DB_POOL_MAX accordingly in env.
 // Falls back to 10 only if the env var is missing/invalid, matching the
 // previous hardcoded behaviour so this is a safe no-op until configured.
-export const DB_POOL_MAX: number = Number(process.env.DB_POOL_MAX) || 10;
+export const DB_POOL_MAX: number = Math.min(100, Math.max(1, Number(process.env.DB_POOL_MAX) || 10));
+export const DB_POOL_MIN: number = Math.min(
+    DB_POOL_MAX,
+    Math.max(0, Number(process.env.DB_POOL_MIN) || Math.min(2, DB_POOL_MAX)),
+);
+export const DB_POOL_IDLE_TIMEOUT_MS: number = Math.max(30_000, Number(process.env.DB_POOL_IDLE_TIMEOUT_MS) || 600_000);
+export const DB_POOL_CONNECTION_TIMEOUT_MS: number = Math.max(5_000, Number(process.env.DB_POOL_CONNECTION_TIMEOUT_MS) || 15_000);
 
 // Logs any query slower than this many ms via the Phase 1.3 slow-query
 // logger in src/lib/prisma/prisma.ts. Defaults to 300ms.
@@ -32,6 +38,27 @@ export const SLOW_REQUEST_THRESHOLD_MS: number = Math.max(
     Number(process.env.SLOW_REQUEST_THRESHOLD_MS) || 250,
 );
 export const TRUST_PROXY_HOPS: number = Math.min(5, Math.max(0, Math.trunc(Number(process.env.TRUST_PROXY_HOPS) || 0)));
+
+export const PERFORMANCE_METRICS_TOKEN: string | undefined = process.env.PERFORMANCE_METRICS_TOKEN?.trim() || undefined;
+
+// Infrastructure placement guard. In production set all three region labels
+// and REQUIRE_COLOCATED_INFRA=true after moving API/Postgres/Redis together.
+// REDIS_REGION=local means Redis runs beside the API (e.g. Docker Compose).
+export const APP_REGION: string | undefined = process.env.APP_REGION?.trim() || undefined;
+export const DATABASE_REGION: string | undefined = process.env.DATABASE_REGION?.trim() || undefined;
+export const REDIS_REGION: string | undefined = process.env.REDIS_REGION?.trim() || undefined;
+export const REQUIRE_COLOCATED_INFRA: boolean = process.env.REQUIRE_COLOCATED_INFRA === "true";
+
+export const DB_KEEPALIVE_ENABLED: boolean = process.env.DB_KEEPALIVE_ENABLED !== "false";
+export const DB_KEEPALIVE_CRON: string = process.env.DB_KEEPALIVE_CRON?.trim() || "*/2 * * * *";
+
+// Phase 2 durable transactional outbox. The web process may run the worker
+// in-process (safe across multiple replicas via FOR UPDATE SKIP LOCKED), or a
+// dedicated worker process can enable the same poller independently.
+export const OUTBOX_WORKER_ENABLED: boolean = process.env.OUTBOX_WORKER_ENABLED !== "false";
+export const OUTBOX_WORKER_POLL_MS: number = Math.min(60_000, Math.max(500, Number(process.env.OUTBOX_WORKER_POLL_MS) || 1_000));
+export const OUTBOX_WORKER_BATCH_SIZE: number = Math.min(100, Math.max(1, Math.trunc(Number(process.env.OUTBOX_WORKER_BATCH_SIZE) || 10)));
+export const OUTBOX_LOCK_TIMEOUT_MS: number = Math.min(15 * 60_000, Math.max(30_000, Number(process.env.OUTBOX_LOCK_TIMEOUT_MS) || 120_000));
 
 export const CLOUDINARY_CLOUD_NAME: string = process.env
     .CLOUDINARY_CLOUD_NAME as string;

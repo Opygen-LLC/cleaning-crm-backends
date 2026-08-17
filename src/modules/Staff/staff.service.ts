@@ -23,6 +23,7 @@ import { IRequestUser } from "../../types/requestUser.interface";
 import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 import { uploadToCloudinary } from "../../lib/utils/cloudinary";
 import { geocodeAddressSafely } from "../../lib/utils/geocoding";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
 
 /**
  * [Phase 2 — location-aware dispatch] Best-effort geocode of a staff
@@ -41,7 +42,7 @@ const geocodeStaffAddress = async (address: string | null | undefined) => {
     };
 };
 
-const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
+const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser) => {
     const {
         name,
         email,
@@ -57,13 +58,9 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
         staffAvailability,
     } = payload;
 
-    const adminProfile = await prisma.adminProfile.findFirst({
-        where: { userId: adminUser.id },
-    });
-    if (!adminProfile)
-        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    const adminId = await getAdminId(adminUser);
 
-    await assertWithinLimit(adminProfile.id, "staff");
+    await assertWithinLimit(adminId, "staff");
 
     const password = generateRandomPassword() ?? "Staff@123";
     let userId: string;
@@ -111,7 +108,7 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
         return tx.staffProfile.create({
             data: {
                 userId,
-                adminId: adminProfile.id,
+                adminId,
                 staffRole: StaffRole,
                 mobileNumber,
                 address,
@@ -147,17 +144,13 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: any) => {
     return staffProfile;
 };
 
-const getMyStaff = async (query: IQueryParams, userReq: any) => {
-    const adminProfile = await prisma.adminProfile.findFirst({
-        where: { userId: userReq.id },
-    });
-    if (!adminProfile)
-        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+const getMyStaff = async (query: IQueryParams, userReq: IRequestUser) => {
+    const adminId = await getAdminId(userReq);
 
     const { role, status: statusParam, searchTerm, search } = query as any;
 
     const extraWhere: Prisma.StaffProfileWhereInput = {
-        adminId: adminProfile.id,
+        adminId,
     };
 
     if (statusParam && statusParam !== "All") {
@@ -203,14 +196,10 @@ const getStaffById = async (id: string, userReq: IRequestUser) => {
     if (userReq.role !== UserRole.ADMIN)
         throw new AppError(status.FORBIDDEN, "Forbidden");
 
-    const adminProfile = await prisma.adminProfile.findFirst({
-        where: { userId: userReq.id },
-    });
-    if (!adminProfile)
-        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    const adminId = await getAdminId(userReq);
 
     return prisma.staffProfile.findUniqueOrThrow({
-        where: { id, adminId: adminProfile.id },
+        where: { id, adminId },
         include: { user: true, staffAvailability: true },
     });
 };
@@ -220,14 +209,10 @@ const updateStaff = async (
     payload: UpdateStaffPayload,
     adminUser: IRequestUser,
 ) => {
-    const adminProfile = await prisma.adminProfile.findFirst({
-        where: { userId: adminUser.id },
-    });
-    if (!adminProfile)
-        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    const adminId = await getAdminId(adminUser);
 
     const existing = await prisma.staffProfile.findUniqueOrThrow({
-        where: { id, adminId: adminProfile.id },
+        where: { id, adminId },
     });
 
     const geo =
@@ -242,14 +227,10 @@ const updateStaff = async (
 };
 
 const deleteStaff = async (id: string, adminUser: IRequestUser) => {
-    const adminProfile = await prisma.adminProfile.findFirst({
-        where: { userId: adminUser.id },
-    });
-    if (!adminProfile)
-        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    const adminId = await getAdminId(adminUser);
 
     await prisma.staffProfile.findUniqueOrThrow({
-        where: { id, adminId: adminProfile.id },
+        where: { id, adminId },
     });
     return prisma.staffProfile.delete({ where: { id } });
 };
@@ -282,14 +263,10 @@ const deleteStaff = async (id: string, adminUser: IRequestUser) => {
  * staff member's inbox receives it.
  */
 const resetStaffPassword = async (id: string, adminUser: IRequestUser) => {
-    const adminProfile = await prisma.adminProfile.findFirst({
-        where: { userId: adminUser.id },
-    });
-    if (!adminProfile)
-        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    const adminId = await getAdminId(adminUser);
 
     const staffProfile = await prisma.staffProfile.findFirst({
-        where: { id, adminId: adminProfile.id },
+        where: { id, adminId },
         include: { user: true },
     });
     if (!staffProfile)
@@ -374,14 +351,10 @@ const updateAvailability = async (
     payload: UpdateAvailabilityPayload,
     adminUser: IRequestUser,
 ) => {
-    const adminProfile = await prisma.adminProfile.findFirst({
-        where: { userId: adminUser.id },
-    });
-    if (!adminProfile)
-        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    const adminId = await getAdminId(adminUser);
 
     await prisma.staffProfile.findUniqueOrThrow({
-        where: { id, adminId: adminProfile.id },
+        where: { id, adminId },
     });
 
     return upsertAvailability(id, payload.availability);

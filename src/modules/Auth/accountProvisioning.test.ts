@@ -2,18 +2,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const order: string[] = [];
-  const tx = { name: "tx" };
+  const tx = {
+    user: { create: vi.fn() },
+    account: { create: vi.fn() },
+  };
   return {
     order,
     tx,
+    findUser: vi.fn(),
     transaction: vi.fn(),
+    hashPassword: vi.fn(),
     createAdmin: vi.fn(),
     provisionWebsite: vi.fn(),
     createTrial: vi.fn(),
+    enqueueVerification: vi.fn(),
     invalidateSubdomains: vi.fn(),
   };
 });
 
+vi.mock("better-auth/crypto", () => ({
+  hashPassword: mocks.hashPassword,
+}));
 
 vi.mock("../../config/ENV", () => ({
   WEBSITE_BASE_DOMAIN: "sites.example.com",
@@ -21,14 +30,23 @@ vi.mock("../../config/ENV", () => ({
 
 vi.mock("../../lib/prisma/prisma", () => ({
   prisma: {
+    user: { findUnique: mocks.findUser },
     $transaction: mocks.transaction,
   },
 }));
 
-vi.mock("../Admin/admin.service", () => ({
-  adminService: {
-    createAdmin: mocks.createAdmin,
+vi.mock("../../lib/logger", () => ({
+  default: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
+
+vi.mock("../../lib/outbox/authEmailOutbox", () => ({
+  AuthEmailOutbox: {
+    enqueueEmailVerificationTx: mocks.enqueueVerification,
   },
+}));
+
+vi.mock("../Admin/admin.service", () => ({
+  adminService: { createAdmin: mocks.createAdmin },
 }));
 
 vi.mock("../Website/websiteProvisioning.service", () => ({
@@ -38,9 +56,7 @@ vi.mock("../Website/websiteProvisioning.service", () => ({
 }));
 
 vi.mock("../Subscription/subscription.service", () => ({
-  subscriptionService: {
-    createTrialSubscription: mocks.createTrial,
-  },
+  subscriptionService: { createTrialSubscription: mocks.createTrial },
 }));
 
 vi.mock("../Website/websiteHostResolver.service", () => ({
@@ -56,7 +72,27 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.order.length = 0;
 
+  mocks.findUser.mockResolvedValue(null);
+  mocks.hashPassword.mockResolvedValue("hashed-password");
   mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => callback(mocks.tx));
+  mocks.tx.user.create.mockImplementation(async ({ data }: any) => {
+    mocks.order.push("user");
+    return {
+      id: data.id,
+      name: data.name,
+      email: data.email,
+      emailVerified: false,
+      image: null,
+      role: "ADMIN",
+      status: "PENDING",
+      createdAt: new Date("2026-08-18T00:00:00.000Z"),
+      updatedAt: new Date("2026-08-18T00:00:00.000Z"),
+    };
+  });
+  mocks.tx.account.create.mockImplementation(async () => {
+    mocks.order.push("account");
+    return { id: "credential-1" };
+  });
   mocks.createAdmin.mockImplementation(async () => {
     mocks.order.push("admin");
     return { id: "admin-1", businessName: "Sparkle Cleaning" };
@@ -72,77 +108,99 @@ beforeEach(() => {
     mocks.order.push("trial");
     return { id: "subscription-1" };
   });
+  mocks.enqueueVerification.mockImplementation(async () => {
+    mocks.order.push("outbox");
+    return { id: "outbox-1" };
+  });
+  mocks.invalidateSubdomains.mockResolvedValue(undefined);
 });
 
 describe("AccountProvisioningService", () => {
-  it("provisions admin, website/default pages, then trial inside one bounded transaction", async () => {
+  it("creates credential user + tenant website + trial + email outbox in one bounded transaction", async () => {
     const result = await AccountProvisioningService.provisionRegisteredAdmin({
-      userId: "user-1",
+      name: "Jamie Doe",
+      email: "JAMIE@example.com",
+      password: "Secret123!",
       businessName: "Sparkle Cleaning",
       trialDays: 14,
     });
 
-    expect(mocks.order).toEqual(["admin", "website", "trial"]);
+    expect(mocks.order).toEqual(["user", "account", "admin", "website", "trial", "outbox"]);
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.transaction.mock.calls[0]?.[1]).toEqual(PROVISIONING_TRANSACTION_OPTIONS);
+    expect(mocks.hashPassword).toHaveBeenCalledWith("Secret123!");
+
+    const userCreate = mocks.tx.user.create.mock.calls[0]?.[0];
+    expect(userCreate.data.email).toBe("jamie@example.com");
+    expect(userCreate.data.role).toBe("ADMIN");
+    expect(userCreate.data.status).toBe("PENDING");
+
+    const userId = userCreate.data.id;
+    expect(mocks.tx.account.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        accountId: userId,
+        providerId: "credential",
+        userId,
+        password: "hashed-password",
+      }),
+    });
     expect(mocks.createAdmin).toHaveBeenCalledWith(
-      { userId: "user-1", businessName: "Sparkle Cleaning" },
+      { userId, businessName: "Sparkle Cleaning" },
       mocks.tx,
     );
     expect(mocks.provisionWebsite).toHaveBeenCalledWith(mocks.tx, {
       adminId: "admin-1",
       businessName: "Sparkle Cleaning",
-      createdByUserId: "user-1",
+      createdByUserId: userId,
     });
     expect(mocks.createTrial).toHaveBeenCalledWith("admin-1", {
       db: mocks.tx,
       trialDays: 14,
     });
-    expect(result).toEqual({
-      adminProfile: { id: "admin-1", businessName: "Sparkle Cleaning" },
-      subscription: { id: "subscription-1" },
-      website: {
-        id: "website-1",
-        subdomain: "sparkle",
-        status: "PROVISIONED",
-        publicUrl: "https://sparkle.sites.example.com",
-      },
+    expect(mocks.enqueueVerification).toHaveBeenCalledWith(
+      mocks.tx,
+      { userId, email: "jamie@example.com" },
+      { dedupeKey: `registration-email-verification:${userId}` },
+    );
+
+    expect(result.website).toEqual({
+      id: "website-1",
+      subdomain: "sparkle",
+      status: "PROVISIONED",
+      publicUrl: "https://sparkle.sites.example.com",
     });
-    expect(mocks.invalidateSubdomains).toHaveBeenCalledWith(["sparkle"]);
   });
 
-  it("does not attempt trial creation when website provisioning fails", async () => {
-    mocks.provisionWebsite.mockImplementation(async () => {
-      mocks.order.push("website");
-      throw new Error("website write failed");
-    });
+  it("does not open the transaction or hash a password for an existing email", async () => {
+    mocks.findUser.mockResolvedValue({ id: "existing-user" });
 
-    await expect(
-      AccountProvisioningService.provisionRegisteredAdmin({
-        userId: "user-1",
-        businessName: "Sparkle Cleaning",
-        trialDays: 7,
-      }),
-    ).rejects.toThrow("website write failed");
+    await expect(AccountProvisioningService.provisionRegisteredAdmin({
+      name: "Jamie Doe",
+      email: "jamie@example.com",
+      password: "Secret123!",
+      businessName: "Sparkle Cleaning",
+      trialDays: 7,
+    })).rejects.toMatchObject({ statusCode: 409 });
 
-    expect(mocks.order).toEqual(["admin", "website"]);
-    expect(mocks.createTrial).not.toHaveBeenCalled();
+    expect(mocks.hashPassword).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
-  it("rejects the whole provisioning transaction when trial creation fails", async () => {
+  it("stops before outbox creation when trial creation fails", async () => {
     mocks.createTrial.mockImplementation(async () => {
       mocks.order.push("trial");
       throw new Error("trial plan missing");
     });
 
-    await expect(
-      AccountProvisioningService.provisionRegisteredAdmin({
-        userId: "user-1",
-        businessName: "Sparkle Cleaning",
-        trialDays: 7,
-      }),
-    ).rejects.toThrow("trial plan missing");
+    await expect(AccountProvisioningService.provisionRegisteredAdmin({
+      name: "Jamie Doe",
+      email: "jamie@example.com",
+      password: "Secret123!",
+      businessName: "Sparkle Cleaning",
+      trialDays: 7,
+    })).rejects.toThrow("trial plan missing");
 
-    expect(mocks.order).toEqual(["admin", "website", "trial"]);
+    expect(mocks.order).toEqual(["user", "account", "admin", "website", "trial"]);
+    expect(mocks.enqueueVerification).not.toHaveBeenCalled();
   });
 });
