@@ -1,0 +1,20 @@
+model OutboxEvent {
+  id            String   @id @default(uuid())
+  topic         String
+  dedupeKey     String?  @unique
+  payload       Json
+  status        String   @default("PENDING")
+  attempts      Int      @default(0)
+  maxAttempts   Int      @default(8)
+  nextAttemptAt DateTime @default(now())
+  lockedAt      DateTime?
+  processedAt   DateTime?
+  lastError     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status, nextAttemptAt, createdAt])
+  @@index([lockedAt])
+  @@index([processedAt, createdAt])
+  @@map("outbox_event")
+}
