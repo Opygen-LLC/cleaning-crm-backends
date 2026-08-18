@@ -66,6 +66,9 @@ describe("Phase 3 public website runtime contract", () => {
       bookingShowHomeCta: true,
       bookingShowAvailableSlots: true,
       bookingShowPrices: true,
+      bookingShowStartingPrices: true,
+      bookingShowServiceDuration: true,
+      bookingCtaLabel: "Book Now",
       estimateEnabled: false,
       metaTitle: null,
       metaDescription: null,
@@ -79,6 +82,7 @@ describe("Phase 3 public website runtime contract", () => {
     const book = DEFAULT_WEBSITE_PAGES.find((page) => page.kind === "BOOK");
     expect(book).toMatchObject({
       slug: "/book",
+      title: "Book Online",
       isEnabled: false,
       showInNavigation: false,
     });

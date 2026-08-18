@@ -29,6 +29,9 @@ const websitePatch = z.object({
   bookingShowHomeCta: z.boolean().optional(),
   bookingShowAvailableSlots: z.boolean().optional(),
   bookingShowPrices: z.boolean().optional(),
+  bookingShowStartingPrices: z.boolean().optional(),
+  bookingShowServiceDuration: z.boolean().optional(),
+  bookingCtaLabel: z.string().trim().min(1).max(40).optional(),
   estimateEnabled: z.boolean().optional(),
   metaTitle: nullableText(120).optional(),
   metaDescription: nullableText(320).optional(),
@@ -123,6 +126,9 @@ const configureWebsiteBooking = z.object({
   showHomeCta: z.boolean().optional(),
   showAvailableSlots: z.boolean().optional(),
   showPrices: z.boolean().optional(),
+  showStartingPrices: z.boolean().optional(),
+  showServiceDuration: z.boolean().optional(),
+  ctaLabel: z.string().trim().min(1).max(40).optional(),
 }).strict();
 
 const publicContact = z.object({

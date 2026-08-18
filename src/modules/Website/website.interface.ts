@@ -23,6 +23,9 @@ export interface WebsiteUpdateInput {
   bookingShowHomeCta?: boolean;
   bookingShowAvailableSlots?: boolean;
   bookingShowPrices?: boolean;
+  bookingShowStartingPrices?: boolean;
+  bookingShowServiceDuration?: boolean;
+  bookingCtaLabel?: string;
   estimateEnabled?: boolean;
   metaTitle?: string | null;
   metaDescription?: string | null;

@@ -5,6 +5,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { PublicWebsiteService } from "./publicWebsite.service";
 import { bookingFormService } from "../BookingForm/bookingForm.service";
+import { bookingService } from "../Booking/booking.service";
 import { estimateFormService } from "../EstimateForm/estimateForm.service";
 import { allocateLeadRef } from "../Lead/leadRef.service";
 import { normalizePhone } from "../../lib/utils/normalizePhone";
@@ -53,8 +54,32 @@ const submitBooking = async (
     idempotencyKey,
     integration.websiteId,
   );
+
+  // Website booking is an acquisition channel into the canonical CRM Booking
+  // model. The conversion is idempotent and derives schedule/total from the
+  // server-owned submission snapshot, so the browser cannot create a second
+  // booking record or override price/duration.
+  let conversion;
+  try {
+    conversion = await bookingService.convertWebsiteBookingFormSubmission(
+      submission.id,
+      integration.adminId,
+    );
+  } catch (cause) {
+    // A public website call must not leave an unconverted pseudo-booking that
+    // consumes capacity if canonical Booking creation fails (for example a
+    // plan limit or transient database failure). Converted rows are protected
+    // by convertedBookingId and are never deleted here.
+    await prisma.bookingFormSubmission.deleteMany({
+      where: { id: submission.id, convertedBookingId: null },
+    }).catch(() => undefined);
+    throw cause;
+  }
+
   return {
     submission,
+    booking: conversion.booking,
+    alreadyConverted: conversion.alreadyConverted,
     _websiteId: integration.websiteId,
     _formId: integration.formId,
   };

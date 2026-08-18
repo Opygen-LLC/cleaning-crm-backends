@@ -49,6 +49,9 @@ describe("website published snapshots", () => {
       bookingShowHomeCta: false,
       bookingShowAvailableSlots: false,
       bookingShowPrices: false,
+      bookingShowStartingPrices: false,
+      bookingShowServiceDuration: false,
+      bookingCtaLabel: "Schedule Cleaning",
     });
 
     expect(snapshot.website).toEqual(expect.objectContaining({
@@ -58,6 +61,9 @@ describe("website published snapshots", () => {
       bookingShowHomeCta: false,
       bookingShowAvailableSlots: false,
       bookingShowPrices: false,
+      bookingShowStartingPrices: false,
+      bookingShowServiceDuration: false,
+      bookingCtaLabel: "Schedule Cleaning",
     }));
   });
 
@@ -93,6 +99,9 @@ describe("website published snapshots", () => {
     delete legacy.website.bookingShowHomeCta;
     delete legacy.website.bookingShowAvailableSlots;
     delete legacy.website.bookingShowPrices;
+    delete legacy.website.bookingShowStartingPrices;
+    delete legacy.website.bookingShowServiceDuration;
+    delete legacy.website.bookingCtaLabel;
 
     expect(parsePublishedSnapshot(legacy)?.website).toEqual(expect.objectContaining({
       bookingEnabled: true,
@@ -101,6 +110,9 @@ describe("website published snapshots", () => {
       bookingShowHomeCta: true,
       bookingShowAvailableSlots: true,
       bookingShowPrices: true,
+      bookingShowStartingPrices: true,
+      bookingShowServiceDuration: true,
+      bookingCtaLabel: "Book Now",
     }));
   });
 

@@ -76,6 +76,9 @@ model BookingFormSubmission {
   serviceNameSnapshot String?
   priceSnapshot       Decimal?             @db.Decimal(10, 2)
   durationSnapshot    String?
+  addOnIds            String[]             @default([])
+  addOnSnapshot       Json?                @default("[]")
+  totalSnapshot       Decimal?             @db.Decimal(10, 2)
   idempotencyKey      String?
   convertedBookingId  String?              @unique
   convertedAt         DateTime?

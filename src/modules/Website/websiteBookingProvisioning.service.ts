@@ -16,6 +16,9 @@ export interface WebsiteBookingSetupPayload {
   showHomeCta?: boolean;
   showAvailableSlots?: boolean;
   showPrices?: boolean;
+  showStartingPrices?: boolean;
+  showServiceDuration?: boolean;
+  ctaLabel?: string;
 }
 
 export interface WebsiteBookingSetupFormOption {
@@ -42,6 +45,9 @@ export interface WebsiteBookingSetupResult {
     showHomeCta: boolean;
     showAvailableSlots: boolean;
     showPrices: boolean;
+    showStartingPrices: boolean;
+    showServiceDuration: boolean;
+    ctaLabel: string;
   };
 }
 
@@ -133,6 +139,9 @@ const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupRe
         bookingShowHomeCta: true,
         bookingShowAvailableSlots: true,
         bookingShowPrices: true,
+        bookingShowStartingPrices: true,
+        bookingShowServiceDuration: true,
+        bookingCtaLabel: true,
         primaryBookingForm: { select: formOptionSelect },
       },
     }),
@@ -181,6 +190,9 @@ const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupRe
       showHomeCta: website.bookingShowHomeCta,
       showAvailableSlots: website.bookingShowAvailableSlots,
       showPrices: website.bookingShowPrices,
+      showStartingPrices: website.bookingShowStartingPrices,
+      showServiceDuration: website.bookingShowServiceDuration,
+      ctaLabel: website.bookingCtaLabel,
     },
   };
 };
@@ -277,11 +289,11 @@ const createManagedBookingForm = async (
       published: true,
       websiteManaged: true,
       headline: `${admin.businessName} Online Booking`,
-      subheading: "Choose a service, select an available time, and send your booking request.",
+      subheading: "Choose a service, add any extras, and reserve an available cleaning time.",
       accentColor: website.accentColor,
       showReviews: true,
-      ctaLabel: "Book now",
-      confirmationMessage: "Thanks — your booking request has been received.",
+      ctaLabel: "Book Now",
+      confirmationMessage: "Thanks — your booking is confirmed. Keep your booking reference for any changes.",
       availableDays: DEFAULT_AVAILABLE_DAYS,
       blockedDates: [],
       timeSlots: DEFAULT_TIME_SLOTS,
@@ -505,6 +517,9 @@ const configure = async (
       ...(payload.showHomeCta !== undefined ? { bookingShowHomeCta: payload.showHomeCta } : {}),
       ...(payload.showAvailableSlots !== undefined ? { bookingShowAvailableSlots: payload.showAvailableSlots } : {}),
       ...(payload.showPrices !== undefined ? { bookingShowPrices: payload.showPrices } : {}),
+      ...(payload.showStartingPrices !== undefined ? { bookingShowStartingPrices: payload.showStartingPrices } : {}),
+      ...(payload.showServiceDuration !== undefined ? { bookingShowServiceDuration: payload.showServiceDuration } : {}),
+      ...(payload.ctaLabel !== undefined ? { bookingCtaLabel: payload.ctaLabel.trim() || "Book Now" } : {}),
     };
 
     if (!payload.enabled) {

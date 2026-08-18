@@ -26,6 +26,9 @@ model BusinessWebsite {
   bookingShowHomeCta         Boolean @default(true)
   bookingShowAvailableSlots  Boolean @default(true)
   bookingShowPrices          Boolean @default(true)
+  bookingShowStartingPrices  Boolean @default(true)
+  bookingShowServiceDuration Boolean @default(true)
+  bookingCtaLabel            String  @default("Book Now")
 
   // Website presentation switch around the existing EstimateForm engine.
   // The selected form stays attached when disabled so it can be re-enabled

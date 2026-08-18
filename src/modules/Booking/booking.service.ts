@@ -130,6 +130,26 @@ const bookingInclude = {
   serviceCatalog: { select: { id: true, serviceName: true, basePriceGbp: true, duration: true, category: true } },
 } as const;
 
+// Booking list/calendar reads stay lean. The detail endpoint additionally
+// exposes the linked online-booking acquisition snapshot so staff can see the
+// property answers and customer-selected extras without duplicating that data
+// into a second website booking model.
+const bookingDetailInclude = {
+  ...bookingInclude,
+  sourceBookingFormSubmission: {
+    select: {
+      ref: true,
+      source: true,
+      sourcePage: true,
+      propertyType: true,
+      bedrooms: true,
+      bathrooms: true,
+      answers: true,
+      addOnSnapshot: true,
+    },
+  },
+} as const;
+
 // ── Booking confirmation email helper ─────────────────────────────────────────
 
 const sendBookingEmail = async (
@@ -289,18 +309,16 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
 /**
  * Convert an Online Booking submission into a real Booking atomically.
  *
- * The submission owns the service identity. The browser may adjust schedule,
- * duration and price, but it cannot replace serviceCatalogId/serviceType with
- * a service from another tenant. Repeating the request is idempotent: once the
- * submission has convertedBookingId, the existing booking is returned.
+ * One conversion primitive powers both the authenticated admin action and the
+ * trusted website acquisition path. The website never writes a second booking
+ * model: it creates a BookingFormSubmission, then this function creates the
+ * canonical Booking/Client and links the submission with convertedBookingId.
  */
-const convertBookingFormSubmission = async (
+const convertBookingFormSubmissionForAdmin = async (
   submissionId: string,
   payload: IBookingSubmissionConversion,
-  user: IRequestUser,
+  adminId: string,
 ) => {
-  const adminId = await getAdminId(user);
-
   const preview = await prisma.bookingFormSubmission.findFirst({
     where: { id: submissionId, form: { adminId } },
     select: {
@@ -317,7 +335,7 @@ const convertBookingFormSubmission = async (
 
   await assertWithinLimit(adminId, "booking");
   const existingClient = await prisma.client.findUnique({
-    where: { email_adminId: { email: preview.email.trim(), adminId } },
+    where: { email_adminId: { email: preview.email.trim().toLowerCase(), adminId } },
     select: { id: true },
   });
   if (!existingClient) await assertWithinLimit(adminId, "client");
@@ -346,9 +364,6 @@ const convertBookingFormSubmission = async (
       return { booking: submission.convertedBooking, alreadyConverted: true };
     }
     if (submission.status === FormSubmissionStatus.CONVERTED) {
-      // Older releases marked submissions CONVERTED in a second request after
-      // creating a booking and therefore have no reliable booking FK. Creating
-      // another booking here could duplicate a real customer booking.
       throw new AppError(status.CONFLICT, "This legacy converted submission is not linked to its booking", {
         code: "LEGACY_CONVERSION_UNLINKED",
         retryable: false,
@@ -363,9 +378,6 @@ const convertBookingFormSubmission = async (
 
     let catalog = submission.serviceCatalog;
     if (catalog && catalog.adminId !== adminId) {
-      // Defensive invariant for historical/bad data. Never copy a cross-tenant
-      // foreign key into a real booking even if the database was populated
-      // before Phase 0 tenant checks existed.
       throw new AppError(status.CONFLICT, "Submission service does not belong to this business", {
         code: "SERVICE_TENANT_MISMATCH",
         retryable: false,
@@ -386,7 +398,6 @@ const convertBookingFormSubmission = async (
           legacyServiceType: true,
         },
       });
-      // Attach the FK only when legacy -> catalog mapping is unambiguous.
       catalog = matches.length === 1 ? matches[0] : null;
     }
 
@@ -397,7 +408,7 @@ const convertBookingFormSubmission = async (
       });
     }
 
-    const email = submission.email.trim();
+    const email = submission.email.trim().toLowerCase();
     let client = await tx.client.findUnique({
       where: { email_adminId: { email, adminId } },
       select: { id: true },
@@ -445,6 +456,7 @@ const convertBookingFormSubmission = async (
         serviceNameSnapshot,
         priceSnapshot: submission.priceSnapshot ?? catalog?.basePriceGbp ?? null,
         durationSnapshot: submission.durationSnapshot ?? catalog?.duration ?? null,
+        addOnSnapshot: (submission.addOnSnapshot ?? []) as Prisma.InputJsonValue,
         address: submission.address,
         scheduledDate: new Date(payload.scheduledDate),
         durationMins: payload.durationMins,
@@ -471,8 +483,6 @@ const convertBookingFormSubmission = async (
         status: FormSubmissionStatus.CONVERTED,
         convertedBookingId: booking.id,
         convertedAt: new Date(),
-        // Backfill old submissions during conversion when a unique catalog
-        // mapping is now available.
         serviceCatalogId: catalog?.id ?? submission.serviceCatalogId,
         serviceType,
         serviceNameSnapshot,
@@ -499,6 +509,54 @@ const convertBookingFormSubmission = async (
   return result;
 };
 
+const convertBookingFormSubmission = async (
+  submissionId: string,
+  payload: IBookingSubmissionConversion,
+  user: IRequestUser,
+) => convertBookingFormSubmissionForAdmin(submissionId, payload, await getAdminId(user));
+
+/**
+ * Trusted website conversion. Schedule, duration and total are derived from the
+ * server-owned submission/form snapshots, never from browser-supplied booking
+ * totals. If a prior request created the submission but failed before
+ * conversion, retrying with the same Idempotency-Key safely resumes here.
+ */
+const convertWebsiteBookingFormSubmission = async (submissionId: string, adminId: string) => {
+  const submission = await prisma.bookingFormSubmission.findFirst({
+    where: { id: submissionId, form: { adminId } },
+    select: {
+      id: true,
+      date: true,
+      timeSlot: true,
+      priceSnapshot: true,
+      totalSnapshot: true,
+      convertedBookingId: true,
+      form: { select: { slotDurationMinutes: true } },
+    },
+  });
+  if (!submission) throw new AppError(status.NOT_FOUND, "Booking submission not found");
+
+  const day = submission.date.toISOString().slice(0, 10);
+  const scheduledDate = new Date(`${day}T${submission.timeSlot}:00.000Z`);
+  if (Number.isNaN(scheduledDate.getTime())) {
+    throw new AppError(status.CONFLICT, "Booking submission contains an invalid schedule", {
+      code: "BOOKING_SUBMISSION_SCHEDULE_INVALID",
+      retryable: false,
+    });
+  }
+
+  const total = Number(submission.totalSnapshot ?? submission.priceSnapshot ?? 0);
+  return convertBookingFormSubmissionForAdmin(
+    submissionId,
+    {
+      scheduledDate,
+      durationMins: submission.form.slotDurationMinutes,
+      total: Number.isFinite(total) ? total : 0,
+    },
+    adminId,
+  );
+};
+
 const getAllBookings = async (queryParams: IQueryParams, user: any) => {
   const adminId = await getAdminId(user);
 
@@ -520,7 +578,7 @@ const getBookingById = async (id: string, user: any) => {
 
   const booking = await prisma.booking.findFirst({
     where: { id, adminId },
-    include: bookingInclude,
+    include: bookingDetailInclude,
   });
 
   if (!booking) throw new AppError(status.NOT_FOUND, "Booking not found");
@@ -768,6 +826,7 @@ const getCalendarView = async (query: ICalendarQuery, user: any) => {
 export const bookingService = {
   createBooking,
   convertBookingFormSubmission,
+  convertWebsiteBookingFormSubmission,
   getAllBookings,
   getBookingById,
   updateBooking,

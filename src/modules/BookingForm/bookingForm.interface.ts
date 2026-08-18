@@ -49,6 +49,7 @@ export interface IPublicBookingSubmission {
     propertyType?: "HOUSE" | "FLAT" | "OFFICE" | "COMMERCIAL" | "OTHER";
     bedrooms?: number;
     bathrooms?: number;
+    addOnIds?: string[];
     notes?: string;
     answers?: Record<string, string>;
     // Marketing values may be supplied by the browser, but WEBSITE identity

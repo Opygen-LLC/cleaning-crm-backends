@@ -4,6 +4,7 @@ const {
   prismaMock,
   publicWebsiteMock,
   bookingFormMock,
+  bookingServiceMock,
   estimateFormMock,
   advisoryLockMock,
 } = vi.hoisted(() => {
@@ -15,6 +16,7 @@ const {
   return {
     prismaMock: {
       tx,
+      bookingFormSubmission: { deleteMany: vi.fn() },
       $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
     },
     publicWebsiteMock: {
@@ -23,6 +25,7 @@ const {
       resolvePublicContactIntegration: vi.fn(),
     },
     bookingFormMock: { submitPublicBookingFormById: vi.fn() },
+    bookingServiceMock: { convertWebsiteBookingFormSubmission: vi.fn() },
     estimateFormMock: { submitPublicEstimateFormById: vi.fn() },
     advisoryLockMock: vi.fn(),
   };
@@ -34,6 +37,7 @@ vi.mock("../../lib/prisma/advisoryLock", () => ({
 }));
 vi.mock("./publicWebsite.service", () => ({ PublicWebsiteService: publicWebsiteMock }));
 vi.mock("../BookingForm/bookingForm.service", () => ({ bookingFormService: bookingFormMock }));
+vi.mock("../Booking/booking.service", () => ({ bookingService: bookingServiceMock }));
 vi.mock("../EstimateForm/estimateForm.service", () => ({ estimateFormService: estimateFormMock }));
 
 import { WebsiteAcquisitionService } from "./websiteAcquisition.service";
@@ -60,7 +64,11 @@ beforeEach(() => {
 
 describe("Phase 14 website acquisition integration", () => {
   it("attributes website booking submissions to the resolved BusinessWebsite", async () => {
-    bookingFormMock.submitPublicBookingFormById.mockResolvedValue({ ref: "#BK-1" });
+    bookingFormMock.submitPublicBookingFormById.mockResolvedValue({ id: "submission-1", ref: "#BK-1" });
+    bookingServiceMock.convertWebsiteBookingFormSubmission.mockResolvedValue({
+      booking: { id: "booking-1", bookingRef: "BK-0042" },
+      alreadyConverted: false,
+    });
 
     const payload = { serviceCatalogId: "service-1" } as any;
     const result = await WebsiteAcquisitionService.submitBooking("sparkle-cleaning", payload, "idem-booking-1");
@@ -72,7 +80,25 @@ describe("Phase 14 website acquisition integration", () => {
       "idem-booking-1",
       "website-1",
     );
+    expect(bookingServiceMock.convertWebsiteBookingFormSubmission).toHaveBeenCalledWith("submission-1", "admin-1");
     expect(result.submission.ref).toBe("#BK-1");
+    expect(result.booking.bookingRef).toBe("BK-0042");
+  });
+
+  it("removes an unconverted website submission when canonical booking creation fails", async () => {
+    bookingFormMock.submitPublicBookingFormById.mockResolvedValue({ id: "submission-2", ref: "#BK-2" });
+    bookingServiceMock.convertWebsiteBookingFormSubmission.mockRejectedValue(new Error("Booking capacity changed"));
+    prismaMock.bookingFormSubmission.deleteMany.mockResolvedValue({ count: 1 });
+
+    const payload = { serviceCatalogId: "service-1" } as any;
+
+    await expect(
+      WebsiteAcquisitionService.submitBooking("sparkle-cleaning", payload, "idem-booking-2"),
+    ).rejects.toThrow("Booking capacity changed");
+
+    expect(prismaMock.bookingFormSubmission.deleteMany).toHaveBeenCalledWith({
+      where: { id: "submission-2", convertedBookingId: null },
+    });
   });
 
   it("attributes website estimate submissions to the resolved BusinessWebsite", async () => {

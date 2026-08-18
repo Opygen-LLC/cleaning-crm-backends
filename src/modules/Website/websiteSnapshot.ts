@@ -31,6 +31,9 @@ export interface WebsitePublishedSnapshotV1 {
     bookingShowHomeCta: boolean;
     bookingShowAvailableSlots: boolean;
     bookingShowPrices: boolean;
+    bookingShowStartingPrices: boolean;
+    bookingShowServiceDuration: boolean;
+    bookingCtaLabel: string;
     estimateEnabled: boolean;
     metaTitle: string | null;
     metaDescription: string | null;
@@ -58,6 +61,9 @@ interface DraftWebsiteLike {
   bookingShowHomeCta?: boolean;
   bookingShowAvailableSlots?: boolean;
   bookingShowPrices?: boolean;
+  bookingShowStartingPrices?: boolean;
+  bookingShowServiceDuration?: boolean;
+  bookingCtaLabel?: string;
   estimateEnabled?: boolean;
   metaTitle?: string | null;
   metaDescription?: string | null;
@@ -99,6 +105,9 @@ export const buildPublishedSnapshot = (draft: DraftWebsiteLike): WebsitePublishe
     bookingShowHomeCta: draft.bookingShowHomeCta ?? true,
     bookingShowAvailableSlots: draft.bookingShowAvailableSlots ?? true,
     bookingShowPrices: draft.bookingShowPrices ?? true,
+    bookingShowStartingPrices: draft.bookingShowStartingPrices ?? true,
+    bookingShowServiceDuration: draft.bookingShowServiceDuration ?? true,
+    bookingCtaLabel: draft.bookingCtaLabel?.trim() || "Book Now",
     // Before Phase 13, selecting a published estimate form implicitly exposed
     // /estimate. Preserve that behavior for legacy draft objects while new
     // rows use the explicit estimateEnabled database default.
@@ -154,6 +163,9 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
     (site.bookingShowHomeCta !== undefined && typeof site.bookingShowHomeCta !== "boolean") ||
     (site.bookingShowAvailableSlots !== undefined && typeof site.bookingShowAvailableSlots !== "boolean") ||
     (site.bookingShowPrices !== undefined && typeof site.bookingShowPrices !== "boolean") ||
+    (site.bookingShowStartingPrices !== undefined && typeof site.bookingShowStartingPrices !== "boolean") ||
+    (site.bookingShowServiceDuration !== undefined && typeof site.bookingShowServiceDuration !== "boolean") ||
+    (site.bookingCtaLabel !== undefined && typeof site.bookingCtaLabel !== "string") ||
     (site.estimateEnabled !== undefined && typeof site.estimateEnabled !== "boolean") ||
     !stringOrNull(site.metaTitle) ||
     !stringOrNull(site.metaDescription) ||
@@ -209,6 +221,9 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
       bookingShowHomeCta: site.bookingShowHomeCta ?? true,
       bookingShowAvailableSlots: site.bookingShowAvailableSlots ?? true,
       bookingShowPrices: site.bookingShowPrices ?? true,
+      bookingShowStartingPrices: site.bookingShowStartingPrices ?? true,
+      bookingShowServiceDuration: site.bookingShowServiceDuration ?? true,
+      bookingCtaLabel: typeof site.bookingCtaLabel === "string" && site.bookingCtaLabel.trim() ? site.bookingCtaLabel.trim() : "Book Now",
       // Legacy V1 snapshots had no explicit estimate switch; an attached form
       // meant estimates were enabled. Keep those already-published sites live
       // during rolling deployment/migration.

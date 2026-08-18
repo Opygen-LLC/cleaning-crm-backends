@@ -125,6 +125,9 @@ const getPublicWebsiteBooking = catchAsync(async (req, res) => {
     websiteSettings: {
       showAvailableSlots: integration.showAvailableSlots,
       showPrices: integration.showPrices,
+      showStartingPrices: integration.showStartingPrices,
+      showServiceDuration: integration.showServiceDuration,
+      ctaLabel: integration.ctaLabel,
     },
   };
   res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
@@ -148,12 +151,18 @@ const submitPublicWebsiteBooking = catchAsync(async (req, res) => {
     req.body,
     req.get("Idempotency-Key") ?? undefined,
   );
-  const data = result.submission;
+  const data = {
+    ref: result.submission.ref,
+    submissionId: result.submission.id,
+    bookingId: result.booking.id,
+    bookingRef: result.booking.bookingRef,
+    alreadyConverted: result.alreadyConverted,
+  };
   void WebsiteAnalyticsService.trackConversion(
     result._websiteId,
     WEBSITE_ANALYTICS_EVENT.BOOKING_REQUEST,
     "/book",
-    { formId: result._formId, submissionRef: data.ref },
+    { formId: result._formId, submissionRef: result.submission.ref, bookingRef: result.booking.bookingRef },
     {
       utmSource: req.body.utmSource,
       utmCampaign: req.body.utmCampaign,
@@ -163,7 +172,7 @@ const submitPublicWebsiteBooking = catchAsync(async (req, res) => {
   return sendResponse(res, {
     httpStatusCode: status.CREATED,
     success: true,
-    message: "Booking request submitted successfully. We'll confirm shortly!",
+    message: "Booking created successfully.",
     data,
   });
 });

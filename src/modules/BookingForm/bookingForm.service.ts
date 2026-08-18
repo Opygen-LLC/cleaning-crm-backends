@@ -4,13 +4,37 @@ import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/adv
 import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
-import { FormFieldType, FormSubmissionStatus, ServiceStatus } from "../../generated/prisma/enums";
+import { BookingStatus, FormFieldType, FormSubmissionStatus, ServiceStatus } from "../../generated/prisma/enums";
 import { Prisma } from "../../generated/prisma/client";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { IBookingFormCreate, IPublicBookingSubmission } from "./bookingForm.interface";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { buildBookingSubmissionAttribution } from "./bookingSubmissionAttribution";
+
+type PublicBookingAddOn = { id: string; name: string; price: number };
+
+const addOnSlug = (value: string) =>
+    value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "addon";
+
+/**
+ * ServiceCatalog.addOns is the canonical add-on source. IDs are deterministic
+ * for the current ordered catalog so a reordered/renamed add-on fails closed
+ * instead of charging a stale browser selection at a different price.
+ */
+const projectBookingAddOns = (value: unknown): PublicBookingAddOn[] => {
+    if (!Array.isArray(value)) return [];
+    const result: PublicBookingAddOn[] = [];
+    value.forEach((raw, index) => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+        const record = raw as Record<string, unknown>;
+        const name = typeof record.name === "string" ? record.name.trim() : "";
+        const price = typeof record.priceGbp === "number" ? record.priceGbp : Number(record.priceGbp);
+        if (!name || !Number.isFinite(price) || price < 0) return;
+        result.push({ id: `addon-${index}-${addOnSlug(name)}`, name, price });
+    });
+    return result;
+};
 
 // ─── Slot-generation helpers (mirrors frontend logic exactly) ─────────────────
 
@@ -671,7 +695,9 @@ const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelecto
     // the response. Legacy serviceType stays alongside canonical serviceCatalogId.
     const publicServices = form.services
         .filter((entry) => entry.serviceCatalog
-            ? entry.serviceCatalog.adminId === form.adminId && entry.serviceCatalog.status === ServiceStatus.ACTIVE
+            ? entry.serviceCatalog.adminId === form.adminId
+                && entry.serviceCatalog.status === ServiceStatus.ACTIVE
+                && entry.serviceCatalog.onlineBookingEnabled
             : !!entry.serviceType)
         .map((entry) => ({
             id: entry.id,
@@ -684,6 +710,7 @@ const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelecto
             serviceName: entry.serviceCatalog?.serviceName ?? entry.serviceType?.replace(/_/g, " ") ?? "Service",
             basePrice: entry.serviceCatalog?.basePriceGbp ?? null,
             basePriceGbp: entry.serviceCatalog?.basePriceGbp ?? null,
+            addOns: projectBookingAddOns(entry.serviceCatalog?.addOns),
         }));
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { adminId, admin, services, ...safeForm } = form;
@@ -704,6 +731,7 @@ const getPublicSlotAvailabilityBySelector = async (selector: PublicBookingFormSe
         where: publicBookingFormWhere(selector),
         select: {
             id:                   true,
+            adminId:              true,
             published:            true,
             timeSlots:            true,
             availableDays:        true,
@@ -746,22 +774,42 @@ const getPublicSlotAvailabilityBySelector = async (selector: PublicBookingFormSe
     const dateStart = new Date(`${date}T00:00:00.000Z`);
     const dateEnd   = new Date(`${date}T23:59:59.999Z`);
 
-    const counts = await prisma.bookingFormSubmission.groupBy({
-        by:    ["timeSlot"],
-        where: {
-            formId:  form.id,
-            date:    { gte: dateStart, lte: dateEnd },
-            status:  { not: FormSubmissionStatus.DECLINED },
-        },
-        _count: { id: true },
-    });
+    const [pendingCounts, calendarBookings] = await Promise.all([
+        prisma.bookingFormSubmission.groupBy({
+            by: ["timeSlot"],
+            where: {
+                formId: form.id,
+                date: { gte: dateStart, lte: dateEnd },
+                status: { not: FormSubmissionStatus.DECLINED },
+                // Converted submissions already exist in the canonical Booking
+                // table below. Counting them here too would halve capacity.
+                convertedBookingId: null,
+            },
+            _count: { id: true },
+        }),
+        prisma.booking.findMany({
+            where: {
+                adminId: form.adminId,
+                status: { not: BookingStatus.CANCELLED },
+                scheduledDate: { gte: dateStart, lte: dateEnd },
+            },
+            select: { scheduledDate: true, durationMins: true },
+        }),
+    ]);
 
-    const countMap = Object.fromEntries(counts.map((row) => [row.timeSlot, row._count.id]));
+    const pendingCountMap = Object.fromEntries(pendingCounts.map((row) => [row.timeSlot, row._count.id]));
     return {
         slotDurationMinutes: form.slotDurationMinutes,
         maxBookingsPerSlot: form.maxBookingsPerSlot,
         slots: slotTimes.map((time) => {
-            const booked = countMap[time] ?? 0;
+            const slotStart = new Date(`${date}T${time}:00.000Z`).getTime();
+            const slotEnd = slotStart + form.slotDurationMinutes * 60_000;
+            const calendarCount = calendarBookings.reduce((count, booking) => {
+                const bookingStart = booking.scheduledDate.getTime();
+                const bookingEnd = bookingStart + Math.max(1, booking.durationMins) * 60_000;
+                return count + (bookingStart < slotEnd && bookingEnd > slotStart ? 1 : 0);
+            }, 0);
+            const booked = (pendingCountMap[time] ?? 0) + calendarCount;
             return { time, booked, available: booked < form.maxBookingsPerSlot };
         }),
     };
@@ -798,7 +846,9 @@ const submitPublicBookingFormBySelector = async (
                             serviceName: true,
                             basePriceGbp: true,
                             duration: true,
+                            addOns: true,
                             status: true,
+                            onlineBookingEnabled: true,
                             legacyServiceType: true,
                         },
                     },
@@ -875,7 +925,11 @@ const submitPublicBookingFormBySelector = async (
     const catalog = selectedService?.serviceCatalog;
     if (
         !selectedService
-        || (catalog && (catalog.adminId !== form.adminId || catalog.status !== ServiceStatus.ACTIVE))
+        || (catalog && (
+            catalog.adminId !== form.adminId
+            || catalog.status !== ServiceStatus.ACTIVE
+            || !catalog.onlineBookingEnabled
+        ))
     ) {
         throw new AppError(status.UNPROCESSABLE_ENTITY, "That service is no longer available for online booking.", {
             code: "BOOKING_SERVICE_UNAVAILABLE",
@@ -890,6 +944,21 @@ const submitPublicBookingFormBySelector = async (
         priceSnapshot: catalog?.basePriceGbp ?? null,
         durationSnapshot: catalog?.duration ?? null,
     };
+
+    const availableAddOns = projectBookingAddOns(catalog?.addOns);
+    const requestedAddOnIds = [...new Set(payload.addOnIds ?? [])];
+    const selectedAddOns = requestedAddOnIds
+        .map((id) => availableAddOns.find((addOn) => addOn.id === id))
+        .filter((addOn): addOn is PublicBookingAddOn => Boolean(addOn));
+    if (selectedAddOns.length !== requestedAddOnIds.length) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "One or more selected add-ons are no longer available.", {
+            code: "BOOKING_ADDON_UNAVAILABLE",
+            retryable: false,
+            fieldErrors: { addOnIds: "Refresh the booking page and choose from the current add-ons." },
+        });
+    }
+    const serviceBasePrice = canonicalService.priceSnapshot == null ? 0 : Number(canonicalService.priceSnapshot);
+    const totalSnapshot = Number((serviceBasePrice + selectedAddOns.reduce((sum, addOn) => sum + addOn.price, 0)).toFixed(2));
 
     const dayWindows = form.timeSlots.filter((ts) => ts.startsWith(`${dayName}|`));
     const validSlots = generateSlotsFromWindows(
@@ -926,14 +995,33 @@ const submitPublicBookingFormBySelector = async (
 
         await acquireExtendedTextTransactionAdvisoryLock(tx, slotLockKey);
 
-        const existingCount = await tx.bookingFormSubmission.count({
-            where: {
-                formId: form.id,
-                date: { gte: dateStart, lte: dateEnd },
-                timeSlot: payload.timeSlot,
-                status: { not: FormSubmissionStatus.DECLINED },
-            },
-        });
+        const [pendingSubmissionCount, calendarBookings] = await Promise.all([
+            tx.bookingFormSubmission.count({
+                where: {
+                    formId: form.id,
+                    date: { gte: dateStart, lte: dateEnd },
+                    timeSlot: payload.timeSlot,
+                    status: { not: FormSubmissionStatus.DECLINED },
+                    convertedBookingId: null,
+                },
+            }),
+            tx.booking.findMany({
+                where: {
+                    adminId: form.adminId,
+                    status: { not: BookingStatus.CANCELLED },
+                    scheduledDate: { gte: dateStart, lte: dateEnd },
+                },
+                select: { scheduledDate: true, durationMins: true },
+            }),
+        ]);
+        const requestedSlotStart = new Date(`${payload.date}T${payload.timeSlot}:00.000Z`).getTime();
+        const requestedSlotEnd = requestedSlotStart + form.slotDurationMinutes * 60_000;
+        const canonicalBookingCount = calendarBookings.reduce((count, booking) => {
+            const bookingStart = booking.scheduledDate.getTime();
+            const bookingEnd = bookingStart + Math.max(1, booking.durationMins) * 60_000;
+            return count + (bookingStart < requestedSlotEnd && bookingEnd > requestedSlotStart ? 1 : 0);
+        }, 0);
+        const existingCount = pendingSubmissionCount + canonicalBookingCount;
 
         if (existingCount >= form.maxBookingsPerSlot) {
             throw new AppError(
@@ -956,6 +1044,9 @@ const submitPublicBookingFormBySelector = async (
                 serviceNameSnapshot: canonicalService.serviceNameSnapshot,
                 priceSnapshot: canonicalService.priceSnapshot,
                 durationSnapshot: canonicalService.durationSnapshot,
+                addOnIds: requestedAddOnIds,
+                addOnSnapshot: selectedAddOns as unknown as Prisma.InputJsonValue,
+                totalSnapshot,
                 idempotencyKey: idempotencyKey ?? null,
                 // source/sourcePage/websiteId are derived from the trusted
                 // resolver selector, never from customer-controlled JSON.

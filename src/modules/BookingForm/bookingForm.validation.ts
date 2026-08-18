@@ -90,6 +90,7 @@ export const publicBookingSubmissionSchema = z.object({
     propertyType: z.enum(["HOUSE", "FLAT", "OFFICE", "COMMERCIAL", "OTHER"]).optional(),
     bedrooms:    z.number().int().min(0).max(50).optional(),
     bathrooms:   z.number().int().min(0).max(50).optional(),
+    addOnIds:    z.array(z.string().trim().min(1).max(160)).max(25).optional(),
     notes:       z.string().trim().max(2000).optional(),
     answers:     publicAnswersSchema.optional(),
     utmSource:   z.string().trim().max(120).optional(),

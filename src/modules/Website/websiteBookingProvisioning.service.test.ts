@@ -74,6 +74,9 @@ beforeEach(() => {
     bookingShowHomeCta: true,
     bookingShowAvailableSlots: true,
     bookingShowPrices: true,
+    bookingShowStartingPrices: true,
+    bookingShowServiceDuration: true,
+    bookingCtaLabel: "Book Now",
     primaryBookingForm: {
       id: "form-1",
       headline: "Bio Cleaning Online Booking",

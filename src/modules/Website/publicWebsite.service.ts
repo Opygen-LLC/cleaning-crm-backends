@@ -180,6 +180,9 @@ const currentDraftAsPublishedSnapshot = (website: any) => buildPublishedSnapshot
   bookingShowHomeCta: website.bookingShowHomeCta,
   bookingShowAvailableSlots: website.bookingShowAvailableSlots,
   bookingShowPrices: website.bookingShowPrices,
+  bookingShowStartingPrices: website.bookingShowStartingPrices,
+  bookingShowServiceDuration: website.bookingShowServiceDuration,
+  bookingCtaLabel: website.bookingCtaLabel,
   estimateEnabled: website.estimateEnabled,
   metaTitle: website.metaTitle,
   metaDescription: website.metaDescription,
@@ -305,6 +308,9 @@ const projectWebsite = (
       showHomeCta: config.bookingShowHomeCta,
       showAvailableSlots: config.bookingShowAvailableSlots,
       showPrices: config.bookingShowPrices,
+      showStartingPrices: config.bookingShowStartingPrices,
+      showServiceDuration: config.bookingShowServiceDuration,
+      ctaLabel: config.bookingCtaLabel,
     },
     booking: bookingEnabled && selectedBookingForm
       ? {
@@ -381,6 +387,9 @@ const resolvePublicBookingIntegration = async (identifier: string) => {
     formId: site.booking.formId,
     showAvailableSlots: site.bookingPreferences.showAvailableSlots,
     showPrices: site.bookingPreferences.showPrices,
+    showStartingPrices: site.bookingPreferences.showStartingPrices,
+    showServiceDuration: site.bookingPreferences.showServiceDuration,
+    ctaLabel: site.bookingPreferences.ctaLabel,
   };
 };
 
