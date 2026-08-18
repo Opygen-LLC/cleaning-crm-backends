@@ -24,8 +24,9 @@ import {
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { isWebsiteDomainRoutingReady, readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { presentWebsiteDomain } from "./websiteDomainLifecycle";
+import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
-import { WebsiteEntitlementService } from "./websiteEntitlement.service";
+import { WebsiteEntitlementService, type WebsiteEntitlements } from "./websiteEntitlement.service";
 
 const getOwnedWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
@@ -47,7 +48,9 @@ const getOwnedDomain = async (domainId: string, user: IRequestUser) => {
 };
 
 
-const invalidateWebsiteRouting = async (websiteId: string, subdomain: string, extraHosts: string[] = []) => {
+const present = (domain: any) => presentWebsiteDomain(domain as any);
+
+const routingHostsForWebsite = async (websiteId: string, subdomain: string) => {
   const [aliases, domains] = await Promise.all([
     prisma.websiteSubdomainAlias.findMany({
       where: { websiteId },
@@ -55,15 +58,79 @@ const invalidateWebsiteRouting = async (websiteId: string, subdomain: string, ex
     }),
     prisma.websiteDomain.findMany({
       where: { websiteId, ...readyWebsiteDomainWhere } as any,
-      select: { domain: true },
+      select: { domain: true, isPrimary: true, createdAt: true },
+      orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
     }),
   ]);
+
+  const platformHosts = WEBSITE_BASE_DOMAIN
+    ? [subdomain, ...aliases.map((item) => item.subdomain)].map((label) => `${label}.${WEBSITE_BASE_DOMAIN}`)
+    : [];
+  return {
+    aliases,
+    domains,
+    hosts: [...platformHosts, ...domains.map((item) => item.domain)],
+  };
+};
+
+/**
+ * Domain/subdomain mutations invalidate both the Redis host resolver and the
+ * public website projection. Successful mutations then warm every currently
+ * routable hostname so the first real visitor does not pay a cold Postgres
+ * lookup immediately after a domain change.
+ */
+const invalidateWebsiteRouting = async (
+  websiteId: string,
+  subdomain: string,
+  extraHosts: string[] = [],
+  warm = true,
+) => {
+  const routing = await routingHostsForWebsite(websiteId, subdomain);
   await Promise.all([
-    WebsiteHostResolverService.invalidateSubdomains([subdomain, ...aliases.map((item) => item.subdomain)]),
-    WebsiteHostResolverService.invalidateHosts([...domains.map((item) => item.domain), ...extraHosts]),
+    WebsiteHostResolverService.invalidateSubdomains([subdomain, ...routing.aliases.map((item) => item.subdomain)]),
+    WebsiteHostResolverService.invalidateHosts([...routing.domains.map((item) => item.domain), ...extraHosts]),
     WebsiteProjectionCacheService.invalidateWebsite(websiteId),
   ]);
+
+  if (warm && routing.hosts.length) {
+    await Promise.allSettled(routing.hosts.map((host) => WebsiteHostResolverService.resolveHost(host)));
+  }
 };
+
+const buildRoutingState = async (websiteId: string, subdomain: string, entitlements: WebsiteEntitlements) => {
+  const domains = await prisma.websiteDomain.findMany({
+    where: { websiteId },
+    orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+  });
+  const ready = domains.filter((domain) => isWebsiteDomainRoutingReady(domain));
+  const allowedReadyDomainIds = new Set(
+    entitlements.customDomains && entitlements.customDomainLimit > 0
+      ? ready.slice(0, entitlements.customDomainLimit).map((domain) => domain.id)
+      : [],
+  );
+  const presented = domains.map((domain) => ({
+    ...present(domain),
+    entitlementActive: isWebsiteDomainRoutingReady(domain) && allowedReadyDomainIds.has(domain.id),
+  }));
+  const primary = presented.find((domain) => domain.isPrimary && domain.entitlementActive) ?? null;
+  return {
+    domains: presented,
+    primaryDomain: primary?.domain ?? null,
+    platformUrl: WEBSITE_BASE_DOMAIN ? `https://${subdomain}.${WEBSITE_BASE_DOMAIN}` : null,
+    canonicalUrl: getCanonicalWebsiteOrigin(subdomain, primary?.domain ?? null),
+  };
+};
+
+
+const attachRoutingState = async <T extends Record<string, unknown>>(
+  value: T,
+  websiteId: string,
+  subdomain: string,
+  entitlements: WebsiteEntitlements,
+) => ({
+  ...value,
+  routingState: await buildRoutingState(websiteId, subdomain, entitlements),
+});
 
 const ownershipRecord = (domain: string, token: string) => ({
   type: "TXT" as const,
@@ -240,8 +307,6 @@ const ensurePrimaryDomainInvariant = async (websiteId: string, candidateDomainId
     });
   });
 
-const present = (domain: any) => presentWebsiteDomain(domain as any);
-
 const addDomain = async (payload: WebsiteDomainCreateInput, user: IRequestUser) => {
   assertCustomDomainsEnabled();
   WebsiteDomainProviderService.assertConfigured();
@@ -308,7 +373,7 @@ const addDomain = async (payload: WebsiteDomainCreateInput, user: IRequestUser) 
       },
     });
   });
-  return present(created);
+  return attachRoutingState(present(created), website.id, website.subdomain, entitlements);
 };
 
 const listDomains = async (user: IRequestUser) => {
@@ -316,27 +381,7 @@ const listDomains = async (user: IRequestUser) => {
     getOwnedWebsite(user),
     WebsiteEntitlementService.getForUser(user),
   ]);
-  const domains = await prisma.websiteDomain.findMany({
-    where: { websiteId: website.id },
-    orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
-  });
-
-  const allowedReadyDomainIds = new Set(
-    entitlements.customDomains && entitlements.customDomainLimit > 0
-      ? domains
-          .filter((domain) => isWebsiteDomainRoutingReady(domain))
-          .slice(0, entitlements.customDomainLimit)
-          .map((domain) => domain.id)
-      : [],
-  );
-
-  return domains.map((domain) => ({
-    ...present(domain),
-    // Keep downgraded records/DNS configuration, but tell the dashboard which
-    // verified hostnames are currently inside the plan's routing allowance.
-    entitlementActive:
-      isWebsiteDomainRoutingReady(domain) && allowedReadyDomainIds.has(domain.id),
-  }));
+  return (await buildRoutingState(website.id, website.subdomain, entitlements)).domains;
 };
 
 const verifyDomain = async (domainId: string, user: IRequestUser) => {
@@ -397,7 +442,7 @@ const verifyDomain = async (domainId: string, user: IRequestUser) => {
           ...(wasRoutingReady ? {} : { verifiedAt: null }),
         },
       });
-      return present(updated);
+      return attachRoutingState(present(updated), owned.website.id, owned.website.subdomain, entitlements);
     }
 
     if (!ownershipVerified) {
@@ -418,7 +463,7 @@ const verifyDomain = async (domainId: string, user: IRequestUser) => {
       });
       await ensurePrimaryDomainInvariant(owned.website.id);
       await invalidateWebsiteRouting(owned.website.id, owned.website.subdomain, [domain.domain]);
-      return present(updated);
+      return attachRoutingState(present(updated), owned.website.id, owned.website.subdomain, entitlements);
     }
 
     let provider: WebsiteDomainProviderState;
@@ -440,7 +485,7 @@ const verifyDomain = async (domainId: string, user: IRequestUser) => {
             lastProviderSyncAt: new Date(),
           },
         });
-        return present(preserved);
+        return attachRoutingState(present(preserved), owned.website.id, owned.website.subdomain, entitlements);
       }
 
       const failed = await prisma.websiteDomain.update({
@@ -461,7 +506,7 @@ const verifyDomain = async (domainId: string, user: IRequestUser) => {
       });
       await ensurePrimaryDomainInvariant(owned.website.id);
       await invalidateWebsiteRouting(owned.website.id, owned.website.subdomain, [domain.domain]);
-      return present(failed);
+      return attachRoutingState(present(failed), owned.website.id, owned.website.subdomain, entitlements);
     }
 
     const providerReady = provider.verified && provider.routingConfigured;
@@ -491,12 +536,15 @@ const verifyDomain = async (domainId: string, user: IRequestUser) => {
       await ensurePrimaryDomainInvariant(owned.website.id);
     }
     await invalidateWebsiteRouting(owned.website.id, owned.website.subdomain, [domain.domain]);
-    return present(canonicalized);
+    return attachRoutingState(present(canonicalized), owned.website.id, owned.website.subdomain, entitlements);
   });
 };
 
 const removeDomain = async (domainId: string, user: IRequestUser) => {
-  const { website, domain } = await getOwnedDomain(domainId, user);
+  const [{ website, domain }, entitlements] = await Promise.all([
+    getOwnedDomain(domainId, user),
+    WebsiteEntitlementService.getForUser(user),
+  ]);
 
   // Detach from the hosting project first. If that fails, keep the database row
   // so the owner can retry instead of leaving a live provider alias that the
@@ -510,11 +558,11 @@ const removeDomain = async (domainId: string, user: IRequestUser) => {
   await prisma.websiteDomain.delete({ where: { id: domainId } });
   const promoted = domain.isPrimary ? await ensurePrimaryDomainInvariant(website.id) : null;
   await invalidateWebsiteRouting(website.id, website.subdomain, [domain.domain]);
-  return {
+  return attachRoutingState({
     id: domainId,
-    deleted: true,
+    deleted: true as const,
     promotedPrimaryDomain: promoted?.domain ?? null,
-  } as const;
+  }, website.id, website.subdomain, entitlements);
 };
 
 const setPrimaryDomain = async (domainId: string, user: IRequestUser) => {
@@ -549,7 +597,7 @@ const setPrimaryDomain = async (domainId: string, user: IRequestUser) => {
   });
 
   await invalidateWebsiteRouting(website.id, website.subdomain);
-  return present(updated);
+  return attachRoutingState(present(updated), website.id, website.subdomain, entitlements);
 };
 
 /** Internal hook retained for compatibility with future async/domain workers. */

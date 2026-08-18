@@ -13,9 +13,18 @@ const base = {
 
 describe("custom domain lifecycle", () => {
   it("maps the production workflow to owner-facing states", () => {
-    expect(buildWebsiteDomainLifecycle(base).status).toBe("PENDING_VERIFICATION");
-    expect(buildWebsiteDomainLifecycle({ ...base, ownershipVerified: true }).status).toBe("OWNERSHIP_VERIFIED");
-    expect(buildWebsiteDomainLifecycle({ ...base, ownershipVerified: true, lastProviderSyncAt: new Date() }).status).toBe("DNS_PENDING");
+    expect(buildWebsiteDomainLifecycle(base)).toMatchObject({
+      status: "PENDING_VERIFICATION",
+      nextAction: "VERIFY_OWNERSHIP",
+    });
+    expect(buildWebsiteDomainLifecycle({ ...base, ownershipVerified: true })).toMatchObject({
+      status: "OWNERSHIP_VERIFIED",
+      nextAction: "CONFIGURE_DNS",
+    });
+    expect(buildWebsiteDomainLifecycle({ ...base, ownershipVerified: true, lastProviderSyncAt: new Date() })).toMatchObject({
+      status: "DNS_PENDING",
+      nextAction: "CONFIGURE_DNS",
+    });
     expect(buildWebsiteDomainLifecycle({
       ...base,
       ownershipVerified: true,
@@ -23,7 +32,7 @@ describe("custom domain lifecycle", () => {
       routingVerified: true,
       tlsStatus: "PROVISIONING",
       lastProviderSyncAt: new Date(),
-    }).status).toBe("SSL_PROVISIONING");
+    })).toMatchObject({ status: "SSL_PROVISIONING", nextAction: "WAIT_FOR_TLS" });
     expect(buildWebsiteDomainLifecycle({
       ...base,
       status: "VERIFIED",
@@ -32,8 +41,21 @@ describe("custom domain lifecycle", () => {
       routingVerified: true,
       tlsStatus: "READY",
       lastProviderSyncAt: new Date(),
-    }).status).toBe("ACTIVE");
-    expect(buildWebsiteDomainLifecycle({ ...base, status: "FAILED" }).status).toBe("FAILED");
+    })).toMatchObject({ status: "ACTIVE", nextAction: "SET_PRIMARY" });
+    expect(buildWebsiteDomainLifecycle({
+      ...base,
+      status: "VERIFIED",
+      ownershipVerified: true,
+      providerVerified: true,
+      routingVerified: true,
+      tlsStatus: "READY",
+      isPrimary: true,
+      lastProviderSyncAt: new Date(),
+    })).toMatchObject({ status: "ACTIVE", nextAction: "NONE" });
+    expect(buildWebsiteDomainLifecycle({ ...base, status: "FAILED" })).toMatchObject({
+      status: "FAILED",
+      nextAction: "RETRY",
+    });
   });
 
   it("marks ownership, DNS and SSL independently", () => {

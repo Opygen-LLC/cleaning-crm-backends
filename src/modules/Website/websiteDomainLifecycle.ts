@@ -10,6 +10,19 @@ export type WebsiteCustomDomainLifecycleStatus =
 
 export type WebsiteCustomDomainStepStatus = "PENDING" | "COMPLETE" | "FAILED";
 
+/**
+ * One explicit next action keeps Website Studio deterministic and prevents the
+ * frontend from re-implementing domain lifecycle rules independently.
+ */
+export type WebsiteCustomDomainNextAction =
+  | "VERIFY_OWNERSHIP"
+  | "CONFIGURE_DNS"
+  | "CHECK_DNS"
+  | "WAIT_FOR_TLS"
+  | "SET_PRIMARY"
+  | "RETRY"
+  | "NONE";
+
 export interface WebsiteCustomDomainLifecycleStep {
   key: "ownership" | "dns" | "ssl";
   label: string;
@@ -22,6 +35,7 @@ export interface WebsiteCustomDomainLifecycle {
   label: string;
   active: boolean;
   canSetPrimary: boolean;
+  nextAction: WebsiteCustomDomainNextAction;
   publicUrl: string;
   steps: WebsiteCustomDomainLifecycleStep[];
 }
@@ -33,6 +47,7 @@ export interface WebsiteDomainLifecycleInput {
   providerVerified: boolean;
   routingVerified: boolean;
   tlsStatus: string;
+  isPrimary?: boolean;
   lastProviderSyncAt?: Date | string | null;
 }
 
@@ -62,6 +77,24 @@ const labelFor = (value: WebsiteCustomDomainLifecycleStatus): string => {
     case "ACTIVE": return "Active";
     case "FAILED": return "Failed";
   }
+};
+
+const nextActionFor = (
+  domain: WebsiteDomainLifecycleInput,
+  lifecycle: WebsiteCustomDomainLifecycleStatus,
+): WebsiteCustomDomainNextAction => {
+  if (lifecycle === "FAILED") return "RETRY";
+  if (lifecycle === "PENDING_VERIFICATION") return "VERIFY_OWNERSHIP";
+  if (lifecycle === "OWNERSHIP_VERIFIED") return "CONFIGURE_DNS";
+  if (lifecycle === "DNS_PENDING") {
+    // If the provider itself is verified but routing is still missing, the
+    // customer only needs to fix/check routing. Otherwise provider challenge
+    // records may still need to be added as well.
+    return domain.providerVerified ? "CHECK_DNS" : "CONFIGURE_DNS";
+  }
+  if (lifecycle === "SSL_PROVISIONING") return "WAIT_FOR_TLS";
+  if (lifecycle === "ACTIVE" && !domain.isPrimary) return "SET_PRIMARY";
+  return "NONE";
 };
 
 const buildSteps = (domain: WebsiteDomainLifecycleInput): WebsiteCustomDomainLifecycleStep[] => {
@@ -109,6 +142,7 @@ export const buildWebsiteDomainLifecycle = (
     label: labelFor(status),
     active,
     canSetPrimary: active,
+    nextAction: nextActionFor(domain, status),
     publicUrl: `https://${domain.domain}`,
     steps: buildSteps(domain),
   };

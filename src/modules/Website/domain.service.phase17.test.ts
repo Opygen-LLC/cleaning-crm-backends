@@ -1,7 +1,7 @@
 import { promises as dns } from "node:dns";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { prismaMock, redisMock, providerMock, hostResolverMock, projectionMock } = vi.hoisted(() => ({
+const { prismaMock, redisMock, providerMock, hostResolverMock, projectionMock, entitlementMock } = vi.hoisted(() => ({
   prismaMock: {
     businessWebsite: { findUnique: vi.fn() },
     websiteDomain: {
@@ -17,8 +17,12 @@ const { prismaMock, redisMock, providerMock, hostResolverMock, projectionMock } 
   },
   redisMock: { set: vi.fn(), eval: vi.fn() },
   providerMock: { assertConfigured: vi.fn(), verify: vi.fn(), detach: vi.fn(), describeProviderError: vi.fn() },
-  hostResolverMock: { invalidateSubdomains: vi.fn(), invalidateHosts: vi.fn() },
+  hostResolverMock: { invalidateSubdomains: vi.fn(), invalidateHosts: vi.fn(), resolveHost: vi.fn() },
   projectionMock: { invalidateWebsite: vi.fn() },
+  entitlementMock: {
+    getForUser: vi.fn(),
+    assertCustomDomainsAllowed: vi.fn(),
+  },
 }));
 
 vi.mock("../../config/ENV", () => ({
@@ -36,6 +40,7 @@ vi.mock("../../lib/utils/resolveAdminId", () => ({ getAdminId: vi.fn().mockResol
 vi.mock("./websiteDomainProvider.service", () => ({ WebsiteDomainProviderService: providerMock }));
 vi.mock("./websiteHostResolver.service", () => ({ WebsiteHostResolverService: hostResolverMock }));
 vi.mock("./websiteProjectionCache.service", () => ({ WebsiteProjectionCacheService: projectionMock }));
+vi.mock("./websiteEntitlement.service", () => ({ WebsiteEntitlementService: entitlementMock }));
 
 import { DomainService } from "./domain.service";
 
@@ -79,7 +84,7 @@ beforeEach(() => {
   prismaMock.businessWebsite.findUnique.mockResolvedValue({ id: "website-1", subdomain: "bio-cleaning" });
   prismaMock.$transaction.mockImplementation(async (work: (tx: typeof prismaMock) => Promise<unknown>) => work(prismaMock));
   prismaMock.websiteSubdomainAlias.findMany.mockResolvedValue([]);
-  prismaMock.websiteDomain.findMany.mockResolvedValue([{ domain: activeDomain.domain }]);
+  prismaMock.websiteDomain.findMany.mockResolvedValue([{ ...activeDomain, isPrimary: true }]);
   prismaMock.websiteDomain.updateMany.mockResolvedValue({ count: 1 });
   prismaMock.websiteDomain.update.mockImplementation(async ({ data }: any) =>
     data?.isPrimary === true ? { ...activeDomain, isPrimary: true } : { ...activeDomain, ...data },
@@ -111,7 +116,19 @@ beforeEach(() => {
   });
   hostResolverMock.invalidateSubdomains.mockResolvedValue(undefined);
   hostResolverMock.invalidateHosts.mockResolvedValue(undefined);
+  hostResolverMock.resolveHost.mockResolvedValue({});
   projectionMock.invalidateWebsite.mockResolvedValue(undefined);
+  entitlementMock.getForUser.mockResolvedValue({
+    planName: "PRO",
+    basicWebsite: true,
+    freeSubdomain: true,
+    onlineBooking: true,
+    customDomains: true,
+    customDomainLimit: 3,
+    premiumTemplates: true,
+    analyticsHistoryDays: 365,
+    advancedSeo: true,
+  });
   vi.spyOn(dns, "resolveTxt").mockResolvedValue([["ownership-token"]]);
 });
 
@@ -126,6 +143,8 @@ describe("Phase 17 custom-domain verification", () => {
       expect.objectContaining({ where: { id: "domain-1" }, data: { isPrimary: true } }),
     );
     expect(hostResolverMock.invalidateHosts).toHaveBeenCalled();
+    expect(hostResolverMock.resolveHost).toHaveBeenCalledWith("www.biocleaning.co.uk");
+    expect(result.routingState.canonicalUrl).toBe("https://www.biocleaning.co.uk");
   });
   it("keeps an already-active custom domain live during a transient provider recheck failure", async () => {
     const live = { ...activeDomain, isPrimary: true };

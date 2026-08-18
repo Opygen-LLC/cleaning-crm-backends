@@ -8,6 +8,7 @@ import logger from "./lib/logger";
 import { ErrorMonitor } from "./lib/monitoring/errorMonitor";
 import { assertInfrastructureAlignment, getInfrastructureAlignment } from "./lib/monitoring/infrastructure";
 import { startEmailOutboxWorker } from "./workers/emailOutbox.worker";
+import { assertWebsitePlatformConfiguration } from "./modules/Website/websitePlatformConfig";
 
 
 process.on("unhandledRejection", (reason) => {
@@ -38,6 +39,7 @@ setUpSocketIO(server);
 
 function main() {
   try {
+    assertWebsitePlatformConfiguration();
     assertInfrastructureAlignment();
     const infrastructure = getInfrastructureAlignment();
     logger.info(
