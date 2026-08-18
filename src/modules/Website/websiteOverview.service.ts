@@ -1,4 +1,4 @@
-import { subDays } from "date-fns";
+import { startOfMonth, subDays } from "date-fns";
 import redis from "../../config/redis";
 import { prisma } from "../../lib/prisma/prisma";
 
@@ -6,17 +6,19 @@ export interface WebsiteOverviewSummary {
   days: number;
   uniqueVisitors: number;
   bookings: number;
+  bookingsThisMonth: number;
   leads: number;
 }
 
 interface WebsiteOverviewRow {
   uniqueVisitors: bigint;
   bookings: bigint;
+  bookingsThisMonth: bigint;
   leads: bigint;
 }
 
 const OVERVIEW_DAYS = 30;
-const CACHE_VERSION = 1 as const;
+const CACHE_VERSION = 2 as const;
 const CACHE_PREFIX = `website-studio-overview:v${CACHE_VERSION}:`;
 const CACHE_TTL_SECONDS = 45;
 
@@ -60,6 +62,8 @@ const getForAdminId = async (adminId: string): Promise<WebsiteOverviewSummary> =
   const since = subDays(new Date(), OVERVIEW_DAYS - 1);
   since.setHours(0, 0, 0, 0);
 
+  const monthStart = startOfMonth(new Date());
+
   const rows = await prisma.$queryRaw<WebsiteOverviewRow[]>`
     SELECT
       COALESCE((
@@ -78,6 +82,12 @@ const getForAdminId = async (adminId: string): Promise<WebsiteOverviewSummary> =
       ), 0)::bigint AS "bookings",
       COALESCE((
         SELECT COUNT(*)
+        FROM "booking_form_submission" AS booking_month
+        WHERE booking_month."sourceWebsiteId" = website.id
+          AND booking_month."createdAt" >= ${monthStart}
+      ), 0)::bigint AS "bookingsThisMonth",
+      COALESCE((
+        SELECT COUNT(*)
         FROM "lead" AS lead
         WHERE lead."sourceWebsiteId" = website.id
           AND lead."createdAt" >= ${since}
@@ -92,6 +102,7 @@ const getForAdminId = async (adminId: string): Promise<WebsiteOverviewSummary> =
     days: OVERVIEW_DAYS,
     uniqueVisitors: Number(row?.uniqueVisitors ?? 0n),
     bookings: Number(row?.bookings ?? 0n),
+    bookingsThisMonth: Number(row?.bookingsThisMonth ?? row?.bookings ?? 0n),
     leads: Number(row?.leads ?? 0n),
   };
 

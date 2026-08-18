@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveWebsiteEntitlements, MAX_WEBSITE_ANALYTICS_HISTORY_DAYS } from "./websiteEntitlement.service";
+import { deriveWebsiteEntitlements, MAX_WEBSITE_ANALYTICS_HISTORY_DAYS, WebsiteEntitlementService } from "./websiteEntitlement.service";
 
 const future = () => new Date(Date.now() + 86_400_000);
 const past = () => new Date(Date.now() - 86_400_000);
@@ -99,6 +99,23 @@ describe("website subscription entitlements", () => {
     expect(result.onlineBooking).toBe(true);
     expect(result.customDomains).toBe(false);
     expect(result.premiumTemplates).toBe(false);
+  });
+
+  it("blocks premium templates on the base entitlement", () => {
+    const entitlements = deriveWebsiteEntitlements({
+      status: "ACTIVE",
+      isTrial: false,
+      currentPeriodEnd: future(),
+      subscriptionPlan: { name: "STARTER", features: [] },
+    });
+
+    try {
+      WebsiteEntitlementService.assertTemplateAllowed({ tier: "PRO", name: "Premium Home" }, entitlements);
+      throw new Error("Expected premium template restriction");
+    } catch (error: any) {
+      expect(error?.meta?.code ?? error?.details?.code ?? error?.code).toBe("WEBSITE_PREMIUM_TEMPLATE_REQUIRED");
+      expect(String(error?.message ?? "")).toMatch(/premium website template/i);
+    }
   });
 
   it("caps analytics history at the supported aggregate horizon", () => {

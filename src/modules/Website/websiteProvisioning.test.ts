@@ -8,7 +8,8 @@ vi.mock("../../lib/prisma/advisoryLock", () => ({
   acquireTextTransactionAdvisoryLock: vi.fn(),
 }));
 
-import { buildWebsiteSubdomainBase, reserveWebsiteSubdomainTx } from "./websiteProvisioning.service";
+import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
+import { WEBSITE_SUBDOMAIN_RESERVATION_LOCK, buildWebsiteSubdomainBase, reserveWebsiteSubdomainTx } from "./websiteProvisioning.service";
 
 describe("buildWebsiteSubdomainBase", () => {
   it("creates the expected Bio Cleaning registration subdomain", () => {
@@ -39,6 +40,40 @@ describe("buildWebsiteSubdomainBase", () => {
 });
 
 describe("reserveWebsiteSubdomainTx", () => {
+
+
+  it("allows duplicate company names while reserving distinct tenant labels", async () => {
+    const taken = new Set<string>();
+    const db = {
+      businessWebsite: {
+        findUnique: vi.fn(async ({ where }: { where: { subdomain: string } }) =>
+          taken.has(where.subdomain) ? { id: `website-${where.subdomain}` } : null,
+        ),
+      },
+      websiteSubdomainAlias: { findUnique: vi.fn(async () => null) },
+    };
+
+    const first = await reserveWebsiteSubdomainTx(db as never, "Bio Cleaning", "admin-one");
+    taken.add(first);
+    const second = await reserveWebsiteSubdomainTx(db as never, "Bio Cleaning", "admin-two");
+
+    expect(first).toBe("bio-cleaning");
+    expect(second).toBe("bio-cleaning-2");
+  });
+
+  it("takes the global advisory reservation lock before checking a proposed slug", async () => {
+    const db = {
+      businessWebsite: { findUnique: vi.fn(async () => null) },
+      websiteSubdomainAlias: { findUnique: vi.fn(async () => null) },
+    };
+    const lock = vi.mocked(acquireTextTransactionAdvisoryLock);
+
+    await reserveWebsiteSubdomainTx(db as never, "Concurrent Cleaning", "admin-1");
+
+    expect(lock).toHaveBeenCalledWith(db, WEBSITE_SUBDOMAIN_RESERVATION_LOCK);
+    expect(lock.mock.invocationCallOrder[0]).toBeLessThan(db.businessWebsite.findUnique.mock.invocationCallOrder[0]!);
+  });
+
   it("uses deterministic numeric suffixes when Bio Cleaning labels are already occupied", async () => {
     const taken = new Set(["bio-cleaning", "bio-cleaning-2"]);
     const db = {

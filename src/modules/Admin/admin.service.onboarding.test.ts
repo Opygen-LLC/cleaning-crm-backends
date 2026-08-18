@@ -75,6 +75,38 @@ describe("website-first onboarding status", () => {
   });
 
 
+  it("resumes step 3 after a browser refresh without losing saved progress", async () => {
+    const row = statusRow(["business_profile", "branding"]);
+    db.adminProfile.findUnique.mockResolvedValue(row);
+
+    const beforeRefresh = await adminService.getOnboardingStatus(USER_ID);
+    const afterRefresh = await adminService.getOnboardingStatus(USER_ID);
+
+    expect(beforeRefresh).toMatchObject({ currentStep: 3, resumeStep: "services", completedCount: 2 });
+    expect(afterRefresh).toMatchObject({ currentStep: 3, resumeStep: "services", completedCount: 2 });
+  });
+
+  it("restores persisted onboarding progress after logout/login", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(statusRow(["business_profile", "branding", "services"]));
+
+    const firstSession = await adminService.getOnboardingStatus(USER_ID);
+    const signedInAgain = await adminService.getOnboardingStatus(USER_ID);
+
+    expect(firstSession.resumeStep).toBe("website_address");
+    expect(signedInAgain.resumeStep).toBe("website_address");
+    expect(signedInAgain.steps.slice(0, 3).every((step) => step.completed)).toBe(true);
+  });
+
+  it("keeps earlier steps completed when the owner navigates back from a later step", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(statusRow(["business_profile", "branding", "services", "website_address"]));
+
+    const result = await adminService.getOnboardingStatus(USER_ID);
+
+    expect(result.currentStep).toBe(5);
+    expect(result.steps.find((step) => step.key === "branding")?.completed).toBe(true);
+    expect(result.steps.find((step) => step.key === "services")?.completed).toBe(true);
+  });
+
   it("resumes at the first incomplete step without discarding progress saved in the old order", async () => {
     db.adminProfile.findUnique.mockResolvedValue(statusRow(["business_profile", "services"]));
 

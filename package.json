@@ -23,7 +23,14 @@
     "migrate:phase2-websites:prod": "node dist/backfillBusinessWebsites.js",
     "migrate:phase21-existing-websites": "pnpm run backfill:websites",
     "migrate:phase21-existing-websites:dry-run": "pnpm run backfill:websites:dry-run",
-    "migrate:phase21-existing-websites:prod": "node dist/backfillBusinessWebsites.js"
+    "migrate:phase21-existing-websites:prod": "node dist/backfillBusinessWebsites.js",
+    "migrate:phase10-websites": "tsx src/scripts/migrateWebsiteRelease.ts",
+    "migrate:phase10-websites:dry-run": "tsx src/scripts/migrateWebsiteRelease.ts --dry-run",
+    "migrate:phase10-websites:prod": "node dist/migrateWebsiteRelease.js",
+    "load:phase10:public": "tsx src/scripts/load/phase10LoadTest.ts --mode=public --users=500",
+    "load:phase10:dashboard": "tsx src/scripts/load/phase10LoadTest.ts --mode=dashboard --users=500",
+    "release:phase10:verify": "pnpm test && pnpm typecheck",
+    "release:phase10:preflight": "pnpm run release:phase10:verify && pnpm run migrate:phase10-websites:dry-run"
   },
   "keywords": [],
   "author": "opygen",
