@@ -210,13 +210,29 @@ const deleteWorkLocation = async (userId: string, locationId: string) => {
 
 // ── Create the AdminProfile row for a freshly-registered/created admin user ─
 const createAdmin = async (
-  payload: { userId: string; businessName: string },
+  payload: {
+    userId: string;
+    businessName: string;
+    /** Phone / WhatsApp collected in registration wizard Step 2 */
+    mobileNumber?: string;
+    /** Business type collected in registration wizard Step 1 */
+    businessType?: "residential" | "commercial" | "both";
+    /** License / Trade ID collected in registration wizard Step 1 */
+    licenseNumber?: string;
+  },
   db: any = prisma,
 ) => {
   return db.adminProfile.create({
     data: {
       userId: payload.userId,
       businessName: payload.businessName,
+      // Persist optional wizard fields immediately so they are available
+      // to the onboarding flow without an extra PATCH round-trip.
+      ...(payload.mobileNumber && { mobileNumber: payload.mobileNumber }),
+      ...(payload.businessType && { businessType: payload.businessType }),
+      // licenseNumber is stored in the generic `website` text field as a
+      // lightweight placeholder until a dedicated column is added via migration.
+      ...(payload.licenseNumber && { website: payload.licenseNumber }),
     },
   });
 };

@@ -35,6 +35,9 @@ const register = async ({
     name,
     email,
     password,
+    mobileNumber,
+    businessType,
+    licenseNumber,
 }: IRegisterUserPayload) => {
     const platformConfig = await getPlatformConfig();
     if (!platformConfig.registrationOpen) {
@@ -50,6 +53,10 @@ const register = async ({
         email,
         password,
         trialDays: platformConfig.defaultTrialDays,
+        // Optional 2-step wizard fields — undefined if not provided
+        mobileNumber,
+        businessType,
+        licenseNumber,
     });
 };
 

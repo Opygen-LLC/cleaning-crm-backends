@@ -3,6 +3,12 @@ export interface IRegisterUserPayload {
     name: string;
     email: string;
     password: string;
+    /** Phone / WhatsApp number — collected in the 2-step wizard (Step 2) */
+    mobileNumber?: string;
+    /** Business type — collected in the 2-step wizard (Step 1) */
+    businessType?: "residential" | "commercial" | "both";
+    /** License or Trade ID — collected in the 2-step wizard (Step 1) */
+    licenseNumber?: string;
 }
 
 export interface ILoginUserPayload {
