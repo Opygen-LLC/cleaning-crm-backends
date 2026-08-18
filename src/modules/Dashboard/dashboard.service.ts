@@ -10,6 +10,8 @@ import {
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
 import redis from "../../config/redis";
+import { createHash } from "node:crypto";
+import { CacheNamespaces, CacheTtl, ttlForKey } from "../../lib/cache/cachePolicy";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { IRequestUser } from "../../types/requestUser.interface";
 
@@ -89,7 +91,11 @@ const getDashboardOverview = async (
   const takeLimit = Number(query?.limit) || 10;
 
   // ── Redis Cache Check ──────────────────────────────────────────────────────
-  const cacheKey = `dashboard:overview:${adminId}:${period}:${statusEnum ?? "all"}:${search ?? ""}:${takeLimit}`;
+  const filterHash = createHash("sha1")
+    .update(JSON.stringify({ status: statusEnum ?? "all", search: search ?? "", limit: takeLimit }))
+    .digest("hex")
+    .slice(0, 12);
+  const cacheKey = CacheNamespaces.dashboardSummary(adminId, `${period}:${filterHash}`);
   const cached = await redis.get(cacheKey).catch(() => null);
   if (cached) {
     try {
@@ -454,7 +460,9 @@ const getDashboardOverview = async (
   // PERF FIX: Increased cache TTL from 60s → 300s. Dashboard aggregates
   // 15 DB queries; a 1-minute TTL was causing pool exhaustion under normal
   // multi-user load. 5 minutes is safe — dashboard data is not real-time.
-  await redis.setex(cacheKey, 300, JSON.stringify(result)).catch(() => {});
+  await redis
+    .setex(cacheKey, ttlForKey(CacheTtl.dashboardSummary, cacheKey), JSON.stringify(result))
+    .catch(() => {});
 
   return result;
 };

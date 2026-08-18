@@ -1,5 +1,5 @@
 import { prisma } from "../../lib/prisma/prisma";
-import { WEBSITE_CUSTOM_DOMAINS_ENABLED, WEBSITE_CUSTOM_DOMAIN_LIMIT_PER_SITE, WEBSITE_DOMAIN_PROVIDER } from "../../config/ENV";
+import { WEBSITE_BASE_DOMAIN, WEBSITE_CUSTOM_DOMAINS_ENABLED, WEBSITE_CUSTOM_DOMAIN_LIMIT_PER_SITE, WEBSITE_DOMAIN_PROVIDER } from "../../config/ENV";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { TemplateRegistry } from "./templateRegistry";
@@ -7,12 +7,116 @@ import { WebsiteService } from "./website.service";
 import { parsePublishedSnapshot } from "./websiteSnapshot";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { WebsiteEntitlementService } from "./websiteEntitlement.service";
-import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
+import { isWebsiteDomainRoutingReady, readyWebsiteDomainWhere } from "./websiteDomainReadiness";
+import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { WebsiteOverviewService } from "./websiteOverview.service";
 
 type WebsiteStudioDomain = Parameters<typeof isWebsiteDomainRoutingReady>[0] & {
   id: string;
   [key: string]: unknown;
+};
+
+const getOverview = async (user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+
+  const [website, business, overview, entitlements] = await Promise.all([
+    prisma.businessWebsite.findUnique({
+      where: { adminId },
+      select: {
+        id: true,
+        status: true,
+        subdomain: true,
+        templateId: true,
+        templateVersion: true,
+        publishedAt: true,
+        publishedRevisionNumber: true,
+        metaTitle: true,
+        primaryBookingFormId: true,
+        bookingEnabled: true,
+        pages: {
+          where: { kind: "HOME" },
+          select: { isEnabled: true },
+          take: 1,
+        },
+        revisions: {
+          orderBy: { revisionNumber: "desc" },
+          select: { revisionNumber: true },
+          take: 1,
+        },
+        domains: {
+          where: { isPrimary: true, ...readyWebsiteDomainWhere },
+          select: { domain: true },
+          take: 1,
+        },
+      },
+    }),
+    prisma.adminProfile.findUnique({
+      where: { id: adminId },
+      select: { businessName: true, city: true, businessDescription: true },
+    }),
+    WebsiteOverviewService.getForAdminId(adminId),
+    WebsiteEntitlementService.getForAdminId(adminId),
+  ]);
+
+  if (!website) return null;
+
+  const template = TemplateRegistry.requireTemplate(website.templateId, website.templateVersion);
+  const platformUrl = WEBSITE_BASE_DOMAIN
+    ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}`
+    : null;
+  const primaryCustomDomain =
+    WEBSITE_CUSTOM_DOMAINS_ENABLED && entitlements.customDomains && entitlements.customDomainLimit > 0
+      ? website.domains[0]?.domain ?? null
+      : null;
+  const publicUrl = getCanonicalWebsiteOrigin(website.subdomain, primaryCustomDomain);
+  const draftRevisionNumber = website.revisions[0]?.revisionNumber ?? 0;
+  const businessName = business?.businessName?.trim() || "Your cleaning business";
+
+  return {
+    website: {
+      id: website.id,
+      status: website.status,
+      subdomain: website.subdomain,
+      platformUrl,
+      publicUrl,
+      templateId: website.templateId,
+      templateVersion: website.templateVersion,
+      templateName: template.name,
+      publishedAt: website.publishedAt,
+      publishedRevisionNumber: website.publishedRevisionNumber,
+      draftRevisionNumber,
+      hasUnpublishedChanges:
+        website.publishedRevisionNumber === null ||
+        draftRevisionNumber > website.publishedRevisionNumber,
+    },
+    business: { name: businessName, city: business?.city?.trim() || null },
+    seoDefaults: buildDefaultWebsiteSeo({
+      businessName,
+      city: business?.city ?? null,
+      businessDescription: business?.businessDescription ?? null,
+    }),
+    overview,
+    readiness: {
+      templateSelected: Boolean(template),
+      homePageEnabled: Boolean(website.pages[0]?.isEnabled),
+      onlineBookingConnected: Boolean(website.bookingEnabled && website.primaryBookingFormId),
+      seoTitleAdded: Boolean(website.metaTitle?.trim()),
+      publicAddressReady: Boolean(publicUrl),
+    },
+    features: {
+      customDomainsEnabled:
+        WEBSITE_CUSTOM_DOMAINS_ENABLED &&
+        entitlements.customDomains &&
+        entitlements.customDomainLimit > 0,
+      customDomainsDeploymentEnabled: WEBSITE_CUSTOM_DOMAINS_ENABLED,
+      customDomainLimitPerSite: Math.min(
+        WEBSITE_CUSTOM_DOMAIN_LIMIT_PER_SITE,
+        entitlements.customDomainLimit,
+      ),
+      customDomainProvider: WEBSITE_DOMAIN_PROVIDER.toUpperCase(),
+      entitlements,
+    },
+  };
 };
 
 /**
@@ -161,4 +265,4 @@ const getStudio = async (user: IRequestUser) => {
   };
 };
 
-export const WebsiteStudioService = { getStudio };
+export const WebsiteStudioService = { getOverview, getStudio };

@@ -315,12 +315,17 @@ const loadDraftSnapshot = async (websiteId: string, db: any) => {
   return website;
 };
 
-const loadWebsiteDetailsWhere = async (where: { id: string } | { adminId: string }, db: any = prisma) => {
+const loadWebsiteDetailsWhere = async (
+  where: { id: string } | { adminId: string },
+  db: any = prisma,
+  options: { includeDomains?: boolean } = {},
+) => {
+  const includeDomains = options.includeDomains !== false;
   const website = await db.businessWebsite.findUnique({
     where,
     include: {
       pages: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
-      domains: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] },
+      ...(includeDomains ? { domains: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] } } : {}),
       assets: { orderBy: { createdAt: "desc" } },
       subdomainAliases: { orderBy: { createdAt: "desc" } },
       primaryBookingForm: { select: { id: true, slug: true, published: true, headline: true } },
@@ -335,10 +340,11 @@ const loadWebsiteDetailsWhere = async (where: { id: string } | { adminId: string
   });
   const draftRevisionNumber = latest._max.revisionNumber ?? 0;
   const { publishedSnapshot: _publishedSnapshot, ...safeWebsite } = website;
-  const presentedDomains = website.domains.map((domain: any) => presentWebsiteDomain(domain as any));
+  const websiteDomains = Array.isArray((website as any).domains) ? (website as any).domains : [];
+  const presentedDomains = websiteDomains.map((domain: any) => presentWebsiteDomain(domain as any));
   const platformUrl = WEBSITE_BASE_DOMAIN ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}` : null;
   const primaryDomain = WEBSITE_CUSTOM_DOMAINS_ENABLED
-    ? website.domains.find((domain: any) => domain.isPrimary && isWebsiteDomainRoutingReady(domain))?.domain ?? null
+    ? websiteDomains.find((domain: any) => domain.isPrimary && isWebsiteDomainRoutingReady(domain))?.domain ?? null
     : null;
   return {
     ...safeWebsite,
@@ -360,6 +366,9 @@ const loadWebsiteDetails = (websiteId: string, db: any = prisma) =>
 
 const loadWebsiteDetailsForAdmin = (adminId: string, db: any = prisma) =>
   loadWebsiteDetailsWhere({ adminId }, db);
+
+const loadWebsiteEditorDetailsForAdmin = (adminId: string, db: any = prisma) =>
+  loadWebsiteDetailsWhere({ adminId }, db, { includeDomains: false });
 
 const getLatestRevisionNumber = async (db: any, websiteId: string): Promise<number> => {
   const latest = await db.websiteRevision.aggregate({
@@ -515,10 +524,16 @@ const createWebsite = async (payload: WebsiteCreateInput, user: IRequestUser) =>
 };
 
 const getWebsiteForAdmin = async (adminId: string) => loadWebsiteDetailsForAdmin(adminId);
+const getWebsiteEditorForAdmin = async (adminId: string) => loadWebsiteEditorDetailsForAdmin(adminId);
 
 const getWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
   return getWebsiteForAdmin(adminId);
+};
+
+const getWebsiteEditor = async (user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  return getWebsiteEditorForAdmin(adminId);
 };
 
 const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) => {
@@ -1385,6 +1400,8 @@ export const WebsiteService = {
   createWebsiteForAdmin,
   getWebsite,
   getWebsiteForAdmin,
+  getWebsiteEditor,
+  getWebsiteEditorForAdmin,
   updateWebsite,
   saveDraft,
   publishWebsite,

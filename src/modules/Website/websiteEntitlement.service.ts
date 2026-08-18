@@ -2,6 +2,9 @@ import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import { SubscriptionStatus } from "../../generated/prisma/enums";
 import { prisma } from "../../lib/prisma/prisma";
+import redis from "../../config/redis";
+import { CacheNamespaces, CacheTtl, ttlForKey } from "../../lib/cache/cachePolicy";
+import { cacheRuntimeSubscriptionForAdmin, getRuntimeSubscriptionForAdmin } from "../../lib/cache/authRuntimeCache";
 import { normalizeSubscriptionPlanFeatures, type SubscriptionPlanFeature } from "../../lib/utils/subscriptionPlanFeatures";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
@@ -117,16 +120,63 @@ export const websiteEntitlementSubscriptionSelect = {
   isTrial: true,
   trialEndsAt: true,
   currentPeriodEnd: true,
+  cancelAtPeriodEnd: true,
   subscriptionPlan: { select: { name: true, features: true } },
 } as const;
 
 const getForAdminId = async (adminId: string): Promise<WebsiteEntitlements> => {
-  const subscription = await prisma.subscription.findFirst({
-    where: { adminId },
-    select: websiteEntitlementSubscriptionSelect,
-    orderBy: { createdAt: "desc" },
-  });
-  return deriveWebsiteEntitlements(subscription as any);
+  const key = CacheNamespaces.entitlements(adminId);
+  const cached = await redis.get(key).catch(() => null);
+  if (cached) {
+    try {
+      return JSON.parse(cached) as WebsiteEntitlements;
+    } catch {
+      void redis.del(key).catch(() => {});
+    }
+  }
+
+  // checkSubscription primes subscription:{adminId} as part of TenantContext.
+  // Reuse that snapshot so Website Studio/domain/template gates do not perform
+  // another subscription join on the same authenticated request.
+  const runtimeSubscription = await getRuntimeSubscriptionForAdmin(adminId);
+  let source: SubscriptionEntitlementSource;
+  if (runtimeSubscription) {
+    source = {
+      status: runtimeSubscription.status,
+      isTrial: runtimeSubscription.isTrial,
+      trialEndsAt: runtimeSubscription.trialEndsAt,
+      currentPeriodEnd: runtimeSubscription.currentPeriodEnd,
+      subscriptionPlan: {
+        name: runtimeSubscription.planName,
+        features: runtimeSubscription.features,
+      },
+    };
+  } else {
+    const subscription = await prisma.subscription.findFirst({
+      where: { adminId },
+      select: websiteEntitlementSubscriptionSelect,
+      orderBy: { createdAt: "desc" },
+    });
+    source = subscription as any;
+    if (subscription) {
+      void cacheRuntimeSubscriptionForAdmin(adminId, {
+        status: subscription.status,
+        planId: null,
+        planName: subscription.subscriptionPlan?.name ?? null,
+        isTrial: subscription.isTrial,
+        trialEndsAt: subscription.trialEndsAt?.toISOString() ?? null,
+        currentPeriodEnd: subscription.currentPeriodEnd?.toISOString() ?? null,
+        cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+        features: subscription.subscriptionPlan?.features ?? [],
+      });
+    }
+  }
+
+  const entitlements = deriveWebsiteEntitlements(source);
+  void redis
+    .setex(key, ttlForKey(CacheTtl.entitlements, key), JSON.stringify(entitlements))
+    .catch(() => {});
+  return entitlements;
 };
 
 const getForUser = async (user: IRequestUser): Promise<WebsiteEntitlements> => getForAdminId(await getAdminId(user));

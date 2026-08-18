@@ -188,7 +188,7 @@ describe("production tenant host routing", () => {
     expect(redisMock.eval).toHaveBeenCalledWith(
       expect.stringContaining("current ~= ARGV[1]"),
       2,
-      expect.stringContaining("site-route:v9:host:missing.sites.example.com"),
+      expect.stringContaining("website-host:missing.sites.example.com"),
       expect.stringContaining("site-route:v9:generation:"),
       "0",
       expect.stringContaining('"notFound":true'),

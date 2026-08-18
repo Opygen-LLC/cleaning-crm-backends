@@ -26,6 +26,14 @@ const paramStr = (val: string | string[] | undefined): string => (Array.isArray(
 
 const createWebsite = catchAsync(async (req, res) => created(res, "Website created successfully", await WebsiteService.createWebsite(req.body, req.user)));
 const getWebsite = catchAsync(async (req, res) => ok(res, "Website retrieved successfully", await WebsiteService.getWebsite(req.user)));
+const getWebsiteEditor = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return ok(res, "Website editor retrieved successfully", await WebsiteService.getWebsiteEditor(req.user));
+});
+const getStudioOverview = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return ok(res, "Website Studio overview retrieved successfully", await WebsiteStudioService.getOverview(req.user));
+});
 const getStudio = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
   return ok(res, "Website Studio retrieved successfully", await WebsiteStudioService.getStudio(req.user));
@@ -294,6 +302,8 @@ const getPublicWebsite = catchAsync(async (req, res) => {
 export const websiteController = {
   createWebsite,
   getWebsite,
+  getWebsiteEditor,
+  getStudioOverview,
   getStudio,
   getWebsiteBookingSetup,
   configureWebsiteBooking,

@@ -13,6 +13,7 @@ import {
   WEBSITE_ROUTE_WAIT_FOR_FILL_MS,
 } from "../../config/ENV";
 import redis from "../../config/redis";
+import { CacheNamespaces } from "../../lib/cache/cachePolicy";
 import { prisma } from "../../lib/prisma/prisma";
 import { normalizeSubdomain } from "./websiteIdentity";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
@@ -22,7 +23,6 @@ import { deriveWebsiteEntitlements, websiteEntitlementSubscriptionSelect } from 
 const ROUTE_CACHE_VERSION = 9 as const;
 const CACHE_NAMESPACE = `site-route:v${ROUTE_CACHE_VERSION}`;
 const SUBDOMAIN_KEY_PREFIX = `${CACHE_NAMESPACE}:subdomain:`;
-const HOST_KEY_PREFIX = `${CACHE_NAMESPACE}:host:`;
 const LOCK_KEY_PREFIX = `${CACHE_NAMESPACE}:lock:`;
 const GENERATION_KEY_PREFIX = `${CACHE_NAMESPACE}:generation:`;
 const DOMAIN_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -56,7 +56,7 @@ type NegativeCacheEntry = {
 };
 
 const subdomainCacheKey = (subdomain: string) => `${SUBDOMAIN_KEY_PREFIX}${subdomain}`;
-const hostCacheKey = (host: string) => `${HOST_KEY_PREFIX}${host}`;
+const hostCacheKey = (host: string) => CacheNamespaces.websiteHost(host);
 const routeLockKey = (cacheKey: string) => `${LOCK_KEY_PREFIX}${cacheKey}`;
 const routeGenerationKey = (cacheKey: string) => `${GENERATION_KEY_PREFIX}${cacheKey}`;
 

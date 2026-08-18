@@ -10,6 +10,43 @@ import { IRequestUser } from "../../types/requestUser.interface";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { inferLegacyServiceType } from "../../lib/utils/serviceIdentity";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
+import redis from "../../config/redis";
+import { CacheNamespaces, CacheTtl, ttlForKey } from "../../lib/cache/cachePolicy";
+import { invalidateBookingFormsForAdmin } from "../BookingForm/bookingForm.cache";
+
+
+const invalidateServiceCatalogCache = async (adminId: string) => {
+  await redis.del(CacheNamespaces.serviceCatalog(adminId)).catch(() => {});
+};
+
+const loadCanonicalServiceCatalog = async (adminId: string) => {
+  const key = CacheNamespaces.serviceCatalog(adminId);
+  const cached = await redis.get(key).catch(() => null);
+  if (cached) {
+    try {
+      return JSON.parse(cached) as Awaited<ReturnType<typeof prisma.serviceCatalog.findMany>>;
+    } catch {
+      void redis.del(key).catch(() => {});
+    }
+  }
+
+  const services = await prisma.serviceCatalog.findMany({
+    where: { adminId },
+    orderBy: { createdAt: "desc" },
+  });
+  void redis
+    .setex(key, ttlForKey(CacheTtl.serviceCatalog, key), JSON.stringify(services))
+    .catch(() => {});
+  return services;
+};
+
+const invalidateServiceCatalogReadModels = async (adminId: string) => {
+  await Promise.all([
+    invalidateServiceCatalogCache(adminId),
+    invalidateBookingFormsForAdmin(adminId),
+    WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
+  ]);
+};
 
 const createServiceCatalog = async (
   payload: IServiceCatalogCreate,
@@ -28,7 +65,7 @@ const createServiceCatalog = async (
       addOns: payload.addOns ? (payload.addOns as any) : [],
     },
   });
-  await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+  await invalidateServiceCatalogReadModels(adminId);
   return created;
 };
 
@@ -88,7 +125,7 @@ const bulkUpsertServiceCatalogs = async (
     })),
   );
 
-  await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+  await invalidateServiceCatalogReadModels(adminId);
   return result;
 };
 
@@ -98,28 +135,23 @@ const getAllServiceCatalogs = async (
 ) => {
   const adminId = await getAdminId(user);
   const { searchTerm, category, status: serviceStatus } = filters;
-  const andConditions: any[] = [{ adminId }];
+  const services = await loadCanonicalServiceCatalog(adminId);
+  const needle = searchTerm?.trim().toLocaleLowerCase("en-GB") ?? "";
 
-  if (searchTerm) {
-    andConditions.push({
-      OR: [
-        { serviceName: { contains: searchTerm, mode: "insensitive" } },
-        { description: { contains: searchTerm, mode: "insensitive" } },
-      ],
-    });
-  }
-  if (category) andConditions.push({ category });
-  if (serviceStatus) andConditions.push({ status: String(serviceStatus).toUpperCase() });
-
-  return prisma.serviceCatalog.findMany({
-    where: { AND: andConditions },
-    orderBy: { createdAt: "desc" },
+  return services.filter((service) => {
+    if (category && service.category !== category) return false;
+    if (serviceStatus && String(service.status).toUpperCase() !== String(serviceStatus).toUpperCase()) return false;
+    if (!needle) return true;
+    return (
+      service.serviceName.toLocaleLowerCase("en-GB").includes(needle) ||
+      service.description.toLocaleLowerCase("en-GB").includes(needle)
+    );
   });
 };
 
 const getServiceCatalogById = async (id: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const service = await prisma.serviceCatalog.findFirst({ where: { id, adminId } });
+  const service = (await loadCanonicalServiceCatalog(adminId)).find((item) => item.id === id) ?? null;
   if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
   return service;
 };
@@ -147,7 +179,7 @@ const updateServiceCatalog = async (
       addOns: payload.addOns ? (payload.addOns as any) : undefined,
     },
   });
-  await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+  await invalidateServiceCatalogReadModels(adminId);
   return updated;
 };
 
@@ -156,7 +188,7 @@ const deleteServiceCatalog = async (id: string, user: IRequestUser) => {
   const service = await prisma.serviceCatalog.findFirst({ where: { id, adminId } });
   if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
   const deleted = await prisma.serviceCatalog.delete({ where: { id } });
-  await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+  await invalidateServiceCatalogReadModels(adminId);
   return deleted;
 };
 

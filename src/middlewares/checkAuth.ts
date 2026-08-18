@@ -5,6 +5,7 @@ import { AccountStatus, UserRole } from "../generated/prisma/enums";
 import { CookieUtils } from "../lib/utils/cookie";
 import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import {
+    getRuntimeAdminAccessContext,
     getRuntimeSessionValidity,
     getRuntimeStaffAccessContext,
     getRuntimeTenantId,
@@ -69,18 +70,27 @@ export const checkAuth =
             let userStatus = req.authRuntime?.userStatus;
             let adminId = req.authRuntime?.adminId;
 
-            if (role === UserRole.STAFF && (userStatus === undefined || adminId === undefined)) {
+            if (role === UserRole.ADMIN && (userStatus === undefined || adminId === undefined)) {
+                const tenantContext = await getRuntimeAdminAccessContext(tokenData.userId as string);
+                if (userStatus === undefined) userStatus = tenantContext.userStatus;
+                if (adminId === undefined) adminId = tenantContext.adminId;
+                req.authRuntime = {
+                    ...req.authRuntime,
+                    userStatus,
+                    adminId,
+                    subscriptionPlanName: tenantContext.subscription?.planName ?? null,
+                    subscriptionFeatures: tenantContext.entitlementSummary,
+                    entitlementSummary: tenantContext.entitlementSummary,
+                };
+            } else if (role === UserRole.STAFF && (userStatus === undefined || adminId === undefined)) {
                 const staffContext = await getRuntimeStaffAccessContext(tokenData.userId as string);
                 if (userStatus === undefined) userStatus = staffContext.userStatus;
                 if (adminId === undefined) adminId = staffContext.adminId;
                 req.authRuntime = { ...req.authRuntime, userStatus, adminId };
-            } else {
-                if (userStatus === undefined) {
-                    userStatus = await getRuntimeUserStatus(tokenData.userId as string);
-                }
-                if (adminId === undefined) {
-                    adminId = await getRuntimeTenantId(tokenData.userId as string, role);
-                }
+            } else if (role === UserRole.SUPER_ADMIN && userStatus === undefined) {
+                userStatus = await getRuntimeUserStatus(tokenData.userId as string);
+            } else if (adminId === undefined) {
+                adminId = await getRuntimeTenantId(tokenData.userId as string, role);
             }
 
             if (!userStatus) {

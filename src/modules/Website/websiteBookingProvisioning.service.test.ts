@@ -14,6 +14,7 @@ const { prismaMock, txMock, cacheMock } = vi.hoisted(() => {
     prismaMock: {
       businessWebsite: { findUnique: vi.fn() },
       bookingForm: { findMany: vi.fn() },
+      estimateForm: { findMany: vi.fn() },
       serviceCatalog: { count: vi.fn() },
       $transaction: vi.fn(async (callback: (transaction: typeof tx) => unknown) => callback(tx)),
     },
@@ -67,6 +68,8 @@ beforeEach(() => {
   txMock.businessWebsite.update.mockResolvedValue({});
   txMock.websitePage.updateMany.mockResolvedValue({ count: 1 });
   prismaMock.businessWebsite.findUnique.mockResolvedValue({
+    status: "PROVISIONED",
+    publishedSnapshot: null,
     primaryBookingFormId: "form-1",
     bookingEnabled: true,
     bookingShowHeaderCta: true,
@@ -77,6 +80,9 @@ beforeEach(() => {
     bookingShowStartingPrices: true,
     bookingShowServiceDuration: true,
     bookingCtaLabel: "Book Now",
+    primaryEstimateFormId: null,
+    estimateEnabled: false,
+    primaryEstimateForm: null,
     primaryBookingForm: {
       id: "form-1",
       headline: "Bio Cleaning Online Booking",
@@ -96,6 +102,7 @@ beforeEach(() => {
       createdAt: new Date(),
     },
   ]);
+  prismaMock.estimateForm.findMany.mockResolvedValue([]);
   prismaMock.serviceCatalog.count.mockResolvedValue(1);
   cacheMock.invalidateAdminWebsite.mockResolvedValue(undefined);
 });

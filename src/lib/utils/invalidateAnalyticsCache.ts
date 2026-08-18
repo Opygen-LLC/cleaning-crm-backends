@@ -12,6 +12,8 @@ export const invalidateAnalyticsCache = (adminId: string): void => {
   invalidatePrivateResponseCache(adminId);
   void (async () => {
     const patterns = [
+      `dashboard-summary:${adminId}:*`,
+      // Rolling-deploy compatibility with pre-Phase-9 workers.
       `dashboard:overview:${adminId}:*`,
       `dashboard:revenue:${adminId}:*`,
       `reports:*:${adminId}:*`,

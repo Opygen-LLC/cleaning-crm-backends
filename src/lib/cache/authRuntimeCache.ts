@@ -2,9 +2,13 @@ import { UserRole } from "../../generated/prisma/enums";
 import redis from "../../config/redis";
 import { prisma } from "../prisma/prisma";
 import { singleFlight } from "../utils/singleFlight";
+import { normalizeSubscriptionPlanFeatures, type SubscriptionPlanFeature } from "../utils/subscriptionPlanFeatures";
+import { CacheNamespaces, CacheTtl, ttlForKey } from "./cachePolicy";
 
 export interface RuntimeAdminSubscription {
   status: string;
+  planId: string | null;
+  planName: string | null;
   isTrial: boolean;
   trialEndsAt: string | null;
   currentPeriodEnd: string | null;
@@ -13,22 +17,25 @@ export interface RuntimeAdminSubscription {
 }
 
 export interface RuntimeAdminAccessContext {
+  role: UserRole.ADMIN;
   userStatus: string | null;
   adminId: string | null;
   subscription: RuntimeAdminSubscription | null;
+  entitlementSummary: SubscriptionPlanFeature[];
 }
 
 export interface RuntimeStaffAccessContext {
+  role: UserRole.STAFF;
   userStatus: string | null;
   adminId: string | null;
 }
 
-const ADMIN_CONTEXT_TTL_SECONDS = 60;
-const STAFF_CONTEXT_TTL_SECONDS = 60;
-const adminContextKey = (userId: string) => `auth:admin-context:v1:${userId}`;
-const staffContextKey = (userId: string) => `auth:staff-context:v1:${userId}`;
+const LEGACY_CONTEXT_TTL_SECONDS = 300;
+const adminContextKey = CacheNamespaces.authContext;
+const staffContextKey = CacheNamespaces.authContext;
 const userStatusKey = (userId: string) => `auth:status:${userId}`;
 const tenantIdKey = (role: UserRole, userId: string) => `tenantId:${role}:${userId}`;
+const subscriptionKey = CacheNamespaces.subscription;
 
 const parseAdminContext = (raw: string): RuntimeAdminAccessContext | null => {
   try {
@@ -54,7 +61,7 @@ export async function getRuntimeAdminAccessContext(userId: string): Promise<Runt
   const shared = await redis.get(key).catch(() => null);
   if (shared) {
     const parsed = parseAdminContext(shared);
-    if (parsed) return parsed;
+    if (parsed?.role === UserRole.ADMIN) return parsed;
   }
 
   return singleFlight(`admin-access-context:${userId}`, async () => {
@@ -74,7 +81,7 @@ export async function getRuntimeAdminAccessContext(userId: string): Promise<Runt
                 trialEndsAt: true,
                 currentPeriodEnd: true,
                 cancelAtPeriodEnd: true,
-                subscriptionPlan: { select: { features: true } },
+                subscriptionPlan: { select: { id: true, name: true, features: true } },
               },
             },
           },
@@ -83,12 +90,16 @@ export async function getRuntimeAdminAccessContext(userId: string): Promise<Runt
     });
 
     const latest = user?.admin?.subscription?.[0] ?? null;
+    const normalizedFeatures = normalizeSubscriptionPlanFeatures(latest?.subscriptionPlan?.features ?? []);
     const context: RuntimeAdminAccessContext = {
+      role: UserRole.ADMIN,
       userStatus: user?.status ?? null,
       adminId: user?.admin?.id ?? null,
       subscription: latest
         ? {
             status: latest.status,
+            planId: latest.subscriptionPlan?.id ?? null,
+            planName: latest.subscriptionPlan?.name ?? null,
             isTrial: latest.isTrial,
             trialEndsAt: latest.trialEndsAt?.toISOString() ?? null,
             currentPeriodEnd: latest.currentPeriodEnd?.toISOString() ?? null,
@@ -96,13 +107,24 @@ export async function getRuntimeAdminAccessContext(userId: string): Promise<Runt
             features: latest.subscriptionPlan?.features ?? [],
           }
         : null,
+      entitlementSummary: normalizedFeatures,
     };
 
     const writes: Promise<unknown>[] = [
-      redis.setex(key, ADMIN_CONTEXT_TTL_SECONDS, JSON.stringify(context)),
+      redis.setex(key, ttlForKey(CacheTtl.authContext, key), JSON.stringify(context)),
     ];
+    if (context.adminId && context.subscription) {
+      const subKey = subscriptionKey(context.adminId);
+      writes.push(
+        redis.setex(
+          subKey,
+          ttlForKey(CacheTtl.subscription, subKey),
+          JSON.stringify(context.subscription),
+        ),
+      );
+    }
     if (context.userStatus) {
-      writes.push(redis.setex(userStatusKey(userId), ADMIN_CONTEXT_TTL_SECONDS, context.userStatus));
+      writes.push(redis.setex(userStatusKey(userId), LEGACY_CONTEXT_TTL_SECONDS, context.userStatus));
     }
     writes.push(
       redis.setex(
@@ -111,7 +133,9 @@ export async function getRuntimeAdminAccessContext(userId: string): Promise<Runt
         context.adminId ?? "__none__",
       ),
     );
-    void Promise.all(writes).catch(() => {});
+    // Cold requests should leave the shared TenantContext fully primed before
+    // downstream entitlement/services run. Redis failure is still fail-open.
+    await Promise.all(writes).catch(() => []);
 
     return context;
   });
@@ -122,7 +146,8 @@ export async function getRuntimeStaffAccessContext(userId: string): Promise<Runt
   const shared = await redis.get(key).catch(() => null);
   if (shared) {
     try {
-      return JSON.parse(shared) as RuntimeStaffAccessContext;
+      const parsed = JSON.parse(shared) as RuntimeStaffAccessContext;
+      if (parsed?.role === UserRole.STAFF) return parsed;
     } catch {
       // reload below
     }
@@ -137,18 +162,19 @@ export async function getRuntimeStaffAccessContext(userId: string): Promise<Runt
       },
     });
     const context: RuntimeStaffAccessContext = {
+      role: UserRole.STAFF,
       userStatus: user?.status ?? null,
       adminId: user?.staff?.adminId ?? null,
     };
 
     const writes: Promise<unknown>[] = [
-      redis.setex(key, STAFF_CONTEXT_TTL_SECONDS, JSON.stringify(context)),
+      redis.setex(key, ttlForKey(CacheTtl.authContext, key), JSON.stringify(context)),
       redis.setex(tenantIdKey(UserRole.STAFF, userId), 300, context.adminId ?? "__none__"),
     ];
     if (context.userStatus) {
-      writes.push(redis.setex(userStatusKey(userId), STAFF_CONTEXT_TTL_SECONDS, context.userStatus));
+      writes.push(redis.setex(userStatusKey(userId), LEGACY_CONTEXT_TTL_SECONDS, context.userStatus));
     }
-    void Promise.all(writes).catch(() => {});
+    await Promise.all(writes).catch(() => []);
     return context;
   });
 }
@@ -230,6 +256,33 @@ export async function getRuntimeSessionValidity(token: string): Promise<boolean>
   const valid = Boolean(session);
   void redis.setex(redisKey, 60, valid ? "true" : "false").catch(() => {});
   return valid;
+}
+
+
+export async function getRuntimeSubscriptionForAdmin(adminId: string): Promise<RuntimeAdminSubscription | null> {
+  const key = subscriptionKey(adminId);
+  const raw = await redis.get(key).catch(() => null);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as RuntimeAdminSubscription;
+  } catch {
+    void redis.del(key).catch(() => {});
+    return null;
+  }
+}
+
+export async function cacheRuntimeSubscriptionForAdmin(
+  adminId: string,
+  subscription: RuntimeAdminSubscription,
+): Promise<void> {
+  const key = subscriptionKey(adminId);
+  await redis
+    .setex(key, ttlForKey(CacheTtl.subscription, key), JSON.stringify(subscription))
+    .catch(() => {});
+}
+
+export async function invalidateRuntimeSubscriptionForAdmin(adminId: string): Promise<void> {
+  await redis.del(subscriptionKey(adminId), CacheNamespaces.entitlements(adminId)).catch(() => {});
 }
 
 export function invalidateRuntimeAuth(userId: string): void {

@@ -10,6 +10,7 @@ import { IRequestUser } from "../../types/requestUser.interface";
 import { IBookingFormCreate, IPublicBookingSubmission } from "./bookingForm.interface";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
+import { cacheBookingForm, getCachedBookingForm, invalidateBookingForm, invalidateBookingFormsForAdmin } from "./bookingForm.cache";
 import { buildBookingSubmissionAttribution } from "./bookingSubmissionAttribution";
 
 type PublicBookingAddOn = { id: string; name: string; price: number };
@@ -364,7 +365,10 @@ const createBookingForm = async (
         },
         include: formInclude,
     });
-    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+    await Promise.all([
+        invalidateBookingFormsForAdmin(adminId),
+        WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
+    ]);
     return created;
 };
 
@@ -486,7 +490,11 @@ const updateBookingForm = async (
             include: formInclude,
         });
     });
-    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+    await Promise.all([
+        invalidateBookingForm(id),
+        invalidateBookingFormsForAdmin(adminId),
+        WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
+    ]);
     return updated;
 };
 
@@ -495,7 +503,11 @@ const deleteBookingForm = async (id: string, user: IRequestUser) => {
     const existing = await prisma.bookingForm.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Booking form not found");
     await prisma.bookingForm.delete({ where: { id } });
-    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+    await Promise.all([
+        invalidateBookingForm(id),
+        invalidateBookingFormsForAdmin(adminId),
+        WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
+    ]);
 };
 
 const togglePublished = async (id: string, user: IRequestUser) => {
@@ -508,7 +520,11 @@ const togglePublished = async (id: string, user: IRequestUser) => {
         data:  { published: !existing.published },
         include: formInclude,
     });
-    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+    await Promise.all([
+        invalidateBookingForm(id),
+        invalidateBookingFormsForAdmin(adminId),
+        WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
+    ]);
     return updated;
 };
 
@@ -647,6 +663,11 @@ const publicBookingFormWhere = (selector: PublicBookingFormSelector) => {
 };
 
 const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelector) => {
+    if (selector.formId && selector.adminId) {
+        const cached = await getCachedBookingForm<any>(selector.formId);
+        if (cached) return cached;
+    }
+
     const form = await prisma.bookingForm.findFirst({
         where: publicBookingFormWhere(selector),
         include: {
@@ -714,12 +735,16 @@ const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelecto
         }));
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { adminId, admin, services, ...safeForm } = form;
-    return {
+    const result = {
         ...safeForm,
         services: publicServices,
         business: projectPublicBusiness(form.admin),
         reviewSummary,
     };
+    if (selector.formId && selector.adminId) {
+        cacheBookingForm(form.adminId, form.id, result);
+    }
+    return result;
 };
 
 /**

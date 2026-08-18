@@ -8,10 +8,10 @@ import {
 } from "../../config/ENV";
 import redis from "../../config/redis";
 import { PublicWebsiteCacheOutbox } from "../../lib/outbox/publicWebsiteCacheOutbox";
+import { CacheNamespaces } from "../../lib/cache/cachePolicy";
 import { prisma } from "../../lib/prisma/prisma";
 
 const CACHE_VERSION = 9 as const;
-const KEY_PREFIX = `site-projection:v${CACHE_VERSION}:`;
 const STALE_KEY_PREFIX = `site-projection-stale:v${CACHE_VERSION}:`;
 const LOCK_PREFIX = `site-projection-lock:v${CACHE_VERSION}:`;
 const GENERATION_PREFIX = `site-projection-generation:v${CACHE_VERSION}:`;
@@ -27,7 +27,7 @@ interface ProjectionCacheEnvelope<T> {
   data: T;
 }
 
-const keyFor = (websiteId: string) => `${KEY_PREFIX}${websiteId}`;
+const keyFor = (websiteId: string) => CacheNamespaces.websiteProjection(websiteId);
 const staleKeyFor = (websiteId: string) => `${STALE_KEY_PREFIX}${websiteId}`;
 const lockKeyFor = (websiteId: string) => `${LOCK_PREFIX}${websiteId}`;
 const generationKeyFor = (websiteId: string) => `${GENERATION_PREFIX}${websiteId}`;

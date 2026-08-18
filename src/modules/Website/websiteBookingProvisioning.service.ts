@@ -7,6 +7,7 @@ import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { statusAfterDraftMutation, WEBSITE_STATUS, type WebsiteLifecycleStatus } from "./websiteLifecycle";
+import { parsePublishedSnapshot } from "./websiteSnapshot";
 
 export interface WebsiteBookingSetupPayload {
   enabled: boolean;
@@ -31,6 +32,7 @@ export interface WebsiteBookingSetupFormOption {
 
 export interface WebsiteBookingSetupResult {
   enabled: boolean;
+  live: boolean;
   primaryBookingFormId: string | null;
   primaryBookingForm: WebsiteBookingSetupFormOption | null;
   publishedForms: WebsiteBookingSetupFormOption[];
@@ -39,6 +41,14 @@ export interface WebsiteBookingSetupResult {
   requiresSelection: boolean;
   canCreateDefault: boolean;
   websitePath: "/book";
+  estimate: {
+    enabled: boolean;
+    live: boolean;
+    primaryEstimateFormId: string | null;
+    primaryEstimateForm: { id: string; headline: string; slug: string; published: true } | null;
+    publishedForms: Array<{ id: string; headline: string; slug: string; published: true }>;
+    websitePath: "/estimate";
+  };
   settings: {
     showHeaderCta: boolean;
     showServiceCtas: boolean;
@@ -127,11 +137,20 @@ const formOptionSelect = {
   websiteManaged: true,
 } as const;
 
+const estimateFormOptionSelect = {
+  id: true,
+  headline: true,
+  slug: true,
+  published: true,
+} as const;
+
 const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupResult> => {
-  const [website, publishedForms, bookableServiceCount] = await Promise.all([
+  const [website, publishedForms, publishedEstimateForms, bookableServiceCount] = await Promise.all([
     prisma.businessWebsite.findUnique({
       where: { adminId },
       select: {
+        status: true,
+        publishedSnapshot: true,
         primaryBookingFormId: true,
         bookingEnabled: true,
         bookingShowHeaderCta: true,
@@ -142,13 +161,22 @@ const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupRe
         bookingShowStartingPrices: true,
         bookingShowServiceDuration: true,
         bookingCtaLabel: true,
+        primaryEstimateFormId: true,
+        estimateEnabled: true,
         primaryBookingForm: { select: formOptionSelect },
+        primaryEstimateForm: { select: estimateFormOptionSelect },
       },
     }),
     prisma.bookingForm.findMany({
       where: { adminId, published: true },
       select: formOptionSelect,
       orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+    }),
+    prisma.estimateForm.findMany({
+      where: { adminId, published: true },
+      select: estimateFormOptionSelect,
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      take: 100,
     }),
     prisma.serviceCatalog.count({
       where: {
@@ -173,9 +201,27 @@ const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupRe
     ...form,
     published: true as const,
   }));
+  const estimateOptions = publishedEstimateForms.map((form) => ({ ...form, published: true as const }));
+  const primaryEstimate = website.primaryEstimateForm?.published
+    ? ({ ...website.primaryEstimateForm, published: true } as const)
+    : null;
+  const published = parsePublishedSnapshot(website.publishedSnapshot);
+  const bookingLive = Boolean(
+    website.status === WEBSITE_STATUS.PUBLISHED &&
+    published?.website.bookingEnabled &&
+    published.website.primaryBookingFormId &&
+    published.pages.some((page) => page.kind === "BOOK" && page.isEnabled),
+  );
+  const estimateLive = Boolean(
+    website.status === WEBSITE_STATUS.PUBLISHED &&
+    published?.website.estimateEnabled &&
+    published.website.primaryEstimateFormId &&
+    published.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled),
+  );
 
   return {
     enabled: website.bookingEnabled,
+    live: bookingLive,
     primaryBookingFormId: website.primaryBookingFormId,
     primaryBookingForm: primary,
     publishedForms: options,
@@ -184,6 +230,14 @@ const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupRe
     requiresSelection: website.bookingEnabled && !primary && options.length > 1,
     canCreateDefault: options.length === 0,
     websitePath: "/book",
+    estimate: {
+      enabled: website.estimateEnabled,
+      live: estimateLive,
+      primaryEstimateFormId: website.primaryEstimateFormId,
+      primaryEstimateForm: primaryEstimate,
+      publishedForms: estimateOptions,
+      websitePath: "/estimate",
+    },
     settings: {
       showHeaderCta: website.bookingShowHeaderCta,
       showServiceCtas: website.bookingShowServiceCtas,

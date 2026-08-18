@@ -69,7 +69,7 @@ describe("Phase 23 public website projection cache", () => {
     expect(redisMock.eval).toHaveBeenCalledWith(
       expect.stringContaining("redis.call('SET', KEYS[2]"),
       3,
-      "site-projection:v9:website-1",
+      "website-projection:website-1",
       "site-projection-stale:v9:website-1",
       "site-projection-generation:v9:website-1",
       "0",
@@ -84,7 +84,7 @@ describe("Phase 23 public website projection cache", () => {
     expect(redisMock.eval).toHaveBeenCalledWith(
       expect.stringContaining("INCR"),
       4,
-      "site-projection:v9:website-1",
+      "website-projection:website-1",
       "site-projection-stale:v9:website-1",
       "site-projection-lock:v9:website-1",
       "site-projection-generation:v9:website-1",

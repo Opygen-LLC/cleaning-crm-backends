@@ -15,15 +15,14 @@ import { prisma } from "../lib/prisma/prisma";
 import AppError from "../errorHelper/AppError";
 import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import { CookieUtils } from "../lib/utils/cookie";
-import redis from "../config/redis";
 import {
   normalizeSubscriptionPlanFeatures,
   type SubscriptionPlanFeature,
 } from "../lib/utils/subscriptionPlanFeatures";
 import {
   getRuntimeAdminAccessContext,
-  getRuntimeTenantId,
   invalidateRuntimeAdminAccessContext,
+  invalidateRuntimeSubscriptionForAdmin,
   type RuntimeAdminAccessContext,
 } from "../lib/cache/authRuntimeCache";
 
@@ -44,10 +43,10 @@ function getAccessToken(req: Request): string | undefined {
 // status gate below, so every hit on a feature-gated route (auto-dispatch,
 // coupons, recurring bookings, ...) paid for two uncached DB round-trips.
 //
-// This single helper now backs both gates: one Redis-cached payload (60s
-// TTL) per user, containing everything either gate needs, including the
-// plan's feature list. This cuts checkFeature from 2 uncached queries per
-// request down to a Redis GET on the (very common) cache-hit path.
+// Both gates now reuse the Redis TenantContext (`auth-context:{userId}`).
+// It contains tenant ownership plus the latest subscription/feature snapshot,
+// so the common path is one Redis read shared across the request instead of
+// repeated user/profile/subscription queries.
 type CachedSubscriptionPayload = {
   adminId: string | null;
   status: string | null;
@@ -58,23 +57,24 @@ type CachedSubscriptionPayload = {
   features: SubscriptionPlanFeature[];
 } | null; // null = admin has no subscription/profile at all → both gates just call next()
 
-// PERF FIX: Increased from 60s to 300s — subscription status changes rarely.
-// When it does change (upgrade/downgrade/cancel), the relevant service
-// manually invalidates this key via redis.del(subscriptionCacheKey(userId)).
-const SUBSCRIPTION_CACHE_TTL_SECONDS = 300;
-const subscriptionCacheKey = (userId: string) => `sub:full:user:${userId}`;
-
 /** Clear the status/feature snapshot after an approved/cancelled plan mutation. */
 export async function invalidateSubscriptionAccessCache(userId: string) {
-  await redis.del(subscriptionCacheKey(userId)).catch(() => {});
-  await invalidateRuntimeAdminAccessContext(userId);
+  // Capture the tenant id before clearing auth-context so invalidation never
+  // performs a second profile lookup on the mutation path.
+  const accessContext = await getRuntimeAdminAccessContext(userId).catch(() => null);
+  await Promise.all([
+    invalidateRuntimeAdminAccessContext(userId),
+    accessContext?.adminId
+      ? invalidateRuntimeSubscriptionForAdmin(accessContext.adminId)
+      : Promise.resolve(),
+  ]);
 
   // Website entitlements are evaluated from the live subscription on public
   // projection/host cache misses. Any plan/status mutation must therefore drop
   // those caches immediately so a downgrade cannot keep premium domains,
   // templates or SEO alive until TTL expiry.
   try {
-    const adminId = await getRuntimeTenantId(userId, UserRole.ADMIN);
+    const adminId = accessContext?.adminId ?? null;
     if (!adminId) return;
     const website = await prisma.businessWebsite.findUnique({
       where: { adminId },
@@ -120,20 +120,10 @@ const subscriptionFromContext = (context: RuntimeAdminAccessContext): CachedSubs
 async function getCachedSubscriptionForUser(
   userId: string,
 ): Promise<CachedSubscriptionPayload> {
-  const cached = await redis.get(subscriptionCacheKey(userId)).catch(() => null);
-  if (cached !== null) {
-    try {
-      return JSON.parse(cached) as CachedSubscriptionPayload;
-    } catch {
-      // fall through and reload the combined admin access context
-    }
-  }
-
-  const payload = subscriptionFromContext(await getRuntimeAdminAccessContext(userId));
-  await redis
-    .setex(subscriptionCacheKey(userId), SUBSCRIPTION_CACHE_TTL_SECONDS, JSON.stringify(payload))
-    .catch(() => {});
-  return payload;
+  // Standalone feature gates reuse the same Redis-backed TenantContext as
+  // checkSubscription. No parallel user-scoped subscription namespace is
+  // maintained anymore.
+  return subscriptionFromContext(await getRuntimeAdminAccessContext(userId));
 }
 
 // ─── Status gate (mounted at router level) ────────────────────────────────────
@@ -169,15 +159,11 @@ export const checkSubscription = async (
     req.authRuntime = {
       userStatus,
       adminId: accessContext.adminId,
+      subscriptionPlanName: accessContext.subscription?.planName ?? null,
       subscriptionFeatures: sub?.features ?? null,
+      entitlementSummary: accessContext.entitlementSummary,
     };
 
-    // Keep the longer-lived subscription cache warm for middleware used in
-    // isolation (tests/background wiring) without putting the write on the
-    // request's critical path.
-    void redis
-      .setex(subscriptionCacheKey(userId), SUBSCRIPTION_CACHE_TTL_SECONDS, JSON.stringify(sub))
-      .catch(() => {});
 
     if (userStatus === AccountStatus.SUSPENDED)
       throw new AppError(

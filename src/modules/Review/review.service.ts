@@ -9,6 +9,7 @@ import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
+import { invalidateBookingFormsForAdmin } from "../BookingForm/bookingForm.cache";
 
 function deriveSentiment(rating: number): string {
     if (rating >= 4) return "positive";
@@ -260,7 +261,10 @@ const updateReview = async (id: string, payload: IUpdateReview, user: IRequestUs
             ...(payload.adminReply !== undefined ? { adminReply: payload.adminReply } : {}),
         },
     });
-    await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
+    await Promise.all([
+        WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
+        invalidateBookingFormsForAdmin(adminId),
+    ]);
     return updated;
 };
 
