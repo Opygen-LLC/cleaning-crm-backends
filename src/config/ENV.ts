@@ -185,3 +185,14 @@ export const WEBSITE_PROJECTION_REBUILD_LOCK_SECONDS: number = Math.min(30, Math
 export const WEBSITE_PROJECTION_STALE_TTL_SECONDS: number = Math.min(7200, Math.max(120, Number(process.env.WEBSITE_PROJECTION_STALE_TTL_SECONDS) || 900));
 export const WEBSITE_PROJECTION_WAIT_FOR_FILL_MS: number = Math.min(3_000, Math.max(100, Number(process.env.WEBSITE_PROJECTION_WAIT_FOR_FILL_MS) || 1_200));
 export const WEBSITE_ERROR_DEDUPE_TTL_SECONDS: number = Math.min(3600, Math.max(10, Number(process.env.WEBSITE_ERROR_DEDUPE_TTL_SECONDS) || 120));
+
+// Phase 8 — signed Next.js Data Cache invalidation. The URL normally points
+// to the frontend Route Handler. Mutations enqueue durable outbox events so
+// public projection freshness does not depend on an in-process fire-and-forget.
+const normalizedFrontendUrl = process.env.FRONTEND_URL?.trim().replace(/\/+$/, "");
+export const NEXT_REVALIDATE_URL: string | undefined = process.env.NEXT_REVALIDATE_URL?.trim()
+    || (normalizedFrontendUrl ? `${normalizedFrontendUrl}/api/public-site/revalidate` : undefined);
+export const NEXT_REVALIDATE_SECRET: string | undefined = process.env.NEXT_REVALIDATE_SECRET?.trim() || undefined;
+export const NEXT_REVALIDATE_TIMEOUT_MS: number = Math.min(10_000, Math.max(500,
+    Number(process.env.NEXT_REVALIDATE_TIMEOUT_MS) || 2_500,
+));

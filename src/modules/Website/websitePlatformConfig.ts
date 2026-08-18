@@ -1,6 +1,8 @@
 import { isIP } from "node:net";
 import { domainToASCII } from "node:url";
 import {
+  NEXT_REVALIDATE_SECRET,
+  NEXT_REVALIDATE_URL,
   NODE_ENV,
   VERCEL_ACCESS_TOKEN,
   VERCEL_PROJECT_ID,
@@ -34,6 +36,16 @@ export const assertWebsitePlatformConfiguration = () => {
     throw new Error(
       "WEBSITE_BASE_DOMAIN must be a valid public hostname in production (for example cleaningcrm.com).",
     );
+  }
+
+  if (!NEXT_REVALIDATE_SECRET || NEXT_REVALIDATE_SECRET.length < 32) {
+    throw new Error("NEXT_REVALIDATE_SECRET must be configured with at least 32 characters in production.");
+  }
+  try {
+    const revalidateUrl = new URL(NEXT_REVALIDATE_URL || "");
+    if (revalidateUrl.protocol !== "https:" && revalidateUrl.protocol !== "http:") throw new Error("invalid protocol");
+  } catch {
+    throw new Error("NEXT_REVALIDATE_URL must be a valid absolute HTTP(S) URL in production.");
   }
 
   if (!WEBSITE_CUSTOM_DOMAINS_ENABLED) return;

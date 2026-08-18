@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { redisMock, prismaMock } = vi.hoisted(() => ({
+const { redisMock, prismaMock, publicCacheOutboxMock } = vi.hoisted(() => ({
   redisMock: { get: vi.fn(), set: vi.fn(), eval: vi.fn() },
   prismaMock: { businessWebsite: { findUnique: vi.fn() } },
+  publicCacheOutboxMock: { enqueue: vi.fn(async () => true) },
 }));
 
 vi.mock("../../config/redis", () => ({ default: redisMock }));
@@ -14,6 +15,7 @@ vi.mock("../../config/ENV", () => ({
   WEBSITE_PROJECTION_WAIT_FOR_FILL_MS: 100,
 }));
 vi.mock("../../lib/prisma/prisma", () => ({ prisma: prismaMock }));
+vi.mock("../../lib/outbox/publicWebsiteCacheOutbox", () => ({ PublicWebsiteCacheOutbox: publicCacheOutboxMock }));
 
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 
@@ -87,6 +89,7 @@ describe("Phase 23 public website projection cache", () => {
       "site-projection-lock:v9:website-1",
       "site-projection-generation:v9:website-1",
     );
+    expect(publicCacheOutboxMock.enqueue).toHaveBeenCalledWith({ websiteId: "website-1" });
   });
 
   it("uses the cached admin→website mapping so CRM invalidation does not query Postgres", async () => {

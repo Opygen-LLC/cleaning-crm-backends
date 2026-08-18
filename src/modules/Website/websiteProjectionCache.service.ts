@@ -7,6 +7,7 @@ import {
   WEBSITE_PROJECTION_WAIT_FOR_FILL_MS,
 } from "../../config/ENV";
 import redis from "../../config/redis";
+import { PublicWebsiteCacheOutbox } from "../../lib/outbox/publicWebsiteCacheOutbox";
 import { prisma } from "../../lib/prisma/prisma";
 
 const CACHE_VERSION = 9 as const;
@@ -271,6 +272,13 @@ const invalidateWebsite = async (websiteId: string | null | undefined): Promise<
     // Redis remains an acceleration layer. PostgreSQL mutations must succeed
     // even during a cache outage; normal TTL expiry provides eventual refresh.
   }
+
+  // The Next.js public projection cache is a second acceleration layer. Queue
+  // revalidation after every explicit projection invalidation so ServiceCatalog,
+  // published Review, BookingForm, domain/subdomain and Publish writes all share
+  // one correctness boundary. The outbox helper is non-throwing; its one-hour
+  // frontend safety window is the fallback if this durable event cannot queue.
+  await PublicWebsiteCacheOutbox.enqueue({ websiteId });
 };
 
 const invalidateAdminWebsite = async (adminId: string | null | undefined): Promise<void> => {

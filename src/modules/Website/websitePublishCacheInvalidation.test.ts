@@ -20,7 +20,7 @@ const { prismaMock, txMock, hostResolverMock, projectionCacheMock } = vi.hoisted
       businessWebsite: { findUnique: vi.fn() },
       $transaction: vi.fn(async (callback: (transaction: WebsiteTransactionMock) => unknown) => callback(tx)),
     },
-    hostResolverMock: { invalidateSubdomains: vi.fn() },
+    hostResolverMock: { invalidateSubdomains: vi.fn(), invalidateHosts: vi.fn() },
     projectionCacheMock: { invalidateWebsite: vi.fn() },
   };
 });
@@ -95,6 +95,7 @@ beforeEach(() => {
     .mockResolvedValue({ _max: { revisionNumber: 1 } });
   txMock.websiteRevision.create.mockResolvedValue({ revisionNumber: 1 });
   hostResolverMock.invalidateSubdomains.mockResolvedValue(undefined);
+  hostResolverMock.invalidateHosts.mockResolvedValue(undefined);
   projectionCacheMock.invalidateWebsite.mockResolvedValue(undefined);
 });
 
@@ -108,6 +109,7 @@ describe("website publish cache invalidation", () => {
       data: expect.objectContaining({ status: "PUBLISHED", publishedRevisionNumber: 1 }),
     }));
     expect(hostResolverMock.invalidateSubdomains).toHaveBeenCalledWith(["sparkle"]);
+    expect(hostResolverMock.invalidateHosts).toHaveBeenCalledWith([]);
     expect(projectionCacheMock.invalidateWebsite).toHaveBeenCalledWith("website-1");
   });
 

@@ -716,6 +716,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
   // every edge immediately re-resolves against the current website row.
   await Promise.all([
     WebsiteHostResolverService.invalidateSubdomains([website.subdomain]),
+    WebsiteHostResolverService.invalidateHosts(website.domains.map((domain: any) => domain.domain)),
     WebsiteProjectionCacheService.invalidateWebsite(website.id),
   ]);
   return website;
@@ -939,6 +940,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
   // no worker can rebuild Redis from a half-published transaction.
   await Promise.all([
     WebsiteHostResolverService.invalidateSubdomains([result.website.subdomain]),
+    WebsiteHostResolverService.invalidateHosts(result.website.domains.map((domain: any) => domain.domain)),
     WebsiteProjectionCacheService.invalidateWebsite(result.website.id),
   ]);
 

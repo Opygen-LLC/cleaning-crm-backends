@@ -2,6 +2,9 @@ import { auth } from "../lib/auth";
 import logger from "../lib/logger";
 import { prisma } from "../lib/prisma/prisma";
 import {
+  NEXT_REVALIDATE_SECRET,
+  NEXT_REVALIDATE_TIMEOUT_MS,
+  NEXT_REVALIDATE_URL,
   OUTBOX_LOCK_TIMEOUT_MS,
   OUTBOX_WORKER_BATCH_SIZE,
   OUTBOX_WORKER_ENABLED,
@@ -11,6 +14,10 @@ import {
   AUTH_EMAIL_OUTBOX_TOPIC,
   type EmailVerificationOutboxPayload,
 } from "../lib/outbox/authEmailOutbox";
+import {
+  PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC,
+  type PublicWebsiteCacheInvalidationPayload,
+} from "../lib/outbox/publicWebsiteCacheOutbox";
 
 type ClaimedOutboxEvent = {
   id: string;
@@ -103,10 +110,55 @@ const deliverVerificationEmail = async (payload: EmailVerificationOutboxPayload)
   });
 };
 
+const parsePublicWebsiteCachePayload = (payload: unknown): PublicWebsiteCacheInvalidationPayload => {
+  if (!payload || typeof payload !== "object") throw new Error("Invalid public website cache invalidation payload");
+  const value = payload as Record<string, unknown>;
+  const websiteId = typeof value.websiteId === "string" ? value.websiteId.trim() : "";
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(websiteId)) {
+    throw new Error("Public website cache invalidation payload has an invalid websiteId");
+  }
+  return {
+    websiteId,
+    tenantIdentifier: typeof value.tenantIdentifier === "string" ? value.tenantIdentifier.trim().toLowerCase() : null,
+    reason: typeof value.reason === "string" ? value.reason.trim().slice(0, 120) : null,
+  };
+};
+
+const deliverPublicWebsiteCacheInvalidation = async (payload: PublicWebsiteCacheInvalidationPayload) => {
+  if (!NEXT_REVALIDATE_URL || !NEXT_REVALIDATE_SECRET) {
+    throw new Error("Next public cache revalidation is not configured");
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), NEXT_REVALIDATE_TIMEOUT_MS);
+  timeout.unref?.();
+  try {
+    const response = await fetch(NEXT_REVALIDATE_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-revalidate-secret": NEXT_REVALIDATE_SECRET,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Next cache revalidation failed (${response.status})${body ? `: ${body.slice(0, 300)}` : ""}`);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 const processEvent = async (event: ClaimedOutboxEvent) => {
   switch (event.topic) {
     case AUTH_EMAIL_OUTBOX_TOPIC.EMAIL_VERIFICATION_REQUESTED:
       await deliverVerificationEmail(parseVerificationPayload(event.payload));
+      return;
+    case PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC.INVALIDATION_REQUESTED:
+      await deliverPublicWebsiteCacheInvalidation(parsePublicWebsiteCachePayload(event.payload));
       return;
     default:
       throw new Error(`Unsupported outbox topic: ${event.topic}`);
@@ -141,7 +193,7 @@ const markFailed = async (event: ClaimedOutboxEvent, error: unknown) => {
     },
   });
 
-  logger.error("Email outbox delivery failed", {
+  logger.error("Outbox delivery failed", {
     outboxEventId: event.id,
     topic: event.topic,
     attempt: event.attempts,
@@ -175,7 +227,7 @@ export const startEmailOutboxWorker = () => {
 
   const tick = () => {
     void processEmailOutboxOnce().catch((error) => {
-      logger.error("Email outbox worker tick failed", { error });
+      logger.error("Outbox worker tick failed", { error });
     });
   };
 
@@ -184,7 +236,7 @@ export const startEmailOutboxWorker = () => {
   tick();
   timer = setInterval(tick, OUTBOX_WORKER_POLL_MS);
   timer.unref();
-  logger.info(`[OUTBOX] email worker started (poll=${OUTBOX_WORKER_POLL_MS}ms, batch=${OUTBOX_WORKER_BATCH_SIZE})`);
+  logger.info(`[OUTBOX] worker started (poll=${OUTBOX_WORKER_POLL_MS}ms, batch=${OUTBOX_WORKER_BATCH_SIZE})`);
 };
 
 export const stopEmailOutboxWorker = () => {

@@ -115,7 +115,10 @@ const {
       businessWebsite: { findUnique: vi.fn(async () => ({ id: "website-1" })) },
       $transaction: vi.fn(async (callback: (transaction: typeof tx) => unknown) => callback(tx)),
     },
-    hostResolverMock: { invalidateSubdomains: vi.fn(async () => undefined) },
+    hostResolverMock: {
+      invalidateSubdomains: vi.fn(async () => undefined),
+      invalidateHosts: vi.fn(async () => undefined),
+    },
     projectionCacheMock: { invalidateWebsite: vi.fn(async () => undefined) },
     publicWebsiteMock: { getPublicWebsiteById: vi.fn(async () => ({ website: { subdomain: "bio-cleaning" } })) },
     bookingProvisioningMock: {
@@ -199,6 +202,7 @@ describe("first website launch", () => {
     expect(result.businessName).toBe("Bio Cleaning");
     expect(result.publicUrl).toBe("https://bio-cleaning.sites.example.com");
     expect(hostResolverMock.invalidateSubdomains).toHaveBeenCalledWith(["bio-cleaning"]);
+    expect(hostResolverMock.invalidateHosts).toHaveBeenCalledWith([]);
     expect(projectionCacheMock.invalidateWebsite).toHaveBeenCalledWith("website-1");
     expect(publicWebsiteMock.getPublicWebsiteById).toHaveBeenCalledWith("website-1");
   });
