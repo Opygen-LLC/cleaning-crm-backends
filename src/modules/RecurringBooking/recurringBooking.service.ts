@@ -1,4 +1,5 @@
 import { resolveServiceIdentity } from "../../lib/utils/serviceIdentity";
+import { nextReference } from "../../lib/utils/referenceNumber";
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
@@ -28,23 +29,6 @@ const DAY_MAP: Record<WeekDay, number> = {
     [WeekDay.THURSDAY]:  4,
     [WeekDay.FRIDAY]:    5,
     [WeekDay.SATURDAY]:  6,
-};
-
-/**
- * Generates a unique recurring schedule reference: #RS-0001
- */
-const generateScheduleRef = async (): Promise<string> => {
-    const last = await prisma.recurringSchedule.findFirst({
-        orderBy: { createdAt: "desc" },
-        select: { scheduleRef: true },
-    });
-    let next = 1;
-    if (last?.scheduleRef) {
-        const parts = last.scheduleRef.split("-");
-        const num = parseInt(parts[parts.length - 1]);
-        if (!isNaN(num)) next = num + 1;
-    }
-    return `#RS-${next.toString().padStart(4, "0")}`;
 };
 
 /**
@@ -130,6 +114,7 @@ const frequencyToDays = (f: RecurringFrequency): number => {
 // ─── Standard includes ────────────────────────────────────────────────────────
 
 const scheduleInclude = {
+    serviceCatalog: { select: { id: true, serviceName: true } },
     client: {
         select: { id: true, name: true, email: true, phone: true },
     },
@@ -169,7 +154,6 @@ const createSchedule = async (
     }
 
     const serviceIdentity = await resolveServiceIdentity(adminId, payload);
-    const scheduleRef = await generateScheduleRef();
 
     // Compute the first nextRunAt from the provided startDate
     const startDate = new Date(payload.startDate);
@@ -181,7 +165,9 @@ const createSchedule = async (
         payload.frequency,
     );
 
-    return prisma.recurringSchedule.create({
+    return prisma.$transaction(async (tx) => {
+        const scheduleRef = await nextReference(tx, "recurring");
+        return tx.recurringSchedule.create({
         data: {
             scheduleRef,
             adminId,
@@ -210,6 +196,7 @@ const createSchedule = async (
             }),
         },
         include: scheduleInclude,
+        });
     });
 };
 
@@ -406,20 +393,8 @@ const generateNextBooking = async (id: string, user: IRequestUser) => {
 
     const now = new Date();
 
-    // Generate booking ref — mirrors the cron helper
-    const lastBooking = await prisma.booking.findFirst({
-        orderBy: { createdAt: "desc" },
-        select: { bookingRef: true },
-    });
-    let nextNum = 1;
-    if (lastBooking?.bookingRef) {
-        const parts = lastBooking.bookingRef.split("-");
-        const num = parseInt(parts[parts.length - 1]);
-        if (!isNaN(num)) nextNum = num + 1;
-    }
-    const bookingRef = `#OP-BK-${nextNum.toString().padStart(4, "0")}`;
-
     const result = await prisma.$transaction(async (tx) => {
+        const bookingRef = await nextReference(tx, "booking");
         const booking = await tx.booking.create({
             data: {
                 bookingRef,

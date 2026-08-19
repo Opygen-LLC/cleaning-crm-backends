@@ -13,6 +13,7 @@ import {
     clientSearchableFields,
 } from "./client.constant";
 import { randomUUID } from "crypto";
+import { serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import {
     buildAddressString,
     geocodeAddressSafely,
@@ -27,6 +28,7 @@ const geocodeClientAddress = async (address: {
     addressLine1?: string;
     addressLine2?: string;
     city?: string;
+    postcode?: string;
     zipcode?: string;
     country?: string;
 }) => {
@@ -52,11 +54,13 @@ const createClient = async (
     // Enforce plan limits before inserting
     await assertWithinLimit(adminId, "client");
 
-    const { notes, servicePreference, email, ...rest } = payload;
+    const { notes, servicePreference, email, postcode, zipcode, ...rest } = payload;
+    const canonicalPostcode = postcode ?? zipcode ?? "";
+    const dbAddress = { ...rest, zipcode: canonicalPostcode };
 
     // Best-effort geocode — never blocks client creation on a bad/unmatched
     // address or a provider outage.
-    const geo = await geocodeClientAddress(rest);
+    const geo = await geocodeClientAddress(dbAddress);
 
     return await prisma.client.upsert({
         where: {
@@ -66,7 +70,7 @@ const createClient = async (
             },
         },
         create: {
-            ...rest,
+            ...dbAddress,
             email,
             ...(servicePreference ? { servicePreference } : {}),
             ...geo,
@@ -80,7 +84,7 @@ const createClient = async (
                 : undefined,
         },
         update: {
-            ...rest,
+            ...dbAddress,
             ...(servicePreference ? { servicePreference } : {}),
             ...geo,
             notes: notes
@@ -119,7 +123,10 @@ const getClients = async (query: IQueryParams, user: IRequestUser) => {
         .fields()
         .execute();
 
-    return result;
+    return {
+        ...result,
+        data: result.data.map((client: any) => ({ ...client, postcode: client.zipcode ?? "" })),
+    };
 };
 
 const getClientById = async (id: string, user: IRequestUser) => {
@@ -154,7 +161,7 @@ const getClientById = async (id: string, user: IRequestUser) => {
 
     // portalAccessToken is always included via the full select above.
     // The admin frontend uses it to build the "Copy portal link" URL.
-    return client;
+    return { ...client, postcode: client.zipcode ?? "" };
 };
 
 const updateClient = async (
@@ -179,6 +186,7 @@ const updateClient = async (
         payload.addressLine1 !== undefined ||
         payload.addressLine2 !== undefined ||
         payload.city !== undefined ||
+        payload.postcode !== undefined ||
         payload.zipcode !== undefined ||
         payload.country !== undefined;
 
@@ -188,16 +196,22 @@ const updateClient = async (
               addressLine2:
                   payload.addressLine2 ?? existing.addressLine2 ?? undefined,
               city: payload.city ?? existing.city,
-              zipcode: payload.zipcode ?? existing.zipcode,
+              zipcode: payload.postcode ?? payload.zipcode ?? existing.zipcode,
               country: payload.country ?? existing.country,
           })
         : {};
 
-    return await prisma.client.update({
+    const { postcode, zipcode, ...restPayload } = payload;
+    const updated = await prisma.client.update({
         where: { id },
-        data: { ...payload, ...geo },
+        data: {
+            ...restPayload,
+            ...(postcode !== undefined || zipcode !== undefined ? { zipcode: postcode ?? zipcode } : {}),
+            ...geo,
+        },
         include: { notes: true },
     });
+    return { ...updated, postcode: updated.zipcode ?? "" };
 };
 
 const deleteClient = async (id: string, user: IRequestUser) => {
@@ -242,6 +256,8 @@ const getClientPortal = async (portalAccessToken: string) => {
                     bookingRef: true,
                     status: true,
                     serviceType: true,
+                    serviceNameSnapshot: true,
+                    serviceCatalog: { select: { id: true, serviceName: true } },
                     address: true,
                     scheduledDate: true,
                     durationMins: true,
@@ -278,7 +294,15 @@ const getClientPortal = async (portalAccessToken: string) => {
 
     if (!client) throw new AppError(status.NOT_FOUND, "Client not found.");
 
-    return client;
+    const { zipcode: _legacyZipcode, ...portalClient } = client;
+    return {
+        ...portalClient,
+        postcode: client.zipcode ?? "",
+        bookings: client.bookings.map((booking) => ({
+            ...booking,
+            serviceName: serviceDisplayName(booking),
+        })),
+    };
 };
 
 // ─── Admin: regenerate portal access token ────────────────────────────────────

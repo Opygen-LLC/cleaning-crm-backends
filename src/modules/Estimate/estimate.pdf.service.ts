@@ -6,7 +6,7 @@ import { generateSimpleDocumentPDFBuffer } from "../../shared/pdf/simpleDocument
 export const generateEstimatePDFBuffer = async (estimateId: string): Promise<Buffer> => {
     const estimate = await prisma.estimate.findUnique({
         where: { id: estimateId },
-        include: { client: true, lineItems: true },
+        include: { client: true, lineItems: true, admin: { select: { currency: true, businessName: true, businessEmail: true, brandColor: true } } },
     });
 
     if (!estimate) {
@@ -34,5 +34,9 @@ export const generateEstimatePDFBuffer = async (estimateId: string): Promise<Buf
         taxAmount: estimate.tax.toString(),
         total: estimate.total.toString(),
         notes: estimate.notes,
+        businessName: estimate.admin.businessName,
+        businessEmail: estimate.admin.businessEmail,
+        brandColor: estimate.admin.brandColor,
+        currency: estimate.admin.currency,
     });
 };

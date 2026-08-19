@@ -26,6 +26,7 @@ export interface WebsitePublishedSnapshotV1 {
     primaryBookingFormId: string | null;
     primaryEstimateFormId: string | null;
     bookingEnabled: boolean;
+    bookingShowNavigation: boolean;
     bookingShowHeaderCta: boolean;
     bookingShowServiceCtas: boolean;
     bookingShowHomeCta: boolean;
@@ -56,6 +57,7 @@ interface DraftWebsiteLike {
   primaryBookingFormId?: string | null;
   primaryEstimateFormId?: string | null;
   bookingEnabled?: boolean;
+  bookingShowNavigation?: boolean;
   bookingShowHeaderCta?: boolean;
   bookingShowServiceCtas?: boolean;
   bookingShowHomeCta?: boolean;
@@ -100,6 +102,7 @@ export const buildPublishedSnapshot = (draft: DraftWebsiteLike): WebsitePublishe
     primaryBookingFormId: draft.primaryBookingFormId ?? null,
     primaryEstimateFormId: draft.primaryEstimateFormId ?? null,
     bookingEnabled: draft.bookingEnabled ?? true,
+    bookingShowNavigation: draft.bookingShowNavigation ?? true,
     bookingShowHeaderCta: draft.bookingShowHeaderCta ?? true,
     bookingShowServiceCtas: draft.bookingShowServiceCtas ?? true,
     bookingShowHomeCta: draft.bookingShowHomeCta ?? true,
@@ -158,6 +161,7 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
     !stringOrNull(site.primaryBookingFormId) ||
     !stringOrNull(site.primaryEstimateFormId) ||
     (site.bookingEnabled !== undefined && typeof site.bookingEnabled !== "boolean") ||
+    (site.bookingShowNavigation !== undefined && typeof site.bookingShowNavigation !== "boolean") ||
     (site.bookingShowHeaderCta !== undefined && typeof site.bookingShowHeaderCta !== "boolean") ||
     (site.bookingShowServiceCtas !== undefined && typeof site.bookingShowServiceCtas !== "boolean") ||
     (site.bookingShowHomeCta !== undefined && typeof site.bookingShowHomeCta !== "boolean") ||
@@ -216,6 +220,7 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
       primaryBookingFormId: site.primaryBookingFormId,
       primaryEstimateFormId: site.primaryEstimateFormId,
       bookingEnabled: site.bookingEnabled ?? true,
+      bookingShowNavigation: site.bookingShowNavigation ?? true,
       bookingShowHeaderCta: site.bookingShowHeaderCta ?? true,
       bookingShowServiceCtas: site.bookingShowServiceCtas ?? true,
       bookingShowHomeCta: site.bookingShowHomeCta ?? true,

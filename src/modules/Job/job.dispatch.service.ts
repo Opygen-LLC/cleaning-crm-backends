@@ -79,12 +79,23 @@ const serviceKeywords: Partial<Record<ServiceType, string[]>> = {
     [ServiceType.MOVE_IN_OUT_CLEAN]: ["move", "in", "out"],
 };
 
-function specialtyMatchScore(staffSpecialties: string[] | undefined | null, jobType: ServiceType | null): number {
-    if (!jobType) return 0;
-    const keywords = serviceKeywords[jobType] ?? [];
-    if (keywords.length === 0 || !staffSpecialties) return 0;
-    const lower = (staffSpecialties ?? []).map((s) => s.toLowerCase());
-    const matched = keywords.some((kw) => lower.some((sp) => sp.includes(kw)));
+function specialtyMatchScore(
+    staffSpecialties: string[] | undefined | null,
+    serviceName: string | null | undefined,
+    legacyType: ServiceType | null,
+): number {
+    if (!staffSpecialties?.length) return 0;
+    const lowerSpecialties = staffSpecialties.map((value) => value.toLowerCase());
+    const canonicalKeywords = String(serviceName ?? "")
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((word) => word.length >= 3 && word !== "clean" && word !== "cleaning");
+    const legacyKeywords = legacyType ? (serviceKeywords[legacyType] ?? []) : [];
+    const keywords = [...new Set([...canonicalKeywords, ...legacyKeywords])];
+    if (keywords.length === 0) return 0;
+    const matched = keywords.some((keyword) =>
+        lowerSpecialties.some((specialty) => specialty.includes(keyword) || keyword.includes(specialty)),
+    );
     return matched ? W_SPECIALTY : 0;
 }
 
@@ -256,7 +267,11 @@ const autoDispatch = async (
             score = -9999; // hard exclusion unless we allow override
         } else {
             // Specialty match
-            const specialtyScore = specialtyMatchScore(staff.specialty, job.serviceType);
+            const specialtyScore = specialtyMatchScore(
+                staff.specialty,
+                job.serviceNameSnapshot,
+                job.serviceType,
+            );
             if (specialtyScore > 0) {
                 score += specialtyScore;
                 reasons.push("Specialty match");

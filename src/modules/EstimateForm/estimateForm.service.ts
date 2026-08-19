@@ -60,7 +60,7 @@ type EstimatePricingResult = {
     min: number | null;
     max: number | null;
     quoteOnly: boolean;
-    currency: "GBP";
+    currency: string;
 };
 
 type EstimateCoverageResult = {
@@ -317,11 +317,12 @@ const calculatePricing = (
         serviceCatalogId: string | null;
         serviceType: ServiceType | null;
         basePrice: unknown;
-        serviceCatalog: { serviceName: string; basePriceGbp: number; duration: string } | null;
+        serviceCatalog: { serviceName: string; basePrice: number; duration: string } | null;
     },
     addOns: Array<{ id: string; label: string; price: unknown }>,
     bedrooms: number,
     bathrooms: number,
+    currency: string,
 ): EstimatePricingResult => {
     const selectedAddOns = addOns.map((addOn) => ({
         id: addOn.id,
@@ -329,7 +330,7 @@ const calculatePricing = (
         price: Number(addOn.price),
     }));
     const addOnTotal = selectedAddOns.reduce((total, addOn) => total + addOn.price, 0);
-    const rawBasePrice = service.basePrice ?? service.serviceCatalog?.basePriceGbp ?? null;
+    const rawBasePrice = service.basePrice ?? service.serviceCatalog?.basePrice ?? null;
     const basePrice = rawBasePrice == null ? null : Number(rawBasePrice);
     const serviceName = service.serviceCatalog?.serviceName ?? service.serviceType?.replace(/_/g, " ") ?? "Service";
 
@@ -347,7 +348,7 @@ const calculatePricing = (
             min: null,
             max: null,
             quoteOnly: true,
-            currency: "GBP",
+            currency,
         };
     }
 
@@ -368,7 +369,7 @@ const calculatePricing = (
         min,
         max,
         quoteOnly: false,
-        currency: "GBP",
+        currency,
     };
 };
 
@@ -677,7 +678,7 @@ const getSubmissions = async (
         .include({
             form: { select: { headline: true, slug: true } },
             serviceCatalog: {
-                select: { id: true, serviceName: true, duration: true, basePriceGbp: true },
+                select: { id: true, serviceName: true, duration: true, basePrice: true },
             },
         })
         .execute();
@@ -704,7 +705,7 @@ const updateSubmissionStatus = async (
         data:  { status: newStatus },
         include: {
             form: { select: { headline: true } },
-            serviceCatalog: { select: { id: true, serviceName: true, duration: true, basePriceGbp: true } },
+            serviceCatalog: { select: { id: true, serviceName: true, duration: true, basePrice: true } },
         },
     });
 };
@@ -734,7 +735,7 @@ const publicFormSelect = {
         select: {
             id: true, serviceType: true, serviceCatalogId: true, enabled: true, basePrice: true,
             serviceCatalog: {
-                select: { id: true, serviceName: true, description: true, basePriceGbp: true, duration: true, category: true, addOns: true, status: true, legacyServiceType: true },
+                select: { id: true, serviceName: true, description: true, basePrice: true, duration: true, category: true, addOns: true, status: true, legacyServiceType: true },
             },
         },
     },
@@ -742,7 +743,7 @@ const publicFormSelect = {
     admin: {
         select: {
             businessName: true, businessLogo: true, mobileNumber: true, businessEmail: true,
-            address: true, city: true, zipcode: true, country: true, brandColor: true,
+            address: true, city: true, zipcode: true, country: true, brandColor: true, currency: true,
             user: { select: { name: true, email: true } },
         },
     },
@@ -780,7 +781,7 @@ const getPublicEstimateFormFor = async (locator: PublicEstimateFormLocator) => {
             where: {
                 adminId: form.adminId,
                 staffId: null,
-                isPublished: true,
+                status: "published",
             },
             _avg: { rating: true },
             _count: { rating: true },
@@ -798,7 +799,7 @@ const getPublicEstimateFormFor = async (locator: PublicEstimateFormLocator) => {
         .map((entry) => ({
             id: entry.id, enabled: entry.enabled, serviceType: entry.serviceType,
             serviceCatalogId: entry.serviceCatalogId,
-            basePrice: entry.basePrice ?? entry.serviceCatalog?.basePriceGbp ?? null,
+            basePrice: entry.basePrice ?? entry.serviceCatalog?.basePrice ?? null,
             serviceName: entry.serviceCatalog?.serviceName ?? entry.serviceType?.replace(/_/g, " ") ?? "Service",
             service: entry.serviceCatalog ? projectCanonicalService(entry.serviceCatalog) : null,
         }));
@@ -884,7 +885,7 @@ const calculatePublicEstimateFor = async (
         );
     }
 
-    const pricing = calculatePricing(service, selectedAddOns, payload.bedrooms, payload.bathrooms);
+    const pricing = calculatePricing(service, selectedAddOns, payload.bedrooms, payload.bathrooms, form.admin.currency ?? "USD");
     return {
         pricing: form.showLiveEstimate ? pricing : null,
         coverage,
@@ -968,7 +969,7 @@ const submitPublicEstimateFormFor = async (
         email: payload.email,
         phone: payload.phone,
     });
-    const pricing = calculatePricing(service, selectedAddOns, payload.bedrooms, payload.bathrooms);
+    const pricing = calculatePricing(service, selectedAddOns, payload.bedrooms, payload.bathrooms, form.admin.currency ?? "USD");
     const pricingSnapshot = {
         calculatedAt: new Date().toISOString(),
         ...pricing,
@@ -980,7 +981,7 @@ const submitPublicEstimateFormFor = async (
         serviceType: service.serviceCatalog?.legacyServiceType ?? service.serviceType ?? null,
         serviceNameSnapshot: service.serviceCatalog?.serviceName ?? service.serviceType?.replace(/_/g, " ") ?? "Service",
         priceSnapshot: service.basePrice == null
-            ? service.serviceCatalog?.basePriceGbp ?? null
+            ? service.serviceCatalog?.basePrice ?? null
             : Number(service.basePrice),
         durationSnapshot: service.serviceCatalog?.duration ?? null,
     };

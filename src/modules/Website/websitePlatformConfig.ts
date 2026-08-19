@@ -1,4 +1,6 @@
+import { promises as dns } from "node:dns";
 import { isIP } from "node:net";
+import tls from "node:tls";
 import { domainToASCII } from "node:url";
 import {
   NEXT_REVALIDATE_SECRET,
@@ -10,6 +12,7 @@ import {
   WEBSITE_CNAME_TARGET,
   WEBSITE_CUSTOM_DOMAINS_ENABLED,
   WEBSITE_DOMAIN_PROVIDER,
+  WEBSITE_TLS_PROBE_TIMEOUT_MS,
 } from "../../config/ENV";
 
 const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -66,3 +69,115 @@ export const assertWebsitePlatformConfiguration = () => {
     );
   }
 };
+
+const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
+const probeWildcardTls = async (host: string) => new Promise<{
+  authorized: boolean;
+  protocol: string | null;
+  validTo: string | null;
+}>((resolve, reject) => {
+  const socket = tls.connect({
+    host,
+    port: 443,
+    servername: host,
+    rejectUnauthorized: true,
+  });
+  const timer = setTimeout(() => {
+    socket.destroy(new Error(`TLS probe timed out after ${WEBSITE_TLS_PROBE_TIMEOUT_MS}ms`));
+  }, WEBSITE_TLS_PROBE_TIMEOUT_MS);
+  timer.unref?.();
+
+  socket.once("secureConnect", () => {
+    clearTimeout(timer);
+    const certificate = socket.getPeerCertificate();
+    const result = {
+      authorized: socket.authorized,
+      protocol: socket.getProtocol(),
+      validTo: certificate.valid_to || null,
+    };
+    socket.end();
+    resolve(result);
+  });
+  socket.once("error", (error) => {
+    clearTimeout(timer);
+    reject(error);
+  });
+});
+
+/**
+ * Operational proof that the configured wildcard namespace actually resolves
+ * and presents a trusted certificate. Any HTTP status from the frontend is
+ * irrelevant here: DNS + TLS are the infrastructure requirements checked by
+ * this probe. The endpoint exposing this result is monitoring-token protected.
+ */
+export const inspectWebsiteWildcardInfrastructure = async () => {
+  const baseDomain = normalizePublicHost(WEBSITE_BASE_DOMAIN);
+  if (!baseDomain) {
+    return {
+      ok: false,
+      baseDomain: null,
+      wildcardHost: null,
+      probeHost: null,
+      dns: { ok: false, addresses: [] as Array<{ address: string; family: number }>, error: "WEBSITE_BASE_DOMAIN is not configured" },
+      tls: { ok: false, authorized: false, protocol: null as string | null, validTo: null as string | null, error: "DNS/TLS probe skipped" },
+    };
+  }
+
+  const probeHost = `phase1-routing-check-${Date.now().toString(36)}.${baseDomain}`;
+  let addresses: Array<{ address: string; family: number }> = [];
+  let dnsError: string | null = null;
+  try {
+    addresses = await withTimeout(
+      dns.lookup(probeHost, { all: true }),
+      WEBSITE_TLS_PROBE_TIMEOUT_MS,
+      "Wildcard DNS lookup",
+    );
+    if (!addresses.length) dnsError = "Wildcard DNS returned no addresses";
+  } catch (error) {
+    dnsError = error instanceof Error ? error.message : String(error);
+  }
+
+  let tlsResult: { authorized: boolean; protocol: string | null; validTo: string | null } | null = null;
+  let tlsError: string | null = null;
+  if (!dnsError) {
+    try {
+      tlsResult = await probeWildcardTls(probeHost);
+    } catch (error) {
+      tlsError = error instanceof Error ? error.message : String(error);
+    }
+  } else {
+    tlsError = "TLS probe skipped because wildcard DNS is unavailable";
+  }
+
+  const dnsOk = !dnsError && addresses.length > 0;
+  const tlsOk = Boolean(tlsResult?.authorized) && !tlsError;
+  return {
+    ok: dnsOk && tlsOk,
+    baseDomain,
+    wildcardHost: `*.${baseDomain}`,
+    probeHost,
+    dns: { ok: dnsOk, addresses, error: dnsError },
+    tls: {
+      ok: tlsOk,
+      authorized: tlsResult?.authorized ?? false,
+      protocol: tlsResult?.protocol ?? null,
+      validTo: tlsResult?.validTo ?? null,
+      error: tlsError,
+    },
+  };
+};
+

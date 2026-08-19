@@ -1,6 +1,4 @@
-import { QuoteStatus, ServiceType } from "../../generated/prisma/enums";
-
-// ── Create ─────────────────────────────────────────────────────────────────────
+import { QuoteStatus } from "../../generated/prisma/enums";
 
 export interface IQuoteLineItemInput {
     description: string;
@@ -10,20 +8,20 @@ export interface IQuoteLineItemInput {
 
 export interface IQuoteCreate {
     clientId: string;
-    serviceType: string;
+    serviceCatalogId?: string;
+    serviceType?: string; // legacy rolling-client compatibility
     address: string;
     lineItems: IQuoteLineItemInput[];
     taxRate: number;
-    validUntil: string; // ISO date string
+    validUntil: string;
     notes?: string;
     internalNotes?: string;
-    templateId?: string; // optional — increments usageCount if supplied
+    templateId?: string;
 }
 
-// ── Update ─────────────────────────────────────────────────────────────────────
-
 export interface IQuoteUpdate {
-    serviceType?: string;
+    serviceCatalogId?: string | null;
+    serviceType?: string; // legacy rolling-client compatibility
     address?: string;
     lineItems?: IQuoteLineItemInput[];
     taxRate?: number;
@@ -32,32 +30,23 @@ export interface IQuoteUpdate {
     internalNotes?: string;
 }
 
-// ── Status ─────────────────────────────────────────────────────────────────────
-
 export interface IQuoteStatusUpdate {
     status: QuoteStatus;
 }
 
-// ── Convert to Booking ─────────────────────────────────────────────────────────
-
 export interface IQuoteConvertToBooking {
-    serviceType: ServiceType;
-    scheduledDate: string; // ISO date string
+    scheduledDate: string;
     durationMins: number;
     staffIds?: string[];
     notes?: string;
 }
-
-// ── Convert to Job ─────────────────────────────────────────────────────────────
 
 export interface IQuoteConvertToJob {
-    scheduledDate: string; // ISO date string
+    scheduledDate: string;
     durationMins: number;
     staffIds?: string[];
     notes?: string;
 }
-
-// ── Public acceptance (unauthenticated) ───────────────────────────────────────
 
 export interface IPublicQuoteAction {
     action: "accept" | "decline";

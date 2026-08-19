@@ -49,6 +49,13 @@ export interface WebsiteHostResolution extends WebsiteRouteResolution {
   customDomain: string | null;
 }
 
+export type WebsiteHostResolverSource = "redis" | "redis-fill" | "database" | "database-redis-unavailable";
+
+export interface WebsiteHostResolverDiagnostics {
+  source: WebsiteHostResolverSource;
+  durationMs: number;
+}
+
 type NegativeCacheEntry = {
   version: typeof ROUTE_CACHE_VERSION;
   notFound: true;
@@ -539,38 +546,52 @@ const loadHostFromDatabase = async (host: string): Promise<WebsiteHostResolution
  * collapses cold-host stampedes, while per-key generations prevent an older DB
  * result from repopulating a route after suspension/domain/subdomain changes.
  */
-const resolveHost = async (input: string): Promise<WebsiteHostResolution> => {
+const resolveHostWithDiagnostics = async (input: string): Promise<{
+  resolution: WebsiteHostResolution;
+  diagnostics: WebsiteHostResolverDiagnostics;
+}> => {
+  const startedAt = performance.now();
+  const finish = (resolution: WebsiteHostResolution, source: WebsiteHostResolverSource) => ({
+    resolution,
+    diagnostics: {
+      source,
+      durationMs: Math.round((performance.now() - startedAt) * 10) / 10,
+    },
+  });
+
   const host = normalizeHost(input);
   const key = hostCacheKey(host);
   const cached = await readHostCache(key, host);
-  if (cached) return cached;
+  if (cached) return finish(cached, "redis");
 
   const lock = await acquireRouteLock(key);
-  if (!lock.redisAvailable) return loadHostFromDatabase(host);
+  if (!lock.redisAvailable) {
+    return finish(await loadHostFromDatabase(host), "database-redis-unavailable");
+  }
 
   if (!lock.token) {
     const filled = await waitForRouteFill(() => readHostCache(key, host));
-    if (filled) return filled;
+    if (filled) return finish(filled, "redis-fill");
   }
 
   const token = lock.token;
   try {
     if (token) {
       const filled = await readHostCache(key, host);
-      if (filled) return filled;
+      if (filled) return finish(filled, "redis");
     }
 
     const generation = await getRouteGeneration(key);
     try {
       const loaded = await loadHostFromDatabase(host);
-      if (generation === null) return loaded;
+      if (generation === null) return finish(loaded, "database-redis-unavailable");
       const stored = await safeSetForGeneration(key, loaded, generation);
-      if (stored === false) return loadHostFromDatabase(host);
-      return loaded;
+      if (stored === false) return finish(await loadHostFromDatabase(host), "database");
+      return finish(loaded, "database");
     } catch (error) {
       if (error instanceof AppError && error.statusCode === status.NOT_FOUND && generation !== null) {
         const stored = await cacheNotFound(key, host, generation);
-        if (stored === false) return loadHostFromDatabase(host);
+        if (stored === false) return finish(await loadHostFromDatabase(host), "database");
       }
       throw error;
     }
@@ -578,6 +599,9 @@ const resolveHost = async (input: string): Promise<WebsiteHostResolution> => {
     if (token) await releaseRouteLock(key, token);
   }
 };
+
+const resolveHost = async (input: string): Promise<WebsiteHostResolution> =>
+  (await resolveHostWithDiagnostics(input)).resolution;
 
 const invalidateSubdomains = async (labels: Array<string | null | undefined>) => {
   const normalized = labels
@@ -608,6 +632,7 @@ const invalidateHosts = async (hosts: Array<string | null | undefined>) => {
 export const WebsiteHostResolverService = {
   resolveSubdomain,
   resolveHost,
+  resolveHostWithDiagnostics,
   invalidateSubdomains,
   invalidateHosts,
 };

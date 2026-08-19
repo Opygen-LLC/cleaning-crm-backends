@@ -6,7 +6,10 @@ model Quote {
   /// authorization because it is predictable.
   publicToken   String?         @unique @db.VarChar(64)
   status        QuoteStatus     @default(DRAFT)
-  serviceType   String
+  // Canonical service identity. serviceType is retained only for legacy rows/clients.
+  serviceType          String?
+  serviceCatalogId     String?
+  serviceNameSnapshot  String?
   address       String
   subtotal      Decimal         @db.Decimal(10, 2)
   taxRate       Decimal         @db.Decimal(5, 2)
@@ -26,10 +29,12 @@ model Quote {
   jobs          Job[]
   admin         AdminProfile    @relation(fields: [adminId], references: [id], onDelete: Cascade)
   client        Client          @relation(fields: [clientId], references: [id])
+  serviceCatalog ServiceCatalog? @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
   lineItems     QuoteLineItem[]
 
   @@index([adminId, status])
   @@index([clientId])
+  @@index([serviceCatalogId])
   @@map("quote")
 }
 
@@ -50,7 +55,10 @@ model Estimate {
   id                    String             @id @default(uuid())
   estimateRef           String             @unique
   status                EstimateStatus     @default(DRAFT)
-  serviceType           String
+  // Canonical service identity. serviceType is retained only for legacy rows/clients.
+  serviceType           String?
+  serviceCatalogId      String?
+  serviceNameSnapshot   String?
   address               String
   labourCost            Decimal            @db.Decimal(10, 2)
   materialCost          Decimal            @db.Decimal(10, 2)
@@ -72,11 +80,13 @@ model Estimate {
   updatedAt             DateTime           @updatedAt
   admin                 AdminProfile       @relation(fields: [adminId], references: [id], onDelete: Cascade)
   client                Client             @relation(fields: [clientId], references: [id])
+  serviceCatalog        ServiceCatalog?     @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
   lineItems             EstimateLineItem[]
   jobs                  Job[]
 
   @@index([adminId, status])
   @@index([clientId])
+  @@index([serviceCatalogId])
   @@map("estimate")
 }
 
@@ -96,18 +106,22 @@ model EstimateLineItem {
 model QuoteTemplate {
   id          String                  @id @default(uuid())
   name        String
-  serviceType String
+  serviceType         String?
+  serviceCatalogId    String?
+  serviceNameSnapshot String?
   notes       String?
   taxRate     Decimal                 @default(20) @db.Decimal(5, 2)
   usageCount  Int                     @default(0)
   lastUsedAt  DateTime?
   adminId     String
   admin       AdminProfile            @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  serviceCatalog ServiceCatalog?       @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
   lineItems   QuoteTemplateLineItem[]
   createdAt   DateTime                @default(now())
   updatedAt   DateTime                @updatedAt
 
   @@index([adminId])
+  @@index([serviceCatalogId])
   @@map("quote_template")
 }
 

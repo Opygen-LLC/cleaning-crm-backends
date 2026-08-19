@@ -42,12 +42,21 @@ export const TRUST_PROXY_HOPS: number = Math.min(5, Math.max(0, Math.trunc(Numbe
 export const PERFORMANCE_METRICS_TOKEN: string | undefined = process.env.PERFORMANCE_METRICS_TOKEN?.trim() || undefined;
 
 // Infrastructure placement guard. In production set all three region labels
-// and REQUIRE_COLOCATED_INFRA=true after moving API/Postgres/Redis together.
+// and keep REQUIRE_COLOCATED_INFRA enabled after moving API/Postgres/Redis together.
 // REDIS_REGION=local means Redis runs beside the API (e.g. Docker Compose).
 export const APP_REGION: string | undefined = process.env.APP_REGION?.trim() || undefined;
 export const DATABASE_REGION: string | undefined = process.env.DATABASE_REGION?.trim() || undefined;
 export const REDIS_REGION: string | undefined = process.env.REDIS_REGION?.trim() || undefined;
-export const REQUIRE_COLOCATED_INFRA: boolean = process.env.REQUIRE_COLOCATED_INFRA === "true";
+export const REQUIRE_COLOCATED_INFRA: boolean = process.env.REQUIRE_COLOCATED_INFRA === "true" || (NODE_ENV === "production" && process.env.REQUIRE_COLOCATED_INFRA !== "false");
+
+export const REDIS_CONNECT_TIMEOUT_MS: number = Math.min(10_000, Math.max(250, Number(process.env.REDIS_CONNECT_TIMEOUT_MS) || 1_500));
+export const REDIS_COMMAND_TIMEOUT_MS: number = Math.min(2_000, Math.max(25, Number(process.env.REDIS_COMMAND_TIMEOUT_MS) || 150));
+export const REDIS_KEEPALIVE_MS: number = Math.min(60_000, Math.max(1_000, Number(process.env.REDIS_KEEPALIVE_MS) || 10_000));
+const parsedRedisMaxRetries = Number(process.env.REDIS_MAX_RETRIES_PER_REQUEST ?? "1");
+export const REDIS_MAX_RETRIES_PER_REQUEST: number = Math.min(
+    3,
+    Math.max(0, Math.trunc(Number.isFinite(parsedRedisMaxRetries) ? parsedRedisMaxRetries : 1)),
+);
 
 export const DB_KEEPALIVE_ENABLED: boolean = process.env.DB_KEEPALIVE_ENABLED !== "false";
 export const DB_KEEPALIVE_CRON: string = process.env.DB_KEEPALIVE_CRON?.trim() || "*/2 * * * *";

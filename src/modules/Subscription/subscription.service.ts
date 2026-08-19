@@ -377,6 +377,17 @@ const changePlan = async (
                 }
             }
 
+            if (
+                freshCoupon.discountType === "FIXED" &&
+                freshCoupon.currency &&
+                freshCoupon.currency !== targetPlan.subscriptionPlan.currency
+            ) {
+                throw new AppError(status.BAD_REQUEST, `This coupon is valid for ${freshCoupon.currency} plans only.`, {
+                    code: "COUPON_CURRENCY_MISMATCH",
+                    fieldErrors: { couponCode: `Choose a coupon for ${targetPlan.subscriptionPlan.currency}.` },
+                });
+            }
+
             couponDiscountType = freshCoupon.discountType;
             couponDiscountValue = Number(freshCoupon.discountValue);
         }

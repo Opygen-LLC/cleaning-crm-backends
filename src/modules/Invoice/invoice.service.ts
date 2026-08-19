@@ -21,31 +21,8 @@ import { logActivity } from "../../lib/utils/logActivity";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
-
-/**
- * Generates a unique invoice reference in the format #OP-INV-0001
- */
-const generateInvoiceRef = async () => {
-    const lastInvoice = await prisma.invoice.findFirst({
-        orderBy: { createdAt: "desc" },
-        select: { invoiceRef: true },
-    });
-
-    let nextNumber = 1;
-
-    if (lastInvoice && lastInvoice.invoiceRef) {
-        const parts = lastInvoice.invoiceRef.split("-");
-        if (parts.length === 3) {
-            const lastNumber = parseInt(parts[2]);
-            if (!isNaN(lastNumber)) {
-                nextNumber = lastNumber + 1;
-            }
-        }
-    }
-
-    const formattedNumber = nextNumber.toString().padStart(4, "0");
-    return `#OP-INV-${formattedNumber}`;
-};
+import { nextReference } from "../../lib/utils/referenceNumber";
+import { formatMoney } from "../../lib/utils/money";
 
 const createInvoice = async (payload: IInvoiceCreate, user: IRequestUser) => {
     const adminId = await getAdminId(user);
@@ -60,13 +37,14 @@ const createInvoice = async (payload: IInvoiceCreate, user: IRequestUser) => {
 
     const { clientDetails, dates, summary, ...invoiceData } = payload;
 
-    const invoiceRef = await generateInvoiceRef();
-
-    const invoice = await prisma.invoice.create({
+    const invoice = await prisma.$transaction(async (tx) => {
+        const invoiceRef = await nextReference(tx, "invoice");
+        return tx.invoice.create({
         data: {
             ...invoiceData,
             invoiceRef,
             adminId,
+            serviceNameSnapshot: serviceCatalog.serviceName,
             clientName: clientDetails.clientName,
             clientEmail: clientDetails.email,
             serviceAddress: clientDetails.serviceAddress,
@@ -79,6 +57,7 @@ const createInvoice = async (payload: IInvoiceCreate, user: IRequestUser) => {
             total: summary.total,
             lineItems: payload.lineItems as any,
         },
+        });
     });
 
     logActivity({
@@ -557,8 +536,6 @@ const sendInvoice = async (id: string, user: any) => {
             year: "numeric",
         });
 
-    const fmt2dp = (n: any) => Number(n).toFixed(2);
-
     // Optional "View Invoice" deep-link — works if public invoice pages exist
     const invoiceViewUrl = FRONTEND_URL
         ? `${FRONTEND_URL}/invoice/${invoice.invoiceRef}`
@@ -575,10 +552,10 @@ const sendInvoice = async (id: string, user: any) => {
             serviceAddress: invoice.serviceAddress,
             issuedDate: fmt(invoice.issuedDate),
             dueDate: fmt(invoice.dueDate),
-            subtotal: fmt2dp(invoice.subtotal),
+            subtotal: formatMoney(invoice.subtotal, admin.currency),
             taxRate: Number(invoice.taxRate),
-            taxAmount: fmt2dp(invoice.taxAmount),
-            total: fmt2dp(invoice.total),
+            taxAmount: formatMoney(invoice.taxAmount, admin.currency),
+            total: formatMoney(invoice.total, admin.currency),
             notes: invoice.notes ?? null,
             invoiceViewUrl,
         },
@@ -638,22 +615,11 @@ const recordPayment = async (
         );
     }
 
-    // Generate payment ref: #OP-PAY-0001
-    const lastPayment = await prisma.payment.findFirst({
-        orderBy: { createdAt: "desc" },
-        select: { paymentRef: true },
-    });
-    let nextNum = 1;
-    if (lastPayment?.paymentRef) {
-        const parts = lastPayment.paymentRef.split("-");
-        const num = parseInt(parts[parts.length - 1]);
-        if (!isNaN(num)) nextNum = num + 1;
-    }
-    const paymentRef = `#OP-PAY-${nextNum.toString().padStart(4, "0")}`;
 
     const paidAt = payload.paidAt ? new Date(payload.paidAt) : new Date();
 
     const result = await prisma.$transaction(async (tx) => {
+        const paymentRef = await nextReference(tx, "payment");
         // Create Payment record
         const payment = await tx.payment.create({
             data: {
@@ -661,6 +627,7 @@ const recordPayment = async (
                 amount: payload.amount,
                 method: payload.method,
                 status: PaymentStatus.PAID,
+                currency: admin.currency,
                 note: payload.note,
                 transactionId: payload.transactionId,
                 paidAt,
@@ -701,7 +668,7 @@ const recordPayment = async (
             : `Payment recorded on ${invoice.invoiceRef}`,
         message: isNowPaid
             ? `All payments received — invoice marked as PAID`
-            : `${payload.method} payment of £${Number(payload.amount).toFixed(2)} recorded (partial)`,
+            : `${payload.method} payment of ${formatMoney(payload.amount, admin.currency)} recorded (partial)`,
         relatedId: invoice.id,
     }).catch(() => {});
 
@@ -710,7 +677,7 @@ const recordPayment = async (
         action: "RECORD_PAYMENT",
         entityType: "Invoice",
         entityId: invoice.id,
-        description: `Recorded ${payload.method} payment of ${payload.amount} on invoice ${invoice.invoiceRef}`,
+        description: `Recorded ${payload.method} payment of ${formatMoney(payload.amount, admin.currency)} on invoice ${invoice.invoiceRef}`,
     });
     invalidateAnalyticsCache(admin.id);
 
@@ -769,6 +736,12 @@ const submitPaymentProof = async (
         adminId = admin.id;
     }
 
+    const paymentCurrency = await prisma.adminProfile.findUnique({
+        where: { id: adminId },
+        select: { currency: true },
+    });
+    if (!paymentCurrency) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+
     if (invoice.status === InvoiceStatus.PAID) {
         throw new AppError(status.BAD_REQUEST, "Invoice is already paid");
     }
@@ -788,29 +761,20 @@ const submitPaymentProof = async (
     let payment: any;
 
     if (paymentId === "new") {
-        // Generate ref for a brand-new payment
-        const lastPayment = await prisma.payment.findFirst({
-            orderBy: { createdAt: "desc" },
-            select: { paymentRef: true },
-        });
-        let nextNum = 1;
-        if (lastPayment?.paymentRef) {
-            const parts = lastPayment.paymentRef.split("-");
-            const num = parseInt(parts[parts.length - 1]);
-            if (!isNaN(num)) nextNum = num + 1;
-        }
-        const paymentRef = `#OP-PAY-${nextNum.toString().padStart(4, "0")}`;
-
-        payment = await prisma.payment.create({
+        payment = await prisma.$transaction(async (tx) => {
+            const paymentRef = await nextReference(tx, "payment");
+            return tx.payment.create({
             data: {
                 paymentRef,
                 amount: invoice.total,
                 method: PaymentMethod.BANK_TRANSFER,
                 status: PaymentStatus.PENDING_APPROVAL,
+                currency: paymentCurrency.currency,
                 paymentProofUrl: uploadResult.secure_url,
                 adminId,
                 invoiceId: invoice.id,
             },
+            });
         });
     } else {
         // Update an existing payment record
@@ -824,6 +788,7 @@ const submitPaymentProof = async (
             where: { id: paymentId },
             data: {
                 status: PaymentStatus.PENDING_APPROVAL,
+                currency: paymentCurrency.currency,
                 paymentProofUrl: uploadResult.secure_url,
             },
         });
@@ -922,7 +887,7 @@ const approvePayment = async (
                     invoiceRef: invoice.invoiceRef,
                     paymentRef: payment.paymentRef,
                     paidDate: fmt(now),
-                    amount: Number(invoice.total).toFixed(2),
+                    amount: formatMoney(invoice.total, admin.currency),
                     paymentMethod: "Bank Transfer",
                     serviceAddress:
                         invoice.serviceAddress ?? invoice.clientName,

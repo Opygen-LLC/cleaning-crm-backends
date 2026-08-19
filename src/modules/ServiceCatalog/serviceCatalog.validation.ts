@@ -1,36 +1,74 @@
 import { z } from "zod";
 import { ServiceStatus, ServiceType } from "../../generated/prisma/enums";
 
-const addOnSchema = z.object({
-    name: z.string().min(1, "Add-on name is required"),
-    priceGbp: z.number().nonnegative("Price must be non-negative"),
+const addOnInputSchema = z
+    .object({
+        name: z.string().trim().min(1, "Add-on name is required"),
+        price: z.number().nonnegative("Price must be non-negative").optional(),
+        // Rolling-deploy compatibility for older web clients.
+        priceGbp: z.number().nonnegative("Price must be non-negative").optional(),
+    })
+    .strict()
+    .superRefine((value, ctx) => {
+        if (value.price === undefined && value.priceGbp === undefined) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["price"],
+                message: "Price is required",
+            });
+        }
+    })
+    .transform(({ name, price, priceGbp }) => ({
+        name,
+        price: price ?? priceGbp ?? 0,
+    }));
+
+const serviceCatalogBaseSchema = z.object({
+    serviceName: z.string().trim().min(1, "Service name is required"),
+    description: z.string().trim().min(1, "Description is required"),
+    basePrice: z.number().nonnegative("Price must be non-negative").optional(),
+    // Rolling-deploy compatibility. `basePrice` is canonical and is an amount
+    // in AdminProfile.currency; the old GBP-specific name is accepted only at
+    // the API edge and never propagated into new internal code.
+    basePriceGbp: z.number().nonnegative("Price must be non-negative").optional(),
+    duration: z.string().trim().min(1, "Duration is required"),
+    category: z.string().trim().min(1, "Category is required"),
+    status: z.nativeEnum(ServiceStatus).optional(),
+    onlineBookingEnabled: z.boolean().optional(),
+    addOns: z.array(addOnInputSchema).optional(),
+    legacyServiceType: z.nativeEnum(ServiceType).nullable().optional(),
 });
 
-const createServiceCatalogSchema = z.object({
-    serviceName: z.string().min(1, "Service name is required"),
-    description: z.string().min(1, "Description is required"),
-    basePriceGbp: z.number().nonnegative("Price must be non-negative"),
-    duration: z.string().min(1, "Duration is required"),
-    category: z.string().min(1, "Category is required"),
-    status: z.nativeEnum(ServiceStatus).optional(),
-    onlineBookingEnabled: z.boolean().optional(),
-    addOns: z.array(addOnSchema).optional(),
-    legacyServiceType: z.nativeEnum(ServiceType).nullable().optional(),
-}).strict();
+const createServiceCatalogSchema = serviceCatalogBaseSchema
+    .strict()
+    .superRefine((value, ctx) => {
+        if (value.basePrice === undefined && value.basePriceGbp === undefined) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["basePrice"],
+                message: "Base price is required",
+            });
+        }
+    })
+    .transform(({ basePrice, basePriceGbp, ...rest }) => ({
+        ...rest,
+        basePrice: basePrice ?? basePriceGbp ?? 0,
+    }));
 
-const bulkCreateServiceCatalogSchema = z.array(createServiceCatalogSchema).min(1).max(20);
+const bulkCreateServiceCatalogSchema = z
+    .array(createServiceCatalogSchema)
+    .min(1)
+    .max(20);
 
-const updateServiceCatalogSchema = z.object({
-    serviceName: z.string().optional(),
-    description: z.string().optional(),
-    basePriceGbp: z.number().nonnegative().optional(),
-    duration: z.string().optional(),
-    category: z.string().optional(),
-    status: z.nativeEnum(ServiceStatus).optional(),
-    onlineBookingEnabled: z.boolean().optional(),
-    addOns: z.array(addOnSchema).optional(),
-    legacyServiceType: z.nativeEnum(ServiceType).nullable().optional(),
-}).strict();
+const updateServiceCatalogSchema = serviceCatalogBaseSchema
+    .partial()
+    .strict()
+    .transform(({ basePrice, basePriceGbp, ...rest }) => ({
+        ...rest,
+        ...(basePrice !== undefined || basePriceGbp !== undefined
+            ? { basePrice: basePrice ?? basePriceGbp }
+            : {}),
+    }));
 
 export const serviceCatalogValidation = {
     createServiceCatalog: createServiceCatalogSchema,

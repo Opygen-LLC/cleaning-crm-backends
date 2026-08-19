@@ -206,8 +206,13 @@ NODE_ENV=production
 BACKEND_IP=0.0.0.0
 PORT=3000
 
-# ── Database (Neon PostgreSQL — already cloud-hosted) ──────────
-DATABASE_URL=postgresql://neondb_owner:<PASSWORD>@<HOST>.neon.tech/neondb?sslmode=require
+# ── Database (must be in the SAME region as the API) ─────────
+# Create/move the production Postgres project/compute into the API region first.
+DATABASE_URL=postgresql://neondb_owner:<PASSWORD>@<SAME-REGION-HOST>.neon.tech/neondb?sslmode=verify-full
+APP_REGION=<api-region>
+DATABASE_REGION=<same-api-region>
+REDIS_REGION=local
+REQUIRE_COLOCATED_INFRA=true
 
 # ── BetterAuth ────────────────────────────────────────────────
 BETTER_AUTH_SECRET=<your-secret>
@@ -238,6 +243,10 @@ REDIS_HOST=redis
 REDIS_PORT=6379
 REDIS_PASSWORD=
 REDIS_DB=0
+REDIS_CONNECT_TIMEOUT_MS=1500
+REDIS_COMMAND_TIMEOUT_MS=150
+REDIS_KEEPALIVE_MS=10000
+REDIS_MAX_RETRIES_PER_REQUEST=1
 
 # ── Stripe ────────────────────────────────────────────────────
 STRIPE_SECRET_KEY=<your-stripe-key>
@@ -249,6 +258,10 @@ CLOUDINARY_API_SECRET=<secret>
 ```
 
 > **Important:** `REDIS_HOST=redis` — this must match the Redis service name in `docker-compose.yml`, not `localhost`.
+
+> **Performance gate:** production now refuses to start when `APP_REGION`, `DATABASE_REGION`, and `REDIS_REGION` are missing or disagree. For the current Docker topology, Redis is local to the API, so move/recreate PostgreSQL in the API region before deployment rather than disabling `REQUIRE_COLOCATED_INFRA`.
+
+> Use `GET /livez` for container/process liveness, `GET /readyz` for traffic readiness, and the token-protected `GET /health/performance` endpoint for route/SQL/Redis p50/p95/p99 diagnostics.
 
 Save and exit: `Ctrl+X` → `Y` → `Enter`
 

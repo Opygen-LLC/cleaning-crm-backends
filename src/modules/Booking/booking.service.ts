@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma/prisma";
+import { formatMoney } from "../../lib/utils/money";
 import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
@@ -27,36 +28,13 @@ import logger from "../../lib/logger";
 import { resolveServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import type { Prisma } from "../../generated/prisma/client";
+import { nextReference } from "../../lib/utils/referenceNumber";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Generates a unique booking reference: #OP-BK-0001.
- *
- * bookingRef is globally unique in the current schema, so generation must use
- * one global sequence/lock. A tenant-scoped sequence would be unsafe until the
- * database uniqueness constraint is migrated to a tenant+reference composite.
- */
-const generateBookingRef = async (tx: Prisma.TransactionClient): Promise<string> => {
-  // bookingRef is globally unique in the current compatibility schema. Keep
-  // the sequence global and serialize generation so concurrent tenants cannot
-  // choose the same next reference. Tenant-local refs can be introduced later
-  // only together with a composite uniqueness migration.
-  await acquireExtendedTextTransactionAdvisoryLock(tx, "booking-ref-sequence");
-  const last = await tx.booking.findFirst({
-    orderBy: { createdAt: "desc" },
-    select: { bookingRef: true },
-  });
-
-  let next = 1;
-  if (last?.bookingRef) {
-    const parts = last.bookingRef.split("-");
-    const num = parseInt(parts[parts.length - 1]);
-    if (!isNaN(num)) next = num + 1;
-  }
-
-  return `#OP-BK-${next.toString().padStart(4, "0")}`;
-};
+/** Allocate a globally unique booking reference under the shared transaction lock. */
+const generateBookingRef = (tx: Prisma.TransactionClient): Promise<string> =>
+  nextReference(tx, "booking");
 
 /**
  * Resolve adminProfile.id from the authenticated user id.
@@ -114,6 +92,7 @@ const resolveOrCreateClient = async (
 // ─── Standard includes shared across queries ──────────────────────────────────
 
 const bookingInclude = {
+  admin: { select: { currency: true } },
   client: {
     select: { id: true, name: true, email: true, phone: true },
   },
@@ -127,7 +106,7 @@ const bookingInclude = {
     },
   },
   job: { select: { id: true, jobRef: true, status: true } },
-  serviceCatalog: { select: { id: true, serviceName: true, basePriceGbp: true, duration: true, category: true } },
+  serviceCatalog: { select: { id: true, serviceName: true, basePrice: true, duration: true, category: true } },
 } as const;
 
 // Booking list/calendar reads stay lean. The detail endpoint additionally
@@ -204,7 +183,7 @@ const sendBookingEmail = async (
       scheduledDate: fmt(new Date(booking.scheduledDate)),
       durationMins: booking.durationMins,
       address: booking.address,
-      total: Number(booking.total).toFixed(2),
+      total: formatMoney(booking.total, booking.admin?.currency),
       notes: booking.notes ?? null,
       staffNames,
       isCompleted: eventType === "completed",
@@ -351,7 +330,7 @@ const convertBookingFormSubmissionForAdmin = async (
             id: true,
             adminId: true,
             serviceName: true,
-            basePriceGbp: true,
+            basePrice: true,
             duration: true,
             legacyServiceType: true,
           },
@@ -393,7 +372,7 @@ const convertBookingFormSubmissionForAdmin = async (
           id: true,
           adminId: true,
           serviceName: true,
-          basePriceGbp: true,
+          basePrice: true,
           duration: true,
           legacyServiceType: true,
         },
@@ -454,7 +433,7 @@ const convertBookingFormSubmissionForAdmin = async (
         serviceCatalogId: catalog?.id ?? null,
         serviceType,
         serviceNameSnapshot,
-        priceSnapshot: submission.priceSnapshot ?? catalog?.basePriceGbp ?? null,
+        priceSnapshot: submission.priceSnapshot ?? catalog?.basePrice ?? null,
         durationSnapshot: submission.durationSnapshot ?? catalog?.duration ?? null,
         addOnSnapshot: (submission.addOnSnapshot ?? []) as Prisma.InputJsonValue,
         address: submission.address,
@@ -486,7 +465,7 @@ const convertBookingFormSubmissionForAdmin = async (
         serviceCatalogId: catalog?.id ?? submission.serviceCatalogId,
         serviceType,
         serviceNameSnapshot,
-        priceSnapshot: submission.priceSnapshot ?? catalog?.basePriceGbp ?? null,
+        priceSnapshot: submission.priceSnapshot ?? catalog?.basePrice ?? null,
         durationSnapshot: submission.durationSnapshot ?? catalog?.duration ?? null,
       },
     });

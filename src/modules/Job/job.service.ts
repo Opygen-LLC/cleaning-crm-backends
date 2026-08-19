@@ -55,6 +55,7 @@ import logger from "../../lib/logger";
 import { sendPushToUsers } from "../Push/push.service";
 import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
 import { resolveServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
+import { nextReference } from "../../lib/utils/referenceNumber";
 
 /**
  * PERF FIX (Phase 5.2): geocoding calls an external HTTP API (Google/Mapbox)
@@ -105,21 +106,6 @@ const geocodeJobAddressInBackground = (
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const generateJobRef = async (adminId?: string): Promise<string> => {
-  const last = await prisma.job.findFirst({
-    where: adminId ? { adminId } : undefined,
-    orderBy: { createdAt: "desc" },
-    select: { jobRef: true },
-  });
-  let next = 1;
-  if (last?.jobRef) {
-    const parts = last.jobRef.split("-");
-    const num = parseInt(parts[parts.length - 1]);
-    if (!isNaN(num)) next = num + 1;
-  }
-  return `#OP-JB-${next.toString().padStart(4, "0")}`;
-};
-
 const jobInclude = {
   client: {
     select: { id: true, name: true, email: true, phone: true },
@@ -134,7 +120,7 @@ const jobInclude = {
     },
   },
   booking: { select: { id: true, bookingRef: true, status: true } },
-  serviceCatalog: { select: { id: true, serviceName: true, basePriceGbp: true, duration: true, category: true } },
+  serviceCatalog: { select: { id: true, serviceName: true, basePrice: true, duration: true, category: true } },
 } as const;
 
 // Map JS getDay() → Prisma WeekDay enum
@@ -218,15 +204,15 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
       }
     : await resolveServiceIdentity(adminId, payload);
 
-  const jobRef = await generateJobRef(adminId);
-
   // PERF FIX (Phase 5.2): job is created immediately without waiting on the
   // external geocoding call — geocoding now runs in the background (see
   // geocodeJobAddressInBackground) and patches lat/lng onto the row once it
   // resolves. The job is fully usable without coordinates in the meantime
   // (this was already true — geocoding never blocked *usability*, only the
   // response time; now it doesn't block the response either).
-  const job = await prisma.job.create({
+  const job = await prisma.$transaction(async (tx) => {
+    const jobRef = await nextReference(tx, "job");
+    return tx.job.create({
     data: {
       jobRef,
       adminId,
@@ -252,6 +238,7 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
       }),
     },
     include: jobInclude,
+    });
   });
 
   geocodeJobAddressInBackground(job.id, adminId, payload.address);
@@ -470,17 +457,7 @@ const updateJobStatus = async (
         });
 
         if (booking) {
-          const lastInvoice = await tx.invoice.findFirst({
-            orderBy: { createdAt: "desc" },
-            select: { invoiceRef: true },
-          });
-          let nextNum = 1;
-          if (lastInvoice?.invoiceRef) {
-            const parts = lastInvoice.invoiceRef.split("-");
-            const n = parseInt(parts[parts.length - 1]);
-            if (!isNaN(n)) nextNum = n + 1;
-          }
-          const invoiceRef = `#OP-INV-${nextNum.toString().padStart(4, "0")}`;
+          const invoiceRef = await nextReference(tx, "invoice");
           const issuedDate = new Date();
           const dueDate = new Date();
           dueDate.setDate(dueDate.getDate() + 14);
@@ -491,6 +468,8 @@ const updateJobStatus = async (
               invoiceRef,
               adminId: job.adminId,
               bookingId: job.bookingId,
+              serviceCatalogId: booking.serviceCatalogId,
+              serviceNameSnapshot: serviceDisplayName(booking),
               status: "DRAFT",
               clientName: booking.client.name,
               clientEmail: booking.client.email,
@@ -671,8 +650,9 @@ const convertBookingToJob = async (bookingId: string, user: IRequestUser) => {
     );
   }
 
-  const jobRef = await generateJobRef(adminId);
-  return prisma.job.create({
+  return prisma.$transaction(async (tx) => {
+    const jobRef = await nextReference(tx, "job");
+    return tx.job.create({
     data: {
       jobRef,
       adminId,
@@ -699,6 +679,7 @@ const convertBookingToJob = async (bookingId: string, user: IRequestUser) => {
       }),
     },
     include: jobInclude,
+    });
   });
 };
 

@@ -15,6 +15,8 @@ export interface UpdateAdminPayload {
 
   address?: string | null;
   city?: string | null;
+  postcode?: string | null;
+  /** @deprecated Use postcode. Accepted during rolling deployments only. */
   zipcode?: string | null;
   country?: string | null;
 

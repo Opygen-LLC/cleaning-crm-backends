@@ -17,6 +17,11 @@ enum Currency {
   GBP
   CAD
   AUD
+  NZD
+  SGD
+  ZAR
+  INR
+  AED
 }
 
 enum SubscriptionName {

@@ -289,6 +289,7 @@ const loadDraftSnapshot = async (websiteId: string, db: any) => {
       primaryBookingFormId: true,
       primaryEstimateFormId: true,
       bookingEnabled: true,
+      bookingShowNavigation: true,
       bookingShowHeaderCta: true,
       bookingShowServiceCtas: true,
       bookingShowHomeCta: true,
@@ -613,6 +614,51 @@ const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user:
   });
 };
 
+const applyPagePatchesBatch = async (
+  tx: any,
+  websiteId: string,
+  patches: Array<Record<string, any>>,
+) => {
+  if (!patches.length) return;
+  const rows = patches.map((patch) => ({
+    id: patch.id,
+    hasTitle: Object.prototype.hasOwnProperty.call(patch, "title"), title: patch.title ?? null,
+    hasContent: Object.prototype.hasOwnProperty.call(patch, "content"), content: patch.content ?? null,
+    hasSeoTitle: Object.prototype.hasOwnProperty.call(patch, "seoTitle"), seoTitle: patch.seoTitle ?? null,
+    hasSeoDescription: Object.prototype.hasOwnProperty.call(patch, "seoDescription"), seoDescription: patch.seoDescription ?? null,
+    hasShowInNavigation: Object.prototype.hasOwnProperty.call(patch, "showInNavigation"), showInNavigation: patch.showInNavigation ?? null,
+    hasIsEnabled: Object.prototype.hasOwnProperty.call(patch, "isEnabled"), isEnabled: patch.isEnabled ?? null,
+    hasSortOrder: Object.prototype.hasOwnProperty.call(patch, "sortOrder"), sortOrder: patch.sortOrder ?? null,
+  }));
+
+  await tx.$executeRaw`
+    WITH patch AS (
+      SELECT * FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS p(
+        id text,
+        "hasTitle" boolean, title text,
+        "hasContent" boolean, content jsonb,
+        "hasSeoTitle" boolean, "seoTitle" text,
+        "hasSeoDescription" boolean, "seoDescription" text,
+        "hasShowInNavigation" boolean, "showInNavigation" boolean,
+        "hasIsEnabled" boolean, "isEnabled" boolean,
+        "hasSortOrder" boolean, "sortOrder" integer
+      )
+    )
+    UPDATE "website_page" wp
+    SET
+      title = CASE WHEN patch."hasTitle" THEN patch.title ELSE wp.title END,
+      content = CASE WHEN patch."hasContent" THEN patch.content ELSE wp.content END,
+      "seoTitle" = CASE WHEN patch."hasSeoTitle" THEN patch."seoTitle" ELSE wp."seoTitle" END,
+      "seoDescription" = CASE WHEN patch."hasSeoDescription" THEN patch."seoDescription" ELSE wp."seoDescription" END,
+      "showInNavigation" = CASE WHEN patch."hasShowInNavigation" THEN patch."showInNavigation" ELSE wp."showInNavigation" END,
+      "isEnabled" = CASE WHEN patch."hasIsEnabled" THEN patch."isEnabled" ELSE wp."isEnabled" END,
+      "sortOrder" = CASE WHEN patch."hasSortOrder" THEN patch."sortOrder" ELSE wp."sortOrder" END,
+      "updatedAt" = NOW()
+    FROM patch
+    WHERE wp.id = patch.id AND wp."websiteId" = ${websiteId}
+  `;
+};
+
 const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const [current, entitlements] = await Promise.all([getWebsiteOrThrow(adminId), WebsiteEntitlementService.getForAdminId(adminId)]);
@@ -667,15 +713,18 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
       });
     }
 
-    for (const page of payload.pages ?? []) {
+    const normalizedPagePatches = (payload.pages ?? []).map((page) => {
       const { id, ...data } = page;
       const pageKind = ownedPageKinds.get(id);
       if (!pageKind) throw new AppError(status.NOT_FOUND, "Website page not found");
-      const normalizedData = data.content === undefined
-        ? data
-        : { ...data, content: validateWebsitePageContent(pageKind, data.content) };
-      await tx.websitePage.update({ where: { id }, data: normalizedData as any });
-    }
+      return {
+        id,
+        ...(data.content === undefined
+          ? data
+          : { ...data, content: validateWebsitePageContent(pageKind, data.content) }),
+      };
+    });
+    await applyPagePatchesBatch(tx, lockedCurrent.id, normalizedPagePatches);
 
     await createRevisionSnapshot(tx, lockedCurrent.id, user.id, "Draft saved", baseRevisionNumber);
     return loadWebsiteDetails(lockedCurrent.id, tx);
@@ -1110,6 +1159,7 @@ const restoreRevision = async (revisionId: string, payload: WebsiteRevisionResto
         primaryBookingFormId: restored.website.primaryBookingFormId,
         primaryEstimateFormId: restored.website.primaryEstimateFormId,
         bookingEnabled: restored.website.bookingEnabled,
+        bookingShowNavigation: restored.website.bookingShowNavigation,
         bookingShowHeaderCta: restored.website.bookingShowHeaderCta,
         bookingShowServiceCtas: restored.website.bookingShowServiceCtas,
         bookingShowHomeCta: restored.website.bookingShowHomeCta,

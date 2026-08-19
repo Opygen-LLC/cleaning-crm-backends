@@ -15,9 +15,22 @@ const submitPublicReview = z.object({
 
 const updateReview = z.object({
   status: z.enum(["pending", "published", "unpublished", "flagged"]).optional(),
+  // Deprecated compatibility input. The service always stores `status` as
+  // the source of truth and derives isPublished from it.
   isPublished: z.boolean().optional(),
   adminReply: z.string().trim().max(5000).optional(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (value.status !== undefined && value.isPublished !== undefined) {
+    const expected = value.status === "published";
+    if (expected !== value.isPublished) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["isPublished"],
+        message: "isPublished conflicts with review status",
+      });
+    }
+  }
+});
 
 export const reviewValidation = {
   submitPublicReview,

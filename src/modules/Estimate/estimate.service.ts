@@ -16,28 +16,14 @@ import {
     estimateFilterableFields,
 } from "./estimate.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
-import { generateQuoteRef, quoteInclude } from "../Quote/quote.service";
+import { quoteInclude } from "../Quote/quote.service";
+import { nextReference } from "../../lib/utils/referenceNumber";
+import {
+    inferLegacyServiceType,
+    resolveFlexibleServiceIdentity,
+} from "../../lib/utils/serviceIdentity";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Generates a unique estimate reference: #OP-EST-0001
- */
-const generateEstimateRef = async (): Promise<string> => {
-    const last = await prisma.estimate.findFirst({
-        orderBy: { createdAt: "desc" },
-        select: { estimateRef: true },
-    });
-
-    let next = 1;
-    if (last?.estimateRef) {
-        const parts = last.estimateRef.split("-");
-        const num = parseInt(parts[parts.length - 1]);
-        if (!isNaN(num)) next = num + 1;
-    }
-
-    return `#OP-EST-${next.toString().padStart(4, "0")}`;
-};
 
 /**
  * Resolve adminProfile.id from the authenticated user id.
@@ -149,6 +135,9 @@ const estimateInclude = {
     jobs: {
         select: { id: true, jobRef: true, status: true },
     },
+    serviceCatalog: {
+        select: { id: true, serviceName: true, basePrice: true, duration: true, legacyServiceType: true },
+    },
 } as const;
 
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
@@ -162,50 +151,62 @@ const createEstimate = async (payload: IEstimateCreate, user: IRequestUser) => {
     });
     if (!client) throw new AppError(status.NOT_FOUND, "Client not found");
 
-    const estimateRef = await generateEstimateRef();
-    const totals = computeTotals(
-        payload.lineItems,
-        payload.discountType ?? "percent",
-        payload.discountValue ?? 0,
-    );
-
-    return prisma.estimate.create({
-        data: {
-            estimateRef,
-            adminId,
-            clientId: payload.clientId,
+    const [serviceIdentity, totals] = await Promise.all([
+        resolveFlexibleServiceIdentity(adminId, {
+            serviceCatalogId: payload.serviceCatalogId,
             serviceType: payload.serviceType,
-            address: payload.address,
-            labourCost: totals.labourCost,
-            materialCost: totals.materialCost,
-            overheadCost: totals.overheadCost,
-            marginPercent: totals.marginPercent,
-            subtotal: totals.subtotal,
-            taxRate: totals.taxRate,
-            tax: totals.tax,
-            total: totals.total,
-            validUntil: new Date(payload.validUntil),
-            notes: payload.notes,
-            internalNotes: payload.internalNotes,
-            lineItems: {
-                createMany: {
-                    data: payload.lineItems.map((item) => ({
-                        description: item.description,
-                        quantity: item.quantity,
-                        unitPrice: item.unitPrice,
-                        total:
-                            Math.round(
-                                item.quantity *
-                                    item.unitPrice *
-                                    (1 - (item.discountPercent ?? 0) / 100) *
-                                    (1 + (item.taxPercent ?? 20) / 100) *
-                                    100,
-                            ) / 100,
-                    })),
+        }),
+        Promise.resolve(
+            computeTotals(
+                payload.lineItems,
+                payload.discountType ?? "percent",
+                payload.discountValue ?? 0,
+            ),
+        ),
+    ]);
+
+    return prisma.$transaction(async (tx) => {
+        const estimateRef = await nextReference(tx, "estimate");
+        return tx.estimate.create({
+            data: {
+                estimateRef,
+                adminId,
+                clientId: payload.clientId,
+                serviceCatalogId: serviceIdentity.serviceCatalogId,
+                serviceType: serviceIdentity.serviceType,
+                serviceNameSnapshot: serviceIdentity.serviceNameSnapshot,
+                address: payload.address,
+                labourCost: totals.labourCost,
+                materialCost: totals.materialCost,
+                overheadCost: totals.overheadCost,
+                marginPercent: totals.marginPercent,
+                subtotal: totals.subtotal,
+                taxRate: totals.taxRate,
+                tax: totals.tax,
+                total: totals.total,
+                validUntil: new Date(payload.validUntil),
+                notes: payload.notes,
+                internalNotes: payload.internalNotes,
+                lineItems: {
+                    createMany: {
+                        data: payload.lineItems.map((item) => ({
+                            description: item.description,
+                            quantity: item.quantity,
+                            unitPrice: item.unitPrice,
+                            total:
+                                Math.round(
+                                    item.quantity *
+                                        item.unitPrice *
+                                        (1 - (item.discountPercent ?? 0) / 100) *
+                                        (1 + (item.taxPercent ?? 20) / 100) *
+                                        100,
+                                ) / 100,
+                        })),
+                    },
                 },
             },
-        },
-        include: estimateInclude,
+            include: estimateInclude,
+        });
     });
 };
 
@@ -260,6 +261,14 @@ const updateEstimate = async (
         );
     }
 
+    const serviceIdentity =
+        payload.serviceCatalogId !== undefined || payload.serviceType !== undefined
+            ? await resolveFlexibleServiceIdentity(adminId, {
+                  serviceCatalogId: payload.serviceCatalogId ?? undefined,
+                  serviceType: payload.serviceType,
+              })
+            : null;
+
     // Recompute totals if line items or discount changed
     let totalsUpdate: Partial<ComputedTotals> | null = null;
     const lineItemsToUse = payload.lineItems;
@@ -296,8 +305,10 @@ const updateEstimate = async (
         return tx.estimate.update({
             where: { id },
             data: {
-                ...(payload.serviceType && {
-                    serviceType: payload.serviceType,
+                ...(serviceIdentity && {
+                    serviceCatalogId: serviceIdentity.serviceCatalogId,
+                    serviceType: serviceIdentity.serviceType,
+                    serviceNameSnapshot: serviceIdentity.serviceNameSnapshot,
                 }),
                 ...(payload.address && { address: payload.address }),
                 ...(payload.validUntil && {
@@ -388,7 +399,12 @@ const convertEstimateToBooking = async (
 
     const estimate = await prisma.estimate.findFirst({
         where: { id, adminId },
-        include: { lineItems: true },
+        include: {
+            lineItems: true,
+            serviceCatalog: {
+                select: { id: true, serviceName: true, basePrice: true, duration: true, legacyServiceType: true },
+            },
+        },
     });
     if (!estimate) throw new AppError(status.NOT_FOUND, "Estimate not found");
 
@@ -412,26 +428,28 @@ const convertEstimateToBooking = async (
         }
     }
 
-    // Generate booking ref
-    const lastBooking = await prisma.booking.findFirst({
-        orderBy: { createdAt: "desc" },
-        select: { bookingRef: true },
-    });
-    let nextBk = 1;
-    if (lastBooking?.bookingRef) {
-        const parts = lastBooking.bookingRef.split("-");
-        const num = parseInt(parts[parts.length - 1]);
-        if (!isNaN(num)) nextBk = num + 1;
-    }
-    const bookingRef = `#OP-BK-${nextBk.toString().padStart(4, "0")}`;
-
     return prisma.$transaction(async (tx) => {
+        const bookingRef = await nextReference(tx, "booking");
+        const legacyServiceType =
+            estimate.serviceCatalog?.legacyServiceType ??
+            inferLegacyServiceType(
+                estimate.serviceNameSnapshot ?? estimate.serviceType ?? "",
+            );
+
         const booking = await tx.booking.create({
             data: {
                 bookingRef,
                 adminId,
                 clientId: estimate.clientId,
-                serviceType: "RESIDENTIAL_CLEAN" as any,
+                serviceCatalogId: estimate.serviceCatalogId,
+                serviceType: legacyServiceType,
+                serviceNameSnapshot:
+                    estimate.serviceNameSnapshot ??
+                    estimate.serviceCatalog?.serviceName ??
+                    estimate.serviceType ??
+                    "Service",
+                priceSnapshot: estimate.serviceCatalog?.basePrice ?? null,
+                durationSnapshot: estimate.serviceCatalog?.duration ?? null,
                 address: estimate.address,
                 scheduledDate: new Date(payload.scheduledDate),
                 durationMins: payload.durationMins,
@@ -518,8 +536,6 @@ const convertEstimateToQuote = async (
         );
     }
 
-    const quoteRef = await generateQuoteRef();
-
     // Re-use estimate totals: tax = estimate.tax, taxRate = estimate.taxRate
     const subtotal = Number(estimate.subtotal);
     const tax = Number(estimate.tax);
@@ -527,12 +543,16 @@ const convertEstimateToQuote = async (
     const total = Number(estimate.total);
 
     const quote = await prisma.$transaction(async (tx) => {
+        const quoteRef = await nextReference(tx, "quote");
         const newQuote = await tx.quote.create({
             data: {
                 quoteRef,
                 adminId,
                 clientId: estimate.clientId,
+                serviceCatalogId: estimate.serviceCatalogId,
                 serviceType: estimate.serviceType,
+                serviceNameSnapshot:
+                    estimate.serviceNameSnapshot ?? estimate.serviceType ?? "Service",
                 address: estimate.address,
                 subtotal,
                 taxRate,

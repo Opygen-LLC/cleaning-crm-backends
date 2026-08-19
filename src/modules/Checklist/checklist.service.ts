@@ -49,7 +49,7 @@ const assertStaffAssignedToJob = async (
 
 const templateInclude = {
     serviceCatalog: {
-        select: { id: true, serviceName: true, basePriceGbp: true, duration: true, status: true },
+        select: { id: true, serviceName: true, basePrice: true, duration: true, status: true },
     },
     tasks: { orderBy: { sortOrder: "asc" as const } },
     _count: {

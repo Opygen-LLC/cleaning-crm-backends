@@ -29,6 +29,7 @@ const updateAdminSchema = z
 
     address: nullableMultipartInput(z.string().trim().max(300)),
     city: nullableMultipartInput(z.string().trim().min(1).max(120)),
+    postcode: nullableMultipartInput(z.string().trim().max(32)),
     zipcode: nullableMultipartInput(z.string().trim().max(32)),
     // Accepts an ISO-3166-1 alpha-2 code (e.g. "GB") or an already-valid
     // Country enum value. The service resolves it to the Prisma enum.
@@ -36,7 +37,12 @@ const updateAdminSchema = z
 
     workLocations: jsonArrayInput(z.array(workLocationSchema).max(25)).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.postcode !== undefined && value.zipcode !== undefined && value.postcode !== value.zipcode) {
+      ctx.addIssue({ code: "custom", path: ["postcode"], message: "postcode conflicts with legacy zipcode" });
+    }
+  });
 
 const updateWorkLocationSchema = z
   .object({

@@ -18,7 +18,8 @@ const lineItemSchema = z
 const createEstimateSchema = z
     .object({
         clientId: z.string().uuid("Invalid client ID"),
-        serviceType: z.string().min(1, "Service type is required"),
+        serviceCatalogId: z.string().uuid("Invalid service catalog ID").optional(),
+        serviceType: z.string().trim().min(1).optional(),
         address: z.string().min(1, "Address is required"),
         postcodeArea: z.string().optional(),
         estimatedDuration: z.string().optional(),
@@ -33,13 +34,23 @@ const createEstimateSchema = z
         internalNotes: z.string().optional(),
         terms: z.string().optional(),
     })
-    .strict();
+    .strict()
+    .superRefine((value, ctx) => {
+        if (!value.serviceCatalogId && !value.serviceType) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["serviceCatalogId"],
+                message: "Choose a service",
+            });
+        }
+    });
 
 // ── Update ─────────────────────────────────────────────────────────────────────
 
 const updateEstimateSchema = z
     .object({
-        serviceType: z.string().min(1).optional(),
+        serviceCatalogId: z.string().uuid("Invalid service catalog ID").nullable().optional(),
+        serviceType: z.string().trim().min(1).optional(),
         address: z.string().min(1).optional(),
         postcodeArea: z.string().optional(),
         estimatedDuration: z.string().optional(),

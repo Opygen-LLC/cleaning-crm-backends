@@ -1,10 +1,11 @@
-import { DiscountType } from "../../generated/prisma/enums";
+import { Currency, DiscountType } from "../../generated/prisma/enums";
 
 export interface ICouponCreate {
     code:          string;
     description?:  string;
     discountType:  DiscountType;
     discountValue: number;
+    currency?:      Currency | null;
     maxUses?:      number | null;
     validFrom?:    string | Date | null;
     validUntil?:   string | Date | null;
@@ -16,6 +17,7 @@ export interface ICouponUpdate {
     description?:   string | null;
     discountType?:  DiscountType;
     discountValue?: number;
+    currency?:      Currency | null;
     maxUses?:       number | null;
     validFrom?:     string | Date | null;
     validUntil?:    string | Date | null;

@@ -143,6 +143,7 @@ const createWebsiteRecordTx = async (
       logo: DEFAULT_WEBSITE_SETTINGS.logo,
       favicon: DEFAULT_WEBSITE_SETTINGS.favicon,
       bookingEnabled: DEFAULT_WEBSITE_SETTINGS.bookingEnabled,
+      bookingShowNavigation: DEFAULT_WEBSITE_SETTINGS.bookingShowNavigation,
       bookingShowHeaderCta: DEFAULT_WEBSITE_SETTINGS.bookingShowHeaderCta,
       bookingShowServiceCtas: DEFAULT_WEBSITE_SETTINGS.bookingShowServiceCtas,
       bookingShowHomeCta: DEFAULT_WEBSITE_SETTINGS.bookingShowHomeCta,

@@ -15,15 +15,17 @@ function buildPagination(page?: number, limit?: number) {
 // ─── Create ───────────────────────────────────────────────────────────────────
 
 const createCoupon = async (payload: ICouponCreate) => {
-    const existing = await prisma.coupon.findUnique({ where: { code: payload.code } });
+    const normalizedCode = payload.code.toUpperCase().trim();
+    const existing = await prisma.coupon.findUnique({ where: { code: normalizedCode } });
     if (existing) throw new AppError(status.CONFLICT, "A coupon with this code already exists");
 
     return prisma.coupon.create({
         data: {
-            code:          payload.code.toUpperCase().trim(),
+            code:          normalizedCode,
             description:   payload.description,
             discountType:  payload.discountType,
             discountValue: payload.discountValue,
+            currency:      payload.currency ?? null,
             maxUses:       payload.maxUses ?? null,
             validFrom:     payload.validFrom ? new Date(payload.validFrom) : null,
             validUntil:    payload.validUntil ? new Date(payload.validUntil) : null,
@@ -109,6 +111,7 @@ const updateCoupon = async (id: string, payload: ICouponUpdate) => {
             ...(payload.description !== undefined && { description: payload.description }),
             ...(payload.discountType  && { discountType:  payload.discountType }),
             ...(payload.discountValue !== undefined && { discountValue: payload.discountValue }),
+            ...(payload.currency      !== undefined && { currency:      payload.currency }),
             ...(payload.maxUses       !== undefined && { maxUses:       payload.maxUses }),
             ...(payload.validFrom     !== undefined && { validFrom:     payload.validFrom ? new Date(payload.validFrom) : null }),
             ...(payload.validUntil    !== undefined && { validUntil:    payload.validUntil ? new Date(payload.validUntil) : null }),
@@ -150,7 +153,7 @@ const getCouponStats = async () => {
     const topCoupons = await prisma.coupon.findMany({
         take: 5,
         orderBy: { usedCount: "desc" },
-        select: { id: true, code: true, usedCount: true, discountType: true, discountValue: true },
+        select: { id: true, code: true, usedCount: true, discountType: true, discountValue: true, currency: true },
     });
 
     return { total, active, inactive: total - active, totalUsage, topCoupons };
@@ -182,6 +185,7 @@ const validateCoupon = async (code: string) => {
         description:   coupon.description,
         discountType:  coupon.discountType,
         discountValue: coupon.discountValue,
+        currency:      coupon.currency,
         validUntil:    coupon.validUntil,
     };
 };

@@ -1,8 +1,7 @@
-import { ServiceType } from "../../generated/prisma/enums";
-
 export interface IPricingRule {
     id: string;
-    service: ServiceType;
+    serviceCatalogId: string;
+    serviceNameSnapshot: string;
     baseRate: number;
     perRoomRate: number;
     minCharge: number;

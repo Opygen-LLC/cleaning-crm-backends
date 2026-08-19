@@ -21,6 +21,9 @@ import { randomBytes } from "node:crypto";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { FRONTEND_URL } from "../../config/ENV";
 import { createNotification } from "../../lib/utils/createNotification";
+import { nextReference } from "../../lib/utils/referenceNumber";
+import { inferLegacyServiceType, resolveFlexibleServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
+import { formatMoney } from "../../lib/utils/money";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -77,25 +80,6 @@ const ensurePublicQuoteToken = async (
 };
 
 /**
- * Generates a unique quote reference: #OP-QT-0001
- */
-export const generateQuoteRef = async (): Promise<string> => {
-    const last = await prisma.quote.findFirst({
-        orderBy: { createdAt: "desc" },
-        select: { quoteRef: true },
-    });
-
-    let next = 1;
-    if (last?.quoteRef) {
-        const parts = last.quoteRef.split("-");
-        const num = parseInt(parts[parts.length - 1]);
-        if (!isNaN(num)) next = num + 1;
-    }
-
-    return `#OP-QT-${next.toString().padStart(4, "0")}`;
-};
-
-/**
  * Resolve adminProfile.id from the authenticated user id.
  * Throws 404 when not found.
  */
@@ -126,6 +110,9 @@ export const quoteInclude = {
         select: { id: true, name: true, email: true, phone: true },
     },
     lineItems: true,
+    serviceCatalog: {
+        select: { id: true, serviceName: true, basePrice: true, duration: true, legacyServiceType: true },
+    },
     bookings: {
         select: {
             id: true,
@@ -158,54 +145,52 @@ const ALLOWED_TRANSITIONS: Record<QuoteStatus, QuoteStatus[]> = {
 const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
     const adminId = await getAdminId(user);
 
-    // Verify client belongs to this admin
-    const client = await prisma.client.findFirst({
-        where: { id: payload.clientId, adminId },
-    });
+    const [client, serviceIdentity] = await Promise.all([
+        prisma.client.findFirst({ where: { id: payload.clientId, adminId } }),
+        resolveFlexibleServiceIdentity(adminId, {
+            serviceCatalogId: payload.serviceCatalogId,
+            serviceType: payload.serviceType,
+        }),
+    ]);
     if (!client) throw new AppError(status.NOT_FOUND, "Client not found");
 
-    const quoteRef = await generateQuoteRef();
-    const { subtotal, tax, total } = computeTotals(
-        payload.lineItems,
-        payload.taxRate,
-    );
+    const { subtotal, tax, total } = computeTotals(payload.lineItems, payload.taxRate);
 
-    const quote = await prisma.quote.create({
-        data: {
-            quoteRef,
-            publicToken: generatePublicQuoteToken(),
-            adminId,
-            clientId: payload.clientId,
-            serviceType: payload.serviceType,
-            address: payload.address,
-            subtotal,
-            taxRate: payload.taxRate,
-            tax,
-            total,
-            validUntil: new Date(payload.validUntil),
-            notes: payload.notes,
-            internalNotes: payload.internalNotes,
-            lineItems: {
-                createMany: {
-                    data: payload.lineItems.map((item) => ({
-                        description: item.description,
-                        quantity: item.quantity,
-                        unitPrice: item.unitPrice,
-                        total:
-                            Math.round(item.quantity * item.unitPrice * 100) /
-                            100,
-                    })),
+    const quote = await prisma.$transaction(async (tx) => {
+        const quoteRef = await nextReference(tx, "quote");
+        return tx.quote.create({
+            data: {
+                quoteRef,
+                publicToken: generatePublicQuoteToken(),
+                adminId,
+                clientId: payload.clientId,
+                serviceCatalogId: serviceIdentity.serviceCatalogId,
+                serviceType: serviceIdentity.serviceType,
+                serviceNameSnapshot: serviceIdentity.serviceNameSnapshot,
+                address: payload.address,
+                subtotal,
+                taxRate: payload.taxRate,
+                tax,
+                total,
+                validUntil: new Date(payload.validUntil),
+                notes: payload.notes,
+                internalNotes: payload.internalNotes,
+                lineItems: {
+                    createMany: {
+                        data: payload.lineItems.map((item) => ({
+                            description: item.description,
+                            quantity: item.quantity,
+                            unitPrice: item.unitPrice,
+                            total: Math.round(item.quantity * item.unitPrice * 100) / 100,
+                        })),
+                    },
                 },
             },
-        },
-        include: quoteInclude,
+            include: quoteInclude,
+        });
     });
 
-    // If created from a template, bump its usage counter (non-fatal)
-    if (payload.templateId) {
-        await recordTemplateUsage(payload.templateId);
-    }
-
+    if (payload.templateId) await recordTemplateUsage(payload.templateId);
     return quote;
 };
 
@@ -286,6 +271,14 @@ const updateQuote = async (
         totalsUpdate = computeTotals(asInput, taxRateToUse);
     }
 
+    const serviceIdentity =
+        payload.serviceCatalogId !== undefined || payload.serviceType !== undefined
+            ? await resolveFlexibleServiceIdentity(adminId, {
+                  serviceCatalogId: payload.serviceCatalogId ?? undefined,
+                  serviceType: payload.serviceType,
+              })
+            : null;
+
     return prisma.$transaction(async (tx) => {
         // Replace line items when provided
         if (lineItemsToUse) {
@@ -305,8 +298,10 @@ const updateQuote = async (
         return tx.quote.update({
             where: { id },
             data: {
-                ...(payload.serviceType && {
-                    serviceType: payload.serviceType,
+                ...(serviceIdentity && {
+                    serviceCatalogId: serviceIdentity.serviceCatalogId,
+                    serviceType: serviceIdentity.serviceType,
+                    serviceNameSnapshot: serviceIdentity.serviceNameSnapshot,
                 }),
                 ...(payload.address && { address: payload.address }),
                 ...(payload.taxRate !== undefined && {
@@ -392,6 +387,7 @@ const convertQuoteToBooking = async (
         where: { id, adminId },
         include: {
             lineItems: true,
+            serviceCatalog: { select: { id: true, serviceName: true, basePrice: true, duration: true, legacyServiceType: true } },
             bookings: { select: { id: true, bookingRef: true } },
         },
     });
@@ -425,28 +421,22 @@ const convertQuoteToBooking = async (
         }
     }
 
-    // Generate booking ref
-    const last = await prisma.booking.findFirst({
-        orderBy: { createdAt: "desc" },
-        select: { bookingRef: true },
-    });
-    let nextBk = 1;
-    if (last?.bookingRef) {
-        const parts = last.bookingRef.split("-");
-        const num = parseInt(parts[parts.length - 1]);
-        if (!isNaN(num)) nextBk = num + 1;
-    }
-    const bookingRef = `#OP-BK-${nextBk.toString().padStart(4, "0")}`;
 
     return prisma.$transaction(async (tx) => {
+        const bookingRef = await nextReference(tx, "booking");
+        const legacyServiceType =
+            quote.serviceCatalog?.legacyServiceType ??
+            inferLegacyServiceType(quote.serviceNameSnapshot ?? quote.serviceType ?? "");
         const booking = await tx.booking.create({
             data: {
                 bookingRef,
                 adminId,
                 clientId: quote.clientId,
-                // Quote serviceType is free text, so the admin explicitly
-                // confirms the Booking ServiceType during conversion.
-                serviceType: payload.serviceType,
+                serviceCatalogId: quote.serviceCatalogId,
+                serviceType: legacyServiceType,
+                serviceNameSnapshot: serviceDisplayName(quote),
+                priceSnapshot: quote.serviceCatalog?.basePrice ?? null,
+                durationSnapshot: quote.serviceCatalog?.duration ?? null,
                 address: quote.address,
                 scheduledDate: new Date(payload.scheduledDate),
                 durationMins: payload.durationMins,
@@ -505,6 +495,9 @@ const publicQuoteSelect = {
     quoteRef: true,
     status: true,
     serviceType: true,
+    serviceCatalogId: true,
+    serviceNameSnapshot: true,
+    serviceCatalog: { select: { id: true, serviceName: true } },
     address: true,
     subtotal: true,
     taxRate: true,
@@ -531,6 +524,7 @@ const publicQuoteSelect = {
             businessEmail: true,
             businessLogo: true,
             brandColor: true,
+            currency: true,
         },
     },
 } as const;
@@ -713,9 +707,10 @@ const sendQuoteEmail = async (id: string, user: IRequestUser) => {
                 select: { id: true, name: true, email: true, phone: true },
             },
             admin: {
-                select: { businessName: true, businessEmail: true },
+                select: { businessName: true, businessEmail: true, currency: true },
             },
             lineItems: true,
+            serviceCatalog: { select: { serviceName: true } },
         },
     });
     if (!quote) throw new AppError(status.NOT_FOUND, "Quote not found");
@@ -744,8 +739,6 @@ const sendQuoteEmail = async (id: string, user: IRequestUser) => {
             month: "long",
             year: "numeric",
         });
-    const fmt2dp = (n: unknown) => Number(n).toFixed(2);
-
     const publicToken = await ensurePublicQuoteToken(
         quote.id,
         quote.publicToken,
@@ -764,17 +757,17 @@ const sendQuoteEmail = async (id: string, user: IRequestUser) => {
             quoteRef: quote.quoteRef,
             businessName: quote.admin.businessName,
             clientName: quote.client.name,
-            serviceType: quote.serviceType,
+            serviceType: serviceDisplayName(quote),
             address: quote.address,
             lineItems: quote.lineItems.map((li) => ({
                 description: li.description,
                 quantity: li.quantity,
-                total: fmt2dp(li.total),
+                total: formatMoney(li.total, quote.admin.currency),
             })),
-            subtotal: fmt2dp(quote.subtotal),
+            subtotal: formatMoney(quote.subtotal, quote.admin.currency),
             taxRate: Number(quote.taxRate),
-            tax: fmt2dp(quote.tax),
-            total: fmt2dp(quote.total),
+            tax: formatMoney(quote.tax, quote.admin.currency),
+            total: formatMoney(quote.total, quote.admin.currency),
             validUntil: fmt(quote.validUntil),
             notes: quote.notes ?? null,
             quoteViewUrl,
@@ -807,7 +800,8 @@ export interface IQuoteTemplateLineItemInput {
 
 export interface IQuoteTemplateCreate {
     name: string;
-    serviceType: string;
+    serviceCatalogId?: string;
+    serviceType?: string;
     taxRate?: number;
     notes?: string;
     lineItems: IQuoteTemplateLineItemInput[];
@@ -815,6 +809,7 @@ export interface IQuoteTemplateCreate {
 
 export interface IQuoteTemplateUpdate {
     name?: string;
+    serviceCatalogId?: string | null;
     serviceType?: string;
     taxRate?: number;
     notes?: string;
@@ -823,6 +818,7 @@ export interface IQuoteTemplateUpdate {
 
 const templateInclude = {
     lineItems: true,
+    serviceCatalog: { select: { id: true, serviceName: true, basePrice: true, duration: true } },
 } as const;
 
 const getAllQuoteTemplates = async (user: IRequestUser) => {
@@ -839,12 +835,18 @@ const createQuoteTemplate = async (
     user: IRequestUser,
 ) => {
     const adminId = await getAdminId(user);
+    const serviceIdentity = await resolveFlexibleServiceIdentity(adminId, {
+        serviceCatalogId: payload.serviceCatalogId,
+        serviceType: payload.serviceType,
+    });
 
     return prisma.quoteTemplate.create({
         data: {
             adminId,
             name: payload.name,
-            serviceType: payload.serviceType,
+            serviceCatalogId: serviceIdentity.serviceCatalogId,
+            serviceType: serviceIdentity.serviceType,
+            serviceNameSnapshot: serviceIdentity.serviceNameSnapshot,
             taxRate: payload.taxRate ?? 20,
             notes: payload.notes,
             lineItems: {
@@ -874,6 +876,14 @@ const updateQuoteTemplate = async (
     if (!existing)
         throw new AppError(status.NOT_FOUND, "Quote template not found");
 
+    const serviceIdentity =
+        payload.serviceCatalogId !== undefined || payload.serviceType !== undefined
+            ? await resolveFlexibleServiceIdentity(adminId, {
+                  serviceCatalogId: payload.serviceCatalogId ?? undefined,
+                  serviceType: payload.serviceType,
+              })
+            : null;
+
     return prisma.$transaction(async (tx) => {
         if (payload.lineItems) {
             await tx.quoteTemplateLineItem.deleteMany({
@@ -893,8 +903,10 @@ const updateQuoteTemplate = async (
             where: { id },
             data: {
                 ...(payload.name && { name: payload.name }),
-                ...(payload.serviceType && {
-                    serviceType: payload.serviceType,
+                ...(serviceIdentity && {
+                    serviceCatalogId: serviceIdentity.serviceCatalogId,
+                    serviceType: serviceIdentity.serviceType,
+                    serviceNameSnapshot: serviceIdentity.serviceNameSnapshot,
                 }),
                 ...(payload.taxRate !== undefined && {
                     taxRate: payload.taxRate,
@@ -952,7 +964,11 @@ const convertQuoteToJob = async (
 
     const quote = await prisma.quote.findFirst({
         where: { id, adminId },
-        include: { lineItems: true, client: { select: { id: true } } },
+        include: {
+            lineItems: true,
+            client: { select: { id: true } },
+            serviceCatalog: { select: { id: true, serviceName: true, basePrice: true, duration: true, legacyServiceType: true } },
+        },
     });
     if (!quote) throw new AppError(status.NOT_FOUND, "Quote not found");
 
@@ -975,42 +991,22 @@ const convertQuoteToJob = async (
         }
     }
 
-    // Generate job ref
-    const lastJob = await prisma.job.findFirst({
-        where: { adminId },
-        orderBy: { createdAt: "desc" },
-        select: { jobRef: true },
-    });
-    let nextNum = 1;
-    if (lastJob?.jobRef) {
-        const parts = lastJob.jobRef.split("-");
-        const num = parseInt(parts[parts.length - 1]);
-        if (!isNaN(num)) nextNum = num + 1;
-    }
-    const jobRef = `#OP-JB-${nextNum.toString().padStart(4, "0")}`;
-
-    // Map quote serviceType (free text) to nearest ServiceType enum value
-    const { ServiceType } = await import("../../generated/prisma/enums");
-    const serviceTypeMap: Record<string, string> = {
-        "Residential Clean":  ServiceType.RESIDENTIAL_CLEAN,
-        "Deep Clean":         ServiceType.DEEP_CLEAN,
-        "Office Clean":       ServiceType.OFFICE_CLEAN,
-        "End of Tenancy":     ServiceType.END_OF_TENANCY,
-        "Carpet Clean":       ServiceType.CARPET_CLEAN,
-        "Window Clean":       ServiceType.WINDOW_CLEAN,
-        "Move-In/Out Clean":  ServiceType.MOVE_IN_OUT_CLEAN,
-    };
-    const resolvedServiceType =
-        (serviceTypeMap[quote.serviceType] as any) ??
-        ServiceType.RESIDENTIAL_CLEAN;
 
     const job = await prisma.$transaction(async (tx) => {
+        const jobRef = await nextReference(tx, "job");
+        const legacyServiceType =
+            quote.serviceCatalog?.legacyServiceType ??
+            inferLegacyServiceType(quote.serviceNameSnapshot ?? quote.serviceType ?? "");
         const created = await tx.job.create({
             data: {
                 jobRef,
                 adminId,
                 clientId: quote.clientId,
-                serviceType: resolvedServiceType,
+                serviceCatalogId: quote.serviceCatalogId,
+                serviceType: legacyServiceType,
+                serviceNameSnapshot: serviceDisplayName(quote),
+                priceSnapshot: quote.serviceCatalog?.basePrice ?? null,
+                durationSnapshot: quote.serviceCatalog?.duration ?? null,
                 address: quote.address,
                 scheduledDate: new Date(payload.scheduledDate),
                 durationMins: payload.durationMins,

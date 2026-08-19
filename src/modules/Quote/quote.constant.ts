@@ -1,6 +1,7 @@
 export const quoteSearchableFields = [
     "quoteRef",
     "serviceType",
+    "serviceNameSnapshot",
     "address",
     "notes",
 ];
@@ -8,5 +9,6 @@ export const quoteSearchableFields = [
 export const quoteFilterableFields = [
     "status",
     "clientId",
+    "serviceCatalogId",
     "serviceType",
 ];

@@ -4,6 +4,8 @@ model Coupon {
   description   String?
   discountType  DiscountType
   discountValue Decimal        @db.Decimal(10, 2)
+  // Required for new FIXED coupons; nullable preserves legacy percentage/fixed rows.
+  currency      Currency?
   maxUses       Int?
   usedCount     Int            @default(0)
   validFrom     DateTime?

@@ -32,6 +32,7 @@ import {
   WEBSITE_BASE_DOMAIN,
 } from "./config/ENV";
 import { WebsiteHostResolverService } from "./modules/Website/websiteHostResolver.service";
+import { inspectWebsiteWildcardInfrastructure } from "./modules/Website/websitePlatformConfig";
 
 import "../src/cron/staffStatus.cron";
 import "../src/cron/recurringBooking.cron";
@@ -111,7 +112,7 @@ const publicWebsiteCors = cors({
     "Content-Type", "Accept", "Origin", "Idempotency-Key",
     "X-Form-Started-At", "X-Turnstile-Token",
   ],
-  exposedHeaders: ["X-Request-Id", "X-Response-Time", "Server-Timing"],
+  exposedHeaders: ["X-Request-Id", "X-Response-Time", "Server-Timing", "X-Website-Resolver-Source"],
   origin: true,
   credentials: false,
 });
@@ -175,45 +176,71 @@ app.use(logRequestResponse);
 const safeDurationMs = (started: bigint) =>
   Math.round((Number(process.hrtime.bigint() - started) / 1_000_000) * 10) / 10;
 
-app.get("/health", async (_req: Request, res: Response) => {
+const dependencyHealth = async () => {
   let dbOk = false;
   let redisOk = false;
   let databaseLatencyMs: number | null = null;
   let redisLatencyMs: number | null = null;
 
-  const dbCheck = (async () => {
-    const started = process.hrtime.bigint();
-    try {
-      const { prisma } = await import("./lib/prisma/prisma");
-      await prisma.$queryRaw`SELECT 1`;
-      dbOk = true;
-    } finally {
-      databaseLatencyMs = safeDurationMs(started);
-    }
-  })().catch(() => {});
+  await Promise.all([
+    (async () => {
+      const started = process.hrtime.bigint();
+      try {
+        const { prisma } = await import("./lib/prisma/prisma");
+        await prisma.$queryRaw`SELECT 1`;
+        dbOk = true;
+      } finally { databaseLatencyMs = safeDurationMs(started); }
+    })().catch(() => {}),
+    (async () => {
+      const started = process.hrtime.bigint();
+      try {
+        const redis = (await import("./config/redis")).default;
+        redisOk = (await redis.ping()) === "PONG";
+      } finally { redisLatencyMs = safeDurationMs(started); }
+    })().catch(() => {}),
+  ]);
 
-  const redisCheck = (async () => {
-    const started = process.hrtime.bigint();
-    try {
-      const redis = (await import("./config/redis")).default;
-      redisOk = (await redis.ping()) === "PONG";
-    } finally {
-      redisLatencyMs = safeDurationMs(started);
-    }
-  })().catch(() => {});
+  return {
+    database: { ok: dbOk, latencyMs: databaseLatencyMs },
+    redis: { ok: redisOk, latencyMs: redisLatencyMs },
+  };
+};
 
-  await Promise.all([dbCheck, redisCheck]);
+// Liveness must never depend on Postgres/Redis. Process managers should use
+// this endpoint to decide whether the Node process itself needs restarting.
+app.get("/livez", (_req: Request, res: Response) => {
+  return res.status(200).json({ success: true, status: "alive", timestamp: new Date().toISOString(), uptimeSeconds: Math.round(process.uptime()) });
+});
 
-  const allOk = dbOk && redisOk;
-  res.status(allOk ? 200 : 503).json({
-    success: allOk,
-    status: allOk ? "ok" : "degraded",
+// Readiness requires the source-of-truth database. Redis is deliberately
+// reported as degraded rather than fatal because every cache path has a DB
+// fallback. This prevents a cache outage from causing a restart storm.
+app.get("/readyz", async (_req: Request, res: Response) => {
+  const checks = await dependencyHealth();
+  const infrastructure = getInfrastructureAlignment();
+  const ready = checks.database.ok && (!infrastructure.enforcementEnabled || infrastructure.aligned);
+  const degraded = ready && !checks.redis.ok;
+  return res.status(ready ? 200 : 503).json({
+    success: ready,
+    status: ready ? (degraded ? "degraded" : "ready") : "not-ready",
     timestamp: new Date().toISOString(),
-    checks: {
-      database: { ok: dbOk, latencyMs: databaseLatencyMs },
-      redis: { ok: redisOk, latencyMs: redisLatencyMs },
-    },
-    infrastructure: getInfrastructureAlignment(),
+    checks,
+    infrastructure,
+  });
+});
+
+// Backward-compatible health endpoint. Keep existing monitors working while
+// deployment health checks move to /livez and /readyz.
+app.get("/health", async (_req: Request, res: Response) => {
+  const checks = await dependencyHealth();
+  const infrastructure = getInfrastructureAlignment();
+  const ready = checks.database.ok && (!infrastructure.enforcementEnabled || infrastructure.aligned);
+  return res.status(ready ? 200 : 503).json({
+    success: ready,
+    status: ready ? (checks.redis.ok ? "ok" : "degraded") : "not-ready",
+    timestamp: new Date().toISOString(),
+    checks,
+    infrastructure,
   });
 });
 
@@ -235,6 +262,21 @@ app.get("/health/performance", (req: Request, res: Response) => {
         connectionTimeoutMs: DB_POOL_CONNECTION_TIMEOUT_MS,
       },
     },
+  });
+});
+
+app.get("/health/website-routing", async (req: Request, res: Response) => {
+  const supplied = req.get("x-monitoring-token") || req.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (NODE_ENV === "production" && (!PERFORMANCE_METRICS_TOKEN || supplied !== PERFORMANCE_METRICS_TOKEN)) {
+    return res.status(404).json({ success: false, message: "Not found" });
+  }
+
+  const data = await inspectWebsiteWildcardInfrastructure();
+  return res.status(data.ok ? 200 : 503).json({
+    success: data.ok,
+    status: data.ok ? "ok" : "degraded",
+    timestamp: new Date().toISOString(),
+    data,
   });
 });
 

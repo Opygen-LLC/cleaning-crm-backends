@@ -120,9 +120,11 @@ const resolvePublicSubdomain = catchAsync(async (req, res) => {
   return ok(res, "Website subdomain resolved successfully", data);
 });
 const resolvePublicHost = catchAsync(async (req, res) => {
-  const data = await WebsiteHostResolverService.resolveHost(paramStr(req.params.host));
+  const { resolution, diagnostics } = await WebsiteHostResolverService.resolveHostWithDiagnostics(paramStr(req.params.host));
   res.setHeader("Cache-Control", "no-store, max-age=0");
-  return ok(res, "Website host resolved successfully", data);
+  res.setHeader("X-Website-Resolver-Source", diagnostics.source);
+  res.setHeader("Server-Timing", `website-host-resolver;dur=${diagnostics.durationMs}`);
+  return ok(res, "Website host resolved successfully", resolution);
 });
 
 const getPublicWebsiteBooking = catchAsync(async (req, res) => {

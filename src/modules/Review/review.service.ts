@@ -251,12 +251,18 @@ const updateReview = async (id: string, payload: IUpdateReview, user: IRequestUs
     const adminId = await getAdminId(user);
     const review = await prisma.review.findFirst({ where: { id, adminId }, select: { id: true } });
     if (!review) throw new AppError(status.NOT_FOUND, "Review not found.");
+    const canonicalStatus =
+        payload.status ??
+        (payload.isPublished === undefined
+            ? undefined
+            : payload.isPublished
+              ? "published"
+              : "unpublished");
     const updated = await prisma.review.update({
         where: { id },
         data: {
-            ...(payload.status !== undefined ? { status: payload.status, isPublished: payload.status === "published" } : {}),
-            ...(payload.isPublished !== undefined
-                ? { isPublished: payload.isPublished, status: payload.isPublished ? "published" : "unpublished" }
+            ...(canonicalStatus !== undefined
+                ? { status: canonicalStatus, isPublished: canonicalStatus === "published" }
                 : {}),
             ...(payload.adminReply !== undefined ? { adminReply: payload.adminReply } : {}),
         },

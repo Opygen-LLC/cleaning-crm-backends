@@ -7,7 +7,9 @@ export interface createClientPayload {
   addressLine1: string;
   addressLine2?: string;
   city: string;
-  zipcode: string;
+  postcode?: string;
+  /** @deprecated Use postcode. */
+  zipcode?: string;
   country: string;
 
   totalBookings?: number;
@@ -25,6 +27,8 @@ export interface updateClientPayload {
   addressLine1?: string;
   addressLine2?: string;
   city?: string;
+  postcode?: string;
+  /** @deprecated Use postcode. */
   zipcode?: string;
   country?: string;
 

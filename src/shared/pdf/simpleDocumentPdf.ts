@@ -9,6 +9,7 @@
  */
 
 import PDFDocument from "pdfkit";
+import { formatMoney } from "../../lib/utils/money";
 
 export interface ISimpleDocLineItem {
     description: string;
@@ -36,9 +37,9 @@ export interface ISimpleDocumentPdfParams {
     businessName?: string;
     businessEmail?: string | null;
     brandColor?: string | null;
+    currency: string;
 }
 
-const fmt2dp = (n: unknown) => `£${Number(n).toFixed(2)}`;
 const fmtDate = (d: Date) =>
     d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
@@ -59,6 +60,7 @@ export const generateSimpleDocumentPDFBuffer = (
         ? params.brandColor!
         : COLORS.headerBg;
     const businessName = params.businessName || "CleanCRM";
+    const fmt2dp = (n: unknown) => formatMoney(Number(n), params.currency);
     return new Promise<Buffer>((resolve, reject) => {
         const doc = new PDFDocument({
             size: "A4",

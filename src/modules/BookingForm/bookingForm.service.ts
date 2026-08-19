@@ -30,7 +30,8 @@ const projectBookingAddOns = (value: unknown): PublicBookingAddOn[] => {
         if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
         const record = raw as Record<string, unknown>;
         const name = typeof record.name === "string" ? record.name.trim() : "";
-        const price = typeof record.priceGbp === "number" ? record.priceGbp : Number(record.priceGbp);
+        const rawPrice = record.price ?? record.priceGbp;
+        const price = typeof rawPrice === "number" ? rawPrice : Number(rawPrice);
         if (!name || !Number.isFinite(price) || price < 0) return;
         result.push({ id: `addon-${index}-${addOnSlug(name)}`, name, price });
     });
@@ -551,7 +552,7 @@ const getSubmissions = async (
         },
         include: {
             form: { select: { headline: true, slug: true } },
-            serviceCatalog: { select: { id: true, serviceName: true, duration: true, basePriceGbp: true } },
+            serviceCatalog: { select: { id: true, serviceName: true, duration: true, basePrice: true } },
             convertedBooking: { select: { id: true, bookingRef: true } },
         },
         orderBy: { createdAt: "desc" },
@@ -679,7 +680,7 @@ const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelecto
             admin: {
                 select: {
                     businessName: true, businessLogo: true, mobileNumber: true, businessEmail: true,
-                    address: true, city: true, zipcode: true, country: true, brandColor: true,
+                    address: true, city: true, zipcode: true, country: true, brandColor: true, currency: true,
                     user: { select: { name: true, email: true } },
                 },
             },
@@ -699,7 +700,7 @@ const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelecto
             where: {
                 adminId: form.adminId,
                 staffId: null,
-                isPublished: true,
+                status: "published",
             },
             _avg: { rating: true },
             _count: { rating: true },
@@ -729,8 +730,7 @@ const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelecto
             duration: entry.duration ?? entry.serviceCatalog?.duration ?? null,
             service: entry.serviceCatalog ? projectCanonicalService(entry.serviceCatalog) : null,
             serviceName: entry.serviceCatalog?.serviceName ?? entry.serviceType?.replace(/_/g, " ") ?? "Service",
-            basePrice: entry.serviceCatalog?.basePriceGbp ?? null,
-            basePriceGbp: entry.serviceCatalog?.basePriceGbp ?? null,
+            basePrice: entry.serviceCatalog?.basePrice ?? null,
             addOns: projectBookingAddOns(entry.serviceCatalog?.addOns),
         }));
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -869,7 +869,7 @@ const submitPublicBookingFormBySelector = async (
                             id: true,
                             adminId: true,
                             serviceName: true,
-                            basePriceGbp: true,
+                            basePrice: true,
                             duration: true,
                             addOns: true,
                             status: true,
@@ -966,7 +966,7 @@ const submitPublicBookingFormBySelector = async (
         serviceCatalogId: catalog?.id ?? selectedService.serviceCatalogId ?? null,
         serviceType: catalog?.legacyServiceType ?? selectedService.serviceType ?? null,
         serviceNameSnapshot: catalog?.serviceName ?? selectedService.serviceType?.replace(/_/g, " ") ?? "Service",
-        priceSnapshot: catalog?.basePriceGbp ?? null,
+        priceSnapshot: catalog?.basePrice ?? null,
         durationSnapshot: catalog?.duration ?? null,
     };
 

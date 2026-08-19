@@ -12,6 +12,7 @@ import { parsePublishedSnapshot } from "./websiteSnapshot";
 export interface WebsiteBookingSetupPayload {
   enabled: boolean;
   bookingFormId?: string | null;
+  showNavigation?: boolean;
   showHeaderCta?: boolean;
   showServiceCtas?: boolean;
   showHomeCta?: boolean;
@@ -50,6 +51,7 @@ export interface WebsiteBookingSetupResult {
     websitePath: "/estimate";
   };
   settings: {
+    showNavigation: boolean;
     showHeaderCta: boolean;
     showServiceCtas: boolean;
     showHomeCta: boolean;
@@ -153,6 +155,7 @@ const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupRe
         publishedSnapshot: true,
         primaryBookingFormId: true,
         bookingEnabled: true,
+        bookingShowNavigation: true,
         bookingShowHeaderCta: true,
         bookingShowServiceCtas: true,
         bookingShowHomeCta: true,
@@ -239,6 +242,7 @@ const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupRe
       websitePath: "/estimate",
     },
     settings: {
+      showNavigation: website.bookingShowNavigation,
       showHeaderCta: website.bookingShowHeaderCta,
       showServiceCtas: website.bookingShowServiceCtas,
       showHomeCta: website.bookingShowHomeCta,
@@ -287,7 +291,7 @@ const ensureAtLeastOneBookableService = async (tx: any, adminId: string) => {
         adminId,
         serviceName: "Standard Cleaning",
         description: "Routine home cleaning for kitchens, bathrooms, bedrooms and living areas.",
-        basePriceGbp: 60,
+        basePrice: 60,
         duration: "2h",
         category: "Residential",
         status: ServiceStatus.ACTIVE,
@@ -566,6 +570,7 @@ const configure = async (
     const nextWebsiteStatus = statusAfterDraftMutation(businessWebsite.status as WebsiteLifecycleStatus);
 
     const presentationPatch = {
+      ...(payload.showNavigation !== undefined ? { bookingShowNavigation: payload.showNavigation } : {}),
       ...(payload.showHeaderCta !== undefined ? { bookingShowHeaderCta: payload.showHeaderCta } : {}),
       ...(payload.showServiceCtas !== undefined ? { bookingShowServiceCtas: payload.showServiceCtas } : {}),
       ...(payload.showHomeCta !== undefined ? { bookingShowHomeCta: payload.showHomeCta } : {}),

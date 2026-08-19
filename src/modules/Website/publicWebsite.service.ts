@@ -1,5 +1,6 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
+import logger from "../../lib/logger";
 import { prisma } from "../../lib/prisma/prisma";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
@@ -52,8 +53,8 @@ const resolveIdentifier = async (identifier: string): Promise<ResolvedWebsite> =
   };
 };
 
-const loadProjectionSource = async (websiteId: string) => {
-  const website = await prisma.businessWebsite.findUnique({
+const loadProjectionSource = async (websiteId: string, options: { includeDraftPages?: boolean } = {}) => {
+  const website: any = await prisma.businessWebsite.findUnique({
     where: { id: websiteId },
     include: {
       admin: {
@@ -79,7 +80,7 @@ const loadProjectionSource = async (websiteId: string) => {
               id: true,
               serviceName: true,
               description: true,
-              basePriceGbp: true,
+              basePrice: true,
               duration: true,
               category: true,
               addOns: true,
@@ -90,11 +91,9 @@ const loadProjectionSource = async (websiteId: string) => {
             take: 200,
           },
           reviews: {
-            // A website testimonial must satisfy both moderation fields. This
-            // fails closed if historical/manual rows ever drift out of sync.
-            where: { isPublished: true, status: "published", staffId: null },
+            // Publication status is the single moderation source of truth.
+            where: { status: "published", staffId: null },
             select: {
-              id: true,
               clientName: true,
               rating: true,
               comment: true,
@@ -105,7 +104,7 @@ const loadProjectionSource = async (websiteId: string) => {
             take: 50,
           },
           workLocations: {
-            select: { id: true, city: true, postcode: true },
+            select: { city: true, postcode: true },
             orderBy: { createdAt: "asc" },
           },
           // Only published forms can power the public runtime. The snapshot
@@ -121,7 +120,10 @@ const loadProjectionSource = async (websiteId: string) => {
           },
         },
       },
-      pages: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
+      pages: options.includeDraftPages === false ? false : {
+        select: { kind: true, slug: true, title: true, content: true, seoTitle: true, seoDescription: true, showInNavigation: true, isEnabled: true, sortOrder: true },
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      },
       domains: {
         where: readyWebsiteDomainWhere as any,
         select: { domain: true, isPrimary: true },
@@ -144,7 +146,6 @@ const loadProjectionSource = async (websiteId: string) => {
   const reviewAggregate = await prisma.review.aggregate({
     where: {
       adminId: website.adminId,
-      isPublished: true,
       status: "published",
       staffId: null,
     },
@@ -175,6 +176,7 @@ const currentDraftAsPublishedSnapshot = (website: any) => buildPublishedSnapshot
   primaryBookingFormId: website.primaryBookingFormId,
   primaryEstimateFormId: website.primaryEstimateFormId,
   bookingEnabled: website.bookingEnabled,
+  bookingShowNavigation: website.bookingShowNavigation,
   bookingShowHeaderCta: website.bookingShowHeaderCta,
   bookingShowServiceCtas: website.bookingShowServiceCtas,
   bookingShowHomeCta: website.bookingShowHomeCta,
@@ -191,6 +193,74 @@ const currentDraftAsPublishedSnapshot = (website: any) => buildPublishedSnapshot
   pages: website.pages,
 });
 
+
+/**
+ * Public rendering must never cross the immutable publish boundary. A legacy or
+ * corrupted publishedSnapshot is recovered only from the exact recorded live
+ * revision (or a historical publish/launch revision when the revision pointer
+ * itself is missing). The current draft is intentionally never considered.
+ */
+const resolveSafePublishedSnapshot = async (website: any): Promise<WebsitePublishedSnapshotV1> => {
+  const direct = parsePublishedSnapshot(website.publishedSnapshot);
+  if (direct) return direct;
+
+  if (website.status !== "PUBLISHED") {
+    throw new AppError(status.NOT_FOUND, "Website not found");
+  }
+
+  if (Number.isInteger(website.publishedRevisionNumber) && website.publishedRevisionNumber > 0) {
+    const exactRevision = await prisma.websiteRevision.findFirst({
+      where: { websiteId: website.id, revisionNumber: website.publishedRevisionNumber },
+      select: { revisionNumber: true, snapshot: true, reason: true },
+    });
+    const recovered = exactRevision ? parseRevisionSnapshotAsPublished(exactRevision.snapshot) : null;
+    if (recovered) {
+      logger.warn(
+        `[public-website] recovered invalid publishedSnapshot for ${website.id} from revision #${exactRevision?.revisionNumber}`,
+      );
+      return recovered;
+    }
+  }
+
+  // Older PUBLISHED rows may predate publishedRevisionNumber. Search only
+  // revisions explicitly created by Publish/Launch; a Draft saved/Restored
+  // revision is never eligible because it may contain private edits.
+  const historical = await prisma.websiteRevision.findMany({
+    where: { websiteId: website.id },
+    select: { revisionNumber: true, snapshot: true, reason: true },
+    orderBy: { revisionNumber: "desc" },
+    take: 50,
+  });
+  for (const revision of historical) {
+    if (!/publish|launch/i.test(revision.reason ?? "")) continue;
+    const recovered = parseRevisionSnapshotAsPublished(revision.snapshot);
+    if (!recovered) continue;
+    logger.warn(
+      `[public-website] recovered invalid publishedSnapshot for ${website.id} from historical publish revision #${revision.revisionNumber}`,
+    );
+    return recovered;
+  }
+
+  throw new AppError(status.SERVICE_UNAVAILABLE, "Website publication is temporarily unavailable", {
+    code: "WEBSITE_PUBLISHED_SNAPSHOT_INVALID",
+    retryable: false,
+  });
+};
+
+const resolveCompatibleBackendTemplate = (config: WebsitePublishedSnapshotV1["website"]) => {
+  const exact = TemplateRegistry.get(config.templateId, config.templateVersion);
+  if (exact) return exact;
+
+  // Rolling deploy/rollback compatibility: presentation may fall back only to
+  // a renderer that declares the same content schema. Never render schema v2
+  // content through a v1 template merely to avoid a 503.
+  const sameFamily = TemplateRegistry.get(config.templateId);
+  if (sameFamily?.schemaVersion === config.schemaVersion) return sameFamily;
+
+  const safeDefault = TemplateRegistry.get("clean-modern");
+  return safeDefault?.schemaVersion === config.schemaVersion ? safeDefault : null;
+};
+
 const projectWebsite = (
   source: Awaited<ReturnType<typeof loadProjectionSource>>,
   options: { mode: "public" | "preview"; aliasRedirectSubdomain?: string | null; snapshotOverride?: WebsitePublishedSnapshotV1 | null },
@@ -206,17 +276,37 @@ const projectWebsite = (
 
   const snapshot = options.snapshotOverride ?? (options.mode === "preview"
     ? currentDraftAsPublishedSnapshot(website)
-    : parsePublishedSnapshot(website.publishedSnapshot) ?? currentDraftAsPublishedSnapshot(website));
+    : parsePublishedSnapshot(website.publishedSnapshot));
+  if (!snapshot) {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Website publication is temporarily unavailable", {
+      code: "WEBSITE_PUBLISHED_SNAPSHOT_INVALID",
+      retryable: false,
+    });
+  }
 
   const config = snapshot.website;
   const pages = snapshot.pages.filter((page) => page.isEnabled);
   const entitlements = deriveWebsiteEntitlements(website.admin.subscription[0] as any);
-  const requestedTemplate = TemplateRegistry.get(config.templateId, config.templateVersion);
-  if (!requestedTemplate) throw new AppError(status.SERVICE_UNAVAILABLE, "Website template version is unavailable");
+  const requestedTemplate = resolveCompatibleBackendTemplate(config);
+  if (!requestedTemplate) {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Website template schema is unavailable", {
+      code: "WEBSITE_TEMPLATE_SCHEMA_UNAVAILABLE",
+      retryable: false,
+    });
+  }
   // Subscription downgrade changes presentation only; CRM/content/domain rows are
-  // never destroyed. Upgrading restores the selected premium template.
+  // never destroyed. Upgrading restores the selected premium template. The
+  // fallback must support the same schema as the published content.
+  const defaultTemplate = TemplateRegistry.get("clean-modern");
+  const downgradeFallback = defaultTemplate?.schemaVersion === config.schemaVersion ? defaultTemplate : null;
+  if (requestedTemplate.tier === "PRO" && !entitlements.premiumTemplates && !downgradeFallback) {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Website template schema is unavailable", {
+      code: "WEBSITE_TEMPLATE_SCHEMA_UNAVAILABLE",
+      retryable: false,
+    });
+  }
   const template = requestedTemplate.tier === "PRO" && !entitlements.premiumTemplates
-    ? TemplateRegistry.requireTemplate("clean-modern", "1.0.0")
+    ? downgradeFallback!
     : requestedTemplate;
 
   // Canonical SEO and canonical routing share the exact same primary-domain
@@ -275,7 +365,7 @@ const projectWebsite = (
     navigation: pages
       .filter((page) => {
         if (!page.showInNavigation) return false;
-        if (page.kind === "BOOK" && (!bookingEnabled || !config.bookingShowHeaderCta)) return false;
+        if (page.kind === "BOOK" && (!bookingEnabled || !config.bookingShowNavigation)) return false;
         if (page.kind === "ESTIMATE" && !estimateEnabled) return false;
         return true;
       })
@@ -303,6 +393,7 @@ const projectWebsite = (
     })),
     bookingPreferences: {
       enabled: config.bookingEnabled,
+      showNavigation: config.bookingShowNavigation,
       showHeaderCta: config.bookingShowHeaderCta,
       showServiceCtas: config.bookingShowServiceCtas,
       showHomeCta: config.bookingShowHomeCta,
@@ -346,8 +437,13 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
   const canonical = await WebsiteProjectionCacheService.getOrLoad<PublicProjection>(
     websiteId,
     async () => {
-      const website = await loadProjectionSource(websiteId);
-      return projectWebsite(website, { mode: "public", aliasRedirectSubdomain: null });
+      const source = await loadProjectionSource(websiteId, { includeDraftPages: false });
+      const publishedSnapshot = await resolveSafePublishedSnapshot(source.website);
+      return projectWebsite(source, {
+        mode: "public",
+        aliasRedirectSubdomain: null,
+        snapshotOverride: publishedSnapshot,
+      });
     },
   );
 

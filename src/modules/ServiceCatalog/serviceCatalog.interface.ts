@@ -2,13 +2,13 @@ import { ServiceStatus, ServiceType } from "../../generated/prisma/enums";
 
 export interface IServiceAddOn {
     name: string;
-    priceGbp: number;
+    price: number;
 }
 
 export interface IServiceCatalogCreate {
     serviceName: string;
     description: string;
-    basePriceGbp: number;
+    basePrice: number;
     duration: string;
     category: string;
     status?: ServiceStatus;
@@ -20,7 +20,7 @@ export interface IServiceCatalogCreate {
 export interface IServiceCatalogUpdate {
     serviceName?: string;
     description?: string;
-    basePriceGbp?: number;
+    basePrice?: number;
     duration?: string;
     category?: string;
     status?: ServiceStatus;

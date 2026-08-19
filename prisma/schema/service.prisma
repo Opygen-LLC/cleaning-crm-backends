@@ -2,7 +2,9 @@ model ServiceCatalog {
   id           String        @id @default(uuid())
   serviceName  String
   description  String
-  basePriceGbp Float         @default(0.0)
+  // Canonical price amount in the owning business's AdminProfile.currency.
+  // The database column keeps its legacy name for a zero-downtime rollout.
+  basePrice    Float         @default(0.0) @map("basePriceGbp")
   duration     String
   category     String
   status       ServiceStatus @default(ACTIVE)
@@ -16,7 +18,10 @@ model ServiceCatalog {
 
   addOns Json? @default("[]")
 
-  invoices Invoice[]
+  invoices       Invoice[]
+  estimates      Estimate[]
+  quotes         Quote[]
+  quoteTemplates QuoteTemplate[]
 
   bookingFormServices     BookingFormService[]
   bookingFormSubmissions  BookingFormSubmission[]

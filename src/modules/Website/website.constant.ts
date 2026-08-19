@@ -7,6 +7,7 @@ export const DEFAULT_WEBSITE_SETTINGS = Object.freeze({
   logo: null as string | null,
   favicon: null as string | null,
   bookingEnabled: false,
+  bookingShowNavigation: true,
   bookingShowHeaderCta: true,
   bookingShowServiceCtas: true,
   bookingShowHomeCta: true,

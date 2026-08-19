@@ -86,7 +86,7 @@ EXPOSE 3000
 
 # Health-check: wget is available on Alpine
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD wget -qO- http://localhost:3000/health || exit 1
+  CMD wget -qO- http://localhost:3000/livez || exit 1
 
 CMD ["node", "dist/index.js"]
 

@@ -13,27 +13,18 @@ import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const generatePaymentRef = async (): Promise<string> => {
-  const last = await prisma.payment.findFirst({
-    orderBy: { createdAt: "desc" },
-    select: { paymentRef: true },
-  });
-  let nextNum = 1;
-  if (last?.paymentRef) {
-    const parts = last.paymentRef.split("-");
-    const num = parseInt(parts[parts.length - 1]);
-    if (!isNaN(num)) nextNum = num + 1;
-  }
-  return `#OP-PAY-${nextNum.toString().padStart(4, "0")}`;
-};
+import { nextReference } from "../../lib/utils/referenceNumber";
+import { formatMoney } from "../../lib/utils/money";
 
 // ─── Create Payment — POST /payment ──────────────────────────────────────────
 
 const createPayment = async (payload: IPaymentCreate, user: any) => {
   const adminId = await getAdminId(user);
+  const admin = await prisma.adminProfile.findUnique({
+    where: { id: adminId },
+    select: { currency: true },
+  });
+  if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
 
   // If linked to an invoice, validate ownership
   if (payload.invoiceId) {
@@ -46,16 +37,17 @@ const createPayment = async (payload: IPaymentCreate, user: any) => {
     }
   }
 
-  const paymentRef = await generatePaymentRef();
   const paidAt = payload.paidAt ? new Date(payload.paidAt) : new Date();
 
   const result = await prisma.$transaction(async (tx) => {
+    const paymentRef = await nextReference(tx, "payment");
     const payment = await tx.payment.create({
       data: {
         paymentRef,
         amount: payload.amount,
         method: payload.method,
         status: PaymentStatus.PAID,
+        currency: admin.currency,
         note: payload.note,
         transactionId: payload.transactionId,
         paidAt,
@@ -106,7 +98,7 @@ const createPayment = async (payload: IPaymentCreate, user: any) => {
       const { emitToAdmin } = await import("../../config/socketio");
       emitToAdmin(adminId, "invoice:paid", {
         invoiceId: payload.invoiceId,
-        paymentRef,
+        paymentRef: result.payment.paymentRef,
         amount: Number(payload.amount),
       });
     } catch { /* socket not yet initialised — non-fatal */ }
@@ -115,7 +107,7 @@ const createPayment = async (payload: IPaymentCreate, user: any) => {
       adminId,
       type: NotificationType.PAYMENT,
       title: `Invoice marked as PAID`,
-      message: `All payments for this invoice have been received (total £${Number(result.invoice.total ?? 0).toFixed(2)})`,
+      message: `All payments for this invoice have been received (total ${formatMoney(result.invoice.total ?? 0, admin.currency)})`,
       relatedId: result.payment.id,
     }).catch(() => {});
   } else if (payload.invoiceId) {
@@ -124,7 +116,7 @@ const createPayment = async (payload: IPaymentCreate, user: any) => {
       adminId,
       type: NotificationType.PAYMENT,
       title: `Payment recorded`,
-      message: `${payload.method} payment of £${Number(payload.amount).toFixed(2)} recorded`,
+      message: `${payload.method} payment of ${formatMoney(payload.amount, admin.currency)} recorded`,
       relatedId: result.payment.id,
     }).catch(() => {});
   }
@@ -134,7 +126,7 @@ const createPayment = async (payload: IPaymentCreate, user: any) => {
     action: "CREATE_PAYMENT",
     entityType: "Payment",
     entityId: result.payment.id,
-    description: `Created payment ${paymentRef} — ${payload.method} £${Number(payload.amount).toFixed(2)}`,
+    description: `Created payment ${result.payment.paymentRef} — ${payload.method} ${formatMoney(payload.amount, admin.currency)}`,
   });
   invalidateAnalyticsCache(adminId);
 

@@ -9,7 +9,7 @@ export const generateQuotePDFBuffer = async (quoteId: string): Promise<Buffer> =
         include: {
             client: true,
             lineItems: true,
-            admin: { select: { businessName: true, businessEmail: true, brandColor: true } },
+            admin: { select: { businessName: true, businessEmail: true, brandColor: true, currency: true } },
         },
     });
 
@@ -41,5 +41,6 @@ export const generateQuotePDFBuffer = async (quoteId: string): Promise<Buffer> =
         businessName: quote.admin.businessName,
         businessEmail: quote.admin.businessEmail,
         brandColor: quote.admin.brandColor,
+        currency: quote.admin.currency,
     });
 };

@@ -22,7 +22,8 @@ export interface ISubmitPublicReview {
 }
 
 export interface IUpdateReview {
-  status?: string;
+  status?: "pending" | "published" | "unpublished" | "flagged";
+  /** @deprecated Rolling-client compatibility; status is canonical. */
   isPublished?: boolean;
   adminReply?: string;
 }

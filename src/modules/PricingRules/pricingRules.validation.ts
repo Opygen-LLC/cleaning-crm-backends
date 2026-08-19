@@ -1,28 +1,24 @@
 import { z } from "zod";
-import { ServiceType } from "../../generated/prisma/enums";
-
-const serviceTypeValues = Object.values(ServiceType) as [ServiceType, ...ServiceType[]];
 
 const pricingRuleSchema = z.object({
-    id:              z.string().optional(),
-    service:         z.enum(serviceTypeValues),
-    baseRate:        z.number().min(0, "Base rate cannot be negative"),
-    perRoomRate:     z.number().min(0, "Per-room rate cannot be negative"),
-    minCharge:       z.number().min(0, "Min charge cannot be negative"),
+    id: z.string().optional(),
+    serviceCatalogId: z.string().uuid("Choose a valid service"),
+    serviceNameSnapshot: z.string().trim().min(1).max(160),
+    baseRate: z.number().min(0, "Base rate cannot be negative"),
+    perRoomRate: z.number().min(0, "Per-room rate cannot be negative"),
+    minCharge: z.number().min(0, "Min charge cannot be negative"),
     travelSurcharge: z.number().min(0, "Travel surcharge cannot be negative"),
-});
+}).strict();
 
 const addOnRuleSchema = z.object({
-    id:    z.string().optional(),
-    label: z.string().min(1, "Add-on label is required"),
+    id: z.string().optional(),
+    label: z.string().trim().min(1, "Add-on label is required").max(160),
     price: z.number().min(0, "Price cannot be negative"),
-});
+}).strict();
 
 const upsertPricingRulesSchema = z.object({
-    rules:  z.array(pricingRuleSchema).min(1, "At least one pricing rule is required"),
+    rules: z.array(pricingRuleSchema),
     addons: z.array(addOnRuleSchema),
 }).strict();
 
-export const pricingRulesValidation = {
-    upsertPricingRules: upsertPricingRulesSchema,
-};
+export const pricingRulesValidation = { upsertPricingRules: upsertPricingRulesSchema };

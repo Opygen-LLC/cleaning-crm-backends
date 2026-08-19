@@ -43,7 +43,16 @@ const logRequestResponse = (
         timings.push(`redis;dur=${Math.round(trace.redisDurationMs * 10) / 10}`);
       }
       res.setHeader("X-Response-Time", `${rounded}ms`);
-      res.setHeader("Server-Timing", timings.join(", "));
+      const existingServerTiming = res.getHeader("Server-Timing");
+      const existingTimings = Array.isArray(existingServerTiming)
+        ? existingServerTiming.join(", ")
+        : typeof existingServerTiming === "string"
+          ? existingServerTiming
+          : "";
+      res.setHeader(
+        "Server-Timing",
+        [existingTimings, ...timings].filter(Boolean).join(", ")
+      );
     }
     return originalSend(body);
   }) as Response["send"];

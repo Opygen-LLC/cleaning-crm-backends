@@ -10,8 +10,9 @@ model Invoice {
   linkedBookingRef String?
 
   // Service Relation
-  serviceCatalogId String?
-  serviceCatalog   ServiceCatalog? @relation(fields: [serviceCatalogId], references: [id])
+  serviceCatalogId    String?
+  serviceNameSnapshot String?
+  serviceCatalog      ServiceCatalog? @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
 
   lineItems Json? @default("[]") // description, quantity, unitPrice, total
 

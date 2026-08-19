@@ -10,6 +10,8 @@ import redis from "../../config/redis";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import AppError from "../../errorHelper/AppError";
 import httpStatus from "http-status";
+import { serviceDisplayName } from "../../lib/utils/serviceIdentity";
+import { formatMoney } from "../../lib/utils/money";
 
 // ── Shared helper: resolve adminId from userId (now uses Redis cache) ─────────
 
@@ -19,8 +21,12 @@ async function requireAdminProfile(userId: string) {
   const adminId = await getAdminId({ userId } as any).catch(() => null);
   if (!adminId)
     throw new AppError(httpStatus.NOT_FOUND, "Admin profile not found.");
-  // Return same shape as before so callers using `.id` still work.
-  return { id: adminId };
+  const profile = await prisma.adminProfile.findUnique({
+    where: { id: adminId },
+    select: { currency: true },
+  });
+  if (!profile) throw new AppError(httpStatus.NOT_FOUND, "Admin profile not found.");
+  return { id: adminId, currency: profile.currency };
 }
 
 // ── Shared: resolve date range from period string ─────────────────────────────
@@ -116,6 +122,7 @@ function toCsv(rows: Record<string, unknown>[]): string {
 type StatWithChange = { value: number; changePercent: number };
 
 type RevenueReportResult = {
+  currency: string;
   stats: {
     totalRevenue: StatWithChange;
     totalProfit: StatWithChange;
@@ -300,10 +307,14 @@ export const getRevenueReport = async (
         total: true,
         paidDate: true,
         clientName: true,
+        serviceNameSnapshot: true,
+        serviceCatalog: { select: { serviceName: true } },
         booking: {
           select: {
             client: { select: { name: true } },
             serviceType: true,
+            serviceNameSnapshot: true,
+            serviceCatalog: { select: { serviceName: true } },
           },
         },
       },
@@ -314,7 +325,7 @@ export const getRevenueReport = async (
         status: "PAID",
         paidDate: { gte: from, lte: to },
       },
-      select: { total: true, booking: { select: { serviceType: true } } },
+      select: { total: true, serviceNameSnapshot: true, serviceCatalog: { select: { serviceName: true } }, booking: { select: { serviceType: true, serviceNameSnapshot: true, serviceCatalog: { select: { serviceName: true } } } } },
     }),
   ]);
 
@@ -357,7 +368,11 @@ export const getRevenueReport = async (
 
   const svcMap: Record<string, { revenue: number; jobs: number }> = {};
   for (const inv of byServiceRaw) {
-    const svcType = inv.booking?.serviceType ?? "Unknown";
+    const svcType = serviceDisplayName({
+      serviceNameSnapshot: inv.serviceNameSnapshot ?? inv.booking?.serviceNameSnapshot,
+      serviceCatalog: inv.serviceCatalog ?? inv.booking?.serviceCatalog,
+      serviceType: inv.booking?.serviceType,
+    });
     if (!svcMap[svcType]) svcMap[svcType] = { revenue: 0, jobs: 0 };
     svcMap[svcType].revenue += Number(inv.total);
     svcMap[svcType].jobs++;
@@ -375,12 +390,13 @@ export const getRevenueReport = async (
     id: inv.id,
     invoiceRef: inv.invoiceRef,
     clientName: inv.booking?.client?.name ?? inv.clientName ?? "—",
-    serviceType: inv.booking?.serviceType ?? "—",
+    serviceType: serviceDisplayName(inv.booking ?? { serviceNameSnapshot: inv.serviceNameSnapshot, serviceCatalog: inv.serviceCatalog, serviceType: null }),
     amount: Number(inv.total),
     paidDate: inv.paidDate,
   }));
 
   const result = {
+    currency: String(admin.currency),
     stats: {
       totalRevenue: {
         value: totalRevenue,
@@ -685,6 +701,8 @@ export const getJobCompletionReport = async (
       durationMins: true,
       scheduledDate: true,
       serviceType: true,
+      serviceNameSnapshot: true,
+      serviceCatalog: { select: { serviceName: true } },
       staffAssignments: {
         select: {
           staffId: true,
@@ -739,7 +757,7 @@ export const getJobCompletionReport = async (
 
   const serviceMap: Record<string, { completed: number; total: number }> = {};
   for (const job of jobs) {
-    const svc = job.serviceType ?? "Unknown";
+    const svc = serviceDisplayName(job);
     if (!serviceMap[svc]) serviceMap[svc] = { completed: 0, total: 0 };
     serviceMap[svc].total++;
     if (job.status === JobStatus.COMPLETED) serviceMap[svc].completed++;
@@ -952,14 +970,14 @@ export const exportRevenueReportPdf = async (
       .fontSize(10)
       .fillColor("#333333")
       .text(
-        `Total Revenue: £${data.stats.totalRevenue.value.toLocaleString()} (${data.stats.totalRevenue.changePercent >= 0 ? "+" : ""}${data.stats.totalRevenue.changePercent}%)`,
+        `Total Revenue: ${formatMoney(data.stats.totalRevenue.value, data.currency)} (${data.stats.totalRevenue.changePercent >= 0 ? "+" : ""}${data.stats.totalRevenue.changePercent}%)`,
       )
       .text(
-        `Total Profit: £${data.stats.totalProfit.value.toLocaleString()} (${data.stats.totalProfit.changePercent >= 0 ? "+" : ""}${data.stats.totalProfit.changePercent}%)`,
+        `Total Profit: ${formatMoney(data.stats.totalProfit.value, data.currency)} (${data.stats.totalProfit.changePercent >= 0 ? "+" : ""}${data.stats.totalProfit.changePercent}%)`,
       )
-      .text(`Avg Job Value: £${data.stats.avgJobValue.value.toLocaleString()}`)
+      .text(`Avg Job Value: ${formatMoney(data.stats.avgJobValue.value, data.currency)}`)
       .text(
-        `Outstanding Invoices: £${data.stats.outstandingInvoices.value.toLocaleString()}`,
+        `Outstanding Invoices: ${formatMoney(data.stats.outstandingInvoices.value, data.currency)}`,
       );
     doc.moveDown(1.5);
 
@@ -969,7 +987,7 @@ export const exportRevenueReportPdf = async (
     doc.fontSize(10).fillColor("#333333");
     data.chart.forEach((pt) => {
       doc.text(
-        `${pt.label}: Revenue £${pt.revenue.toLocaleString()} | Profit £${pt.profit.toLocaleString()} | Expenses £${pt.expenses.toLocaleString()}`,
+        `${pt.label}: Revenue ${formatMoney(pt.revenue, data.currency)} | Profit ${formatMoney(pt.profit, data.currency)} | Expenses ${formatMoney(pt.expenses, data.currency)}`,
       );
     });
     doc.moveDown(1.5);
@@ -980,7 +998,7 @@ export const exportRevenueReportPdf = async (
     doc.fontSize(10).fillColor("#333333");
     data.byService.forEach((s) => {
       doc.text(
-        `${s.serviceType}: £${s.revenue.toLocaleString()} (${s.jobs} jobs, avg £${s.avgPerJob}/job)`,
+        `${s.serviceType}: ${formatMoney(s.revenue, data.currency)} (${s.jobs} jobs, avg ${formatMoney(s.avgPerJob, data.currency)}/job)`,
       );
     });
 

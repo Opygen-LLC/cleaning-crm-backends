@@ -2,6 +2,7 @@ import PDFDocument from "pdfkit";
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
+import { formatMoney } from "../../lib/utils/money";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,7 +15,7 @@ interface LineItem {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const fmt2dp = (n: unknown) => `£${Number(n).toFixed(2)}`;
+const fmt2dp = (n: unknown, currency: string) => formatMoney(Number(n), currency);
 const fmtDate = (d: Date) =>
     d.toLocaleDateString("en-GB", {
         day: "numeric",
@@ -72,6 +73,7 @@ export const generateInvoicePDFBuffer = async (
                     businessName: true,
                     businessEmail: true,
                     brandColor: true,
+                    currency: true,
                 },
             },
         },
@@ -296,14 +298,14 @@ export const generateInvoicePDFBuffer = async (
             doc.font("Helvetica")
                 .fontSize(11)
                 .fillColor(COLORS.muted)
-                .text(fmt2dp(item.unitPrice), COL.price + 8, rowY + 11, {
+                .text(fmt2dp(item.unitPrice, invoice.admin.currency), COL.price + 8, rowY + 11, {
                     width: 80,
                 });
 
             doc.font("Helvetica-Bold")
                 .fontSize(11)
                 .fillColor(COLORS.primary)
-                .text(fmt2dp(item.total), COL.total + 8, rowY + 11, {
+                .text(fmt2dp(item.total, invoice.admin.currency), COL.total + 8, rowY + 11, {
                     width: 80,
                 });
 
@@ -367,11 +369,11 @@ export const generateInvoicePDFBuffer = async (
             totY += 24;
         };
 
-        drawTotalRow("Subtotal", fmt2dp(invoice.subtotal));
+        drawTotalRow("Subtotal", fmt2dp(invoice.subtotal, invoice.admin.currency));
         if (Number(invoice.taxRate) > 0) {
             drawTotalRow(
                 `VAT (${Number(invoice.taxRate)}%)`,
-                fmt2dp(invoice.taxAmount),
+                fmt2dp(invoice.taxAmount, invoice.admin.currency),
             );
         }
 
@@ -384,7 +386,7 @@ export const generateInvoicePDFBuffer = async (
         doc.font("Helvetica-Bold")
             .fontSize(18)
             .fillColor(COLORS.accentText)
-            .text(fmt2dp(invoice.total), TOT_X, totY + 9, {
+            .text(fmt2dp(invoice.total, invoice.admin.currency), TOT_X, totY + 9, {
                 align: "right",
                 width: TOT_W - 12,
             });

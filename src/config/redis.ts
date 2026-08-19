@@ -1,4 +1,5 @@
 import Redis from "ioredis";
+import { REDIS_COMMAND_TIMEOUT_MS, REDIS_CONNECT_TIMEOUT_MS, REDIS_KEEPALIVE_MS, REDIS_MAX_RETRIES_PER_REQUEST } from "./ENV";
 import dotenv from "dotenv";
 import logger from "../lib/logger";
 import { recordRedisReadMetric } from "../lib/monitoring/performanceMetrics";
@@ -46,10 +47,10 @@ const redis = new Redis({
     // the Redis TCP/TLS handshake. Errors remain non-fatal via the listener.
     lazyConnect: false,
     enableOfflineQueue: false, // reject commands immediately if Redis is not connected instead of queuing/hanging
-    maxRetriesPerRequest: 1, // fail a pending command fast instead of queueing/retrying it repeatedly
-    connectTimeout: 2_000,
-    commandTimeout: 100,
-    keepAlive: 10_000,
+    maxRetriesPerRequest: REDIS_MAX_RETRIES_PER_REQUEST, // fail a pending command fast instead of queueing/retrying it repeatedly
+    connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
+    commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
+    keepAlive: REDIS_KEEPALIVE_MS,
     retryStrategy(times) {
         return Math.min(times * 500, 10_000);
     },

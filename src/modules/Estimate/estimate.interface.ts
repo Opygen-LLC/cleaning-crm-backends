@@ -14,7 +14,8 @@ export interface IEstimateLineItemInput {
 
 export interface IEstimateCreate {
     clientId: string;
-    serviceType: string;
+    serviceCatalogId?: string;
+    serviceType?: string; // legacy compatibility
     address: string;
     postcodeArea?: string;
     estimatedDuration?: string;
@@ -31,7 +32,8 @@ export interface IEstimateCreate {
 // ── Update ──────────────────────────────────────────────────────────────────
 
 export interface IEstimateUpdate {
-    serviceType?: string;
+    serviceCatalogId?: string | null;
+    serviceType?: string; // legacy compatibility
     address?: string;
     postcodeArea?: string;
     estimatedDuration?: string;

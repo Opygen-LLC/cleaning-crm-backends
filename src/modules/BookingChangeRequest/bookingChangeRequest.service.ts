@@ -1,5 +1,6 @@
 import status from "http-status";
 import { prisma } from "../../lib/prisma/prisma";
+import { serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import AppError from "../../errorHelper/AppError";
 import {
     BookingChangeRequestStatus,
@@ -83,7 +84,7 @@ const getRequests = async (
     });
     if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
 
-    return prisma.bookingChangeRequest.findMany({
+    const requests = await prisma.bookingChangeRequest.findMany({
         where: { adminId: admin.id, ...(filters.status ? { status: filters.status } : {}) },
         orderBy: [{ status: "asc" }, { createdAt: "desc" }],
         include: {
@@ -94,12 +95,18 @@ const getRequests = async (
                     status: true,
                     scheduledDate: true,
                     serviceType: true,
+                    serviceNameSnapshot: true,
+                    serviceCatalog: { select: { serviceName: true } },
                     address: true,
                 },
             },
             client: { select: { id: true, name: true, email: true, phone: true } },
         },
     });
+    return requests.map((request) => ({
+        ...request,
+        booking: { ...request.booking, serviceName: serviceDisplayName(request.booking) },
+    }));
 };
 
 // ── Admin: approve/reject ──────────────────────────────────────────────────────

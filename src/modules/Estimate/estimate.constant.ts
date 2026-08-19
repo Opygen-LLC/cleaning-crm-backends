@@ -1,6 +1,7 @@
 export const estimateSearchableFields = [
     "estimateRef",
     "serviceType",
+    "serviceNameSnapshot",
     "address",
     "notes",
 ];
@@ -8,5 +9,6 @@ export const estimateSearchableFields = [
 export const estimateFilterableFields = [
     "status",
     "clientId",
+    "serviceCatalogId",
     "serviceType",
 ];

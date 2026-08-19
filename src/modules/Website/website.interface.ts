@@ -18,6 +18,7 @@ export interface WebsiteUpdateInput {
   primaryBookingFormId?: string | null;
   primaryEstimateFormId?: string | null;
   bookingEnabled?: boolean;
+  bookingShowNavigation?: boolean;
   bookingShowHeaderCta?: boolean;
   bookingShowServiceCtas?: boolean;
   bookingShowHomeCta?: boolean;

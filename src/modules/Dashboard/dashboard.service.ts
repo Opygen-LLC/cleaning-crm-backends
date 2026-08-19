@@ -4,7 +4,6 @@ import {
   JobStatus,
   InvoiceStatus,
   LeaveStatus,
-  RecurringFrequency,
   RecurringStatus,
 } from "../../generated/prisma/enums";
 import AppError from "../../errorHelper/AppError";
@@ -14,6 +13,8 @@ import { createHash } from "node:crypto";
 import { CacheNamespaces, CacheTtl, ttlForKey } from "../../lib/cache/cachePolicy";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { IRequestUser } from "../../types/requestUser.interface";
+import { currencyPrefix } from "../../lib/utils/money";
+import { serviceDisplayName } from "../../lib/utils/serviceIdentity";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -57,7 +58,7 @@ const mapStatusToEnum = (s?: string): BookingStatus | undefined => {
 };
 
 const formatServiceType = (t?: string | null) => {
-  if (!t) return "Residential Clean";
+  if (!t) return "Service";
   return t
     .replace(/_/g, " ")
     .toLowerCase()
@@ -88,9 +89,8 @@ const getDashboardOverview = async (
   const period = query?.period ?? "30d";
   const statusEnum = mapStatusToEnum(query?.status);
   const search = query?.search?.trim();
-  const takeLimit = Number(query?.limit) || 10;
+  const takeLimit = Math.min(50, Math.max(1, Number(query?.limit) || 10));
 
-  // ── Redis Cache Check ──────────────────────────────────────────────────────
   const filterHash = createHash("sha1")
     .update(JSON.stringify({ status: statusEnum ?? "all", search: search ?? "", limit: takeLimit }))
     .digest("hex")
@@ -98,123 +98,90 @@ const getDashboardOverview = async (
   const cacheKey = CacheNamespaces.dashboardSummary(adminId, `${period}:${filterHash}`);
   const cached = await redis.get(cacheKey).catch(() => null);
   if (cached) {
-    try {
-      return JSON.parse(cached);
-    } catch {
-      // fall through if corrupt
-    }
+    try { return JSON.parse(cached); } catch { /* rebuild corrupt cache */ }
   }
 
   const now = new Date();
-  let days = 30;
-  if (period === "7d") days = 7;
-  else if (period === "90d") days = 90;
-  else if (period === "12m") days = 365;
-
+  const days = period === "7d" ? 7 : period === "90d" ? 90 : period === "12m" ? 365 : 30;
   const periodStart = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
   const prev = previousPeriod(periodStart, now);
   const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+  const bucketUnit: "day" | "month" = period === "90d" || period === "12m" ? "month" : "day";
 
   const recentBookingsWhere: any = {
     adminId,
     ...(statusEnum ? { status: statusEnum } : {}),
-    ...(search
-      ? {
-          OR: [
-            { bookingRef: { contains: search, mode: "insensitive" } },
-            { client: { name: { contains: search, mode: "insensitive" } } },
-            { address: { contains: search, mode: "insensitive" } },
-          ],
-        }
-      : {}),
+    ...(search ? { OR: [
+      { bookingRef: { contains: search, mode: "insensitive" } },
+      { client: { name: { contains: search, mode: "insensitive" } } },
+      { address: { contains: search, mode: "insensitive" } },
+    ] } : {}),
   };
 
-  const bucketUnit: "day" | "month" = period === "12m" ? "month" : "day";
+  type SummaryRow = {
+    currentRevenue: string | number | null;
+    previousRevenue: string | number | null;
+    activeBookingsCount: bigint | number;
+    activeBookingsPrevCount: bigint | number;
+    totalClientsCount: bigint | number;
+    clientsPrevCount: bigint | number;
+    jobsCompletedCount: bigint | number;
+    jobsCompletedPrevCount: bigint | number;
+    monthlyRecurringValue: string | number | null;
+    currency: string | null;
+  };
+  type ChartRow = { bucket: Date; revenue: string | number | null; jobsCompleted: bigint | number; newClients: bigint | number };
 
-  const [
-    invoicesCurrentRaw,
-    activeBookingsCount,
-    totalClientsCount,
-    jobsCompletedCount,
-    invoicesPrevRaw,
-    activeBookingsPrevCount,
-    clientsPrevCount,
-    jobsCompletedPrevCount,
-    dailyRevenue,
-    dailyJobsCompleted,
-    dailyNewClients,
-    recentBookingsRaw,
-    topStaffRaw,
-    activeRecurringSchedules,
-    adminProfile,
-  ] = await Promise.all([
-    prisma.invoice.aggregate({
-      where: {
-        adminId,
-        status: InvoiceStatus.PAID,
-        paidDate: { gte: periodStart, lte: now },
-      },
-      _sum: { total: true },
-    }),
-    prisma.booking.count({
-      where: {
-        adminId,
-        status: { in: [BookingStatus.SCHEDULED, BookingStatus.IN_PROGRESS] },
-      },
-    }),
-    prisma.client.count({ where: { adminId } }),
-    prisma.job.count({
-      where: {
-        adminId,
-        status: JobStatus.COMPLETED,
-        updatedAt: { gte: periodStart, lte: now },
-      },
-    }),
-    prisma.invoice.aggregate({
-      where: { adminId, status: InvoiceStatus.PAID, paidDate: prev },
-      _sum: { total: true },
-    }),
-    prisma.booking.count({
-      where: {
-        adminId,
-        status: { in: [BookingStatus.SCHEDULED, BookingStatus.IN_PROGRESS] },
-        createdAt: prev,
-      },
-    }),
-    prisma.client.count({
-      where: { adminId, createdAt: { lte: periodStart } },
-    }),
-    prisma.job.count({
-      where: { adminId, status: JobStatus.COMPLETED, updatedAt: prev },
-    }),
-    prisma.$queryRaw<{ bucket: Date; total: string | null }[]>`
-      SELECT date_trunc(${bucketUnit}, "paidDate") AS bucket,
-             COALESCE(SUM("total"), 0) AS total
-      FROM "invoice"
-      WHERE "adminId" = ${adminId}
-        AND "status" = 'PAID'
-        AND "paidDate" BETWEEN ${periodStart} AND ${now}
-      GROUP BY 1
-      ORDER BY 1
+  const [summaryRows, chartRows, recentBookingsRaw, topStaffRaw] = await Promise.all([
+    prisma.$queryRaw<SummaryRow[]>`
+      SELECT
+        (SELECT COALESCE(SUM(i.total), 0) FROM "invoice" i
+          WHERE i."adminId" = ${adminId} AND i.status = 'PAID' AND i."paidDate" BETWEEN ${periodStart} AND ${now}) AS "currentRevenue",
+        (SELECT COALESCE(SUM(i.total), 0) FROM "invoice" i
+          WHERE i."adminId" = ${adminId} AND i.status = 'PAID' AND i."paidDate" BETWEEN ${prev.gte} AND ${prev.lte}) AS "previousRevenue",
+        (SELECT COUNT(*) FROM "booking" b
+          WHERE b."adminId" = ${adminId} AND b.status IN ('SCHEDULED','IN_PROGRESS')) AS "activeBookingsCount",
+        (SELECT COUNT(*) FROM "booking" b
+          WHERE b."adminId" = ${adminId} AND b.status IN ('SCHEDULED','IN_PROGRESS') AND b."createdAt" < ${periodStart}) AS "activeBookingsPrevCount",
+        (SELECT COUNT(*) FROM "client" c WHERE c."adminId" = ${adminId}) AS "totalClientsCount",
+        (SELECT COUNT(*) FROM "client" c WHERE c."adminId" = ${adminId} AND c."createdAt" < ${periodStart}) AS "clientsPrevCount",
+        (SELECT COUNT(*) FROM "job" j
+          WHERE j."adminId" = ${adminId} AND j.status = 'COMPLETED' AND j."updatedAt" BETWEEN ${periodStart} AND ${now}) AS "jobsCompletedCount",
+        (SELECT COUNT(*) FROM "job" j
+          WHERE j."adminId" = ${adminId} AND j.status = 'COMPLETED' AND j."updatedAt" BETWEEN ${prev.gte} AND ${prev.lte}) AS "jobsCompletedPrevCount",
+        (SELECT COALESCE(SUM(CASE
+          WHEN rs.frequency = 'WEEKLY' THEN rs.total * 4
+          WHEN rs.frequency = 'BIWEEKLY' THEN rs.total * 2
+          ELSE rs.total END), 0)
+          FROM "recurring_schedule" rs WHERE rs."adminId" = ${adminId} AND rs.status = 'ACTIVE') AS "monthlyRecurringValue",
+        (SELECT ap.currency::text FROM "AdminProfile" ap WHERE ap.id = ${adminId} LIMIT 1) AS currency
     `,
-    prisma.$queryRaw<{ bucket: Date; count: bigint }[]>`
-      SELECT date_trunc(${bucketUnit}, "updatedAt") AS bucket,
-             COUNT(*) AS count
-      FROM "job"
-      WHERE "adminId" = ${adminId}
-        AND "status" = 'COMPLETED'
-        AND "updatedAt" BETWEEN ${periodStart} AND ${now}
-      GROUP BY 1
-      ORDER BY 1
-    `,
-    prisma.$queryRaw<{ bucket: Date; count: bigint }[]>`
-      SELECT date_trunc(${bucketUnit}, "createdAt") AS bucket,
-             COUNT(*) AS count
-      FROM "client"
-      WHERE "adminId" = ${adminId}
-        AND "createdAt" BETWEEN ${periodStart} AND ${now}
-      GROUP BY 1
-      ORDER BY 1
+    prisma.$queryRaw<ChartRow[]>`
+      SELECT bucket,
+             COALESCE(SUM(revenue), 0) AS revenue,
+             COALESCE(SUM("jobsCompleted"), 0)::bigint AS "jobsCompleted",
+             COALESCE(SUM("newClients"), 0)::bigint AS "newClients"
+      FROM (
+        SELECT date_trunc(${bucketUnit}, i."paidDate") AS bucket,
+               SUM(i.total) AS revenue, 0::bigint AS "jobsCompleted", 0::bigint AS "newClients"
+        FROM "invoice" i
+        WHERE i."adminId" = ${adminId} AND i.status = 'PAID' AND i."paidDate" BETWEEN ${periodStart} AND ${now}
+        GROUP BY 1
+        UNION ALL
+        SELECT date_trunc(${bucketUnit}, j."updatedAt") AS bucket,
+               0::numeric AS revenue, COUNT(*)::bigint AS "jobsCompleted", 0::bigint AS "newClients"
+        FROM "job" j
+        WHERE j."adminId" = ${adminId} AND j.status = 'COMPLETED' AND j."updatedAt" BETWEEN ${periodStart} AND ${now}
+        GROUP BY 1
+        UNION ALL
+        SELECT date_trunc(${bucketUnit}, c."createdAt") AS bucket,
+               0::numeric AS revenue, 0::bigint AS "jobsCompleted", COUNT(*)::bigint AS "newClients"
+        FROM "client" c
+        WHERE c."adminId" = ${adminId} AND c."createdAt" BETWEEN ${periodStart} AND ${now}
+        GROUP BY 1
+      ) metrics
+      GROUP BY bucket
+      ORDER BY bucket
     `,
     prisma.booking.findMany({
       where: recentBookingsWhere,
@@ -222,248 +189,123 @@ const getDashboardOverview = async (
       take: takeLimit,
       include: {
         client: { select: { id: true, name: true, email: true } },
-        staffAssignments: {
-          include: { staff: { include: { user: { select: { name: true } } } } },
-          take: 1,
-        },
+        serviceCatalog: { select: { serviceName: true } },
+        staffAssignments: { include: { staff: { include: { user: { select: { name: true } } } } }, take: 1 },
       },
     }),
-    // PERF FIX (Phase 1.3): SQL aggregation for topStaff counting completed jobs per staff in DB
-    prisma.$queryRaw<
-      {
-        userId: string;
-        name: string;
-        image: string | null;
-        specialty: string[];
-        jobCount: bigint;
-      }[]
-    >`
-      SELECT
-        u.id AS "userId",
-        u.name,
-        u.image,
-        sp.specialty,
-        COUNT(jsa."jobId") AS "jobCount"
+    prisma.$queryRaw<{
+      userId: string; name: string; image: string | null; specialty: string[];
+      jobCount: bigint; avgRating: number | null; reviewCount: bigint;
+    }[]>`
+      WITH job_counts AS (
+        SELECT jsa."staffId", COUNT(j.id)::bigint AS "jobCount"
+        FROM "job_staff_assignment" jsa
+        JOIN "job" j ON j.id = jsa."jobId"
+        WHERE j.status = 'COMPLETED' AND j."updatedAt" >= ${ninetyDaysAgo} AND j."adminId" = ${adminId}
+        GROUP BY jsa."staffId"
+      ), review_stats AS (
+        SELECT r."staffId", AVG(r.rating)::float AS "avgRating", COUNT(*)::bigint AS "reviewCount"
+        FROM "review" r
+        WHERE r."adminId" = ${adminId} AND r.status = 'published' AND r."staffId" IS NOT NULL
+        GROUP BY r."staffId"
+      )
+      SELECT u.id AS "userId", u.name, u.image, sp.specialty,
+             COALESCE(jc."jobCount", 0)::bigint AS "jobCount",
+             rs."avgRating", COALESCE(rs."reviewCount", 0)::bigint AS "reviewCount"
       FROM "StaffProfile" sp
       JOIN "user" u ON u.id = sp."userId"
-      LEFT JOIN "job_staff_assignment" jsa ON jsa."staffId" = sp.id
-      LEFT JOIN "job" j ON j.id = jsa."jobId"
-        AND j.status = 'COMPLETED'
-        AND j."updatedAt" >= ${ninetyDaysAgo}
+      LEFT JOIN job_counts jc ON jc."staffId" = sp.id
+      LEFT JOIN review_stats rs ON rs."staffId" = sp.id
       WHERE sp."adminId" = ${adminId}
-      GROUP BY u.id, u.name, u.image, sp.specialty
-      ORDER BY "jobCount" DESC
+      ORDER BY "jobCount" DESC, u.name ASC
       LIMIT 4
     `,
-    prisma.recurringSchedule.findMany({
-      where: { adminId, status: RecurringStatus.ACTIVE },
-      select: { total: true, frequency: true },
-    }),
-    prisma.adminProfile.findUnique({
-      where: { id: adminId },
-      select: { currency: true },
-    }),
   ]);
 
-  const currentRevenue = Number(invoicesCurrentRaw._sum.total ?? 0);
-  const previousRevenue = Number(invoicesPrevRaw._sum.total ?? 0);
-  const currency = adminProfile?.currency ?? "USD";
+  const summary = summaryRows[0] ?? {} as SummaryRow;
+  const currentRevenue = Number(summary.currentRevenue ?? 0);
+  const previousRevenue = Number(summary.previousRevenue ?? 0);
+  const activeBookingsCount = Number(summary.activeBookingsCount ?? 0);
+  const activeBookingsPrevCount = Number(summary.activeBookingsPrevCount ?? 0);
+  const totalClientsCount = Number(summary.totalClientsCount ?? 0);
+  const clientsPrevCount = Number(summary.clientsPrevCount ?? 0);
+  const jobsCompletedCount = Number(summary.jobsCompletedCount ?? 0);
+  const jobsCompletedPrevCount = Number(summary.jobsCompletedPrevCount ?? 0);
+  const currency = summary.currency ?? "USD";
 
   const stats = [
-    {
-      label: "Total Revenue",
-      value: currentRevenue,
-      changePercent: pct(currentRevenue, previousRevenue),
-      prefix: currency === "USD" ? "$" : currency === "GBP" ? "£" : "$",
-    },
-    {
-      label: "Active Bookings",
-      value: activeBookingsCount,
-      changePercent: pct(activeBookingsCount, activeBookingsPrevCount),
-    },
-    {
-      label: "Total Clients",
-      value: totalClientsCount,
-      changePercent: pct(totalClientsCount, clientsPrevCount),
-    },
-    {
-      label: "Jobs Completed",
-      value: jobsCompletedCount,
-      changePercent: pct(jobsCompletedCount, jobsCompletedPrevCount),
-    },
+    { label: "Total Revenue", value: currentRevenue, changePercent: pct(currentRevenue, previousRevenue), prefix: currencyPrefix(currency) },
+    { label: "Active Bookings", value: activeBookingsCount, changePercent: pct(activeBookingsCount, activeBookingsPrevCount) },
+    { label: "Total Clients", value: totalClientsCount, changePercent: pct(totalClientsCount, clientsPrevCount) },
+    { label: "Jobs Completed", value: jobsCompletedCount, changePercent: pct(jobsCompletedCount, jobsCompletedPrevCount) },
   ];
 
   const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const revenueMap: Map<
-    string,
-    { revenue: number; jobsCompleted: number; newClients: number }
-  > = new Map();
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const revenueMap = new Map<string, { revenue: number; jobsCompleted: number; newClients: number }>();
+  const putEmpty = (label: string) => revenueMap.set(label, { revenue: 0, jobsCompleted: 0, newClients: 0 });
+  const dailyLabel = (d: Date) => period === "7d" ? DAYS[d.getDay()] : `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  const monthLabel = (d: Date) => MONTHS[d.getMonth()];
 
-  if (period === "7d") {
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(now.getDate() - i);
-      const label = DAYS[d.getDay()];
-      revenueMap.set(label, { revenue: 0, jobsCompleted: 0, newClients: 0 });
-    }
-  } else if (period === "30d") {
-    for (let i = 29; i >= 0; i -= 4) {
-      const d = new Date(now);
-      d.setDate(now.getDate() - i);
-      const label = `Day ${d.getDate()}`;
-      revenueMap.set(label, { revenue: 0, jobsCompleted: 0, newClients: 0 });
+  if (period === "7d" || period === "30d") {
+    const points = period === "7d" ? 7 : 30;
+    for (let i = points - 1; i >= 0; i--) {
+      const d = new Date(now); d.setDate(now.getDate() - i); putEmpty(dailyLabel(d));
     }
   } else {
-    const monthNames = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(now);
-      d.setMonth(now.getMonth() - i);
-      const label = monthNames[d.getMonth()];
-      if (!revenueMap.has(label)) {
-        revenueMap.set(label, { revenue: 0, jobsCompleted: 0, newClients: 0 });
-      }
+    const points = period === "90d" ? 4 : 12;
+    for (let i = points - 1; i >= 0; i--) {
+      const d = new Date(now); d.setDate(1); d.setMonth(now.getMonth() - i); putEmpty(monthLabel(d));
     }
   }
 
-  const getBucketLabel = (d: Date) => {
-    if (period === "7d") return DAYS[d.getDay()];
-    if (period === "30d") return `Day ${d.getDate()}`;
-    const monthNames = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-    ];
-    return monthNames[d.getMonth()];
-  };
-
-  for (const row of dailyRevenue) {
+  for (const row of chartRows) {
     if (!row.bucket) continue;
-    const label = getBucketLabel(new Date(row.bucket));
-    const amount = Number(row.total ?? 0);
-    const entry = revenueMap.get(label);
-    if (entry) entry.revenue += amount;
-    else
-      revenueMap.set(label, {
-        revenue: amount,
-        jobsCompleted: 0,
-        newClients: 0,
-      });
+    const d = new Date(row.bucket);
+    const label = bucketUnit === "month" ? monthLabel(d) : dailyLabel(d);
+    const entry = revenueMap.get(label) ?? { revenue: 0, jobsCompleted: 0, newClients: 0 };
+    entry.revenue += Number(row.revenue ?? 0);
+    entry.jobsCompleted += Number(row.jobsCompleted ?? 0);
+    entry.newClients += Number(row.newClients ?? 0);
+    revenueMap.set(label, entry);
   }
 
-  for (const row of dailyJobsCompleted) {
-    if (!row.bucket) continue;
-    const label = getBucketLabel(new Date(row.bucket));
-    const count = Number(row.count ?? 0);
-    const entry = revenueMap.get(label);
-    if (entry) entry.jobsCompleted += count;
-    else
-      revenueMap.set(label, {
-        revenue: 0,
-        jobsCompleted: count,
-        newClients: 0,
-      });
-  }
-
-  for (const row of dailyNewClients) {
-    if (!row.bucket) continue;
-    const label = getBucketLabel(new Date(row.bucket));
-    const count = Number(row.count ?? 0);
-    const entry = revenueMap.get(label);
-    if (entry) entry.newClients += count;
-    else
-      revenueMap.set(label, {
-        revenue: 0,
-        jobsCompleted: 0,
-        newClients: count,
-      });
-  }
-
-  const revenueInsight = Array.from(revenueMap.entries()).map(
-    ([day, data]) => ({
-      day,
-      revenue: Math.round(data.revenue),
-      jobsCompleted: data.jobsCompleted,
-      newClients: data.newClients,
-    }),
-  );
+  const revenueInsight = Array.from(revenueMap.entries()).map(([day, data]) => ({
+    day, revenue: Math.round(data.revenue), jobsCompleted: data.jobsCompleted, newClients: data.newClients,
+  }));
 
   const recentBookings = recentBookingsRaw.map((b) => ({
     id: b.id,
     bookingRef: b.bookingRef,
     clientName: b.client?.name ?? "Client",
-    serviceType: formatServiceType(b.serviceType),
-    scheduledDate: b.scheduledDate
-      ? new Date(b.scheduledDate).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      : "",
+    serviceType: serviceDisplayName(b),
+    scheduledDate: b.scheduledDate ? new Date(b.scheduledDate).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "",
     address: b.address,
     assignedStaff: b.staffAssignments[0]?.staff?.user?.name ?? "Unassigned",
     status: formatBookingStatus(b.status),
     total: Number(b.total),
   }));
 
-  const sortedStaff = topStaffRaw.map((s) => ({
+  const topStaff = topStaffRaw.map((s) => ({
     id: s.userId,
     name: s.name,
     avatar: s.image ?? undefined,
     jobsCompleted: Number(s.jobCount),
-    speciality: formatServiceType(
-      (s.specialty?.[0] ?? "RESIDENTIAL_CLEAN") as string,
-    ),
-    rating: 4.8,
+    speciality: s.specialty?.[0] ? formatServiceType(s.specialty[0]) : "General cleaning",
+    rating: Number(s.reviewCount) > 0 && s.avgRating != null ? Number(Number(s.avgRating).toFixed(1)) : null,
+    reviewCount: Number(s.reviewCount),
   }));
 
-  let monthlyRecurringValue = 0;
-  for (const s of activeRecurringSchedules) {
-    const val = Number(s.total);
-    if (s.frequency === RecurringFrequency.WEEKLY)
-      monthlyRecurringValue += val * 4;
-    else if (s.frequency === RecurringFrequency.BIWEEKLY)
-      monthlyRecurringValue += val * 2;
-    else monthlyRecurringValue += val;
-  }
-
   const result = {
+    currency,
     stats,
     revenueInsight,
     recentBookings,
-    topStaff: sortedStaff,
-    monthlyRecurringValue: Math.round(monthlyRecurringValue),
+    topStaff,
+    monthlyRecurringValue: Math.round(Number(summary.monthlyRecurringValue ?? 0)),
   };
 
-  // PERF FIX: Increased cache TTL from 60s → 300s. Dashboard aggregates
-  // 15 DB queries; a 1-minute TTL was causing pool exhaustion under normal
-  // multi-user load. 5 minutes is safe — dashboard data is not real-time.
-  await redis
-    .setex(cacheKey, ttlForKey(CacheTtl.dashboardSummary, cacheKey), JSON.stringify(result))
-    .catch(() => {});
-
+  await redis.setex(cacheKey, ttlForKey(CacheTtl.dashboardSummary, cacheKey), JSON.stringify(result)).catch(() => {});
   return result;
 };
 
@@ -542,6 +384,7 @@ const getRevenuePage = async (
     recentInv,
     staffWithJobsRaw,
     jobCountCurrent,
+    revenueAdminProfile,
   ] = await Promise.all([
     prisma.invoice.aggregate({
       where: {
@@ -640,6 +483,7 @@ const getRevenuePage = async (
         updatedAt: { gte: from, lte: now },
       },
     }),
+    prisma.adminProfile.findUnique({ where: { id: adminId }, select: { currency: true } }),
   ]);
 
   const totalRevenue = Number(paidCur._sum.total ?? 0);
@@ -649,6 +493,8 @@ const getRevenuePage = async (
   const totalProfit = totalRevenue - totalExpenses;
   const prevProfit = prevRevenue - prevExpenses;
   const outstanding = Number(outstandingRaw._sum.total ?? 0);
+  const revenueCurrency = revenueAdminProfile?.currency ?? "USD";
+  const revenuePrefix = currencyPrefix(revenueCurrency);
 
   const chartMap: Record<string, { revenue: number; expenses: number }> = {};
   for (const row of dailyRevenue) {
@@ -724,31 +570,32 @@ const getRevenuePage = async (
   }));
 
   const revenueResult = {
+    currency: revenueCurrency,
     stats: {
       totalRevenue: {
         label: "Total Revenue",
         value: totalRevenue,
         changePercent: pct(totalRevenue, prevRevenue),
-        prefix: "$",
+        prefix: revenuePrefix,
       },
       totalProfit: {
         label: "Net Profit",
         value: totalProfit,
         changePercent: pct(totalProfit, prevProfit),
-        prefix: "$",
+        prefix: revenuePrefix,
       },
       avgJobValue: {
         label: "Avg. Job Value",
         value:
           jobCountCurrent > 0 ? Math.round(totalRevenue / jobCountCurrent) : 0,
         changePercent: 0,
-        prefix: "$",
+        prefix: revenuePrefix,
       },
       outstandingInvoices: {
         label: "Outstanding Invoices",
         value: outstanding,
         changePercent: 0,
-        prefix: "$",
+        prefix: revenuePrefix,
       },
     },
     chart,

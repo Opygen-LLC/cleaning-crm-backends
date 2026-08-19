@@ -97,7 +97,7 @@ const prisma = new PrismaClient({
 // file transport as the rest of the app) — use this to confirm the Phase
 // 2–4 fixes actually move the needle, and to catch regressions later.
 prisma.$on("query", (e: { query: string; params: string; duration: number }) => {
-    recordDatabaseQueryMetric(e.duration);
+    recordDatabaseQueryMetric(e.duration, e.query);
     recordTraceDatabaseQuery(e.duration);
 
     if (e.duration > SLOW_QUERY_THRESHOLD_MS) {

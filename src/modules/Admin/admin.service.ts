@@ -109,6 +109,7 @@ const getAdmin = async (userId: string) => {
     role: user.role,
     avatar: user.image ?? undefined,
     ...profileFields,
+    postcode: profileFields.zipcode ?? null,
     countryIso: countryEnumToIso(profileFields.country),
     workLocations,
   };
@@ -122,9 +123,14 @@ const getAdmin = async (userId: string) => {
 const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
   const adminId = await findAdminIdOrThrow(userId);
 
-  const { workLocations, country, ...scalarFields } = payload;
+  const { workLocations, country, postcode, zipcode, ...scalarFields } = payload;
 
-  const data: Record<string, unknown> = { ...scalarFields };
+  const data: Record<string, unknown> = {
+    ...scalarFields,
+    ...(postcode !== undefined || zipcode !== undefined
+      ? { zipcode: postcode ?? zipcode }
+      : {}),
+  };
 
   // "country" arrives as an ISO-3166-1 alpha-2 code (or already a valid enum
   // value) from the frontend's country picker — resolve it to the real

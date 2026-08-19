@@ -9,13 +9,21 @@ const createClientSchema = z.object({
   addressLine1: z.string(),
   addressLine2: z.string().optional(),
   city: z.string(),
-  zipcode: z.string(),
+  postcode: z.string().optional(),
+  zipcode: z.string().optional(),
   country: z.string(),
 
   totalBookings: z.number().int().min(0).optional(),
   totalSpend: z.number().min(0).optional(),
 
   notes: z.string().optional(),
+}).superRefine((value, ctx) => {
+  if (!value.postcode && !value.zipcode) {
+    ctx.addIssue({ code: "custom", path: ["postcode"], message: "Postcode is required" });
+  }
+  if (value.postcode && value.zipcode && value.postcode !== value.zipcode) {
+    ctx.addIssue({ code: "custom", path: ["postcode"], message: "postcode conflicts with legacy zipcode" });
+  }
 });
 
 const updateClientSchema = z.object({
@@ -27,6 +35,7 @@ const updateClientSchema = z.object({
   addressLine1: z.string().optional(),
   addressLine2: z.string().optional(),
   city: z.string().optional(),
+  postcode: z.string().optional(),
   zipcode: z.string().optional(),
   country: z.string().optional(),
 

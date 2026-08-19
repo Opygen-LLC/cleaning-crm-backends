@@ -24,6 +24,7 @@ const websitePatch = z.object({
   primaryBookingFormId: z.string().uuid().nullable().optional(),
   primaryEstimateFormId: z.string().uuid().nullable().optional(),
   bookingEnabled: z.boolean().optional(),
+  bookingShowNavigation: z.boolean().optional(),
   bookingShowHeaderCta: z.boolean().optional(),
   bookingShowServiceCtas: z.boolean().optional(),
   bookingShowHomeCta: z.boolean().optional(),
@@ -121,6 +122,7 @@ const publicClientError = z.object({
 const configureWebsiteBooking = z.object({
   enabled: z.boolean(),
   bookingFormId: z.string().uuid().nullable().optional(),
+  showNavigation: z.boolean().optional(),
   showHeaderCta: z.boolean().optional(),
   showServiceCtas: z.boolean().optional(),
   showHomeCta: z.boolean().optional(),

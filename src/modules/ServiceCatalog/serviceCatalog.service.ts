@@ -110,7 +110,7 @@ const bulkUpsertServiceCatalogs = async (
       const data = {
         serviceName: payload.serviceName,
         description: payload.description,
-        basePriceGbp: payload.basePriceGbp,
+        basePrice: payload.basePrice,
         duration: payload.duration,
         category: payload.category,
         ...(payload.status !== undefined ? { status: payload.status } : {}),
