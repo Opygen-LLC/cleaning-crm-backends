@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findUser: vi.fn(),
   findAdmin: vi.fn(),
+  queryRaw: vi.fn(),
   transaction: vi.fn(),
   getPlatformConfig: vi.fn(),
   createTrial: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("../../lib/prisma/prisma", () => ({
   prisma: {
     user: { findUnique: mocks.findUser },
     adminProfile: { findUnique: mocks.findAdmin },
+    $queryRaw: mocks.queryRaw,
     $transaction: mocks.transaction,
   },
 }));
@@ -59,12 +61,12 @@ describe("AccountIntegrityService", () => {
   });
 
   it("requires an active subscription before verification activation", async () => {
-    mocks.findAdmin.mockResolvedValue({
-      id: "a1",
+    mocks.queryRaw.mockResolvedValue([{
+      adminId: "a1",
       onboardingCompletedAt: null,
-      businessWebsite: { id: "w1" },
-      subscription: [],
-    });
+      hasWebsite: true,
+      hasActiveSubscription: false,
+    }]);
 
     await expect(AccountIntegrityService.assertAdminReadyForActivation("u1")).rejects.toMatchObject({
       code: "SUBSCRIPTION_PROVISIONING_INCOMPLETE",

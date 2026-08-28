@@ -17,6 +17,7 @@ import { normalizePhone } from "../../lib/utils/normalizePhone";
 const resolveAdminProfile = async (user: IRequestUser) => {
     const adminProfile = await prisma.adminProfile.findFirst({
         where: { userId: user.id },
+        select: { id: true, businessName: true },
     });
 
     if (!adminProfile) {

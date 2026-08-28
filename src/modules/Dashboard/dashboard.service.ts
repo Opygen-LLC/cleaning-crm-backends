@@ -407,130 +407,120 @@ const getRevenuePage = async (
   period: RevenuePeriod,
 ) => {
   const adminId = typeof user === "string" ? user : await getAdminId(user);
-
-  // PERF FIX #14: Revenue page ran 11 parallel DB queries with zero caching.
-  // Every filter-period change hit the DB cold. Apply 5-minute Redis cache
-  // keyed by adminId + period so repeat loads within the window are instant.
   const revCacheKey = `dashboard:revenue:${adminId}:${period}`;
   const revCached = await redis.get(revCacheKey).catch(() => null);
   if (revCached) {
-    try {
-      return JSON.parse(revCached);
-    } catch {
-      // fall through on corrupt entry
-    }
+    try { return JSON.parse(revCached); } catch { /* rebuild corrupt entry */ }
   }
 
   const now = new Date();
   const msPerDay = 24 * 60 * 60 * 1000;
   let from: Date;
   let bucketFn: (d: Date) => string;
-  const monthNames = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
   if (period === "7d") {
     from = new Date(now.getTime() - 7 * msPerDay);
-    bucketFn = (d) =>
-      ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()];
+    bucketFn = (d) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()]!;
   } else if (period === "30d") {
     from = new Date(now.getTime() - 30 * msPerDay);
     bucketFn = (d) => `Week ${Math.ceil(d.getDate() / 7)}`;
   } else if (period === "90d") {
     from = new Date(now.getTime() - 90 * msPerDay);
-    bucketFn = (d) => monthNames[d.getMonth()];
+    bucketFn = (d) => monthNames[d.getMonth()]!;
   } else {
     from = new Date(now);
     from.setFullYear(from.getFullYear() - 1);
-    bucketFn = (d) => monthNames[d.getMonth()];
+    bucketFn = (d) => monthNames[d.getMonth()]!;
   }
 
   const prev = previousPeriod(from, now);
+  const bucketUnit: "day" | "month" = period === "90d" || period === "12m" ? "month" : "day";
 
-  const bucketUnit: "day" | "month" =
-    period === "90d" || period === "12m" ? "month" : "day";
+  type RevenueAggregateRow = {
+    currentRevenue: string | number | null;
+    previousRevenue: string | number | null;
+    currentExpenses: string | number | null;
+    previousExpenses: string | number | null;
+    outstanding: string | number | null;
+    jobCountCurrent: bigint | number;
+    currency: string | null;
+    chartRows: unknown;
+  };
+  type ServiceRevenueRow = {
+    serviceCatalogId: string | null;
+    serviceName: string | null;
+    revenue: string | number | null;
+    jobs: bigint | number;
+  };
+  type RawChartRow = { bucket: string | Date; revenue: string | number | null; expenses: string | number | null };
 
-  const [
-    paidCur,
-    paidPrev,
-    expCur,
-    expPrev,
-    outstandingRaw,
-    dailyRevenue,
-    dailyExpenses,
-    serviceGroups,
-    recentInv,
-    staffWithJobsRaw,
-    jobCountCurrent,
-    revenueAdminProfile,
-  ] = await Promise.all([
-    prisma.invoice.aggregate({
-      where: {
-        adminId,
-        status: InvoiceStatus.PAID,
-        paidDate: { gte: from, lte: now },
-      },
-      _sum: { total: true },
-    }),
-    prisma.invoice.aggregate({
-      where: { adminId, status: InvoiceStatus.PAID, paidDate: prev },
-      _sum: { total: true },
-    }),
-    prisma.expense.aggregate({
-      where: { adminId, date: { gte: from, lte: now } },
-      _sum: { amount: true },
-    }),
-    prisma.expense.aggregate({
-      where: { adminId, date: prev },
-      _sum: { amount: true },
-    }),
-    prisma.invoice.aggregate({
-      where: {
-        adminId,
-        status: { in: [InvoiceStatus.SENT, InvoiceStatus.OVERDUE] },
-      },
-      _sum: { total: true },
-    }),
-    prisma.$queryRaw<{ bucket: Date; total: string | null }[]>`
-      SELECT date_trunc(${bucketUnit}, "paidDate") AS bucket,
-             COALESCE(SUM("total"), 0) AS total
-      FROM "invoice"
-      WHERE "adminId" = ${adminId}
-        AND "status" = 'PAID'
-        AND "paidDate" BETWEEN ${from} AND ${now}
-      GROUP BY 1
-      ORDER BY 1
+  // Four database operations total on a cold revenue page:
+  //  1) totals + current/previous comparisons + chart + currency + job count
+  //  2) revenue-by-service joined directly to service_catalog
+  //  3) recent invoices
+  //  4) staff completed-job aggregate
+  // This replaces the previous 12-way fan-out plus a 13th service-name lookup.
+  const [aggregateRows, serviceRows, recentInv, staffWithJobsRaw] = await Promise.all([
+    prisma.$queryRaw<RevenueAggregateRow[]>`
+      WITH revenue_buckets AS (
+        SELECT date_trunc(${bucketUnit}, i."paidDate") AS bucket,
+               COALESCE(SUM(i.total), 0) AS revenue
+        FROM "invoice" i
+        WHERE i."adminId" = ${adminId}
+          AND i.status = 'PAID'
+          AND i."paidDate" BETWEEN ${from} AND ${now}
+        GROUP BY 1
+      ),
+      expense_buckets AS (
+        SELECT date_trunc(${bucketUnit}, e.date) AS bucket,
+               COALESCE(SUM(e.amount), 0) AS expenses
+        FROM "expense" e
+        WHERE e."adminId" = ${adminId}
+          AND e.date BETWEEN ${from} AND ${now}
+        GROUP BY 1
+      ),
+      chart AS (
+        SELECT COALESCE(r.bucket, e.bucket) AS bucket,
+               COALESCE(r.revenue, 0) AS revenue,
+               COALESCE(e.expenses, 0) AS expenses
+        FROM revenue_buckets r
+        FULL OUTER JOIN expense_buckets e ON e.bucket = r.bucket
+      )
+      SELECT
+        (SELECT COALESCE(SUM(i.total), 0) FROM "invoice" i
+          WHERE i."adminId" = ${adminId} AND i.status = 'PAID' AND i."paidDate" BETWEEN ${from} AND ${now}) AS "currentRevenue",
+        (SELECT COALESCE(SUM(i.total), 0) FROM "invoice" i
+          WHERE i."adminId" = ${adminId} AND i.status = 'PAID' AND i."paidDate" BETWEEN ${prev.gte} AND ${prev.lte}) AS "previousRevenue",
+        (SELECT COALESCE(SUM(e.amount), 0) FROM "expense" e
+          WHERE e."adminId" = ${adminId} AND e.date BETWEEN ${from} AND ${now}) AS "currentExpenses",
+        (SELECT COALESCE(SUM(e.amount), 0) FROM "expense" e
+          WHERE e."adminId" = ${adminId} AND e.date BETWEEN ${prev.gte} AND ${prev.lte}) AS "previousExpenses",
+        (SELECT COALESCE(SUM(i.total), 0) FROM "invoice" i
+          WHERE i."adminId" = ${adminId} AND i.status IN ('SENT','OVERDUE')) AS outstanding,
+        (SELECT COUNT(*) FROM "job" j
+          WHERE j."adminId" = ${adminId} AND j.status = 'COMPLETED' AND j."updatedAt" BETWEEN ${from} AND ${now}) AS "jobCountCurrent",
+        (SELECT ap.currency::text FROM "AdminProfile" ap WHERE ap.id = ${adminId} LIMIT 1) AS currency,
+        COALESCE((
+          SELECT jsonb_agg(
+            jsonb_build_object('bucket', c.bucket, 'revenue', c.revenue, 'expenses', c.expenses)
+            ORDER BY c.bucket
+          ) FROM chart c
+        ), '[]'::jsonb) AS "chartRows"
     `,
-    prisma.$queryRaw<{ bucket: Date; total: string | null }[]>`
-      SELECT date_trunc(${bucketUnit}, "date") AS bucket,
-             COALESCE(SUM("amount"), 0) AS total
-      FROM "expense"
-      WHERE "adminId" = ${adminId}
-        AND "date" BETWEEN ${from} AND ${now}
-      GROUP BY 1
-      ORDER BY 1
+    prisma.$queryRaw<ServiceRevenueRow[]>`
+      SELECT i."serviceCatalogId",
+             COALESCE(sc."serviceName", 'Other') AS "serviceName",
+             COALESCE(SUM(i.total), 0) AS revenue,
+             COUNT(*)::bigint AS jobs
+      FROM "invoice" i
+      LEFT JOIN "service_catalog" sc ON sc.id = i."serviceCatalogId"
+      WHERE i."adminId" = ${adminId}
+        AND i.status = 'PAID'
+        AND i."paidDate" BETWEEN ${from} AND ${now}
+      GROUP BY i."serviceCatalogId", sc."serviceName"
+      ORDER BY revenue DESC
     `,
-    prisma.invoice.groupBy({
-      by: ["serviceCatalogId"],
-      where: {
-        adminId,
-        status: InvoiceStatus.PAID,
-        paidDate: { gte: from, lte: now },
-      },
-      _sum: { total: true },
-      _count: { _all: true },
-    }),
     prisma.invoice.findMany({
       where: { adminId },
       orderBy: { createdAt: "desc" },
@@ -545,15 +535,8 @@ const getRevenuePage = async (
         status: true,
       },
     }),
-    // PERF FIX (Phase 2.4): SQL aggregate for staffWithJobs in getRevenuePage
-    prisma.$queryRaw<
-      { userId: string; name: string; image: string | null; jobCount: bigint }[]
-    >`
-      SELECT
-        u.id AS "userId",
-        u.name,
-        u.image,
-        COUNT(jsa."jobId") AS "jobCount"
+    prisma.$queryRaw<{ userId: string; name: string; image: string | null; jobCount: bigint }[]>`
+      SELECT u.id AS "userId", u.name, u.image, COUNT(j.id)::bigint AS "jobCount"
       FROM "StaffProfile" sp
       JOIN "user" u ON u.id = sp."userId"
       LEFT JOIN "job_staff_assignment" jsa ON jsa."staffId" = sp.id
@@ -564,83 +547,57 @@ const getRevenuePage = async (
       GROUP BY u.id, u.name, u.image
       ORDER BY "jobCount" DESC
     `,
-    // PERF FIX (Phase 1.6): Move jobCountCurrent into Promise.all array
-    prisma.job.count({
-      where: {
-        adminId,
-        status: JobStatus.COMPLETED,
-        updatedAt: { gte: from, lte: now },
-      },
-    }),
-    prisma.adminProfile.findUnique({ where: { id: adminId }, select: { currency: true } }),
   ]);
 
-  const totalRevenue = Number(paidCur._sum.total ?? 0);
-  const prevRevenue = Number(paidPrev._sum.total ?? 0);
-  const totalExpenses = Number(expCur._sum.amount ?? 0);
-  const prevExpenses = Number(expPrev._sum.amount ?? 0);
+  const aggregate = aggregateRows[0];
+  const totalRevenue = Number(aggregate?.currentRevenue ?? 0);
+  const prevRevenue = Number(aggregate?.previousRevenue ?? 0);
+  const totalExpenses = Number(aggregate?.currentExpenses ?? 0);
+  const prevExpenses = Number(aggregate?.previousExpenses ?? 0);
   const totalProfit = totalRevenue - totalExpenses;
   const prevProfit = prevRevenue - prevExpenses;
-  const outstanding = Number(outstandingRaw._sum.total ?? 0);
-  const revenueCurrency = revenueAdminProfile?.currency ?? "USD";
+  const outstanding = Number(aggregate?.outstanding ?? 0);
+  const jobCountCurrent = Number(aggregate?.jobCountCurrent ?? 0);
+  const revenueCurrency = aggregate?.currency ?? "USD";
   const revenuePrefix = currencyPrefix(revenueCurrency);
 
-  const chartMap: Record<string, { revenue: number; expenses: number }> = {};
-  for (const row of dailyRevenue) {
-    if (!row.bucket) continue;
-    const k = bucketFn(new Date(row.bucket));
-    if (!chartMap[k]) chartMap[k] = { revenue: 0, expenses: 0 };
-    chartMap[k].revenue += Number(row.total ?? 0);
-  }
-  for (const row of dailyExpenses) {
-    if (!row.bucket) continue;
-    const k = bucketFn(new Date(row.bucket));
-    if (!chartMap[k]) chartMap[k] = { revenue: 0, expenses: 0 };
-    chartMap[k].expenses += Number(row.total ?? 0);
-  }
-  const chart = Object.entries(chartMap).map(([label, d]) => ({
-    label,
-    revenue: d.revenue,
-    expenses: d.expenses,
-    profit: d.revenue - d.expenses,
-  }));
-
-  const serviceIds = serviceGroups
-    .map((g) => g.serviceCatalogId)
-    .filter((id): id is string => Boolean(id));
-  const serviceCatalogs = serviceIds.length
-    ? await prisma.serviceCatalog.findMany({
-        where: { id: { in: serviceIds } },
-        select: { id: true, serviceName: true },
-      })
+  const chartRows: RawChartRow[] = Array.isArray(aggregate?.chartRows)
+    ? (aggregate!.chartRows as RawChartRow[])
     : [];
-  const serviceNameMap = new Map(
-    serviceCatalogs.map((s) => [s.id, s.serviceName]),
-  );
-
-  const byService = serviceGroups.map((g) => {
-    const revenue = Number(g._sum.total ?? 0);
-    const jobs = g._count._all;
+  const chart = chartRows.map((row) => {
+    const revenue = Number(row.revenue ?? 0);
+    const expenses = Number(row.expenses ?? 0);
     return {
-      serviceType: g.serviceCatalogId
-        ? (serviceNameMap.get(g.serviceCatalogId) ?? "Other")
-        : "Other",
+      label: bucketFn(new Date(row.bucket)),
+      revenue,
+      expenses,
+      profit: revenue - expenses,
+    };
+  });
+
+  const byService = serviceRows.map((row) => {
+    const revenue = Number(row.revenue ?? 0);
+    const jobs = Number(row.jobs ?? 0);
+    return {
+      serviceType: row.serviceName ?? "Other",
       revenue,
       jobs,
       avgPerJob: jobs > 0 ? Math.round(revenue / jobs) : 0,
       changePercent: 0,
     };
   });
+
   const byStaff = staffWithJobsRaw
-    .map((s) => ({
-      staffId: s.userId,
-      name: s.name,
-      avatar: s.image ?? undefined,
+    .map((staff) => ({
+      staffId: staff.userId,
+      name: staff.name,
+      avatar: staff.image ?? undefined,
       revenue: 0,
-      jobs: Number(s.jobCount),
+      jobs: Number(staff.jobCount),
       avgRating: 0,
     }))
     .sort((a, b) => b.jobs - a.jobs);
+
   const statusMap: Record<string, "Paid" | "Pending" | "Overdue"> = {
     PAID: "Paid",
     SENT: "Pending",
@@ -661,31 +618,10 @@ const getRevenuePage = async (
   const revenueResult = {
     currency: revenueCurrency,
     stats: {
-      totalRevenue: {
-        label: "Total Revenue",
-        value: totalRevenue,
-        changePercent: pct(totalRevenue, prevRevenue),
-        prefix: revenuePrefix,
-      },
-      totalProfit: {
-        label: "Net Profit",
-        value: totalProfit,
-        changePercent: pct(totalProfit, prevProfit),
-        prefix: revenuePrefix,
-      },
-      avgJobValue: {
-        label: "Avg. Job Value",
-        value:
-          jobCountCurrent > 0 ? Math.round(totalRevenue / jobCountCurrent) : 0,
-        changePercent: 0,
-        prefix: revenuePrefix,
-      },
-      outstandingInvoices: {
-        label: "Outstanding Invoices",
-        value: outstanding,
-        changePercent: 0,
-        prefix: revenuePrefix,
-      },
+      totalRevenue: { label: "Total Revenue", value: totalRevenue, changePercent: pct(totalRevenue, prevRevenue), prefix: revenuePrefix },
+      totalProfit: { label: "Net Profit", value: totalProfit, changePercent: pct(totalProfit, prevProfit), prefix: revenuePrefix },
+      avgJobValue: { label: "Avg. Job Value", value: jobCountCurrent > 0 ? Math.round(totalRevenue / jobCountCurrent) : 0, changePercent: 0, prefix: revenuePrefix },
+      outstandingInvoices: { label: "Outstanding Invoices", value: outstanding, changePercent: 0, prefix: revenuePrefix },
     },
     chart,
     byService,
@@ -693,12 +629,7 @@ const getRevenuePage = async (
     recentTransactions,
   };
 
-  // PERF FIX #14: Write revenue page result to Redis for 5 minutes.
-  // Revenue figures are not real-time — 5-minute staleness is acceptable.
-  await redis
-    .setex(revCacheKey, 300, JSON.stringify(revenueResult))
-    .catch(() => {});
-
+  await redis.setex(revCacheKey, 300, JSON.stringify(revenueResult)).catch(() => {});
   return revenueResult;
 };
 

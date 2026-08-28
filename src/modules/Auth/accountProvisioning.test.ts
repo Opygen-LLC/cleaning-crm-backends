@@ -4,12 +4,10 @@ const mocks = vi.hoisted(() => {
   const order: string[] = [];
   const tx = {
     user: { create: vi.fn() },
-    account: { create: vi.fn() },
   };
   return {
     order,
     tx,
-    findUser: vi.fn(),
     transaction: vi.fn(),
     hashPassword: vi.fn(),
     createAdmin: vi.fn(),
@@ -30,7 +28,6 @@ vi.mock("../../config/ENV", () => ({
 
 vi.mock("../../lib/prisma/prisma", () => ({
   prisma: {
-    user: { findUnique: mocks.findUser },
     $transaction: mocks.transaction,
   },
 }));
@@ -72,11 +69,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.order.length = 0;
 
-  mocks.findUser.mockResolvedValue(null);
   mocks.hashPassword.mockResolvedValue("hashed-password");
   mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => callback(mocks.tx));
   mocks.tx.user.create.mockImplementation(async ({ data }: any) => {
-    mocks.order.push("user");
+    mocks.order.push("user+account");
     return {
       id: data.id,
       name: data.name,
@@ -89,10 +85,7 @@ beforeEach(() => {
       updatedAt: new Date("2026-08-18T00:00:00.000Z"),
     };
   });
-  mocks.tx.account.create.mockImplementation(async () => {
-    mocks.order.push("account");
-    return { id: "credential-1" };
-  });
+
   mocks.createAdmin.mockImplementation(async () => {
     mocks.order.push("admin");
     return { id: "admin-1", businessName: "Sparkle Cleaning" };
@@ -125,7 +118,7 @@ describe("AccountProvisioningService", () => {
       trialDays: 14,
     });
 
-    expect(mocks.order).toEqual(["user", "account", "admin", "website", "trial", "outbox"]);
+    expect(mocks.order).toEqual(["user+account", "admin", "website", "trial", "outbox"]);
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.transaction.mock.calls[0]?.[1]).toEqual(PROVISIONING_TRANSACTION_OPTIONS);
     expect(mocks.hashPassword).toHaveBeenCalledWith("Secret123!");
@@ -136,11 +129,10 @@ describe("AccountProvisioningService", () => {
     expect(userCreate.data.status).toBe("PENDING");
 
     const userId = userCreate.data.id;
-    expect(mocks.tx.account.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
+    expect(userCreate.data.accounts).toEqual({
+      create: expect.objectContaining({
         accountId: userId,
         providerId: "credential",
-        userId,
         password: "hashed-password",
       }),
     });
@@ -156,6 +148,7 @@ describe("AccountProvisioningService", () => {
     expect(mocks.createTrial).toHaveBeenCalledWith("admin-1", {
       db: mocks.tx,
       trialDays: 14,
+      skipExistingCheck: true,
     });
     expect(mocks.enqueueVerification).toHaveBeenCalledWith(
       mocks.tx,
@@ -171,8 +164,15 @@ describe("AccountProvisioningService", () => {
     });
   });
 
-  it("does not open the transaction or hash a password for an existing email", async () => {
-    mocks.findUser.mockResolvedValue({ id: "existing-user" });
+  it("relies on the database unique-email constraint instead of SELECT-before-INSERT", async () => {
+    const { Prisma } = await import("../../generated/prisma/client");
+    mocks.tx.user.create.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "7.7.0",
+        meta: { target: ["email"], modelName: "User" },
+      }),
+    );
 
     await expect(AccountProvisioningService.provisionRegisteredAdmin({
       name: "Jamie Doe",
@@ -182,8 +182,8 @@ describe("AccountProvisioningService", () => {
       trialDays: 7,
     })).rejects.toMatchObject({ statusCode: 409 });
 
-    expect(mocks.hashPassword).not.toHaveBeenCalled();
-    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.hashPassword).toHaveBeenCalledWith("Secret123!");
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
   });
 
   it("stops before outbox creation when trial creation fails", async () => {
@@ -200,7 +200,7 @@ describe("AccountProvisioningService", () => {
       trialDays: 7,
     })).rejects.toThrow("trial plan missing");
 
-    expect(mocks.order).toEqual(["user", "account", "admin", "website", "trial"]);
+    expect(mocks.order).toEqual(["user+account", "admin", "website", "trial"]);
     expect(mocks.enqueueVerification).not.toHaveBeenCalled();
   });
 });

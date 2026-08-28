@@ -3,8 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   userFindUnique: vi.fn(),
   userUpdate: vi.fn(),
-  accountFindFirst: vi.fn(),
-  adminFindUnique: vi.fn(),
   assertReadyForActivation: vi.fn(),
   verifyEmailOTP: vi.fn(),
   getAccessToken: vi.fn(),
@@ -14,43 +12,18 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../lib/prisma/prisma", () => ({
   prisma: {
-    user: {
-      findUnique: mocks.userFindUnique,
-      update: mocks.userUpdate,
-    },
-    account: { findFirst: mocks.accountFindFirst },
-    adminProfile: { findUnique: mocks.adminFindUnique },
+    user: { findUnique: mocks.userFindUnique, update: mocks.userUpdate },
     session: { create: mocks.sessionCreate },
   },
 }));
-
-vi.mock("../../lib/auth", () => ({
-  auth: {
-    api: {
-      verifyEmailOTP: mocks.verifyEmailOTP,
-    },
-  },
-}));
-
-vi.mock("../../lib/utils/token", () => ({
-  tokenUtils: {
-    getAccessToken: mocks.getAccessToken,
-    getRefreshToken: mocks.getRefreshToken,
-  },
-}));
-
+vi.mock("../../lib/auth", () => ({ auth: { api: { verifyEmailOTP: mocks.verifyEmailOTP } } }));
+vi.mock("../../lib/utils/token", () => ({ tokenUtils: { getAccessToken: mocks.getAccessToken, getRefreshToken: mocks.getRefreshToken } }));
 vi.mock("../../lib/utils/jwt", () => ({ jwtUtils: {} }));
 vi.mock("../../config/ENV", () => ({ REFRESH_TOKEN_SECRET: "test-refresh-secret" }));
-vi.mock("./accountProvisioning.service", () => ({
-  AccountProvisioningService: { provisionRegisteredAdmin: vi.fn() },
-}));
-vi.mock("./accountIntegrity.service", () => ({
-  AccountIntegrityService: { assertAdminReadyForActivation: mocks.assertReadyForActivation },
-}));
+vi.mock("./accountProvisioning.service", () => ({ AccountProvisioningService: { provisionRegisteredAdmin: vi.fn() } }));
+vi.mock("./accountIntegrity.service", () => ({ AccountIntegrityService: { assertAdminReadyForActivation: mocks.assertReadyForActivation } }));
 vi.mock("../../lib/utils/platformConfig", () => ({ getPlatformConfig: vi.fn() }));
-vi.mock("../../lib/outbox/authEmailOutbox", () => ({
-  AuthEmailOutbox: { enqueueEmailVerification: vi.fn() },
-}));
+vi.mock("../../lib/outbox/authEmailOutbox", () => ({ AuthEmailOutbox: { enqueueEmailVerification: vi.fn() } }));
 
 import authService from "./auth.service";
 
@@ -65,90 +38,51 @@ const verifiedAdmin = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.userFindUnique.mockResolvedValue({ id: "user-1", role: "ADMIN" });
-  mocks.accountFindFirst.mockResolvedValue({ userId: "user-1" });
-  mocks.assertReadyForActivation.mockResolvedValue({
-    adminId: "admin-1",
-    isOnboardingComplete: false,
-  });
+  mocks.userFindUnique.mockResolvedValue({ id: "user-1", role: "ADMIN", accounts: [{ id: "credential-1" }] });
+  mocks.assertReadyForActivation.mockResolvedValue({ adminId: "admin-1", isOnboardingComplete: false });
   mocks.verifyEmailOTP.mockResolvedValue({ user: { ...verifiedAdmin }, token: "better-auth-token" });
-  mocks.userUpdate.mockResolvedValue({ ...verifiedAdmin, status: "ACTIVE" });
+  mocks.userUpdate.mockResolvedValue({ id: "user-1", name: "Jamie", email: "jamie@example.com", emailVerified: true, role: "ADMIN" });
   mocks.getAccessToken.mockReturnValue("access-token");
   mocks.getRefreshToken.mockReturnValue("refresh-token");
   mocks.sessionCreate.mockResolvedValue({ token: "fallback-session-token" });
 });
 
-describe("verifyEmail deterministic ADMIN activation", () => {
-  it("checks profile + active trial/subscription + website before consuming the OTP", async () => {
+describe("verifyEmail optimized ADMIN activation", () => {
+  it("resolves identity + credential ownership in one application query before consuming OTP", async () => {
     const result = await authService.verifyEmail("jamie@example.com", "123456");
-
+    expect(mocks.userFindUnique).toHaveBeenCalledWith({
+      where: { email: "jamie@example.com" },
+      select: { id: true, role: true, accounts: { where: { providerId: "credential" }, select: { id: true }, take: 1 } },
+    });
     expect(mocks.assertReadyForActivation).toHaveBeenCalledWith("user-1");
-    expect(mocks.assertReadyForActivation.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.verifyEmailOTP.mock.invocationCallOrder[0]!,
-    );
+    expect(mocks.assertReadyForActivation.mock.invocationCallOrder[0]).toBeLessThan(mocks.verifyEmailOTP.mock.invocationCallOrder[0]!);
     expect(mocks.userUpdate).toHaveBeenCalledWith({
       where: { email: "jamie@example.com" },
       data: { status: "ACTIVE" },
+      select: { id: true, name: true, email: true, emailVerified: true, role: true },
     });
-    expect(result).toMatchObject({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      token: "better-auth-token",
-      user: { status: "ACTIVE" },
-    });
+    expect(result).toMatchObject({ accessToken: "access-token", refreshToken: "refresh-token", token: "better-auth-token" });
     expect(mocks.sessionCreate).not.toHaveBeenCalled();
   });
 
-  it("does not consume the OTP or activate the user when website provisioning is incomplete", async () => {
-    mocks.assertReadyForActivation.mockRejectedValue(
-      Object.assign(new Error("Website provisioning is not complete yet."), {
-        statusCode: 409,
-        code: "WEBSITE_PROVISIONING_INCOMPLETE",
-      }),
-    );
-
-    await expect(
-      authService.verifyEmail("jamie@example.com", "123456"),
-    ).rejects.toMatchObject({
-      statusCode: 409,
-      code: "WEBSITE_PROVISIONING_INCOMPLETE",
-    });
-
+  it("rejects social-only accounts before consuming the OTP", async () => {
+    mocks.userFindUnique.mockResolvedValue({ id: "user-1", role: "ADMIN", accounts: [] });
+    await expect(authService.verifyEmail("jamie@example.com", "123456")).rejects.toMatchObject({ statusCode: 400 });
     expect(mocks.verifyEmailOTP).not.toHaveBeenCalled();
-    expect(mocks.userUpdate).not.toHaveBeenCalled();
-    expect(mocks.getAccessToken).not.toHaveBeenCalled();
   });
 
-  it("does not consume the OTP or activate the user when trial/subscription provisioning is incomplete", async () => {
-    mocks.assertReadyForActivation.mockRejectedValue(
-      Object.assign(new Error("Subscription provisioning is not complete yet."), {
-        statusCode: 409,
-        code: "SUBSCRIPTION_PROVISIONING_INCOMPLETE",
-      }),
-    );
-
-    await expect(
-      authService.verifyEmail("jamie@example.com", "123456"),
-    ).rejects.toMatchObject({
-      statusCode: 409,
-      code: "SUBSCRIPTION_PROVISIONING_INCOMPLETE",
-    });
-
+  it("does not consume the OTP when tenant provisioning is incomplete", async () => {
+    mocks.assertReadyForActivation.mockRejectedValue(Object.assign(new Error("Website provisioning is not complete yet."), { statusCode: 409, code: "WEBSITE_PROVISIONING_INCOMPLETE" }));
+    await expect(authService.verifyEmail("jamie@example.com", "123456")).rejects.toMatchObject({ statusCode: 409, code: "WEBSITE_PROVISIONING_INCOMPLETE" });
     expect(mocks.verifyEmailOTP).not.toHaveBeenCalled();
     expect(mocks.userUpdate).not.toHaveBeenCalled();
   });
 
   it("creates a server-side fallback session when Better Auth omits the auto-sign-in token", async () => {
     mocks.verifyEmailOTP.mockResolvedValue({ user: { ...verifiedAdmin } });
-
     const result = await authService.verifyEmail("jamie@example.com", "123456");
-
     expect(mocks.sessionCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        userId: "user-1",
-        token: expect.any(String),
-        expiresAt: expect.any(Date),
-      }),
+      data: expect.objectContaining({ userId: "user-1", token: expect.any(String), expiresAt: expect.any(Date) }),
       select: { token: true },
     });
     expect(result.token).toBe("fallback-session-token");
@@ -157,14 +91,10 @@ describe("verifyEmail deterministic ADMIN activation", () => {
   it("returns AUTH_VERIFICATION_SESSION_FAILED when a fallback session cannot be persisted", async () => {
     mocks.verifyEmailOTP.mockResolvedValue({ user: { ...verifiedAdmin } });
     mocks.sessionCreate.mockRejectedValue(new Error("database unavailable"));
-
-    await expect(
-      authService.verifyEmail("jamie@example.com", "123456"),
-    ).rejects.toMatchObject({
+    await expect(authService.verifyEmail("jamie@example.com", "123456")).rejects.toMatchObject({
       statusCode: 500,
       code: "AUTH_VERIFICATION_SESSION_FAILED",
       retryable: true,
     });
   });
-
 });

@@ -80,15 +80,10 @@ const provisionRegisteredAdmin = async (
 ) => {
   const email = input.email.trim().toLowerCase();
 
-  // Fast duplicate check avoids paying the scrypt cost for the common existing
-  // email case. The unique index remains the final authority for concurrent
-  // requests and is mapped to the same safe error below.
-  const existing = await prisma.user.findUnique({
-    where: { email },
-    select: { id: true },
-  });
-  if (existing) throw registrationEmailUnavailable();
-
+  // User.email has a database unique constraint and remains the sole authority.
+  // Avoid SELECT -> INSERT here: it adds a round trip and still cannot prevent
+  // a concurrent-registration race. P2002 below maps duplicates to the same
+  // enumeration-safe error. Password hashing remains outside the transaction.
   const passwordHash = await hashPassword(input.password);
   const userId = randomUUID();
   const credentialAccountId = randomUUID();
@@ -158,6 +153,14 @@ const runProvisioningTransaction = async (
           role: UserRole.ADMIN,
           status: AccountStatus.PENDING,
           needPasswordChange: false,
+          accounts: {
+            create: {
+              id: input.credentialAccountId,
+              accountId: input.userId,
+              providerId: "credential",
+              password: input.passwordHash,
+            },
+          },
         },
         select: {
           id: true,
@@ -172,18 +175,6 @@ const runProvisioningTransaction = async (
         },
       });
 
-      // Better Auth stores email/password credentials in Account with
-      // providerId=credential and accountId=user.id. Using Better Auth's own
-      // hashPassword keeps login/change-password compatibility intact.
-      await tx.account.create({
-        data: {
-          id: input.credentialAccountId,
-          accountId: input.userId,
-          providerId: "credential",
-          userId: input.userId,
-          password: input.passwordHash,
-        },
-      });
 
       // Pass optional wizard fields into the AdminProfile at creation time so
       // they are immediately available without a separate PATCH call.
@@ -212,6 +203,7 @@ const runProvisioningTransaction = async (
         await subscriptionService.createTrialSubscription(admin.id, {
           db: tx,
           trialDays: input.trialDays,
+          skipExistingCheck: true,
         });
 
       // The durable outbox row commits with the account. Registration returns

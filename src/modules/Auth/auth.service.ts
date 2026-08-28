@@ -163,9 +163,9 @@ const register = async ({
 const login = async ({ email, password }: ILoginUserPayload) => {
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Better Auth performs credential verification first and intentionally
-    // returns the same invalid-credential error for unknown users/bad passwords.
-    // Application/account state is reconciled only after credentials succeed.
+    // Better Auth is the credential/session authority. Its successful sign-in
+    // response already contains the freshly-loaded user and persisted opaque
+    // session token, so re-reading both rows here only adds database latency.
     const signIn = await auth.api.signInEmail({
         body: { email: normalizedEmail, password },
     });
@@ -184,24 +184,14 @@ const login = async ({ email, password }: ILoginUserPayload) => {
         );
     }
 
-    // From this point onward the newly-created Better Auth session is treated
-    // as provisional. Any application/database/token failure revokes it so the
-    // server never returns (or leaves behind) a partially-completed login.
     try {
-        const user = await prisma.user.findUnique({
-            where: { id: signIn.user.id },
-            select: {
-                id: true,
-                name: true,
-                email: true,
-                emailVerified: true,
-                role: true,
-                status: true,
-                staff: { select: { status: true } },
-            },
-        });
+        const signedInUser = signIn.user as typeof signIn.user & {
+            role: UserRole;
+            status: AccountStatus;
+            needPasswordChange?: boolean;
+        };
 
-        if (!user || user.email.toLowerCase() !== normalizedEmail) {
+        if (signedInUser.email.toLowerCase() !== normalizedEmail) {
             throw new AppError(
                 status.INTERNAL_SERVER_ERROR,
                 "The authenticated identity could not be reconciled with the application account.",
@@ -209,32 +199,28 @@ const login = async ({ email, password }: ILoginUserPayload) => {
             );
         }
 
-        assertAccountCanUseAuthenticatedApp(user);
+        // STAFF has one application-specific state that Better Auth does not
+        // carry in its user row. ADMIN/SUPER_ADMIN therefore need no extra read.
+        const staff = signedInUser.role === UserRole.STAFF
+            ? await prisma.staffProfile.findUnique({
+                where: { userId: signedInUser.id },
+                select: { status: true },
+            })
+            : null;
 
-        const now = new Date();
-        const persistedSession = await prisma.session.findUnique({
-            where: { token: sessionToken },
-            select: { id: true, userId: true, expiresAt: true },
+        assertAccountCanUseAuthenticatedApp({
+            status: signedInUser.status,
+            role: signedInUser.role,
+            emailVerified: signedInUser.emailVerified,
+            staff,
         });
 
-        if (
-            !persistedSession ||
-            persistedSession.userId !== user.id ||
-            persistedSession.expiresAt <= now
-        ) {
-            throw new AppError(
-                status.INTERNAL_SERVER_ERROR,
-                "Your credentials were accepted, but the secure session was not persisted.",
-                { code: AUTH_ERROR_CODES.AUTH_SESSION_NOT_CREATED, retryable: true },
-            );
-        }
-
         const tokenPayload = {
-            userId: user.id,
-            role: user.role,
-            name: user.name,
-            email: user.email,
-            emailVerified: user.emailVerified,
+            userId: signedInUser.id,
+            role: signedInUser.role,
+            name: signedInUser.name,
+            email: signedInUser.email,
+            emailVerified: signedInUser.emailVerified,
         };
 
         let accessToken: string;
@@ -250,42 +236,31 @@ const login = async ({ email, password }: ILoginUserPayload) => {
             );
         }
 
-        // Enforce the active-session cap only after every required login
-        // artifact exists. The current session is always preserved and expired
-        // sessions are excluded from the active-session calculation/removal.
-        const sessionCount = await prisma.session.count({
-            where: {
-                userId: user.id,
-                expiresAt: { gt: now },
-            },
-        });
-
-        if (sessionCount > MAX_SESSIONS) {
-            const excess = await prisma.session.findMany({
-                where: {
-                    userId: user.id,
-                    token: { not: sessionToken },
-                    expiresAt: { gt: now },
-                },
-                orderBy: { createdAt: "asc" },
-                take: sessionCount - MAX_SESSIONS,
-                select: { id: true },
-            });
-
-            if (excess.length > 0) {
-                await prisma.session.deleteMany({
-                    where: { id: { in: excess.map((entry) => entry.id) } },
-                });
-            }
-        }
+        // Keep the current session plus the newest MAX_SESSIONS-1 active
+        // sessions. One SQL statement replaces count -> list -> delete and does
+        // not put session housekeeping on a multi-round-trip critical path.
+        const keepOtherSessions = Math.max(0, MAX_SESSIONS - 1);
+        await prisma.$executeRaw`
+            WITH excess_sessions AS (
+                SELECT id
+                FROM "session"
+                WHERE "userId" = ${signedInUser.id}
+                  AND token <> ${sessionToken}
+                  AND "expiresAt" > NOW()
+                ORDER BY "createdAt" DESC
+                OFFSET ${keepOtherSessions}
+            )
+            DELETE FROM "session"
+            WHERE id IN (SELECT id FROM excess_sessions)
+        `;
 
         return {
             user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                role: user.role,
-                status: user.status,
+                id: signedInUser.id,
+                name: signedInUser.name,
+                email: signedInUser.email,
+                role: signedInUser.role,
+                status: signedInUser.status,
             },
             sessionToken,
             accessToken,
@@ -331,36 +306,48 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
         );
     }
 
-    const persisted = await prisma.session.findFirst({
-        where: {
-            token: sessionToken,
-            userId: user.id,
-            expiresAt: { gt: new Date() },
-        },
-        select: {
-            expiresAt: true,
-            user: {
-                select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    emailVerified: true,
-                    role: true,
-                    status: true,
-                    needPasswordChange: true,
-                    staff: { select: { status: true } },
-                    admin: {
-                        select: {
-                            onboardingCompletedAt: true,
-                            onboardingCompletedSteps: true,
-                        },
-                    },
-                },
-            },
-        },
-    });
+    type SessionSnapshotRow = {
+        expiresAt: Date;
+        id: string;
+        name: string;
+        email: string;
+        emailVerified: boolean;
+        role: UserRole;
+        status: AccountStatus;
+        needPasswordChange: boolean;
+        staffStatus: StaffStatus | null;
+        onboardingCompletedAt: Date | null;
+        onboardingCompletedSteps: string[] | null;
+    };
 
-    if (!persisted) {
+    // One SQL statement is the canonical browser-session read. Using explicit
+    // joins avoids Prisma relation-load fan-out while selecting only the fields
+    // required for auth/routing. /auth/me remains the separate full-profile API.
+    const rows = await prisma.$queryRaw<SessionSnapshotRow[]>`
+        SELECT
+            s."expiresAt",
+            u.id,
+            u.name,
+            u.email,
+            u."emailVerified",
+            u.role::text AS role,
+            u.status::text AS status,
+            u."needPasswordChange",
+            sp.status::text AS "staffStatus",
+            ap."onboardingCompletedAt",
+            ap."onboardingCompletedSteps"
+        FROM "session" s
+        JOIN "user" u ON u.id = s."userId"
+        LEFT JOIN "StaffProfile" sp ON sp."userId" = u.id
+        LEFT JOIN "AdminProfile" ap ON ap."userId" = u.id
+        WHERE s.token = ${sessionToken}
+          AND s."userId" = ${user.id}
+          AND s."expiresAt" > NOW()
+        LIMIT 1
+    `;
+
+    const account = rows[0];
+    if (!account) {
         throw new AppError(
             status.UNAUTHORIZED,
             "The authenticated session has expired or was revoked.",
@@ -368,10 +355,14 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
         );
     }
 
-    const account = persisted.user;
-    assertAccountCanUseAuthenticatedApp(account);
+    assertAccountCanUseAuthenticatedApp({
+        status: account.status,
+        role: account.role,
+        emailVerified: account.emailVerified,
+        staff: account.staffStatus ? { status: account.staffStatus } : null,
+    });
 
-    if (account.role === UserRole.ADMIN && !account.admin) {
+    if (account.role === UserRole.ADMIN && account.onboardingCompletedSteps == null) {
         throw new AppError(
             status.INTERNAL_SERVER_ERROR,
             "The authenticated admin profile is incomplete.",
@@ -383,9 +374,9 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
     let currentStep: string | null = null;
 
     if (account.role === UserRole.ADMIN) {
-        onboardingCompleted = account.admin?.onboardingCompletedAt != null;
+        onboardingCompleted = account.onboardingCompletedAt != null;
         if (!onboardingCompleted) {
-            const completed = new Set(account.admin?.onboardingCompletedSteps ?? []);
+            const completed = new Set(account.onboardingCompletedSteps ?? []);
             currentStep =
                 ACCOUNT_SETUP_STEPS.find((step) => !completed.has(step.key))?.key ??
                 ACCOUNT_SETUP_STEPS[ACCOUNT_SETUP_STEPS.length - 1]?.key ??
@@ -409,7 +400,7 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
         },
         needPasswordChange: account.needPasswordChange,
         session: {
-            expiresAt: persisted.expiresAt,
+            expiresAt: account.expiresAt,
         },
     };
 };
@@ -453,13 +444,31 @@ const getNewToken = async (
         );
     }
 
+    // One joined session lookup validates revocation/expiry and refreshes the
+    // current account state. This replaces the previous session read followed
+    // by a separate user read, while still making suspensions/role changes take
+    // effect on the next refresh.
     const session = await prisma.session.findFirst({
         where: {
             token: sessionToken,
             userId: refreshUserId,
             expiresAt: { gt: new Date() },
         },
-        select: { id: true, token: true },
+        select: {
+            id: true,
+            token: true,
+            user: {
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    emailVerified: true,
+                    role: true,
+                    status: true,
+                    staff: { select: { status: true } },
+                },
+            },
+        },
     });
 
     if (!session) {
@@ -470,30 +479,7 @@ const getNewToken = async (
         );
     }
 
-    // Refresh from current database state rather than trusting stale role/status
-    // claims from the old refresh JWT. Suspensions and role changes therefore
-    // take effect immediately on the next refresh.
-    const user = await prisma.user.findUnique({
-        where: { id: refreshUserId },
-        select: {
-            id: true,
-            name: true,
-            email: true,
-            emailVerified: true,
-            role: true,
-            status: true,
-            staff: { select: { status: true } },
-        },
-    });
-
-    if (!user) {
-        throw new AppError(
-            status.UNAUTHORIZED,
-            "The authenticated account no longer exists.",
-            { code: AUTH_ERROR_CODES.REFRESH_SESSION_EXPIRED, retryable: false },
-        );
-    }
-
+    const user = session.user;
     assertAccountCanUseAuthenticatedApp(user);
 
     const tokenPayload = {
@@ -527,25 +513,24 @@ const verifyEmail = async (email: string, otp: string) => {
     // Resolve identity and credential ownership first. ADMIN provisioning is
     // checked before the OTP is consumed so an incomplete tenant cannot become
     // stuck in a verified-but-unusable state.
-    const [user, passwordAccount] = await Promise.all([
-        prisma.user.findUnique({
-            where: { email },
-            select: { id: true, role: true },
-        }),
-        prisma.account.findFirst({
-            where: {
-                user: { email },
-                providerId: "credential",
+    const user = await prisma.user.findUnique({
+        where: { email },
+        select: {
+            id: true,
+            role: true,
+            accounts: {
+                where: { providerId: "credential" },
+                select: { id: true },
+                take: 1,
             },
-            select: { userId: true },
-        }),
-    ]);
+        },
+    });
 
     if (!user) {
         throw new AppError(status.NOT_FOUND, "User not found.");
     }
 
-    if (!passwordAccount) {
+    if (user.accounts.length === 0) {
         throw new AppError(
             status.BAD_REQUEST,
             "Email verification is not allowed for social login accounts.",
@@ -575,9 +560,16 @@ const verifyEmail = async (email: string, otp: string) => {
         );
     }
 
-    result.user = await prisma.user.update({
+    const activatedUser = await prisma.user.update({
         where: { email },
         data: { status: AccountStatus.ACTIVE },
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            emailVerified: true,
+            role: true,
+        },
     });
 
     const returnedSessionToken =
@@ -585,16 +577,16 @@ const verifyEmail = async (email: string, otp: string) => {
             ? (result as { token: string }).token
             : undefined;
     const sessionToken = await ensureVerifiedSessionToken(
-        result.user.id,
+        activatedUser.id,
         returnedSessionToken,
     );
 
     const tokenPayload = {
-        userId: result.user.id,
-        role: result.user.role,
-        name: result.user.name,
-        email: result.user.email,
-        emailVerified: result.user.emailVerified,
+        userId: activatedUser.id,
+        role: activatedUser.role,
+        name: activatedUser.name,
+        email: activatedUser.email,
+        emailVerified: activatedUser.emailVerified,
     };
 
     return {

@@ -16,7 +16,8 @@ describe("requestTrace", () => {
       { requestId: "req-123", traceId: "0123456789abcdef0123456789abcdef" },
       async () => {
         await Promise.resolve();
-        recordTraceDatabaseQuery(12.5);
+        recordTraceDatabaseQuery(12.5, { operation: "SELECT", table: "user" });
+        recordTraceDatabaseQuery(4.5, { operation: "SELECT", table: "session" });
         recordTraceRedisCommand(2.5, { hits: 1 });
         recordTraceResponseCache("miss");
         recordTraceSpan("auth", 3.5, "auth.test");
@@ -25,8 +26,13 @@ describe("requestTrace", () => {
         const trace = getRequestTrace();
         expect(trace?.requestId).toBe("req-123");
         expect(trace?.traceId).toBe("0123456789abcdef0123456789abcdef");
-        expect(trace?.dbQueryCount).toBe(1);
-        expect(trace?.dbDurationMs).toBe(12.5);
+        expect(trace?.dbQueryCount).toBe(2);
+        expect(trace?.dbDurationMs).toBe(17);
+        expect(trace?.slowestDbQuery).toEqual({
+          durationMs: 12.5,
+          operation: "SELECT",
+          table: "user",
+        });
         expect(trace?.redisHits).toBe(1);
         expect(trace?.redisMisses).toBe(0);
         expect(trace?.responseCacheMisses).toBe(1);

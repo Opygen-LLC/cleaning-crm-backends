@@ -133,36 +133,65 @@ const getOverview = async (user: IRequestUser) => {
 const getStudio = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
 
-  const [website, business, bookingForms, estimateForms, entitlements, overview] = await Promise.all([
+  type StudioBootstrapRow = {
+    businessName: string | null;
+    city: string | null;
+    businessDescription: string | null;
+    websiteStatus: string | null;
+    publishedSnapshot: unknown;
+    bookingForms: Array<{ id: string; slug: string; published: boolean; headline: string | null }>;
+    estimateForms: Array<{ id: string; slug: string; published: boolean; headline: string | null }>;
+  };
+
+  // Business identity + the two form lists are one read model. This replaces
+  // three Prisma round trips on every Studio open while keeping the heavier
+  // website/domain aggregate and entitlement services independently cacheable.
+  const [website, bootstrapRows, entitlements, overview] = await Promise.all([
     WebsiteService.getWebsiteForAdmin(adminId),
-    prisma.adminProfile.findUnique({
-      where: { id: adminId },
-      select: {
-        businessName: true,
-        city: true,
-        businessDescription: true,
-        businessWebsite: {
-          select: { status: true, publishedSnapshot: true },
-        },
-      },
-    }),
-    prisma.bookingForm.findMany({
-      where: { adminId },
-      select: { id: true, slug: true, published: true, headline: true },
-      orderBy: [{ published: "desc" }, { updatedAt: "desc" }],
-      take: 100,
-    }),
-    prisma.estimateForm.findMany({
-      where: { adminId },
-      select: { id: true, slug: true, published: true, headline: true },
-      orderBy: [{ published: "desc" }, { updatedAt: "desc" }],
-      take: 100,
-    }),
+    prisma.$queryRaw<StudioBootstrapRow[]>`
+      SELECT
+        ap."businessName",
+        ap.city,
+        ap."businessDescription",
+        bw.status::text AS "websiteStatus",
+        bw."publishedSnapshot",
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'id', bf.id, 'slug', bf.slug, 'published', bf.published, 'headline', bf.headline
+          ) ORDER BY bf.published DESC, bf."updatedAt" DESC)
+          FROM (
+            SELECT id, slug, published, headline, "updatedAt"
+            FROM "booking_form"
+            WHERE "adminId" = ${adminId}
+            ORDER BY published DESC, "updatedAt" DESC
+            LIMIT 100
+          ) bf
+        ), '[]'::jsonb) AS "bookingForms",
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'id', ef.id, 'slug', ef.slug, 'published', ef.published, 'headline', ef.headline
+          ) ORDER BY ef.published DESC, ef."updatedAt" DESC)
+          FROM (
+            SELECT id, slug, published, headline, "updatedAt"
+            FROM "estimate_form"
+            WHERE "adminId" = ${adminId}
+            ORDER BY published DESC, "updatedAt" DESC
+            LIMIT 100
+          ) ef
+        ), '[]'::jsonb) AS "estimateForms"
+      FROM "AdminProfile" ap
+      LEFT JOIN "business_website" bw ON bw."adminId" = ap.id
+      WHERE ap.id = ${adminId}
+      LIMIT 1
+    `,
     WebsiteEntitlementService.getForAdminId(adminId),
     WebsiteOverviewService.getForAdminId(adminId),
   ]);
 
-  const published = parsePublishedSnapshot(business?.businessWebsite?.publishedSnapshot);
+  const business = bootstrapRows[0] ?? null;
+  const bookingForms = business?.bookingForms ?? [];
+  const estimateForms = business?.estimateForms ?? [];
+  const published = parsePublishedSnapshot(business?.publishedSnapshot);
   const publishedBookingFormId = published?.website.bookingEnabled
     ? published.website.primaryBookingFormId
     : null;
@@ -227,7 +256,7 @@ const getStudio = async (user: IRequestUser) => {
     overview,
     booking: {
       live: Boolean(
-        business?.businessWebsite?.status === "PUBLISHED" &&
+        business?.websiteStatus === "PUBLISHED" &&
         published?.website.bookingEnabled &&
         publishedBookPageEnabled &&
         publishedBookingForm,
@@ -237,7 +266,7 @@ const getStudio = async (user: IRequestUser) => {
     },
     estimate: {
       live: Boolean(
-        business?.businessWebsite?.status === "PUBLISHED" &&
+        business?.websiteStatus === "PUBLISHED" &&
         published?.website.estimateEnabled &&
         publishedEstimatePageEnabled &&
         publishedEstimateForm,

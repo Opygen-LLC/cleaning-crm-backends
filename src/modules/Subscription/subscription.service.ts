@@ -95,10 +95,13 @@ const getMySubscription = async (user: IRequestUser) => {
 
 const createTrialSubscription = async (
     adminId: string,
-    options: { db?: any; trialDays?: number } = {},
+    options: { db?: any; trialDays?: number; skipExistingCheck?: boolean } = {},
 ) => {
     const db = options.db ?? prisma;
 
+    // Fresh registration creates the AdminProfile in the same transaction, so
+    // an active subscription cannot already exist. Skip that defensive lookup
+    // only for this trusted internal path; every other caller keeps the guard.
     const [plan, existing] = await Promise.all([
         db.plan.findFirst({
             where: {
@@ -107,10 +110,12 @@ const createTrialSubscription = async (
             },
             select: { id: true, subscriptionPlanId: true },
         }),
-        db.subscription.findFirst({
-            where: { adminId, status: SubscriptionStatus.ACTIVE },
-            select: { id: true },
-        }),
+        options.skipExistingCheck
+            ? Promise.resolve(null)
+            : db.subscription.findFirst({
+                where: { adminId, status: SubscriptionStatus.ACTIVE },
+                select: { id: true },
+            }),
     ]);
 
     if (!plan) {
@@ -529,20 +534,11 @@ const getMyBillingHistory = async (
 
     const adminId = await resolveAdminProfileId(user);
 
-    const subscription = await prisma.subscription.findFirst({
-        where: { adminId },
-        select: { id: true },
-    });
-    if (!subscription) {
-        return { meta: { page, limit, total: 0, totalPages: 0 }, data: [] };
-    }
-
+    const tenantHistoryWhere = { subscription: { adminId } };
     const [total, data] = await Promise.all([
-        prisma.billingHistory.count({
-            where: { subscriptionId: subscription.id },
-        }),
+        prisma.billingHistory.count({ where: tenantHistoryWhere }),
         prisma.billingHistory.findMany({
-            where: { subscriptionId: subscription.id },
+            where: tenantHistoryWhere,
             orderBy: { createdAt: "desc" },
             skip,
             take: limit,

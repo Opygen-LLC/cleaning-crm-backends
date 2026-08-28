@@ -110,7 +110,11 @@ const summarizeQuery = (query: string) => {
 
 prisma.$on("query", (e: { query: string; params: string; duration: number }) => {
     recordDatabaseQueryMetric(e.duration, e.query);
-    recordTraceDatabaseQuery(e.duration);
+    const summary = summarizeQuery(e.query);
+    recordTraceDatabaseQuery(e.duration, {
+        operation: summary.operation,
+        table: summary.table,
+    });
 
     if (e.duration > SLOW_QUERY_THRESHOLD_MS) {
         // Query parameters are never logged: they can contain emails, tokens,
@@ -119,8 +123,6 @@ prisma.$on("query", (e: { query: string; params: string; duration: number }) => 
         // Google Cloud Logging. Full SQL is opt-in only for local debugging.
         const requestId = getRequestTrace()?.requestId ?? "background";
         const durationMs = Math.round(e.duration * 10) / 10;
-        const summary = summarizeQuery(e.query);
-
         if (NODE_ENV === "production") {
             logger.warn("slow_database_query", {
                 event: "slow_database_query",

@@ -1,15 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  sessionFindFirst: vi.fn(),
-}));
+const mocks = vi.hoisted(() => ({ queryRaw: vi.fn() }));
 
 vi.mock("../../lib/prisma/prisma", () => ({
   prisma: {
-    session: {
-      findFirst: mocks.sessionFindFirst,
-      deleteMany: vi.fn(),
-    },
+    $queryRaw: mocks.queryRaw,
+    session: { deleteMany: vi.fn() },
   },
 }));
 vi.mock("../../lib/auth", () => ({ auth: { api: {} } }));
@@ -23,56 +19,34 @@ vi.mock("../../lib/outbox/authEmailOutbox", () => ({ AuthEmailOutbox: {} }));
 
 import authService from "./auth.service";
 
-const requestUser = {
+const requestUser = { id: "user-1", email: "jamie@example.com", role: "ADMIN" } as never;
+
+const snapshot = {
+  expiresAt: new Date("2026-10-01T00:00:00.000Z"),
   id: "user-1",
+  name: "Jamie Doe",
   email: "jamie@example.com",
+  emailVerified: true,
   role: "ADMIN",
-} as never;
+  status: "ACTIVE",
+  needPasswordChange: false,
+  staffStatus: null,
+  onboardingCompletedAt: null,
+  onboardingCompletedSteps: ["business_profile", "branding"],
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.sessionFindFirst.mockResolvedValue({
-    expiresAt: new Date("2026-10-01T00:00:00.000Z"),
-    user: {
-      id: "user-1",
-      name: "Jamie Doe",
-      email: "jamie@example.com",
-      emailVerified: true,
-      role: "ADMIN",
-      status: "ACTIVE",
-      needPasswordChange: false,
-      staff: null,
-      admin: {
-        onboardingCompletedAt: null,
-        onboardingCompletedSteps: ["business_profile", "branding"],
-      },
-    },
-  });
+  mocks.queryRaw.mockResolvedValue([{ ...snapshot }]);
 });
 
 describe("canonical auth session snapshot", () => {
-  it("returns the first incomplete onboarding key from one narrow session lookup", async () => {
+  it("returns the first incomplete onboarding key from exactly one SQL lookup", async () => {
     const result = await authService.session(requestUser, "session-token");
-
-    expect(mocks.sessionFindFirst).toHaveBeenCalledWith({
-      where: {
-        token: "session-token",
-        userId: "user-1",
-        expiresAt: { gt: expect.any(Date) },
-      },
-      select: expect.objectContaining({
-        expiresAt: true,
-        user: expect.any(Object),
-      }),
-    });
+    expect(mocks.queryRaw).toHaveBeenCalledOnce();
     expect(result).toMatchObject({
       authenticated: true,
-      user: {
-        id: "user-1",
-        role: "ADMIN",
-        status: "ACTIVE",
-        emailVerified: true,
-      },
+      user: { id: "user-1", role: "ADMIN", status: "ACTIVE", emailVerified: true },
       onboarding: { completed: false, currentStep: "services" },
       needPasswordChange: false,
       session: { expiresAt: expect.any(Date) },
@@ -80,39 +54,15 @@ describe("canonical auth session snapshot", () => {
   });
 
   it("returns completed onboarding after launch", async () => {
-    mocks.sessionFindFirst.mockResolvedValue({
-      expiresAt: new Date("2026-10-01T00:00:00.000Z"),
-      user: {
-        id: "user-1",
-        name: "Jamie Doe",
-        email: "jamie@example.com",
-        emailVerified: true,
-        role: "ADMIN",
-        status: "ACTIVE",
-        needPasswordChange: false,
-        staff: null,
-        admin: {
-          onboardingCompletedAt: new Date("2026-08-28T00:00:00.000Z"),
-          onboardingCompletedSteps: [],
-        },
-      },
-    });
-
+    mocks.queryRaw.mockResolvedValue([{ ...snapshot, onboardingCompletedAt: new Date("2026-08-28T00:00:00.000Z"), onboardingCompletedSteps: [] }]);
     await expect(authService.session(requestUser, "session-token")).resolves.toMatchObject({
       onboarding: { completed: true, currentStep: null },
     });
   });
 
   it("rejects a missing or revoked Better Auth session as INVALID_SESSION", async () => {
-    await expect(authService.session(requestUser, undefined)).rejects.toMatchObject({
-      statusCode: 401,
-      code: "INVALID_SESSION",
-    });
-
-    mocks.sessionFindFirst.mockResolvedValue(null);
-    await expect(authService.session(requestUser, "revoked-token")).rejects.toMatchObject({
-      statusCode: 401,
-      code: "INVALID_SESSION",
-    });
+    await expect(authService.session(requestUser, undefined)).rejects.toMatchObject({ statusCode: 401, code: "INVALID_SESSION" });
+    mocks.queryRaw.mockResolvedValue([]);
+    await expect(authService.session(requestUser, "revoked-token")).rejects.toMatchObject({ statusCode: 401, code: "INVALID_SESSION" });
   });
 });

@@ -117,7 +117,14 @@ const logRequestResponse = (
       const redisMs = round(trace?.redisDurationMs ?? 0);
       const queueMs = round(trace?.queueDurationMs ?? 0);
       const parts = [`${req.method} ${route} → ${res.statusCode} in ${rounded}ms`];
-      if (dbQueries > 0) parts.push(`DB ${dbMs}ms/${dbQueries}q`);
+      if (dbQueries > 0) {
+        const slowest = trace?.slowestDbQuery;
+        parts.push(
+          slowest
+            ? `DB ${dbMs}ms/${dbQueries}q · slowest ${round(slowest.durationMs)}ms ${slowest.operation} ${slowest.table}`
+            : `DB ${dbMs}ms/${dbQueries}q`,
+        );
+      }
       if ((trace?.redisCommandCount ?? 0) > 0) parts.push(`Redis ${redisMs}ms`);
       if (queueMs > 0) parts.push(`Queue ${queueMs}ms`);
       if ((trace?.externalDurationMs ?? 0) > 0) parts.push(`External ${round(trace?.externalDurationMs ?? 0)}ms`);
@@ -134,6 +141,13 @@ const logRequestResponse = (
       totalDurationMs: rounded,
       dbDurationMs: round(trace?.dbDurationMs ?? 0),
       dbQueryCount: trace?.dbQueryCount ?? 0,
+      slowestDbQuery: trace?.slowestDbQuery
+        ? {
+            durationMs: round(trace.slowestDbQuery.durationMs),
+            operation: trace.slowestDbQuery.operation,
+            table: trace.slowestDbQuery.table,
+          }
+        : null,
       redisDurationMs: round(trace?.redisDurationMs ?? 0),
       redisCommandCount: trace?.redisCommandCount ?? 0,
       redisHits: trace?.redisHits ?? 0,

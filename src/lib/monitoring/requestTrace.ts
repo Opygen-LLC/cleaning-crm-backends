@@ -8,6 +8,7 @@ export interface RequestTraceState {
   startedAtNs: bigint;
   dbQueryCount: number;
   dbDurationMs: number;
+  slowestDbQuery: { durationMs: number; operation: string; table: string } | null;
   redisCommandCount: number;
   redisDurationMs: number;
   redisHits: number;
@@ -33,6 +34,7 @@ export const runWithRequestTrace = <T>(
     startedAtNs: process.hrtime.bigint(),
     dbQueryCount: 0,
     dbDurationMs: 0,
+    slowestDbQuery: null,
     redisCommandCount: 0,
     redisDurationMs: 0,
     redisHits: 0,
@@ -55,11 +57,25 @@ export const getTracePropagationMetadata = (): { traceId: string; requestId: str
   return trace ? { traceId: trace.traceId, requestId: trace.requestId } : null;
 };
 
-export const recordTraceDatabaseQuery = (durationMs: number): void => {
+export const recordTraceDatabaseQuery = (
+  durationMs: number,
+  query?: { operation: string; table: string },
+): void => {
   const trace = storage.getStore();
   if (!trace) return;
   trace.dbQueryCount += 1;
   trace.dbDurationMs += durationMs;
+
+  if (
+    query &&
+    (!trace.slowestDbQuery || durationMs > trace.slowestDbQuery.durationMs)
+  ) {
+    trace.slowestDbQuery = {
+      durationMs,
+      operation: query.operation,
+      table: query.table,
+    };
+  }
 };
 
 export const recordTraceRedisCommand = (

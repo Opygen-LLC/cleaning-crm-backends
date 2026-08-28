@@ -97,9 +97,14 @@ const bookingInclude = {
     select: { id: true, name: true, email: true, phone: true },
   },
   staffAssignments: {
-    include: {
+    select: {
       staff: {
-        include: {
+        select: {
+          id: true,
+          staffRole: true,
+          mobileNumber: true,
+          specialty: true,
+          status: true,
           user: { select: { id: true, name: true, email: true } },
         },
       },
@@ -771,9 +776,11 @@ const getCalendarView = async (query: ICalendarQuery, user: any) => {
       },
       serviceCatalog: { select: { id: true, serviceName: true } },
       staffAssignments: {
-        include: {
+        select: {
           staff: {
-            include: {
+            select: {
+              id: true,
+              staffRole: true,
               user: { select: { id: true, name: true } },
             },
           },

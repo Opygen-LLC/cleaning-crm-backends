@@ -127,30 +127,43 @@ const inspectActiveAdminProvisioning = async (
  * have the full transaction-created tenant graph and an ACTIVE trial/subscription.
  */
 const assertAdminReadyForActivation = async (userId: string) => {
-  const admin = await prisma.adminProfile.findUnique({
-    where: { userId },
-    select: {
-      id: true,
-      onboardingCompletedAt: true,
-      businessWebsite: { select: { id: true } },
-      subscription: {
-        where: { status: SubscriptionStatus.ACTIVE },
-        select: { id: true },
-        take: 1,
-      },
-    },
-  });
+  type ActivationReadinessRow = {
+    adminId: string;
+    onboardingCompletedAt: Date | null;
+    hasActiveSubscription: boolean;
+    hasWebsite: boolean;
+  };
 
+  // One SQL round trip verifies the three registration invariants. Prisma
+  // relation selects can fan out into separate statements depending on the
+  // relation-load strategy; EXISTS keeps this hot OTP path deterministic.
+  const rows = await prisma.$queryRaw<ActivationReadinessRow[]>`
+    SELECT
+      ap.id AS "adminId",
+      ap."onboardingCompletedAt",
+      EXISTS (
+        SELECT 1 FROM "Subscription" s
+        WHERE s."adminId" = ap.id AND s.status::text = ${SubscriptionStatus.ACTIVE}
+      ) AS "hasActiveSubscription",
+      EXISTS (
+        SELECT 1 FROM "business_website" bw WHERE bw."adminId" = ap.id
+      ) AS "hasWebsite"
+    FROM "AdminProfile" ap
+    WHERE ap."userId" = ${userId}
+    LIMIT 1
+  `;
+
+  const admin = rows[0];
   if (!admin) throw provisioningError("ADMIN_PROFILE_MISSING");
-  if (admin.subscription.length === 0) {
+  if (!admin.hasActiveSubscription) {
     throw provisioningError("SUBSCRIPTION_PROVISIONING_INCOMPLETE");
   }
-  if (!admin.businessWebsite) {
+  if (!admin.hasWebsite) {
     throw provisioningError("WEBSITE_PROVISIONING_INCOMPLETE");
   }
 
   return {
-    adminId: admin.id,
+    adminId: admin.adminId,
     isOnboardingComplete: admin.onboardingCompletedAt != null,
   };
 };

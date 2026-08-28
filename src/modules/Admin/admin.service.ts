@@ -459,16 +459,23 @@ const getOnboardingStatus = async (
   // The setup wizard only consumes the five required steps. Avoid five extra
   // CRM count queries on every step save/refetch; optional checklist counts are
   // only needed once the owner can actually enter the dashboard.
-  const [serviceAreaCount, teamCount, clientCount, bookingCount, publishedBookingFormCount] =
-    admin.onboardingCompletedAt
-      ? await Promise.all([
-          prisma.workLocation.count({ where: { adminId: admin.id } }),
-          prisma.staffProfile.count({ where: { adminId: admin.id, status: "ACTIVE" } }),
-          prisma.client.count({ where: { adminId: admin.id, status: "ACTIVE" } }),
-          prisma.booking.count({ where: { adminId: admin.id } }),
-          prisma.bookingForm.count({ where: { adminId: admin.id, published: true } }),
-        ])
-      : [0, 0, 0, 0, 0];
+  type OptionalOnboardingFlagsRow = {
+    hasServiceArea: boolean;
+    hasTeam: boolean;
+    hasClient: boolean;
+    hasBooking: boolean;
+    hasPublishedBookingForm: boolean;
+  };
+  const optionalRow = admin.onboardingCompletedAt
+    ? (await prisma.$queryRaw<OptionalOnboardingFlagsRow[]>`
+        SELECT
+          EXISTS (SELECT 1 FROM "WorkLocation" wl WHERE wl."adminId" = ${admin.id}) AS "hasServiceArea",
+          EXISTS (SELECT 1 FROM "StaffProfile" sp WHERE sp."adminId" = ${admin.id} AND sp.status = 'ACTIVE') AS "hasTeam",
+          EXISTS (SELECT 1 FROM "client" c WHERE c."adminId" = ${admin.id} AND c.status = 'ACTIVE') AS "hasClient",
+          EXISTS (SELECT 1 FROM "booking" b WHERE b."adminId" = ${admin.id}) AS "hasBooking",
+          EXISTS (SELECT 1 FROM "booking_form" bf WHERE bf."adminId" = ${admin.id} AND bf.published = true) AS "hasPublishedBookingForm"
+      `)[0]
+    : null;
 
   const steps: OnboardingStepResult[] = ONBOARDING_STEPS.map((step) => {
     const isCompleted = completed.has(step.key);
@@ -487,11 +494,11 @@ const getOnboardingStatus = async (
     Exclude<GettingStartedStepKey, OnboardingStepKey>,
     boolean
   > = {
-    service_area: serviceAreaCount > 0,
-    team: teamCount > 0,
-    client: clientCount > 0,
-    booking: bookingCount > 0,
-    online_booking: publishedBookingFormCount > 0,
+    service_area: optionalRow?.hasServiceArea ?? false,
+    team: optionalRow?.hasTeam ?? false,
+    client: optionalRow?.hasClient ?? false,
+    booking: optionalRow?.hasBooking ?? false,
+    online_booking: optionalRow?.hasPublishedBookingForm ?? false,
   };
 
   const gettingStartedSteps: GettingStartedStepResult[] =
@@ -825,10 +832,11 @@ const completeOnboardingStep = async (
   }
 
   if (step === "services") {
-    const serviceCount = await prisma.serviceCatalog.count({
+    const service = await prisma.serviceCatalog.findFirst({
       where: { adminId: admin.id },
+      select: { id: true },
     });
-    if (serviceCount === 0) {
+    if (!service) {
       throw new AppError(status.CONFLICT, "Add at least one service before continuing.", {
         code: "ONBOARDING_SERVICE_REQUIRED",
         retryable: false,

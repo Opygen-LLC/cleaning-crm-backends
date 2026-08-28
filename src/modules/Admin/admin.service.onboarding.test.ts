@@ -3,12 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../lib/prisma/prisma", () => ({
   prisma: {
     adminProfile: { findUnique: vi.fn(), update: vi.fn() },
-    serviceCatalog: { count: vi.fn() },
-    workLocation: { count: vi.fn() },
-    staffProfile: { count: vi.fn() },
-    client: { count: vi.fn() },
-    booking: { count: vi.fn() },
-    bookingForm: { count: vi.fn() },
+    serviceCatalog: { findFirst: vi.fn() },
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -28,12 +24,8 @@ import { adminService } from "./admin.service";
 
 const db = prisma as unknown as {
   adminProfile: { findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
-  serviceCatalog: { count: ReturnType<typeof vi.fn> };
-  workLocation: { count: ReturnType<typeof vi.fn> };
-  staffProfile: { count: ReturnType<typeof vi.fn> };
-  client: { count: ReturnType<typeof vi.fn> };
-  booking: { count: ReturnType<typeof vi.fn> };
-  bookingForm: { count: ReturnType<typeof vi.fn> };
+  serviceCatalog: { findFirst: ReturnType<typeof vi.fn> };
+  $queryRaw: ReturnType<typeof vi.fn>;
 };
 
 const USER_ID = "user-1";
@@ -81,17 +73,19 @@ const bootstrapRow = (overrides: Record<string, unknown> = {}) => ({
 });
 
 const optionalCounts = () => {
-  db.workLocation.count.mockResolvedValue(0);
-  db.staffProfile.count.mockResolvedValue(0);
-  db.client.count.mockResolvedValue(0);
-  db.booking.count.mockResolvedValue(0);
-  db.bookingForm.count.mockResolvedValue(0);
+  db.$queryRaw.mockResolvedValue([{
+    hasServiceArea: false,
+    hasTeam: false,
+    hasClient: false,
+    hasBooking: false,
+    hasPublishedBookingForm: false,
+  }]);
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
   optionalCounts();
-  db.serviceCatalog.count.mockResolvedValue(1);
+  db.serviceCatalog.findFirst.mockResolvedValue({ id: "service-1" });
 });
 
 describe("website-first onboarding status", () => {
@@ -206,7 +200,7 @@ describe("website-first onboarding status", () => {
 
   it("requires at least one ServiceCatalog record before completing services", async () => {
     db.adminProfile.findUnique.mockResolvedValue(statusRow(["business_profile", "branding"]));
-    db.serviceCatalog.count.mockResolvedValue(0);
+    db.serviceCatalog.findFirst.mockResolvedValue(null);
 
     await expect(adminService.completeOnboardingStep(USER_ID, "services")).rejects.toMatchObject({
       statusCode: 409,
