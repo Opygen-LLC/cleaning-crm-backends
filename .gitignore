@@ -6,7 +6,9 @@
 dist
 
 # Local env files
+.env
 .env.local
+.env.runtime
 task.md
 .Deployments.md
 .agent.md

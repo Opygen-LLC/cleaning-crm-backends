@@ -1,7 +1,0 @@
-Delete these files from the source repository/worktree if present:
-
-.env
-
-Do NOT delete the runtime-only .env.runtime on the Google Compute Engine host. It must remain untracked and is generated from Google Secret Manager by scripts/gcp/load-secrets.sh.
-
-If the old populated .env was ever shared outside the trusted environment, rotate all credentials it contained before production rollout.
