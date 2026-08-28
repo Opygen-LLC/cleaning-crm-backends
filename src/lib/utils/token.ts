@@ -27,8 +27,9 @@ const getRefreshToken = (payload: JwtPayload) =>
     } as SignOptions);
 
 /**
- * Access credentials stay host-only on api.opygen.com. The frontend never
- * receives this credential, even as an HttpOnly domain cookie.
+ * Canonical browser credentials are host-only. When the API is reached through
+ * Next.js /backend-api, Set-Cookie is received from the frontend origin, so the
+ * browser stores this cookie only for that frontend host.
  */
 const setAccessTokenCookie = (res: Response, token: string) => {
     CookieUtils.setCookie(res, "accessToken", token, {
@@ -41,20 +42,21 @@ const setAccessTokenCookie = (res: Response, token: string) => {
 };
 
 /**
- * Keep the refresh token host-only on api.opygen.com. The browser sends it
- * only to auth endpoints and frontend JavaScript can never read it.
+ * Refresh is root-scoped so the cookie works through the /backend-api BFF path.
+ * HttpOnly + SameSite=Lax + the server's browserOriginGuard remain the security
+ * boundary; JavaScript never receives the token.
  */
 const setRefreshTokenCookie = (res: Response, token: string) => {
     CookieUtils.setCookie(res, "refreshToken", token, {
         httpOnly: true,
         secure: SECURE_COOKIE,
         sameSite: "lax",
-        path: "/api/v1/auth",
+        path: "/",
         maxAge: REFRESH_COOKIE_MAX_AGE_MS,
     });
 };
 
-/** Better Auth session is also API-host-only and HttpOnly. */
+/** Better Auth session follows the same host-only BFF cookie contract. */
 const setBetterAuthSessionCookie = (res: Response, token: string) => {
     CookieUtils.setCookie(res, "better-auth.session_token", token, {
         httpOnly: true,
@@ -70,7 +72,13 @@ const clearAuthCookies = (res: Response) => {
     const sharedRole = { ...host, domain: COOKIE_DOMAIN };
 
     CookieUtils.clearCookie(res, "accessToken", host);
+    CookieUtils.clearCookie(res, "refreshToken", host);
+
+    // Rollout cleanup: old direct-API/BFF experiments may have left a refresh
+    // cookie on one of these paths. Clear them explicitly so there is never a
+    // stale same-name cookie with a more specific path.
     CookieUtils.clearCookie(res, "refreshToken", { ...host, path: "/api/v1/auth" });
+    CookieUtils.clearCookie(res, "refreshToken", { ...host, path: "/backend-api/auth" });
     CookieUtils.clearCookie(res, "better-auth.session_token", host);
     CookieUtils.clearCookie(res, "user_role", sharedRole);
 
@@ -81,8 +89,11 @@ const clearAuthCookies = (res: Response) => {
     }
 
     // Remove older domain-scoped variants of credentials created before Phase 5.
-    for (const name of ["accessToken", "refreshToken", "better-auth.session_token"]) {
-        CookieUtils.clearCookie(res, name, { path: "/", domain: COOKIE_DOMAIN });
+    if (COOKIE_DOMAIN) {
+        for (const name of ["accessToken", "refreshToken", "better-auth.session_token"]) {
+            CookieUtils.clearCookie(res, name, { path: "/", domain: COOKIE_DOMAIN });
+        }
+        CookieUtils.clearCookie(res, "refreshToken", { path: "/api/v1/auth", domain: COOKIE_DOMAIN });
     }
 };
 

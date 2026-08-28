@@ -24,6 +24,9 @@ import {
   DB_POOL_IDLE_TIMEOUT_MS,
   DB_POOL_MAX,
   DB_POOL_MIN,
+  APP_VERSION,
+  BUILD_DATE,
+  GIT_SHA,
   NODE_ENV,
   PERFORMANCE_METRICS_TOKEN,
   TRUST_PROXY_HOPS,
@@ -277,6 +280,15 @@ app.get("/health/website-routing", async (req: Request, res: Response) => {
     status: data.ok ? "ok" : "degraded",
     timestamp: new Date().toISOString(),
     data,
+  });
+});
+
+app.get("/version", (_req: Request, res: Response) => {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  return res.status(200).json({
+    version: APP_VERSION,
+    gitSha: GIT_SHA,
+    buildDate: BUILD_DATE,
   });
 });
 

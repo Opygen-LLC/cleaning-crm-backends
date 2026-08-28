@@ -41,12 +41,6 @@ const parseDurationMs = (value: string): number | null => {
     return amount * multiplier;
 };
 
-const hostBelongsToCookieDomain = (host: string, cookieDomain: string): boolean => {
-    const parent = cookieDomain.replace(/^\./, "").toLowerCase();
-    const normalized = host.toLowerCase();
-    return normalized === parent || normalized.endsWith(`.${parent}`);
-};
-
 export const assertAuthSecurityConfiguration = (): void => {
     if (NODE_ENV !== "production") return;
 
@@ -66,12 +60,11 @@ export const assertAuthSecurityConfiguration = (): void => {
         throw new Error("Production frontend/API authentication origins must use HTTPS");
     }
 
-    if (!COOKIE_DOMAIN || !COOKIE_DOMAIN.startsWith(".") || !COOKIE_DOMAIN.includes(".")) {
-        throw new Error("COOKIE_DOMAIN is required in production and must be a shared parent domain such as .opygen.com");
-    }
-
-    if (!hostBelongsToCookieDomain(frontendUrl.hostname, COOKIE_DOMAIN) || !hostBelongsToCookieDomain(apiUrl.hostname, COOKIE_DOMAIN)) {
-        throw new Error("FRONTEND_URL and BETTER_AUTH_URL must both belong to COOKIE_DOMAIN");
+    // Canonical auth cookies are host-only and no longer depend on a shared
+    // parent domain. COOKIE_DOMAIN is optional and used only to delete legacy
+    // domain-scoped cookies during rollout.
+    if (COOKIE_DOMAIN && (!COOKIE_DOMAIN.startsWith(".") || !COOKIE_DOMAIN.includes("."))) {
+        throw new Error("COOKIE_DOMAIN, when set for legacy cleanup, must be a parent domain such as .opygen.com");
     }
 
     const accessMs = parseDurationMs(ACCESS_TOKEN_EXPIRES_IN);
@@ -82,8 +75,12 @@ export const assertAuthSecurityConfiguration = (): void => {
     const explicitAllowedOrigins = AUTH_ALLOWED_ORIGINS
         .map(normalizeOrigin)
         .filter((value): value is string => Boolean(value));
-    if (!explicitAllowedOrigins.includes(frontend) || !explicitAllowedOrigins.includes(api)) {
-        throw new Error("AUTH_ALLOWED_ORIGINS must explicitly include both FRONTEND_URL and BETTER_AUTH_URL");
+
+    // Normal browser authentication enters through the frontend BFF, so the
+    // frontend origin is the only mandatory browser origin. BETTER_AUTH_URL may
+    // be a private/public upstream and does not need to share a cookie domain.
+    if (!explicitAllowedOrigins.includes(frontend)) {
+        throw new Error("AUTH_ALLOWED_ORIGINS must explicitly include FRONTEND_URL");
     }
 };
 

@@ -60,6 +60,12 @@ describe("auth HTTP/controller contract",()=>{
         const r=await call(authController.me,{user:{id:"user-1",role:"ADMIN",email:"jamie@example.com"} as never});
         expect(r.statusCode).toBe(200); expect(r.body).toMatchObject({success:true,data:{id:"user-1",emailVerified:true,status:"ACTIVE"}});
     });
+    it("session confirms the browser-authenticated account without exposing credentials",async()=>{
+        const r=await call(authController.session,{user:{id:"user-1",role:"ADMIN",email:"jamie@example.com"} as never});
+        expect(r.statusCode).toBe(200);
+        expect(r.body).toMatchObject({success:true,data:{authenticated:true,user:{id:"user-1",emailVerified:true,status:"ACTIVE"}}});
+        expect(JSON.stringify(r.body)).not.toMatch(/access-secret|refresh-secret|session-secret/);
+    });
     it("refresh rotates cookies but exposes only refreshed + role",async()=>{
         const r=await call(authController.getNewToken,{cookies:{refreshToken:"refresh-secret","better-auth.session_token":"session-secret"}} as never);
         expect(r.statusCode).toBe(200); expect(r.cookies.map(c=>c.name)).toEqual(["accessToken","refreshToken","better-auth.session_token"]);

@@ -22,8 +22,10 @@ x-app-common: &app-common
     FRONTEND_URL: https://cleaningcrm.opygen.com
     APP_URL: https://cleaningcrm.opygen.com
     BETTER_AUTH_URL: https://api.opygen.com
+    # Optional rollout-only cleanup scope for legacy Domain=.opygen.com cookies.
+    # Canonical access/refresh/session cookies are host-only.
     COOKIE_DOMAIN: .opygen.com
-    AUTH_ALLOWED_ORIGINS: https://cleaningcrm.opygen.com,https://api.opygen.com
+    AUTH_ALLOWED_ORIGINS: https://cleaningcrm.opygen.com
     ACCESS_TOKEN_EXPIRES_IN: 15m
     REFRESH_TOKEN_EXPIRES_IN: 30d
   depends_on:

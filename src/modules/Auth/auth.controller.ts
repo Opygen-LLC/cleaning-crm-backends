@@ -70,6 +70,16 @@ const me = catchAsync(async (req, res) => {
     });
 });
 
+const session = catchAsync(async (req, res) => {
+    const user = await authService.me(req.user);
+    sendResponse(res, {
+        httpStatusCode: httpStatus.OK,
+        success: true,
+        message: "Authenticated session confirmed",
+        data: { authenticated: true, user },
+    });
+});
+
 const getNewToken = catchAsync(async (req, res) => {
     const refreshToken = req.cookies.refreshToken;
     const sessionToken = req.cookies["better-auth.session_token"];
@@ -188,6 +198,6 @@ const logout = catchAsync(async (req, res) => {
 });
 
 export default {
-    register, login, me, getNewToken, verifyEmail, resendOtp, forgotPassword,
+    register, login, me, session, getNewToken, verifyEmail, resendOtp, forgotPassword,
     resetPassword, changePassword, logout,
 };

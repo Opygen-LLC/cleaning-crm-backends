@@ -44,6 +44,12 @@ router.get(
     authController.me,
 );
 
+router.get(
+    "/session",
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    authController.session,
+);
+
 router.post("/refresh-token", authController.getNewToken);
 router.post(
     "/verify-email",
