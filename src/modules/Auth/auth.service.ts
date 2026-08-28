@@ -236,6 +236,7 @@ const getNewToken = async (
         accessToken: newAccessToken,
         refreshToken: newRefreshToken,
         sessionToken: token,
+        role: typeof data.role === "string" ? data.role : undefined,
     };
 };
 
@@ -466,14 +467,20 @@ const changePassword = async (
     };
 };
 
-const logout = async (sessionToken: string) => {
-    const result = await auth.api.signOut({
-        headers: new Headers({
-            Authorization: `Bearer ${sessionToken}`,
-        }),
-    });
+const logout = async (sessionToken?: string) => {
+    // Logout is deliberately idempotent. Clearing browser credentials should
+    // still succeed if the server-side session has already expired/revoked.
+    if (!sessionToken) return { success: true };
 
-    return result;
+    try {
+        return await auth.api.signOut({
+            headers: new Headers({
+                Authorization: `Bearer ${sessionToken}`,
+            }),
+        });
+    } catch {
+        return { success: true };
+    }
 };
 
 const userService = {

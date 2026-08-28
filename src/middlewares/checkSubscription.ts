@@ -27,10 +27,12 @@ import {
 } from "../lib/cache/authRuntimeCache";
 
 function getAccessToken(req: Request): string | undefined {
+  const cookieToken = CookieUtils.getCookie(req, "accessToken");
+  if (cookieToken) return cookieToken;
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith("Bearer "))
     return authHeader.slice("Bearer ".length).trim();
-  return CookieUtils.getCookie(req, "accessToken");
+  return undefined;
 }
 
 // ─── Shared cached subscription + plan loader ─────────────────────────────────

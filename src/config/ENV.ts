@@ -85,10 +85,22 @@ export const BETTER_AUTH_URL: string = process.env.BETTER_AUTH_URL as string;
 export const APP_URL: string = process.env.APP_URL as string;
 export const FRONTEND_URL: string = process.env.FRONTEND_URL as string;
 
-// Cookie domain shared across subdomains (e.g. api.faysaldev.com and
-// app.faysaldev.com both need to read the same cookie). Leave unset in
-// local dev (localhost) where a domain attribute would break cookies.
-export const COOKIE_DOMAIN: string | undefined = process.env.COOKIE_DOMAIN;
+// Shared parent domain for ONLY the short-lived access/role cookies used by
+// the frontend Next.js proxy (production example: .opygen.com). Refresh and
+// Better Auth session cookies remain host-only on the API. Leave unset locally.
+export const COOKIE_DOMAIN: string | undefined = process.env.COOKIE_DOMAIN?.trim() || undefined;
+
+export const AUTH_ALLOWED_ORIGINS: string[] = (process.env.AUTH_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((value) => value.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+
+export type ProcessRole = "api" | "worker" | "scheduler" | "bootstrap";
+export const PROCESS_ROLE: ProcessRole = (() => {
+    const value = (process.env.PROCESS_ROLE || "api").trim().toLowerCase();
+    if (["api", "worker", "scheduler", "bootstrap"].includes(value)) return value as ProcessRole;
+    throw new Error(`Invalid PROCESS_ROLE: ${value}`);
+})();
 
 export const ACCESS_TOKEN_SECRET: string = process.env
     .ACCESS_TOKEN_SECRET as string;

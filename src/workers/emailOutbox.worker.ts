@@ -231,11 +231,10 @@ export const startEmailOutboxWorker = () => {
     });
   };
 
-  // Process immediately after boot, then continue polling. `unref` allows a
-  // graceful process shutdown without the timer keeping Node alive by itself.
+  // Dedicated worker process: keep the polling timer referenced so the worker
+  // remains alive even when the DB pool is momentarily idle.
   tick();
   timer = setInterval(tick, OUTBOX_WORKER_POLL_MS);
-  timer.unref();
   logger.info(`[OUTBOX] worker started (poll=${OUTBOX_WORKER_POLL_MS}ms, batch=${OUTBOX_WORKER_BATCH_SIZE})`);
 };
 

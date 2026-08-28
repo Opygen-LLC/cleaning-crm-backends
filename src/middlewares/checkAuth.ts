@@ -14,19 +14,18 @@ import {
 } from "../lib/cache/authRuntimeCache";
 import { privateResponseCache } from "./privateResponseCache";
 
-// ─── Cross-domain auth note ──────────────────────────────────────────────────
-
-// The frontend (opygen.com) and API (api.faysaldev.com) are unrelated root
-// domains, so cookies cannot bridge them. Access tokens are accepted from both
-// Authorization: Bearer <token> headers (production) and the accessToken cookie
-// (same-origin / local dev). See original file for full explanation.
-
+// Browser authentication is cookie-first. Authorization: Bearer remains
+// supported for explicit server-to-server/integration callers, but cannot
+// shadow a valid browser cookie when both are present.
 const getAccessTokenFromRequest = (req: Request): string | undefined => {
+    const cookieToken = CookieUtils.getCookie(req, "accessToken");
+    if (cookieToken) return cookieToken;
+
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith("Bearer ")) {
         return authHeader.slice("Bearer ".length).trim();
     }
-    return CookieUtils.getCookie(req, "accessToken");
+    return undefined;
 };
 
 export const checkAuth =
@@ -136,8 +135,8 @@ export const checkAuth =
             }
 
             // ── Optional session bookkeeping ────────────────────────────────
-            // If the better-auth session cookie is present (same-origin / local
-            // dev), verify it's still valid. We do NOT fail if it's absent —
+            // If the API-host-only Better Auth session cookie is present, verify it
+            // is still valid. We do NOT fail if it's absent —
             // only if it's present but revoked.
             const sessionToken = CookieUtils.getCookie(
                 req,

@@ -20,12 +20,10 @@ import { notFound } from "./middlewares/notFound";
 import { maintenanceModeGate } from "./middlewares/maintenanceMode";
 import path from "path";
 import {
-  BETTER_AUTH_URL,
   DB_POOL_CONNECTION_TIMEOUT_MS,
   DB_POOL_IDLE_TIMEOUT_MS,
   DB_POOL_MAX,
   DB_POOL_MIN,
-  FRONTEND_URL,
   NODE_ENV,
   PERFORMANCE_METRICS_TOKEN,
   TRUST_PROXY_HOPS,
@@ -34,28 +32,12 @@ import {
 import { WebsiteHostResolverService } from "./modules/Website/websiteHostResolver.service";
 import { inspectWebsiteWildcardInfrastructure } from "./modules/Website/websitePlatformConfig";
 
-import "../src/cron/staffStatus.cron";
-import "../src/cron/recurringBooking.cron";
-import "../src/cron/invoiceOverdue.cron";
-// PERF FIX (Phase 1.1): keeps the Neon Postgres compute instance warm so
-// requests don't pay a multi-second cold-start cost after idle periods.
-// See dbKeepAlive.cron.ts for full context.
-import "../src/cron/dbKeepAlive.cron";
-import "../src/cron/websiteAnalyticsRetention.cron";
-// BUGFIX: unlike the three crons above (which self-schedule via a top-level
-// cron.schedule() call the moment their module is imported), subscriptionExpiry.cron.ts
-// deliberately wraps its scheduling in an exported scheduleSubscriptionExpiryJob()
-// function (see that file's own header comment). A bare side-effect import
-// never called it, so trial/paid subscription expiry silently never ran in
-// production — accounts whose trial or billing period lapsed stayed ACTIVE
-// forever with full feature access. Import the function and invoke it.
-import { scheduleSubscriptionExpiryJob } from "../src/cron/subscriptionExpiry.cron";
 import logRequestResponse from "./middlewares/logger.middleware";
 import { requestContext } from "./middlewares/requestContext";
 import { getPerformanceSnapshot } from "./lib/monitoring/performanceMetrics";
 import { getInfrastructureAlignment } from "./lib/monitoring/infrastructure";
-
-scheduleSubscriptionExpiryJob();
+import { getAuthenticatedOrigins } from "./config/authSecurity";
+import { browserOriginGuard } from "./middlewares/browserOriginGuard";
 
 const app = express();
 
@@ -82,15 +64,7 @@ app.use(express.urlencoded({ extended: true, limit: "64kb" }));
 // only /api/v1/website/public/* and receive NON-credentialed CORS. This lets
 // free subdomains/custom domains submit booking/estimate/contact forms without
 // granting those origins browser access to authenticated CRM endpoints.
-const allowedOrigins = [
-  FRONTEND_URL,
-  BETTER_AUTH_URL,
-  "http://localhost:3000",
-  "http://localhost:3001",
-  "http://localhost:5000",
-  "https://cleaning-crm-clients.vercel.app",
-  "https://cleaningcrm.opygen.com",
-].filter(Boolean) as string[];
+const allowedOrigins = getAuthenticatedOrigins();
 
 const authenticatedCors = cors({
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -287,7 +261,7 @@ app.get("/", (_req: Request, res: Response) => {
   });
 });
 
-app.use("/api/v1", maintenanceModeGate, routes);
+app.use("/api/v1", browserOriginGuard, maintenanceModeGate, routes);
 
 app.use(globalErrorHandler);
 app.use(notFound);

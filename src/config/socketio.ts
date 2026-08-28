@@ -1,270 +1,151 @@
-import { Server as SocketIOServer } from "socket.io";
-import { Server } from "http";
+import { Server as SocketIOServer, type Socket } from "socket.io";
+import type { Server } from "http";
 import { prisma } from "../lib/prisma/prisma";
-import { BETTER_AUTH_URL, FRONTEND_URL } from "./ENV";
+import { ACCESS_TOKEN_SECRET } from "./ENV";
+import { getAuthenticatedOrigins } from "./authSecurity";
+import { jwtUtils } from "../lib/utils/jwt";
 import logger from "../lib/logger";
+import { publishRealtimeEvent, startRealtimeSubscriber } from "../lib/realtime/realtimeBus";
 
-// CLEANUP (audit "Other Small Things"): this file used to log every
-// connection/join/disconnect event via plain console.log/warn/error, which
-// bypasses the app's existing winston setup (log level control, daily
-// rotating file transport, etc.) and spams stdout under real traffic.
-// Routed through the shared `logger` instead — connection lifecycle events
-// go to `debug` (only visible when explicitly enabled), rejections/errors
-// stay visible at `warn`/`error` in every environment.
+let io: SocketIOServer | undefined;
 
-// Singleton — exported so other modules can emit events (e.g. job status changes)
-let io: SocketIOServer;
+type SocketAuthContext = {
+    userId: string;
+    role: string;
+    adminId?: string;
+    staffId?: string;
+};
+
+const parseCookieHeader = (header: string | undefined): Record<string, string> => {
+    if (!header) return {};
+    const out: Record<string, string> = {};
+    for (const part of header.split(";")) {
+        const index = part.indexOf("=");
+        if (index <= 0) continue;
+        const name = part.slice(0, index).trim();
+        const raw = part.slice(index + 1).trim();
+        try { out[name] = decodeURIComponent(raw); } catch { out[name] = raw; }
+    }
+    return out;
+};
+
+const authenticateSocket = async (socket: Socket): Promise<SocketAuthContext> => {
+    const cookies = parseCookieHeader(socket.handshake.headers.cookie);
+    const accessToken = cookies.accessToken;
+    const sessionToken = cookies["better-auth.session_token"];
+    if (!accessToken || !sessionToken) throw new Error("Authentication cookies are missing");
+
+    const verified = jwtUtils.verifyToken(accessToken, ACCESS_TOKEN_SECRET);
+    if (!verified.success || !verified.data?.userId || !verified.data?.role) {
+        throw new Error("Invalid access token");
+    }
+
+    const session = await prisma.session.findFirst({
+        where: {
+            token: sessionToken,
+            userId: String(verified.data.userId),
+            expiresAt: { gt: new Date() },
+        },
+        select: {
+            userId: true,
+            user: {
+                select: {
+                    role: true,
+                    status: true,
+                    admin: { select: { id: true } },
+                    staff: { select: { id: true } },
+                },
+            },
+        },
+    });
+
+    if (!session || session.user.status !== "ACTIVE" || session.user.role !== verified.data.role) {
+        throw new Error("Session is invalid or inactive");
+    }
+
+    return {
+        userId: session.userId,
+        role: session.user.role,
+        adminId: session.user.admin?.id,
+        staffId: session.user.staff?.id,
+    };
+};
+
+const joinCanonicalRooms = (socket: Socket, auth: SocketAuthContext) => {
+    if (auth.role === "ADMIN" && auth.adminId) socket.join(`admin:${auth.adminId}`);
+    if (auth.role === "STAFF" && auth.staffId) socket.join(`staff:${auth.staffId}`);
+    if (auth.role === "SUPER_ADMIN") socket.join("super-admins");
+};
 
 const setUpSocketIO = (server: Server): SocketIOServer => {
     io = new SocketIOServer(server, {
         cors: {
-            // FIX: every socket client in this app connects with
-            // `withCredentials: true` (see useSocketJobStatus / useSocketStaffDashboard),
-            // and browsers reject a wildcard "*" origin on credentialed
-            // requests. Mirror the same allow-list the Express CORS
-            // middleware in server.ts already uses, with credentials enabled,
-            // so the polling-transport handshake isn't silently blocked.
-            origin: [
-                FRONTEND_URL,
-                BETTER_AUTH_URL,
-                "http://localhost:3000",
-                "http://localhost:5000",
-                "https://cleaning-crm-clients.vercel.app",
-            ],
+            origin: getAuthenticatedOrigins(),
             methods: ["GET", "POST"],
             credentials: true,
         },
     });
 
-    io.on("connection", (socket) => {
-        logger.debug("[Socket.IO] A new client connected");
-
-        /**
-         * FIX: joinAdminRoom now requires a valid, unexpired session token and
-         * verifies the token belongs to the claimed adminId before joining the room.
-         * Without this check any socket caller could join any admin's room simply
-         * by guessing a UUID.
-         */
-        socket.on(
-            "joinAdminRoom",
-            async (adminId: string, sessionToken: string) => {
-                if (!adminId || !sessionToken) {
-                    logger.warn(
-                        "[Socket.IO] joinAdminRoom rejected: missing adminId or sessionToken",
-                    );
-                    return;
-                }
-
-                try {
-                    const session = await prisma.session.findFirst({
-                        where: {
-                            token: sessionToken,
-                            expiresAt: { gt: new Date() },
-                        },
-                        include: {
-                            user: {
-                                include: { admin: true },
-                            },
-                        },
-                    });
-
-                    if (session?.user?.admin?.id === adminId) {
-                        socket.join(`admin:${adminId}`);
-                        logger.debug(
-                            `[Socket.IO] Socket joined admin room: admin:${adminId}`,
-                        );
-                    } else {
-                        logger.warn(
-                            `[Socket.IO] joinAdminRoom rejected: token does not match adminId ${adminId}`,
-                        );
-                    }
-                } catch (err) {
-                    logger.error(`[Socket.IO] joinAdminRoom error: ${String(err)}`);
-                }
-            },
-        );
-
-        /**
-         * PERF FIX (Phase 5, performance audit — frontend polling): the
-         * SuperAdmin sidebar badge (`SuperAdminLayoutClient.tsx`) was polling
-         * `GET /super-admin/billing-history/pending-proofs` every 60s on
-         * *every* super-admin route to keep the "pending proofs" count fresh
-         * — exactly the pattern flagged in the production log
-         * (`pending-proofs` hit repeatedly across an extended session).
-         *
-         * `joinSuperAdminRoom` lets a super-admin's socket join a shared
-         * `super-admins` room (validated the same way as joinAdminRoom /
-         * joinStaffRoom — the session token must belong to a user whose role
-         * is SUPER_ADMIN and whose id matches the claimed id) so the server
-         * can push `payment-proof:submitted` / `payment-proof:approved` /
-         * `payment-proof:rejected` events instead of the client polling for
-         * them. See emitToSuperAdmins below and its call sites in
-         * subscription.service.ts (submitPaymentProof) and
-         * superAdmin.service.ts (approvePaymentProof / rejectPaymentProof).
-         */
-        socket.on(
-            "joinSuperAdminRoom",
-            async (userId: string, sessionToken: string) => {
-                if (!userId || !sessionToken) {
-                    logger.warn(
-                        "[Socket.IO] joinSuperAdminRoom rejected: missing userId or sessionToken",
-                    );
-                    return;
-                }
-
-                try {
-                    const session = await prisma.session.findFirst({
-                        where: {
-                            token: sessionToken,
-                            expiresAt: { gt: new Date() },
-                        },
-                        include: { user: true },
-                    });
-
-                    if (
-                        session?.user?.id === userId &&
-                        session.user.role === "SUPER_ADMIN"
-                    ) {
-                        socket.join("super-admins");
-                        logger.debug(
-                            "[Socket.IO] Socket joined super-admins room",
-                        );
-                    } else {
-                        logger.warn(
-                            "[Socket.IO] joinSuperAdminRoom rejected: token does not match a SUPER_ADMIN user",
-                        );
-                    }
-                } catch (err) {
-                    logger.error(
-                        `[Socket.IO] joinSuperAdminRoom error: ${String(err)}`,
-                    );
-                }
-            },
-        );
-
-        /**
-         * Staff equivalent of joinAdminRoom — required so that staff members
-         * receive real-time events scoped to *them* (e.g. "you've been
-         * assigned a new job") rather than only the admin who dispatched it.
-         *
-         * Validates the session token belongs to a user whose StaffProfile.id
-         * matches the claimed staffId before joining the room, for the same
-         * reason joinAdminRoom does: prevent any socket from joining another
-         * staff member's room just by guessing a UUID.
-         */
-        socket.on(
-            "joinStaffRoom",
-            async (staffId: string, sessionToken: string) => {
-                if (!staffId || !sessionToken) {
-                    logger.warn(
-                        "[Socket.IO] joinStaffRoom rejected: missing staffId or sessionToken",
-                    );
-                    return;
-                }
-
-                try {
-                    const session = await prisma.session.findFirst({
-                        where: {
-                            token: sessionToken,
-                            expiresAt: { gt: new Date() },
-                        },
-                        include: {
-                            user: {
-                                include: { staff: true },
-                            },
-                        },
-                    });
-
-                    if (session?.user?.staff?.id === staffId) {
-                        socket.join(`staff:${staffId}`);
-                        logger.debug(
-                            `[Socket.IO] Socket joined staff room: staff:${staffId}`,
-                        );
-                    } else {
-                        logger.warn(
-                            `[Socket.IO] joinStaffRoom rejected: token does not match staffId ${staffId}`,
-                        );
-                    }
-                } catch (err) {
-                    logger.error(`[Socket.IO] joinStaffRoom error: ${String(err)}`);
-                }
-            },
-        );
-
-        // Listen for messages
-        socket.on("message", (data) => {
-            logger.debug(`[Socket.IO] Message from client: ${JSON.stringify(data)}`);
-            io.emit("message", { text: "Hello from the server!" });
-        });
-
-        // Handle disconnect
-        socket.on("disconnect", () => {
-            logger.debug("[Socket.IO] A client disconnected");
-        });
-
-        // Custom event example
-        socket.on("joinRoom", (room) => {
-            socket.join(room);
-            logger.debug(`[Socket.IO] Socket joined room: ${room}`);
-        });
-
-        // Example: send a message to a specific room
-        socket.on("sendToRoom", (room, message) => {
-            socket.to(room).emit("message", { text: message });
-        });
+    io.use(async (socket, next) => {
+        try {
+            socket.data.auth = await authenticateSocket(socket);
+            next();
+        } catch (error) {
+            logger.warn(`[Socket.IO] rejected connection: ${error instanceof Error ? error.message : String(error)}`);
+            next(new Error("unauthorized"));
+        }
     });
 
+    io.on("connection", (socket) => {
+        const auth = socket.data.auth as SocketAuthContext;
+        joinCanonicalRooms(socket, auth);
+        logger.debug(`[Socket.IO] authenticated ${auth.role} socket connected`);
+
+        // Backward-compatible room events no longer accept browser-readable
+        // session tokens. The authenticated handshake is the authority.
+        socket.on("joinAdminRoom", (adminId: string) => {
+            if (auth.role === "ADMIN" && auth.adminId === adminId) socket.join(`admin:${adminId}`);
+        });
+        socket.on("joinStaffRoom", (staffId: string) => {
+            if (auth.role === "STAFF" && auth.staffId === staffId) socket.join(`staff:${staffId}`);
+        });
+        socket.on("joinSuperAdminRoom", (userId: string) => {
+            if (auth.role === "SUPER_ADMIN" && auth.userId === userId) socket.join("super-admins");
+        });
+
+        socket.on("disconnect", () => logger.debug("[Socket.IO] authenticated client disconnected"));
+    });
+
+    startRealtimeSubscriber(io);
     return io;
 };
 
-/** Emit a real-time event to a specific admin's connected clients */
-export const emitToAdmin = (
-    adminId: string,
-    event: string,
-    payload: unknown,
-): void => {
-    if (!io) {
-        logger.warn("[Socket.IO] emitToAdmin called before io is initialised");
-        return;
-    }
-    io.to(`admin:${adminId}`).emit(event, payload);
+const localEmit = (target: "admin" | "staff" | "super-admins" | "all", id: string | undefined, event: string, payload: unknown) => {
+    if (!io) return;
+    if (target === "admin" && id) io.to(`admin:${id}`).emit(event, payload);
+    else if (target === "staff" && id) io.to(`staff:${id}`).emit(event, payload);
+    else if (target === "super-admins") io.to("super-admins").emit(event, payload);
+    else if (target === "all") io.emit(event, payload);
 };
 
-/** Emit a real-time event to a specific staff member's connected clients */
-export const emitToStaff = (
-    staffId: string,
-    event: string,
-    payload: unknown,
-): void => {
-    if (!io) {
-        logger.warn("[Socket.IO] emitToStaff called before io is initialised");
-        return;
-    }
-    io.to(`staff:${staffId}`).emit(event, payload);
+export const emitToAdmin = (adminId: string, event: string, payload: unknown): void => {
+    localEmit("admin", adminId, event, payload);
+    void publishRealtimeEvent({ scope: "admin", id: adminId }, event, payload);
 };
 
-/** Emit a real-time event to all connected clients (broadcast) */
+export const emitToStaff = (staffId: string, event: string, payload: unknown): void => {
+    localEmit("staff", staffId, event, payload);
+    void publishRealtimeEvent({ scope: "staff", id: staffId }, event, payload);
+};
+
 export const emitToAll = (event: string, payload: unknown): void => {
-    if (!io) {
-        logger.warn("[Socket.IO] emitToAll called before io is initialised");
-        return;
-    }
-    io.emit(event, payload);
+    localEmit("all", undefined, event, payload);
+    void publishRealtimeEvent({ scope: "all" }, event, payload);
 };
 
-/**
- * Emit a real-time event to every connected super-admin (see the
- * joinSuperAdminRoom handler above). Used to replace the pending-proofs
- * polling flagged in Phase 5 of the performance audit with a push model.
- */
 export const emitToSuperAdmins = (event: string, payload: unknown): void => {
-    if (!io) {
-        logger.warn(
-            "[Socket.IO] emitToSuperAdmins called before io is initialised",
-        );
-        return;
-    }
-    io.to("super-admins").emit(event, payload);
+    localEmit("super-admins", undefined, event, payload);
+    void publishRealtimeEvent({ scope: "super-admins" }, event, payload);
 };
 
 export default setUpSocketIO;

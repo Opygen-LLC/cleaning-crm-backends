@@ -3,6 +3,9 @@ import { defineConfig } from "tsup";
 export default defineConfig({
     entry: [
         "src/index.ts",
+        "src/processes/worker.ts",
+        "src/processes/scheduler.ts",
+        "src/processes/bootstrap.ts",
         "src/scripts/backfillBusinessWebsites.ts",
         "src/scripts/migrateWebsiteRelease.ts",
         "src/scripts/phase2/reconcileAdminProvisioning.ts",

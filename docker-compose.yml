@@ -1,112 +1,135 @@
-# ─────────────────────────────────────────────────────────────
-# docker-compose.yml — Opygen Cleaning CRM Backend
-# Server IP   : 43.205.126.45
-# Public Host : https://43.205.126.45.sslip.io  (free TLS via sslip.io)
-# Frontend    : https://cleaningcrm.opygen.com
-# ─────────────────────────────────────────────────────────────
+# Google Compute Engine production topology for Cleaning CRM.
+# Run API/worker/scheduler as separate containers on the same VM/VPC.
+# PostgreSQL should be Google Cloud SQL (private IP) in the same region.
+# Secrets are loaded into .env.runtime from Google Secret Manager.
+
+x-app-common: &app-common
+  build:
+    context: .
+    target: production
+  restart: always
+  env_file:
+    - .env.runtime
+  environment: &common-environment
+    NODE_ENV: production
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+    REDIS_DB: 0
+    REDIS_REGION: local
+    REQUIRE_COLOCATED_INFRA: "true"
+    # Exactly one trusted reverse-proxy hop: Caddy -> API.
+    TRUST_PROXY_HOPS: 1
+    FRONTEND_URL: https://cleaningcrm.opygen.com
+    APP_URL: https://cleaningcrm.opygen.com
+    BETTER_AUTH_URL: https://api.opygen.com
+    COOKIE_DOMAIN: .opygen.com
+    AUTH_ALLOWED_ORIGINS: https://cleaningcrm.opygen.com,https://api.opygen.com
+  depends_on:
+    redis:
+      condition: service_healthy
+  networks:
+    - crm_network
 
 services:
-  # ── Node.js / Express + Socket.IO application ──────────────
-  app:
-    build:
-      context: .
-      target: production
-    container_name: cleaning_crm_app
-    restart: always
-    expose:
-      - "3000" # internal only — Caddy reverse-proxies external traffic
-    env_file:
-      - .env
+  api:
+    <<: *app-common
+    container_name: cleaning_crm_api
+    command: ["node", "dist/index.js"]
     environment:
-      - NODE_ENV=production
-      - BACKEND_IP=0.0.0.0
-      - PORT=3000
-      # Redis points to the sibling container, not localhost
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=
-      - REDIS_DB=0
-      # Region labels are used by the Phase 1 startup guard. Redis is local to
-      # this app host; set APP_REGION/DATABASE_REGION in .env after colocating DB.
-      # Production must declare the actual deployment/database regions. The
-      # API refuses to start when they differ, preventing accidental return to
-      # the previous Mumbai <-> Virginia topology.
-      - APP_REGION=${APP_REGION:?APP_REGION must be set in production}
-      - DATABASE_REGION=${DATABASE_REGION:?DATABASE_REGION must be set in production}
-      - REDIS_REGION=local
-      - REQUIRE_COLOCATED_INFRA=true
-      # Frontend URL for CORS whitelist
-      - FRONTEND_URL=https://cleaningcrm.opygen.com
-      - APP_URL=https://cleaningcrm.opygen.com
-      # BetterAuth base URL = public backend URL served by Caddy
-      - BETTER_AUTH_URL=https://43.205.126.45.sslip.io
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - crm_network
+      <<: *common-environment
+      PROCESS_ROLE: api
+      PORT: 3000
+      BACKEND_IP: 0.0.0.0
+      OUTBOX_WORKER_ENABLED: "false"
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/livez"]
+      interval: 20s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
 
+  worker:
+    <<: *app-common
+    container_name: cleaning_crm_worker
+    command: ["node", "dist/worker.js"]
+    environment:
+      <<: *common-environment
+      PROCESS_ROLE: worker
+      OUTBOX_WORKER_ENABLED: "true"
 
-  # ── One-shot schema migration/reconciliation runner ─────────
-  # Explicit release profile: this service never starts with normal `docker compose up`.
-  # Usage:
-  #   docker compose --profile release run --rm migrate
-  #   docker compose --profile release run --rm migrate node dist/reconcileAdminProvisioning.js
+  scheduler:
+    <<: *app-common
+    container_name: cleaning_crm_scheduler
+    command: ["node", "dist/scheduler.js"]
+    environment:
+      <<: *common-environment
+      PROCESS_ROLE: scheduler
+      # Cloud SQL is always-on; disable DB keepalive unless your provider needs it.
+      DB_KEEPALIVE_ENABLED: "false"
+
+  # Explicit one-shot seed/bootstrap task. Never runs with normal compose up.
+  bootstrap:
+    <<: *app-common
+    profiles: ["bootstrap"]
+    restart: "no"
+    command: ["node", "dist/bootstrap.js"]
+    environment:
+      <<: *common-environment
+      PROCESS_ROLE: bootstrap
+
+  # Explicit release-only schema migration. Run before app rollout.
   migrate:
     build:
       context: .
       target: migration
     profiles: ["release"]
+    restart: "no"
     env_file:
-      - .env
+      - .env.runtime
     environment:
-      - NODE_ENV=production
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=
-      - REDIS_DB=0
+      NODE_ENV: production
+      REDIS_REGION: local
+      REQUIRE_COLOCATED_INFRA: "true"
     depends_on:
       redis:
         condition: service_healthy
     networks:
       - crm_network
 
-  # ── Redis — session cache, Socket.IO adapter ────────────────
   redis:
     image: redis:7-alpine
     container_name: cleaning_crm_redis
     restart: always
-    command: redis-server --appendonly yes --save 60 1
-    # Makes REDIS_HOST=localhost work when the API runs directly on the host.
-    # Loopback binding keeps Redis unavailable to the public network.
-    ports:
-      - "127.0.0.1:6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
-      timeout: 5s
+      timeout: 3s
       retries: 5
     networks:
       - crm_network
 
-  # ── Caddy — TLS termination + reverse proxy ─────────────────
   caddy:
     image: caddy:2-alpine
     container_name: cleaning_crm_caddy
     restart: always
+    environment:
+      API_DOMAIN: api.opygen.com
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp" # HTTP/3 (QUIC) support
+      - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-      - caddy_logs:/var/log/caddy
     depends_on:
-      - app
+      api:
+        condition: service_healthy
     networks:
       - crm_network
 
@@ -114,7 +137,6 @@ volumes:
   redis_data:
   caddy_data:
   caddy_config:
-  caddy_logs:
 
 networks:
   crm_network:
