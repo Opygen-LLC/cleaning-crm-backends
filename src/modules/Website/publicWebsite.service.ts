@@ -314,7 +314,7 @@ const projectWebsite = (
   // routing-ready custom domain (and automatically promotes the first healthy
   // domain), while additional healthy domains remain aliases.
   const primaryDomain = entitlements.customDomains && entitlements.customDomainLimit > 0
-    ? website.domains.find((domain) => domain.isPrimary)?.domain ?? null
+    ? website.domains.find((domain: { isPrimary: boolean; domain: string }) => domain.isPrimary)?.domain ?? null
     : null;
   const canonicalUrl = getCanonicalWebsiteOrigin(website.subdomain, primaryDomain);
 
@@ -325,10 +325,10 @@ const projectWebsite = (
   });
 
   const selectedBookingForm = config.primaryBookingFormId
-    ? website.admin.bookingForms.find((form) => form.id === config.primaryBookingFormId) ?? null
+    ? website.admin.bookingForms.find((form: { id: string; slug: string; published: boolean; headline: string | null; subheading: string | null }) => form.id === config.primaryBookingFormId) ?? null
     : null;
   const selectedEstimateForm = config.primaryEstimateFormId
-    ? website.admin.estimateForms.find((form) => form.id === config.primaryEstimateFormId) ?? null
+    ? website.admin.estimateForms.find((form: { id: string; slug: string; published: boolean; headline: string | null; subheading: string | null }) => form.id === config.primaryEstimateFormId) ?? null
     : null;
   const bookingEnabled = config.bookingEnabled && Boolean(selectedBookingForm?.published);
   const estimateEnabled = config.estimateEnabled && Boolean(selectedEstimateForm?.published);
@@ -379,7 +379,7 @@ const projectWebsite = (
       seoDescription: entitlements.advancedSeo ? page.seoDescription : null,
     })),
     services: website.admin.serviceCatalogs.map(projectCanonicalService),
-    reviews: website.admin.reviews.map((review) => ({
+    reviews: website.admin.reviews.map((review: { clientName: string; rating: number; comment: string | null; adminReply: string | null; createdAt: Date }) => ({
       clientName: review.clientName,
       rating: review.rating,
       comment: review.comment,
@@ -387,7 +387,7 @@ const projectWebsite = (
       createdAt: review.createdAt,
     })),
     reviewSummary,
-    serviceAreas: website.admin.workLocations.map((location) => ({
+    serviceAreas: website.admin.workLocations.map((location: { city: string; postcode: string }) => ({
       city: location.city,
       postcode: location.postcode,
     })),

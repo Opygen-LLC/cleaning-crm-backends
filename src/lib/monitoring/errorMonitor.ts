@@ -104,12 +104,13 @@ const shouldSendPublicWebsiteError = async (event: MonitorEvent): Promise<boolea
 };
 
 const post = async (event: MonitorEvent): Promise<void> => {
-  if (!ERROR_MONITOR_WEBHOOK_URL) return;
+  const webhookUrl = ERROR_MONITOR_WEBHOOK_URL;
+  if (!webhookUrl) return;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1500);
   try {
     await traceAsyncOperation("external", "monitoring.webhook", () =>
-      fetch(ERROR_MONITOR_WEBHOOK_URL, {
+      fetch(webhookUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

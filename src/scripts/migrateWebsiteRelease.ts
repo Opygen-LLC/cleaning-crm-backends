@@ -86,7 +86,11 @@ export const runPhase10WebsiteMigration = async (
           continue;
         }
 
-        const repaired = await WebsiteReleaseMigrationService.reconcileAdminWebsiteForRelease(admin);
+        const repaired = await WebsiteReleaseMigrationService.reconcileAdminWebsiteForRelease({
+          adminId: admin.id,
+          userId: admin.userId,
+          businessName: admin.businessName,
+        });
         bumpIssues(result.issueCounts, repaired.detectedIssues);
         if (repaired.created) result.created += 1;
         else if (repaired.repaired) result.repaired += 1;

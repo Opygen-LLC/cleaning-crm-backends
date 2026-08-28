@@ -299,6 +299,7 @@ interface IPaymentHistoryFilters {
 // The DB stores PaymentMethod as an enum (BANK_TRANSFER, CASH, CHEQUE, MANUAL);
 // the frontend works with display labels ("Bank Transfer", "Cash", ...).
 const METHOD_LABELS: Record<PaymentMethod, string> = {
+    [PaymentMethod.STRIPE]: "Stripe",
     [PaymentMethod.BANK_TRANSFER]: "Bank Transfer",
     [PaymentMethod.CASH]: "Cash",
     [PaymentMethod.CHEQUE]: "Cheque",

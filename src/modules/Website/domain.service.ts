@@ -23,7 +23,7 @@ import {
 } from "./websiteDomainProvider.service";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { isWebsiteDomainRoutingReady, readyWebsiteDomainWhere } from "./websiteDomainReadiness";
-import { presentWebsiteDomain } from "./websiteDomainLifecycle";
+import { presentWebsiteDomain, type WebsiteDomainLifecycleInput } from "./websiteDomainLifecycle";
 import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { WebsiteEntitlementService, type WebsiteEntitlements } from "./websiteEntitlement.service";
@@ -48,7 +48,8 @@ const getOwnedDomain = async (domainId: string, user: IRequestUser) => {
 };
 
 
-const present = (domain: any) => presentWebsiteDomain(domain as any);
+const present = <T extends WebsiteDomainLifecycleInput & Record<string, unknown>>(domain: T) =>
+  presentWebsiteDomain(domain);
 
 const routingHostsForWebsite = async (websiteId: string, subdomain: string) => {
   const [aliases, domains] = await Promise.all([

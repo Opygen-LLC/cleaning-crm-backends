@@ -32,7 +32,7 @@ const getMyLeaves = catchAsync(async (req, res) => {
 /** DELETE /api/v1/staff/leave/:id  — staff cancels a pending leave */
 const cancelLeave = catchAsync(async (req, res) => {
     const result = await staffLeaveService.cancelLeave(
-        req.user,
+        req.user.id,
         req.params.id as string,
     );
 

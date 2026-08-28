@@ -12,7 +12,7 @@ export const readyWebsiteDomainWhere = {
   providerVerified: true,
   routingVerified: true,
   tlsStatus: { in: [...WEBSITE_READY_TLS_STATUSES] },
-} as const;
+};
 
 export const isWebsiteDomainRoutingReady = (domain: {
   status: string;

@@ -17,7 +17,7 @@ export interface RuntimeAdminSubscription {
 }
 
 export interface RuntimeAdminAccessContext {
-  role: UserRole.ADMIN;
+  role: "ADMIN";
   userStatus: string | null;
   adminId: string | null;
   subscription: RuntimeAdminSubscription | null;
@@ -25,7 +25,7 @@ export interface RuntimeAdminAccessContext {
 }
 
 export interface RuntimeStaffAccessContext {
-  role: UserRole.STAFF;
+  role: "STAFF";
   userStatus: string | null;
   adminId: string | null;
 }

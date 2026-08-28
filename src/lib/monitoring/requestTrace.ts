@@ -85,7 +85,7 @@ export const recordTraceResponseCache = (outcome: "hit" | "miss"): void => {
 export const recordTraceSpan = (
   kind: TraceSpanKind,
   durationMs: number,
-  name = kind,
+  name: string = kind,
 ): void => {
   const trace = storage.getStore();
   if (!trace) return;
