@@ -60,7 +60,12 @@
     "release:phase5:verify": "pnpm run security:phase5 && pnpm run release:phase3:verify && pnpm run typecheck",
     "observability:phase6": "node scripts/verifyPhase6Observability.mjs",
     "release:phase6:verify": "pnpm run observability:phase6 && pnpm run test:phase6:observability && pnpm run release:phase5:verify && pnpm run typecheck",
-    "test:phase6:observability": "vitest run src/lib/monitoring/requestTrace.test.ts src/lib/monitoring/performanceMetrics.test.ts"
+    "test:phase6:observability": "vitest run src/lib/monitoring/requestTrace.test.ts src/lib/monitoring/performanceMetrics.test.ts",
+    "test:phase7:qualification": "vitest run src/modules/EstimateForm/estimateForm.idempotency.test.ts src/modules/Website/websiteAcquisitionIntegration.test.ts",
+    "load:phase7:warm": "k6 run -e CACHE_MODE=warm scripts/load/phase7-load.js",
+    "load:phase7:cold": "k6 run -e CACHE_MODE=cold scripts/load/phase7-load.js",
+    "verify:phase7:release": "node scripts/phase7/verifyPhase7Release.mjs",
+    "release:phase7:verify": "pnpm run verify:phase7:release && pnpm run test:phase7:qualification && pnpm run release:phase6:verify && pnpm run typecheck"
   },
   "keywords": [],
   "author": "opygen",

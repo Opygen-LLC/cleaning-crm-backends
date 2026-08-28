@@ -35,6 +35,8 @@ import { publicWebsiteRoutes } from "../modules/Website/publicWebsite.routes";
 import { checkSubscription } from "../middlewares/checkSubscription";
 import express from "express";
 import { telemetryRoutes } from "../modules/Telemetry/telemetry.routes";
+import { e2eTestRoutes } from "../modules/E2E/e2eTest.routes";
+import { NODE_ENV } from "../config/ENV";
 
 const router = Router();
 
@@ -95,6 +97,11 @@ const gatedRoutes: { path: string; route: Router }[] = [
     { path: "/push",              route: pushRoutes },
     { path: "/website",           route: websiteRoutes },
 ];
+
+
+if (NODE_ENV !== "production" && process.env.E2E_TEST_HOOKS_ENABLED === "true") {
+    router.use("/__e2e", e2eTestRoutes);
+}
 
 openRoutes.forEach(({ path, route }) => {
     router.use(path, route);

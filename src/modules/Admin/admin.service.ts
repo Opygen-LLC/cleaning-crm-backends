@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { startOfMonth } from "date-fns";
 import status from "http-status";
 import { prisma } from "../../lib/prisma/prisma";
+import logger from "../../lib/logger";
 import AppError from "../../errorHelper/AppError";
 import { countryEnumToIso, resolveCountryEnum } from "../../lib/constants/countryIsoMap";
 import {
@@ -836,6 +837,10 @@ const completeOnboardingStep = async (
     }
   }
 
+  if (step === "business_profile" && !completed.has(step)) {
+    logger.info("onboarding_started", { event: "onboarding_started", tenantHash: hashTelemetryId(admin.id), releaseSha: RELEASE_VERSION });
+  }
+
   await prisma.$transaction(async (tx) => {
     if (!completed.has(step)) {
       await tx.adminProfile.update({
@@ -934,6 +939,7 @@ const finalizeOnboardingSetup = async (
       where: { id: admin.id },
       data: { onboardingCompletedAt: new Date() },
     });
+    logger.info("onboarding_completed", { event: "onboarding_completed", tenantHash: hashTelemetryId(admin.id), releaseSha: RELEASE_VERSION });
   }
 
   return buildOnboardingMutationResult(userId, admin.id);

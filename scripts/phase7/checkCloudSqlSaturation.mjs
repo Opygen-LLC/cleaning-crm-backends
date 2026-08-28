@@ -1,0 +1,13 @@
+import { execFileSync } from "node:child_process";
+const project=process.env.GCP_PROJECT, instance=process.env.CLOUD_SQL_INSTANCE, max=Number(process.env.CLOUD_SQL_MAX_CONNECTIONS||0);
+if(!project||!instance||!max) throw new Error("GCP_PROJECT, CLOUD_SQL_INSTANCE and CLOUD_SQL_MAX_CONNECTIONS are required");
+const token=execFileSync("gcloud",["auth","print-access-token"],{encoding:"utf8"}).trim();
+const end=new Date(), start=new Date(end.getTime()-Number(process.env.WINDOW_MINUTES||10)*60000);
+const params=new URLSearchParams({filter:`metric.type=\"cloudsql.googleapis.com/database/postgresql/num_backends\" AND resource.labels.database_id=\"${project}:${instance}\"`,"interval.startTime":start.toISOString(),"interval.endTime":end.toISOString(),view:"FULL"});
+const res=await fetch(`https://monitoring.googleapis.com/v3/projects/${project}/timeSeries?${params}`,{headers:{Authorization:`Bearer ${token}`}});
+if(!res.ok) throw new Error(`Cloud Monitoring ${res.status}: ${await res.text()}`);
+const body=await res.json();
+let peak=0; for(const series of body.timeSeries||[]) for(const point of series.points||[]) peak=Math.max(peak,Number(point.value?.int64Value||point.value?.doubleValue||0));
+const ratio=peak/max, limit=Number(process.env.MAX_DB_CONNECTION_SATURATION||0.85);
+console.log(JSON.stringify({peakConnections:peak,maxConnections:max,saturation:ratio,limit},null,2));
+if(ratio>limit) process.exit(43);

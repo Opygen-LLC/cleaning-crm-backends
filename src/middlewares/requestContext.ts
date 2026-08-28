@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { NextFunction, Request, Response } from "express";
 import { runWithRequestTrace } from "../lib/monitoring/requestTrace";
+import { RELEASE_VERSION } from "../config/ENV";
 
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const SAFE_TRACE_ID = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
@@ -26,6 +27,7 @@ export const requestContext = (
     res.locals.traceId = traceId;
     res.setHeader("X-Request-Id", requestId);
     res.setHeader("X-Trace-Id", traceId);
+    res.setHeader("X-Release-Sha", RELEASE_VERSION);
 
     // AsyncLocalStorage keeps this id attached to Prisma/Redis work kicked off
     // by the request, so slow-query logs can be correlated without passing the
