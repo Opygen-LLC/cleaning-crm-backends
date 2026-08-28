@@ -1,8 +1,10 @@
+import type { TargetMarket } from "./requestGeography";
 import { createHash } from "node:crypto";
 
 const MAX_SAMPLES_PER_BUCKET = 512;
 const MAX_ROUTE_BUCKETS = 250;
 const MAX_QUERY_BUCKETS = 200;
+const TARGET_MARKET_ORDER: TargetMarket[] = ["USA", "Canada", "UK", "Europe", "Australia", "Other"];
 
 type SampleBucket = {
   samples: number[];
@@ -30,6 +32,7 @@ const routes = new Map<string, RouteBucket>();
 const queries = new Map<string, QueryBucket>();
 const database: SampleBucket = { samples: [], count: 0, errors: 0, totalMs: 0, maxMs: 0, lastSeenAt: Date.now() };
 const redis: RedisStats = { reads: 0, hits: 0, misses: 0, errors: 0, totalMs: 0, samples: [] };
+const marketRequests = new Map<TargetMarket, SampleBucket>();
 
 const pushSample = (samples: number[], value: number) => {
   samples.push(Math.max(0, value));
@@ -80,6 +83,7 @@ export const recordRequestMetric = (input: {
   authDurationMs?: number;
   cacheHits?: number;
   cacheMisses?: number;
+  market?: TargetMarket;
 }): void => {
   const key = `${input.method.toUpperCase()} ${input.route}`;
   let bucket = routes.get(key);
@@ -106,6 +110,20 @@ export const recordRequestMetric = (input: {
   pushSample(bucket.dbSamples, input.dbDurationMs ?? 0);
   pushSample(bucket.redisSamples, input.redisDurationMs ?? 0);
   pushSample(bucket.authSamples, input.authDurationMs ?? 0);
+
+  if (input.market) {
+    let marketBucket = marketRequests.get(input.market);
+    if (!marketBucket) {
+      marketBucket = { samples: [], count: 0, errors: 0, totalMs: 0, maxMs: 0, lastSeenAt: Date.now() };
+      marketRequests.set(input.market, marketBucket);
+    }
+    marketBucket.count += 1;
+    if (input.statusCode >= 500) marketBucket.errors += 1;
+    marketBucket.totalMs += input.durationMs;
+    marketBucket.maxMs = Math.max(marketBucket.maxMs, input.durationMs);
+    marketBucket.lastSeenAt = Date.now();
+    pushSample(marketBucket.samples, input.durationMs);
+  }
 };
 
 export const recordDatabaseQueryMetric = (durationMs: number, query?: string): void => {
@@ -142,9 +160,19 @@ export const getPerformanceSnapshot = () => {
   }).sort((a, b) => b.p95Ms - a.p95Ms || b.count - a.count);
   const queryMetrics = Array.from(queries.values()).map((bucket) => ({ fingerprint: bucket.fingerprint, sample: bucket.sample, ...summarizeBucket(bucket) })).sort((a, b) => b.p95Ms - a.p95Ms || b.count - a.count);
   const redisAttempts = redis.hits + redis.misses;
+  const regionalPerformance = TARGET_MARKET_ORDER.map((market) => {
+    const bucket = marketRequests.get(market);
+    return {
+      market,
+      ...(bucket
+        ? summarizeBucket(bucket)
+        : { count: 0, errors: 0, errorRate: 0, avgMs: 0, p50Ms: 0, p95Ms: 0, p99Ms: 0, maxMs: 0 }),
+    };
+  });
   return {
     generatedAt: new Date().toISOString(), uptimeSeconds: Math.round(process.uptime()),
     requests: { trackedRoutes: routeMetrics.length, topSlowRoutes: routeMetrics.slice(0, 30) },
+    geography: { markets: regionalPerformance },
     database: { ...summarizeBucket(database), trackedQueryShapes: queryMetrics.length, topSlowQueries: queryMetrics.slice(0, 30) },
     redis: {
       reads: redis.reads, hits: redis.hits, misses: redis.misses, errors: redis.errors,

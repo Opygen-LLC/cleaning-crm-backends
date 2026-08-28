@@ -1,7 +1,9 @@
-# Google Compute Engine production topology for Cleaning CRM.
-# Run API/worker/scheduler as separate containers on the same VM/VPC.
-# PostgreSQL should be Google Cloud SQL (private IP) in the same region.
-# Secrets are loaded into .env.runtime from Google Secret Manager.
+# Phase 3 primary-region production topology for Cleaning CRM.
+# Serve users globally through the frontend/CDN edge, while API, PostgreSQL,
+# Redis and DB-heavy worker/scheduler processes stay in one primary region.
+# This compose file keeps API/worker/scheduler/Redis on the same VM/VPC; point
+# DATABASE_URL at PostgreSQL in the same/nearby provider region.
+# Secrets and explicit region labels are loaded from .env.runtime.
 
 x-app-common: &app-common
   build:
@@ -12,9 +14,13 @@ x-app-common: &app-common
     - .env.runtime
   environment: &common-environment
     NODE_ENV: production
+    DEPLOYMENT_PROFILE: primary-region
     REDIS_HOST: redis
     REDIS_PORT: 6379
     REDIS_DB: 0
+    # PRIMARY_REGION, APP_REGION and DATABASE_REGION must be set in .env.runtime.
+    # REDIS_REGION=local resolves to APP_REGION at runtime. PROCESS_REGION
+    # defaults to APP_REGION for these colocated API/worker/scheduler services.
     REDIS_REGION: local
     REQUIRE_COLOCATED_INFRA: "true"
     # Exactly one trusted reverse-proxy hop: Caddy -> API.
@@ -94,6 +100,7 @@ services:
       - .env.runtime
     environment:
       NODE_ENV: production
+      DEPLOYMENT_PROFILE: primary-region
       REDIS_REGION: local
       REQUIRE_COLOCATED_INFRA: "true"
     depends_on:

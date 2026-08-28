@@ -40,12 +40,31 @@ export const TRUST_PROXY_HOPS: number = Math.min(5, Math.max(0, Math.trunc(Numbe
 
 export const PERFORMANCE_METRICS_TOKEN: string | undefined = process.env.PERFORMANCE_METRICS_TOKEN?.trim() || undefined;
 
-// Infrastructure placement guard. In production set all three region labels
-// and keep REQUIRE_COLOCATED_INFRA enabled after moving API/Postgres/Redis together.
-// REDIS_REGION=local means Redis runs beside the API (e.g. Docker Compose).
+// Phase 3 global-ready / primary-region placement contract.
+//
+// The product is global (USA primary, plus Canada, UK, Europe and Australia),
+// but the transactional stack intentionally starts in ONE primary region. The
+// API, PostgreSQL, Redis and database-heavy background processes should stay
+// close to that region until real regional telemetry justifies another design.
+//
+// Use one logical placement label across providers (for example `us-east`).
+// Provider-native IDs can differ even when services are intentionally near each
+// other, so these labels represent the deployment's latency/placement zone.
+// REDIS_REGION=local means
+// Redis is colocated with the API process. PROCESS_REGION defaults to APP_REGION
+// for the initial same-region API/worker/scheduler deployment.
+export type DeploymentProfile = "local-tunnel" | "primary-region" | "ci" | "development" | "other";
+const deploymentProfile = (process.env.DEPLOYMENT_PROFILE?.trim().toLowerCase() ||
+    (NODE_ENV === "production" ? "primary-region" : "development")) as DeploymentProfile;
+if (!["local-tunnel", "primary-region", "ci", "development", "other"].includes(deploymentProfile)) {
+    throw new Error(`Invalid DEPLOYMENT_PROFILE: ${deploymentProfile}`);
+}
+export const DEPLOYMENT_PROFILE: DeploymentProfile = deploymentProfile;
+export const PRIMARY_REGION: string | undefined = process.env.PRIMARY_REGION?.trim() || undefined;
 export const APP_REGION: string | undefined = process.env.APP_REGION?.trim() || undefined;
 export const DATABASE_REGION: string | undefined = process.env.DATABASE_REGION?.trim() || undefined;
 export const REDIS_REGION: string | undefined = process.env.REDIS_REGION?.trim() || undefined;
+export const PROCESS_REGION: string | undefined = process.env.PROCESS_REGION?.trim() || APP_REGION;
 export const REQUIRE_COLOCATED_INFRA: boolean = process.env.REQUIRE_COLOCATED_INFRA === "true" || (NODE_ENV === "production" && process.env.REQUIRE_COLOCATED_INFRA !== "false");
 
 export const REDIS_CONNECT_TIMEOUT_MS: number = Math.min(10_000, Math.max(250, Number(process.env.REDIS_CONNECT_TIMEOUT_MS) || 1_500));

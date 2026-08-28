@@ -2,12 +2,14 @@ import { createHash } from "node:crypto";
 import { Request, Response, NextFunction } from "express";
 import logger from "../lib/logger";
 import {
+  DEPLOYMENT_PROFILE,
   NODE_ENV,
   RELEASE_VERSION,
   SLOW_REQUEST_THRESHOLD_MS,
 } from "../config/ENV";
 import { recordRequestMetric } from "../lib/monitoring/performanceMetrics";
 import { getRequestTrace } from "../lib/monitoring/requestTrace";
+import { resolveRequestGeography } from "../lib/monitoring/requestGeography";
 
 const compactPath = (req: Request): string => {
   const base = req.baseUrl || "";
@@ -75,6 +77,7 @@ const logRequestResponse = (
     const rounded = round(durationMs);
     const route = routeLabel ?? compactPath(req);
     const trace = getRequestTrace() ?? requestTrace;
+    const geography = resolveRequestGeography(req);
 
     recordRequestMetric({
       method: req.method,
@@ -89,6 +92,7 @@ const logRequestResponse = (
       authDurationMs: trace?.authDurationMs,
       cacheHits: trace?.responseCacheHits,
       cacheMisses: trace?.responseCacheMisses,
+      market: geography.market,
     });
 
     const level = durationMs >= SLOW_REQUEST_THRESHOLD_MS || res.statusCode >= 500 ? "warn" : "info";
@@ -147,6 +151,10 @@ const logRequestResponse = (
       userHash: hashIdentity(userId),
       tenantHash: hashIdentity(tenantId),
       releaseSha: RELEASE_VERSION,
+      deploymentProfile: DEPLOYMENT_PROFILE,
+      market: geography.market,
+      countryCode: geography.countryCode,
+      countrySource: geography.source,
       ...(isAuthRoute ? { authErrorCode } : {}),
       processRole: process.env.PROCESS_ROLE || "api",
     });

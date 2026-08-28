@@ -33,10 +33,10 @@ const main = () => {
   const infra = getInfrastructureAlignment();
   if (infra.known) {
     logger.info(
-      `Infrastructure regions — API ${infra.appRegion}, database ${infra.databaseRegion}, Redis ${infra.redisRegion} · ${infra.aligned ? "aligned" : "NOT aligned"}.`,
+      `Infrastructure topology — ${infra.deploymentProfile} · primary ${infra.primaryRegion} · API ${infra.appRegion} · process ${infra.processRegion} · database ${infra.databaseRegion} · Redis ${infra.redisRegion} · ${infra.aligned ? "aligned" : "NOT aligned"}.`,
     );
   } else {
-    logger.info("Infrastructure region labels are not configured for this environment; production must set APP_REGION, DATABASE_REGION and REDIS_REGION.");
+    logger.info("Infrastructure region labels are incomplete; production should set PRIMARY_REGION, APP_REGION, DATABASE_REGION and REDIS_REGION before serving traffic.");
   }
 
   const server = http.createServer(app);

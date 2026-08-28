@@ -17,6 +17,7 @@ describe("performanceMetrics", () => {
         authDurationMs: 1,
         cacheHits: 1,
         cacheMisses: 1,
+        market: "USA",
       });
     }
 
@@ -34,5 +35,10 @@ describe("performanceMetrics", () => {
     expect(route?.redis.hitRate).toBeCloseTo(66.67, 1);
     expect(route?.responseCache.hitRate).toBe(50);
     expect(route?.errorRate).toBe(5);
+
+    const usa = snapshot.geography.markets.find((entry) => entry.market === "USA");
+    expect(usa?.count).toBeGreaterThanOrEqual(20);
+    expect(usa?.p50Ms).toBeGreaterThan(0);
+    expect(usa?.p95Ms).toBeGreaterThanOrEqual(usa?.p50Ms ?? 0);
   });
 });
