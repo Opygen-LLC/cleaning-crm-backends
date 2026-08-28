@@ -1,0 +1,77 @@
+/// Historical tables retained to make the production baseline explicit.
+/// They are intentionally excluded from Prisma Client; Phase 2 never deletes
+/// customer/payment history merely to make a schema diff look clean.
+
+model LegacyPayment {
+  id                String        @id
+  amount            Decimal       @db.Decimal(10, 2)
+  currency          Currency      @default(USD)
+  method            PaymentMethod
+  status            PaymentStatus @default(PENDING)
+  note              String?
+  transactionId     String?
+  invoiceUrl        String?
+  refundAmount      Decimal?      @db.Decimal(10, 2)
+  gatewayPaymentId  String?
+  gatewayCustomerId String?
+  adminId           String
+  paidAt            DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime?
+  admin             AdminProfile  @relation("LegacyPaymentAdmin", fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@map("Payment")
+  @@ignore
+}
+
+model LegacyReview {
+  id        String       @id
+  rating    Int
+  comment   String
+  adminId   String       @unique
+  createdAt DateTime     @default(now())
+  updatedAt DateTime
+  admin     AdminProfile @relation("LegacyReviewAdmin", fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@map("Review")
+  @@ignore
+}
+
+model LegacyPaymentGatewayConfig {
+  id                          String         @id
+  activeGateway               PaymentGateway @default(NONE)
+  stripeEnabled               Boolean        @default(false)
+  stripePublishableKey        String?
+  stripeSecretKeyMasked       String?
+  stripeWebhookSecretMasked   String?
+  stripeTestMode              Boolean        @default(true)
+  stripeConnectedAccountId    String?
+  paypalEnabled               Boolean        @default(false)
+  paypalClientId              String?
+  paypalClientSecretMasked    String?
+  paypalTestMode              Boolean        @default(true)
+  paypalConnectedMerchantId   String?
+  invoicePaymentLink          Boolean        @default(true)
+  quotePaymentLink            Boolean        @default(false)
+  autoSendReceipt             Boolean        @default(true)
+  adminId                     String         @unique
+  updatedAt                   DateTime
+  admin                       AdminProfile   @relation("LegacyPaymentGatewayConfigAdmin", fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@map("payment_gateway_config")
+  @@ignore
+}
+
+model LegacyInvoiceLineItem {
+  id          String  @id
+  description String
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(10, 2)
+  total       Decimal @db.Decimal(10, 2)
+  invoiceId   String
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("invoice_line_item")
+  @@ignore
+}

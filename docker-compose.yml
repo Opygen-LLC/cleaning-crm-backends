@@ -46,6 +46,31 @@ services:
     networks:
       - crm_network
 
+
+  # ── One-shot schema migration/reconciliation runner ─────────
+  # Explicit release profile: this service never starts with normal `docker compose up`.
+  # Usage:
+  #   docker compose --profile release run --rm migrate
+  #   docker compose --profile release run --rm migrate node dist/reconcileAdminProvisioning.js
+  migrate:
+    build:
+      context: .
+      target: migration
+    profiles: ["release"]
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - REDIS_DB=0
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - crm_network
+
   # ── Redis — session cache, Socket.IO adapter ────────────────
   redis:
     image: redis:7-alpine

@@ -41,6 +41,15 @@ model Invoice {
   booking          Booking?          @relation(fields: [bookingId], references: [id], onDelete: SetNull)
   payments         Payment[]
 
+  /// Legacy invoice fields/tables are retained but not exposed to application code.
+  legacyServiceType   ServiceType? @map("serviceType") @ignore
+  legacyAddress       String       @default("") @map("address") @ignore
+  legacyTax           Decimal      @default(0) @db.Decimal(10, 2) @map("tax") @ignore
+  legacyInternalNotes String?      @map("internalNotes") @ignore
+  legacyClientId      String?      @map("clientId") @ignore
+  legacyClient        Client?      @relation("LegacyInvoiceClient", fields: [legacyClientId], references: [id], onDelete: Restrict) @ignore
+  legacyLineItems     LegacyInvoiceLineItem[] @ignore
+
   @@index([adminId])
   @@index([adminId, status])
   @@index([dueDate])

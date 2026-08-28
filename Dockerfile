@@ -42,7 +42,17 @@ RUN pnpm exec prisma generate
 RUN pnpm run build
 
 # ─────────────────────────────────────────────────────────────
-# Stage 4 — prod-dependencies: only production deps (no devDeps)
+# Stage 4 — migration: one-shot release image with Prisma CLI + compiled repair job
+# Never run migrations from the long-lived API container. CI/CD or an operator
+# runs this target exactly once before application rollout.
+# ─────────────────────────────────────────────────────────────
+FROM build AS migration
+
+ENV NODE_ENV=production
+CMD ["pnpm", "exec", "prisma", "migrate", "deploy"]
+
+# ─────────────────────────────────────────────────────────────
+# Stage 5 — prod-dependencies: only production deps (no devDeps)
 # ─────────────────────────────────────────────────────────────
 FROM base AS prod-dependencies
 
@@ -50,7 +60,7 @@ COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --prod --frozen-lockfile
 
 # ─────────────────────────────────────────────────────────────
-# Stage 5 — production: lean runtime image
+# Stage 6 — production: lean runtime image
 # ─────────────────────────────────────────────────────────────
 FROM node:20-alpine AS production
 
@@ -91,7 +101,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 CMD ["node", "dist/index.js"]
 
 # ─────────────────────────────────────────────────────────────
-# Stage 6 — development: hot-reload via tsx --watch
+# Stage 7 — development: hot-reload via tsx --watch
 # ─────────────────────────────────────────────────────────────
 FROM base AS development
 

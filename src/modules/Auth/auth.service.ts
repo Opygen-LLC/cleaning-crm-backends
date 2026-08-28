@@ -15,10 +15,10 @@ import { REFRESH_TOKEN_SECRET } from "../../config/ENV";
 import {
     AccountStatus,
     StaffStatus,
-    SubscriptionStatus,
     UserRole,
 } from "../../generated/prisma/enums";
 import { AccountProvisioningService } from "./accountProvisioning.service";
+import { AccountIntegrityService } from "./accountIntegrity.service";
 import { getPlatformConfig } from "../../lib/utils/platformConfig";
 import { AuthEmailOutbox } from "../../lib/outbox/authEmailOutbox";
 
@@ -271,39 +271,8 @@ const verifyEmail = async (email: string, otp: string) => {
     let isOnboardingComplete: boolean | undefined = undefined;
 
     if (user.role === UserRole.ADMIN) {
-        const admin = await prisma.adminProfile.findUnique({
-            where: { userId: user.id },
-            select: {
-                onboardingCompletedAt: true,
-                businessWebsite: { select: { id: true } },
-                subscription: {
-                    where: { status: SubscriptionStatus.ACTIVE },
-                    select: { id: true },
-                    take: 1,
-                },
-            },
-        });
-
-        if (!admin) {
-            throw new AppError(status.CONFLICT, "Account provisioning is not complete yet.", {
-                code: "ADMIN_PROFILE_NOT_FOUND",
-                retryable: true,
-            });
-        }
-        if (admin.subscription.length === 0) {
-            throw new AppError(status.CONFLICT, "Subscription provisioning is not complete yet.", {
-                code: "SUBSCRIPTION_PROVISIONING_INCOMPLETE",
-                retryable: true,
-            });
-        }
-        if (!admin.businessWebsite) {
-            throw new AppError(status.CONFLICT, "Website provisioning is not complete yet.", {
-                code: "WEBSITE_PROVISIONING_INCOMPLETE",
-                retryable: true,
-            });
-        }
-
-        isOnboardingComplete = admin.onboardingCompletedAt != null;
+        const readiness = await AccountIntegrityService.assertAdminReadyForActivation(user.id);
+        isOnboardingComplete = readiness.isOnboardingComplete;
     }
 
     const result = await auth.api.verifyEmailOTP({

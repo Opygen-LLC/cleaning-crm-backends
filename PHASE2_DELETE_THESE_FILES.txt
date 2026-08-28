@@ -1,0 +1,4 @@
+Phase 2 intentionally removes these obsolete repository files.
+Delete them from the backend project after copying the ZIP contents:
+
+src/cron/subscriptionExpiry.cron copy.ts

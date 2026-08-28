@@ -12,6 +12,12 @@ model Client {
   zipcode      String
   country      String
 
+  /// Legacy columns kept intentionally so old production rows are not dropped.
+  /// They are excluded from Prisma Client and populated by DB defaults where needed.
+  legacyPostcode   String   @default("") @map("postcode") @ignore
+  legacyAvatar     String?  @map("avatar") @ignore
+  legacyJoinedDate DateTime @default(now()) @map("joinedDate") @ignore
+
   /// [Phase 2 — location-aware dispatch] Geocoded from the address fields
   /// above whenever they change. Null until the first successful geocode,
   /// or if the geocoding provider could not resolve the address — callers
@@ -43,6 +49,7 @@ model Client {
   jobs               Job[]
   quotes             Quote[]
   recurringSchedules RecurringSchedule[]
+  legacyInvoices      Invoice[] @relation("LegacyInvoiceClient") @ignore
   // Added to satisfy BookingChangeRequest.client's back-relation —
   // rename to match whatever `BookingChangeRequest` calls this
   // relation on your side if it differs.
@@ -69,6 +76,9 @@ model Client {
 model ClientNote {
   id   String @id @default(uuid())
   text String
+
+  /// Historical creator label from the pre-tenant-note model.
+  legacyCreatedBy String @default("") @map("createdBy") @ignore
 
   clientId String
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)

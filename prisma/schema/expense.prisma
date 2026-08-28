@@ -8,6 +8,12 @@ model Expense {
   paidBy             String
   isRecurring        Boolean           @default(false)
   notes              String?           @db.Text
+
+  /// Retained legacy bookkeeping columns. Current expense UX no longer writes
+  /// them, but migration history must not erase historical values.
+  legacyCurrency           Currency           @default(USD) @map("currency") @ignore
+  legacyReceipt            String?            @map("receipt") @ignore
+  legacyRecurringFrequency ExpenseFrequency?  @map("recurringFrequency") @ignore
   
   adminId            String
   admin              AdminProfile      @relation(fields: [adminId], references: [id], onDelete: Cascade)

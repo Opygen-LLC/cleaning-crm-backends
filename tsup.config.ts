@@ -1,7 +1,12 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-    entry: ["src/index.ts", "src/scripts/backfillBusinessWebsites.ts", "src/scripts/migrateWebsiteRelease.ts"],
+    entry: [
+        "src/index.ts",
+        "src/scripts/backfillBusinessWebsites.ts",
+        "src/scripts/migrateWebsiteRelease.ts",
+        "src/scripts/phase2/reconcileAdminProvisioning.ts",
+    ],
     format: ["esm"],
     target: "esnext",
     outDir: "dist",

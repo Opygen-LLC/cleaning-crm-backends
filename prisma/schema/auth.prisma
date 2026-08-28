@@ -9,6 +9,11 @@ model User {
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
   needPasswordChange Boolean       @default(false)
+
+  /// Legacy account-contact columns retained in the database for historical
+  /// compatibility. Canonical contact data lives on AdminProfile/StaffProfile.
+  legacyMobileNumber String? @map("mobileNumber") @ignore
+  legacyCountry      String? @map("country") @ignore
   admin              AdminProfile?
   staff              StaffProfile?
   accounts           Account[]

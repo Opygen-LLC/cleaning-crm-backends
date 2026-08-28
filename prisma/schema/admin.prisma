@@ -12,6 +12,7 @@ model AdminProfile {
   mobileNumber          String?
   zipcode               String?
   country               Country?
+  legacyState           String?                 @map("state") @ignore
   businessEmail         String?
   businessType          String?
   businessDescription   String?
@@ -63,6 +64,12 @@ model AdminProfile {
   // relation on your side if it differs.
   bookingChangeRequests BookingChangeRequest[]
   businessWebsite       BusinessWebsite?
+
+  /// Ignored relations keep pre-migration tables represented without exposing
+  /// them through Prisma Client or deleting historical data.
+  legacyPayments             LegacyPayment[]               @relation("LegacyPaymentAdmin") @ignore
+  legacyReviews              LegacyReview[]                @relation("LegacyReviewAdmin") @ignore
+  legacyPaymentGatewayConfig LegacyPaymentGatewayConfig?   @relation("LegacyPaymentGatewayConfigAdmin") @ignore
 
   @@index([createdAt])
 }

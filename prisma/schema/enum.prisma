@@ -42,6 +42,9 @@ enum DiscountType {
 }
 
 enum PaymentMethod {
+  /// Retained for historical rows created before manual-payment migration.
+  /// New payment flows must not offer this method.
+  STRIPE
   BANK_TRANSFER
   CASH
   CHEQUE
@@ -55,6 +58,14 @@ enum PaymentStatus {
   FAILED
   REFUNDED
   CANCELLED
+}
+
+/// Legacy gateway configuration enum retained only so the historical
+/// payment_gateway_config table remains represented in migration history.
+enum PaymentGateway {
+  STRIPE
+  PAYPAL
+  NONE
 }
 
 enum Country {
