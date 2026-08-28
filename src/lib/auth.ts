@@ -5,8 +5,6 @@ import { prisma } from "./prisma/prisma";
 import { AccountStatus, UserRole } from "../generated/prisma/enums";
 import { bearer, emailOTP } from "better-auth/plugins";
 import { sendEmail } from "./email";
-import { waitUntil } from "@vercel/functions";
-import { sendEmailSafely } from "./utils/sendEmailSafely";
 import logger from "./logger";
 
 export const auth = betterAuth({
@@ -105,17 +103,19 @@ export const auth = betterAuth({
                     });
 
                     if (user) {
-                        waitUntil(
-                            sendEmailSafely({
-                                to: email,
-                                subject: "Password Reset OTP",
-                                templateName: "otp",
-                                templateData: {
-                                    name: user.name,
-                                    otp,
-                                },
-                            }),
-                        );
+                        // Google Compute Engine has no Vercel request-lifecycle
+                        // waitUntil context. Await SMTP here so the API can report
+                        // a real delivery failure instead of claiming the reset
+                        // code was sent when the background promise was dropped.
+                        await sendEmail({
+                            to: email,
+                            subject: "Password Reset OTP",
+                            templateName: "otp",
+                            templateData: {
+                                name: user.name,
+                                otp,
+                            },
+                        });
                     }
                 }
             },

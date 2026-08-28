@@ -31,7 +31,13 @@ const main = () => {
   assertInfrastructureAlignment();
 
   const infra = getInfrastructureAlignment();
-  logger.info(`[INFRA] app=${infra.appRegion ?? "unknown"} db=${infra.databaseRegion ?? "unknown"} redis=${infra.redisRegion ?? "unknown"} aligned=${infra.aligned}`);
+  if (infra.known) {
+    logger.info(
+      `Infrastructure regions — API ${infra.appRegion}, database ${infra.databaseRegion}, Redis ${infra.redisRegion} · ${infra.aligned ? "aligned" : "NOT aligned"}.`,
+    );
+  } else {
+    logger.info("Infrastructure region labels are not configured for this environment; production must set APP_REGION, DATABASE_REGION and REDIS_REGION.");
+  }
 
   const server = http.createServer(app);
   setUpSocketIO(server);

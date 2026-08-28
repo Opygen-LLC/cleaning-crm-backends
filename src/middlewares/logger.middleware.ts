@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { Request, Response, NextFunction } from "express";
 import logger from "../lib/logger";
 import {
+  NODE_ENV,
   RELEASE_VERSION,
   SLOW_REQUEST_THRESHOLD_MS,
 } from "../config/ENV";
@@ -97,6 +98,21 @@ const logRequestResponse = (
     const userId = req.user?.id ?? null;
     const cacheAttempts = (trace?.responseCacheHits ?? 0) + (trace?.responseCacheMisses ?? 0);
     const redisAttempts = (trace?.redisHits ?? 0) + (trace?.redisMisses ?? 0);
+
+    if (NODE_ENV !== "production") {
+      const dbMs = round(trace?.dbDurationMs ?? 0);
+      const dbQueries = trace?.dbQueryCount ?? 0;
+      const redisMs = round(trace?.redisDurationMs ?? 0);
+      const queueMs = round(trace?.queueDurationMs ?? 0);
+      const parts = [`${req.method} ${route} → ${res.statusCode} in ${rounded}ms`];
+      if (dbQueries > 0) parts.push(`DB ${dbMs}ms/${dbQueries}q`);
+      if ((trace?.redisCommandCount ?? 0) > 0) parts.push(`Redis ${redisMs}ms`);
+      if (queueMs > 0) parts.push(`Queue ${queueMs}ms`);
+      if ((trace?.externalDurationMs ?? 0) > 0) parts.push(`External ${round(trace?.externalDurationMs ?? 0)}ms`);
+      if (level === "warn") parts.push(`request ${requestId.slice(0, 8)}`);
+      logger.log(level, parts.join(" · "));
+      return;
+    }
 
     logger.log(level, "http_request", {
       event: "http_request",

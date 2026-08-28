@@ -41,10 +41,18 @@ import { browserOriginGuard } from "./middlewares/browserOriginGuard";
 
 const app = express();
 
-// Public rate limits and privacy-preserving analytics depend on req.ip. Trust
-// only the explicitly configured number of ingress hops; never blindly trust
-// arbitrary X-Forwarded-For input from direct internet clients.
-if (TRUST_PROXY_HOPS > 0) app.set("trust proxy", TRUST_PROXY_HOPS);
+// Public rate limits and privacy-preserving analytics depend on req.ip. In
+// production, trust only the explicitly configured ingress hop count. Local
+// development commonly runs through the Next.js dev server / local reverse
+// proxy, which sets X-Forwarded-For; trust exactly one hop there so
+// express-rate-limit can resolve the real client IP without emitting its
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR validation error.
+const effectiveTrustProxyHops = TRUST_PROXY_HOPS > 0
+  ? TRUST_PROXY_HOPS
+  : NODE_ENV !== "production"
+    ? 1
+    : 0;
+if (effectiveTrustProxyHops > 0) app.set("trust proxy", effectiveTrustProxyHops);
 
 // Assign a correlation ID before any parser/CORS/router work so even early
 // failures can be traced from the browser to server logs.

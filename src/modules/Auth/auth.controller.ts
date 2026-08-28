@@ -20,7 +20,7 @@ const register = catchAsync(async (req, res) => {
     sendResponse(res, {
         httpStatusCode: httpStatus.CREATED,
         success: true,
-        message: "Account and website created successfully",
+        message: "Account and website created. Verification email queued.",
         data: result,
     });
 });
@@ -111,7 +111,7 @@ const verifyEmail = catchAsync(async (req, res) => {
 
 const resendOtp = catchAsync(async (req, res) => {
     await authService.resendOtp(req.body.email);
-    sendResponse(res, { httpStatusCode: httpStatus.OK, success: true, message: "OTP sent to email successfully" });
+    sendResponse(res, { httpStatusCode: httpStatus.OK, success: true, message: "Verification email queued successfully" });
 });
 
 const forgotPassword = catchAsync(async (req, res) => {

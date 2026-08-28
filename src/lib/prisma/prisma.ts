@@ -5,6 +5,8 @@ import {
     DB_POOL_IDLE_TIMEOUT_MS,
     DB_POOL_MAX,
     DB_POOL_MIN,
+    LOG_SQL_DETAILS,
+    NODE_ENV,
     SLOW_QUERY_THRESHOLD_MS,
 } from "../../config/ENV";
 import { PrismaClient } from "../../generated/prisma/client";
@@ -96,17 +98,43 @@ const prisma = new PrismaClient({
 // winston logger (not console.warn, so it's captured by the same rotating
 // file transport as the rest of the app) — use this to confirm the Phase
 // 2–4 fixes actually move the needle, and to catch regressions later.
+const summarizeQuery = (query: string) => {
+    const normalized = query.replace(/\s+/g, " ").trim();
+    const operation = normalized.match(/^(SELECT|INSERT|UPDATE|DELETE|WITH)/i)?.[1]?.toUpperCase() ?? "QUERY";
+    const table =
+        normalized.match(/(?:FROM|INTO|UPDATE|JOIN)\s+"(?:public)"\."([^"]+)"/i)?.[1]
+        ?? normalized.match(/(?:FROM|INTO|UPDATE|JOIN)\s+"([^"]+)"/i)?.[1]
+        ?? "database";
+    return { operation, table, normalized };
+};
+
 prisma.$on("query", (e: { query: string; params: string; duration: number }) => {
     recordDatabaseQueryMetric(e.duration, e.query);
     recordTraceDatabaseQuery(e.duration);
 
     if (e.duration > SLOW_QUERY_THRESHOLD_MS) {
-        // Never log query parameters: they can contain email addresses, tokens,
-        // customer data or payment metadata. The normalized SQL shape plus the
-        // request id is enough to trace the slow endpoint safely.
+        // Query parameters are never logged: they can contain emails, tokens,
+        // customer data or payment metadata. Local operators get a concise
+        // operation/table summary; production keeps a structured event for
+        // Google Cloud Logging. Full SQL is opt-in only for local debugging.
         const requestId = getRequestTrace()?.requestId ?? "background";
-        const normalizedQuery = e.query.replace(/\s+/g, " ").trim().slice(0, 1_500);
-        logger.warn(`[SLOW QUERY ${Math.round(e.duration * 10) / 10}ms] [${requestId}] ${normalizedQuery}`);
+        const durationMs = Math.round(e.duration * 10) / 10;
+        const summary = summarizeQuery(e.query);
+
+        if (NODE_ENV === "production") {
+            logger.warn("slow_database_query", {
+                event: "slow_database_query",
+                durationMs,
+                operation: summary.operation,
+                table: summary.table,
+                requestId,
+            });
+        } else {
+            logger.warn(
+                `Slow database query — ${durationMs}ms · ${summary.operation} ${summary.table} · request ${requestId.slice(0, 8)}`,
+            );
+            if (LOG_SQL_DETAILS) logger.debug(summary.normalized.slice(0, 1_500));
+        }
     }
 });
 

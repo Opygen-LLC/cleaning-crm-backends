@@ -3,25 +3,96 @@ import nodemailer from "nodemailer";
 import path from "path";
 import AppError from "../errorHelper/AppError";
 import status from "http-status";
-import { SMTP_EMAIL, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT, SMTP_SECURE, SMTP_FROM } from "../config/ENV";
+import {
+    SMTP_EMAIL,
+    SMTP_FROM,
+    SMTP_FROM_NAME,
+    SMTP_HOST,
+    SMTP_PASSWORD,
+    SMTP_PORT,
+    SMTP_SECURE,
+} from "../config/ENV";
 import { prisma } from "./prisma/prisma";
 import logger from "./logger";
 
 const portNumber = Number(SMTP_PORT) || 587;
 const isSecure = SMTP_SECURE !== undefined ? SMTP_SECURE === "true" : portNumber === 465;
+const normalizedHost = (SMTP_HOST || "").trim().toLowerCase();
+
+// Google displays app passwords in groups separated by spaces. The actual
+// credential is the 16-character value without those display spaces. Only
+// normalize whitespace for Gmail so passwords for other SMTP providers retain
+// their exact value.
+const smtpPassword = normalizedHost === "smtp.gmail.com"
+    ? (SMTP_PASSWORD || "").replace(/\s+/g, "")
+    : (SMTP_PASSWORD || "");
+
+const smtpUser = (SMTP_EMAIL || "").trim();
+const fromAddress = (SMTP_FROM || smtpUser).trim();
+
+const assertSmtpConfiguration = () => {
+    const missing: string[] = [];
+    if (!normalizedHost) missing.push("SMTP_HOST");
+    if (!smtpUser) missing.push("SMTP_EMAIL");
+    if (!smtpPassword) missing.push("SMTP_PASSWORD");
+    if (!Number.isFinite(portNumber) || portNumber <= 0) missing.push("SMTP_PORT");
+
+    if (missing.length > 0) {
+        throw new Error(`Email delivery is not configured. Missing: ${missing.join(", ")}.`);
+    }
+};
+
+const maskEmail = (value: string) => {
+    const [local, domain] = value.split("@");
+    if (!local || !domain) return "configured mailbox";
+    const visible = local.slice(0, Math.min(2, local.length));
+    return `${visible}${local.length > 2 ? "***" : "*"}@${domain}`;
+};
+
+const readableSmtpError = (error: unknown) => {
+    const value = error as { code?: string; responseCode?: number; message?: string } | undefined;
+    const code = String(value?.code ?? "").toUpperCase();
+    const responseCode = Number(value?.responseCode ?? 0);
+    const raw = String(value?.message ?? "Unknown SMTP error");
+
+    if (code === "EAUTH" || responseCode === 535 || /invalid login|authentication/i.test(raw)) {
+        return "SMTP authentication failed. Check SMTP_EMAIL and SMTP_PASSWORD. For Gmail, use a Google App Password, not the normal account password.";
+    }
+    if (["ECONNREFUSED", "ETIMEDOUT", "ESOCKET", "ENOTFOUND"].includes(code)) {
+        return `Unable to connect to the configured SMTP server (${SMTP_HOST}:${portNumber}). Check the host, port, firewall and network access.`;
+    }
+    if (responseCode >= 550 && responseCode < 560) {
+        return "The mail server rejected the message. Check the sender address and recipient mailbox.";
+    }
+    return raw;
+};
 
 export const transporter = nodemailer.createTransport({
     host: SMTP_HOST,
     port: portNumber,
     secure: isSecure,
     auth: {
-        user: SMTP_EMAIL,
-        pass: SMTP_PASSWORD,
+        user: smtpUser,
+        pass: smtpPassword,
     },
     tls: {
-        rejectUnauthorized: false,
+        minVersion: "TLSv1.2",
     },
 });
+
+export const verifyEmailTransport = async () => {
+    assertSmtpConfiguration();
+    try {
+        await transporter.verify();
+        logger.info(
+            `Email service ready — ${SMTP_HOST}:${portNumber} as ${maskEmail(smtpUser)}.`,
+        );
+    } catch (error) {
+        const message = readableSmtpError(error);
+        logger.error(`Email service unavailable — ${message}`);
+        throw new Error(message);
+    }
+};
 
 interface SendEmailOptions {
     to: string;
@@ -97,6 +168,8 @@ export const sendEmail = async ({
     attachments,
     adminId,
 }: SendEmailOptions) => {
+    assertSmtpConfiguration();
+
     try {
         const [admin, customTemplate] = adminId
             ? await Promise.all([
@@ -142,13 +215,14 @@ export const sendEmail = async ({
             html = await ejs.renderFile(templatePath, dataWithBrand);
         }
 
-        const fromAddress = SMTP_FROM || SMTP_EMAIL;
-
-        const info = await transporter.sendMail({
-            from: fromAddress,
-            to: to,
+        await transporter.sendMail({
+            from: {
+                name: SMTP_FROM_NAME,
+                address: fromAddress,
+            },
+            to,
             subject: resolvedSubject,
-            html: html,
+            html,
             attachments: attachments?.map((attachment) => ({
                 filename: attachment.filename,
                 content: attachment.content,
@@ -156,15 +230,17 @@ export const sendEmail = async ({
             })),
         });
 
-        logger.info(`[SMTP SUCCESS] Email sent to ${to} (Message ID: ${info.messageId})`);
-    } catch (error: any) {
-        logger.error(
-            `[SMTP ERROR] Failed to send email to ${to} (Subject: "${subject}") via ${SMTP_HOST}:${portNumber}:`,
-            error?.message || error,
-        );
+        logger.info(`Email sent — ${resolvedSubject} → ${maskEmail(to)}.`);
+    } catch (error) {
+        const message = readableSmtpError(error);
+        logger.error(`Email delivery failed — ${message}`);
         throw new AppError(
             status.INTERNAL_SERVER_ERROR,
-            `Failed to send email: ${error?.message || "Unknown SMTP error"}`,
+            "Email delivery is temporarily unavailable. Please try again shortly.",
+            {
+                code: "EMAIL_DELIVERY_UNAVAILABLE",
+                retryable: true,
+            },
         );
     }
 };

@@ -44,6 +44,15 @@ router.post(
     zodValidate(authValidator.verifyEmailValidation, ValidationProperty.BODY),
     authController.verifyEmail,
 );
+router.get("/resend-otp", (_req, res) => {
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({
+        success: false,
+        code: "METHOD_NOT_ALLOWED",
+        message: "Verification codes are resent with a POST request. Use the Resend code button on the verification screen.",
+    });
+});
+
 router.post(
     "/resend-otp",
     otpRateLimit,

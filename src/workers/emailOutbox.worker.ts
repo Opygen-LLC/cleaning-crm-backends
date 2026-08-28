@@ -6,6 +6,7 @@ import {
   NEXT_REVALIDATE_SECRET,
   NEXT_REVALIDATE_TIMEOUT_MS,
   NEXT_REVALIDATE_URL,
+  NODE_ENV,
   OUTBOX_LOCK_TIMEOUT_MS,
   OUTBOX_WORKER_BATCH_SIZE,
   OUTBOX_WORKER_ENABLED,
@@ -209,14 +210,21 @@ const markFailed = async (event: ClaimedOutboxEvent, error: unknown) => {
     },
   });
 
-  logger.error("Outbox delivery failed", {
-    outboxEventId: event.id,
-    topic: event.topic,
-    attempt: event.attempts,
-    maxAttempts: event.maxAttempts,
-    dead,
-    error,
-  });
+  if (NODE_ENV === "production") {
+    logger.error("outbox_delivery_failed", {
+      event: "outbox_delivery_failed",
+      outboxEventId: event.id,
+      topic: event.topic,
+      attempt: event.attempts,
+      maxAttempts: event.maxAttempts,
+      dead,
+      errorMessage: normalizeError(error),
+    });
+  } else {
+    logger.error(
+      `Background delivery failed — ${event.topic} · attempt ${event.attempts}/${event.maxAttempts}${dead ? " · moved to dead-letter state" : " · will retry"}: ${normalizeError(error)}`,
+    );
+  }
 };
 
 export const processEmailOutboxOnce = async () => {
@@ -230,15 +238,19 @@ export const processEmailOutboxOnce = async () => {
           await processEvent(event);
           await markProcessed(event.id);
           const trace = getRequestTrace();
-          logger.info("outbox_event_processed", {
-            event: "outbox_event_processed",
-            outboxEventId: event.id,
-            topic: event.topic,
-            requestId: trace?.requestId ?? null,
-            traceId: trace?.traceId ?? null,
-            dbDurationMs: trace ? Math.round(trace.dbDurationMs * 10) / 10 : 0,
-            externalDurationMs: trace ? Math.round(trace.externalDurationMs * 10) / 10 : 0,
-          });
+          if (NODE_ENV === "production") {
+            logger.info("outbox_event_processed", {
+              event: "outbox_event_processed",
+              outboxEventId: event.id,
+              topic: event.topic,
+              requestId: trace?.requestId ?? null,
+              traceId: trace?.traceId ?? null,
+              dbDurationMs: trace ? Math.round(trace.dbDurationMs * 10) / 10 : 0,
+              externalDurationMs: trace ? Math.round(trace.externalDurationMs * 10) / 10 : 0,
+            });
+          } else if (event.topic !== AUTH_EMAIL_OUTBOX_TOPIC.EMAIL_VERIFICATION_REQUESTED) {
+            logger.info(`Background job completed — ${event.topic}.`);
+          }
         } catch (error) {
           await markFailed(event, error);
         }
@@ -259,7 +271,7 @@ export const startEmailOutboxWorker = () => {
 
   const tick = () => {
     void processEmailOutboxOnce().catch((error) => {
-      logger.error("Outbox worker tick failed", { error });
+      logger.error(`Background delivery worker failed — ${normalizeError(error)}`);
     });
   };
 
@@ -267,7 +279,7 @@ export const startEmailOutboxWorker = () => {
   // remains alive even when the DB pool is momentarily idle.
   tick();
   timer = setInterval(tick, OUTBOX_WORKER_POLL_MS);
-  logger.info(`[OUTBOX] worker started (poll=${OUTBOX_WORKER_POLL_MS}ms, batch=${OUTBOX_WORKER_BATCH_SIZE})`);
+  logger.info(`Background delivery worker ready — poll ${OUTBOX_WORKER_POLL_MS}ms, batch ${OUTBOX_WORKER_BATCH_SIZE}.`);
 };
 
 export const stopEmailOutboxWorker = () => {

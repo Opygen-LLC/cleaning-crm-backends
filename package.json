@@ -4,7 +4,7 @@
   "description": "",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "pnpm run dev:api",
+    "dev": "node scripts/devProcesses.mjs",
     "build": "prisma generate && tsc --noEmit && tsup",
     "typecheck": "prisma generate && tsc --noEmit",
     "start": "pnpm run start:api",
@@ -65,7 +65,8 @@
     "load:phase7:warm": "k6 run -e CACHE_MODE=warm scripts/load/phase7-load.js",
     "load:phase7:cold": "k6 run -e CACHE_MODE=cold scripts/load/phase7-load.js",
     "verify:phase7:release": "node scripts/phase7/verifyPhase7Release.mjs",
-    "release:phase7:verify": "pnpm run verify:phase7:release && pnpm run test:phase7:qualification && pnpm run release:phase6:verify && pnpm run typecheck"
+    "release:phase7:verify": "pnpm run verify:phase7:release && pnpm run test:phase7:qualification && pnpm run release:phase6:verify && pnpm run typecheck",
+    "dev:all": "INCLUDE_SCHEDULER=true node scripts/devProcesses.mjs"
   },
   "keywords": [],
   "author": "opygen",

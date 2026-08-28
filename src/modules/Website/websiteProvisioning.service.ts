@@ -117,6 +117,12 @@ const createInitialRevisionTx = async (
     where: { id: websiteId },
     data: { draftRevisionNumber: 1 },
   });
+
+  // Registration used to reload the complete website (pages/domains/assets)
+  // immediately after this snapshot, creating a second expensive lateral-join
+  // query inside the same transaction. The snapshot already contains the full
+  // relation graph; only the persisted revision counter changed.
+  return { ...snapshot, draftRevisionNumber: 1 };
 };
 
 const createWebsiteRecordTx = async (
@@ -173,8 +179,7 @@ const createWebsiteRecordTx = async (
     select: { id: true },
   });
 
-  await createInitialRevisionTx(db, website.id, createdByUserId, initialRevisionReason);
-  return loadWebsiteSnapshot(db, website.id);
+  return createInitialRevisionTx(db, website.id, createdByUserId, initialRevisionReason);
 };
 
 /** Explicit website creation used by the protected Phase-1 API. */

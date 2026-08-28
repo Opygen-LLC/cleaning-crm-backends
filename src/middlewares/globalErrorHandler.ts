@@ -137,18 +137,26 @@ export const globalErrorHandler = async (
     const monitoredMessage = NODE_ENV === "production" ? message : errorMessage;
     const errorStack = err instanceof Error ? err.stack ?? null : null;
     if (statusCode >= 500) {
-        logger.error("http_error", {
-            event: "http_error",
-            requestId,
-            traceId,
-            route: req.path,
-            method: req.method,
-            statusCode,
-            code,
-            releaseSha: RELEASE_VERSION,
-            errorMessage: monitoredMessage,
-            stack: NODE_ENV === "development" ? errorStack : undefined,
-        });
+        if (NODE_ENV === "production") {
+            logger.error("http_error", {
+                event: "http_error",
+                requestId,
+                traceId,
+                route: req.path,
+                method: req.method,
+                statusCode,
+                code,
+                releaseSha: RELEASE_VERSION,
+                errorMessage: monitoredMessage,
+            });
+        } else {
+            logger.error(
+                `${req.method} ${req.path} failed → ${statusCode} ${code}: ${message} · request ${requestId.slice(0, 8)}`,
+            );
+            if (process.env.LOG_VERBOSE_ERRORS === "true" && errorStack) {
+                logger.debug(errorStack);
+            }
+        }
         void ErrorMonitor.captureBackendError({
             message: monitoredMessage,
             requestId,
@@ -161,7 +169,9 @@ export const globalErrorHandler = async (
             releaseVersion: RELEASE_VERSION,
         });
     } else if (NODE_ENV === "development") {
-        logger.warn("http_client_error", { requestId, traceId, method: req.method, route: req.path, statusCode, code, errorMessage });
+        logger.warn(
+            `${req.method} ${req.path} → ${statusCode} ${code}: ${message} · request ${requestId.slice(0, 8)}`,
+        );
     }
 
     const errorResponse: TErrorResponse = {

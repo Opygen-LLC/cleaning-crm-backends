@@ -38,14 +38,41 @@ export const publishRealtimeEvent = async (
         await redis.publish(CHANNEL, JSON.stringify(message));
     } catch (error) {
         // Realtime delivery is best-effort; persisted DB state remains canonical.
-        logger.warn(`[Realtime] publish failed: ${error instanceof Error ? error.message : String(error)}`);
+        logger.warn(`Realtime update could not be published — ${error instanceof Error ? error.message : String(error)}`);
     }
 };
 
 export const startRealtimeSubscriber = (io: SocketIOServer) => {
-    const subscriber = redis.duplicate();
+    // A Redis pub/sub connection can spend time in "connecting" during local
+    // startup. The primary Redis client intentionally disables its offline
+    // queue so request-path cache calls fail fast, but a subscriber is a
+    // long-lived background connection and should wait until Redis is ready.
+    const subscriber = redis.duplicate({
+        enableOfflineQueue: true,
+        maxRetriesPerRequest: null,
+    });
+
+    let outageLogged = false;
+    let subscribed = false;
+
     subscriber.on("error", (error) => {
-        logger.warn(`[Realtime] subscriber unavailable: ${error.message}`);
+        if (outageLogged) return;
+        outageLogged = true;
+        logger.warn(`Realtime updates are temporarily unavailable — ${error.message}`);
+    });
+
+    subscriber.on("ready", () => {
+        if (outageLogged) logger.info("Realtime connection restored.");
+        outageLogged = false;
+        if (subscribed) return;
+        void subscriber.subscribe(CHANNEL)
+            .then(() => {
+                subscribed = true;
+                logger.info("Realtime subscriber ready.");
+            })
+            .catch((error) => {
+                logger.warn(`Realtime subscriber could not start — ${error instanceof Error ? error.message : String(error)}`);
+            });
     });
 
     subscriber.on("message", (_channel, raw) => {
@@ -53,14 +80,19 @@ export const startRealtimeSubscriber = (io: SocketIOServer) => {
             const message = JSON.parse(raw) as RealtimeEnvelope;
             if (!message || message.source === instanceId || !message.target || !message.event) return;
             emitEnvelope(io, message);
-        } catch (error) {
-            logger.warn(`[Realtime] ignored malformed message: ${error instanceof Error ? error.message : String(error)}`);
+        } catch {
+            logger.warn("Realtime subscriber ignored an invalid message.");
         }
     });
 
-    void subscriber.subscribe(CHANNEL).catch((error) => {
-        logger.warn(`[Realtime] subscribe failed: ${error instanceof Error ? error.message : String(error)}`);
-    });
+    // duplicate() normally starts connecting immediately. If it was created in
+    // a waiting state, connect explicitly; otherwise the ready listener above
+    // owns subscription startup.
+    if (subscriber.status === "wait") {
+        void subscriber.connect().catch((error) => {
+            logger.warn(`Realtime Redis connection could not start — ${error instanceof Error ? error.message : String(error)}`);
+        });
+    }
 
     return subscriber;
 };
