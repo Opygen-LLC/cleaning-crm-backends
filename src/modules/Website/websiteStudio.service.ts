@@ -2,6 +2,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import { WEBSITE_BASE_DOMAIN, WEBSITE_CUSTOM_DOMAINS_ENABLED, WEBSITE_CUSTOM_DOMAIN_LIMIT_PER_SITE, WEBSITE_DOMAIN_PROVIDER } from "../../config/ENV";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
+import type { Prisma } from "../../generated/prisma/client";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteService } from "./website.service";
 import { parsePublishedSnapshot } from "./websiteSnapshot";
@@ -15,6 +16,11 @@ type WebsiteStudioDomain = Parameters<typeof isWebsiteDomainRoutingReady>[0] & {
   id: string;
   [key: string]: unknown;
 };
+
+const primaryReadyWebsiteDomainWhere = {
+  isPrimary: true,
+  ...readyWebsiteDomainWhere,
+} satisfies Prisma.WebsiteDomainWhereInput;
 
 const getOverview = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
@@ -40,7 +46,7 @@ const getOverview = async (user: IRequestUser) => {
           take: 1,
         },
         domains: {
-          where: { isPrimary: true, ...readyWebsiteDomainWhere },
+          where: primaryReadyWebsiteDomainWhere,
           select: { domain: true },
           take: 1,
         },

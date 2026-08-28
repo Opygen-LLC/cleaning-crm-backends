@@ -1,3 +1,5 @@
+import { WebsiteDomainStatus, type Prisma } from "../../generated/prisma/client";
+
 /**
  * Custom-domain routing has several independent safety gates. Never treat a
  * row as publicly routable merely because `status` happens to be VERIFIED: a
@@ -7,12 +9,12 @@
 export const WEBSITE_READY_TLS_STATUSES = ["READY", "EXTERNAL"] as const;
 
 export const readyWebsiteDomainWhere = {
-  status: "VERIFIED",
+  status: WebsiteDomainStatus.VERIFIED,
   ownershipVerified: true,
   providerVerified: true,
   routingVerified: true,
   tlsStatus: { in: [...WEBSITE_READY_TLS_STATUSES] },
-};
+} satisfies Prisma.WebsiteDomainWhereInput;
 
 export const isWebsiteDomainRoutingReady = (domain: {
   status: string;
