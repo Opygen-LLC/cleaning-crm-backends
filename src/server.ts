@@ -38,6 +38,7 @@ import { getPerformanceSnapshot } from "./lib/monitoring/performanceMetrics";
 import { getInfrastructureAlignment } from "./lib/monitoring/infrastructure";
 import { getAuthenticatedOrigins } from "./config/authSecurity";
 import { browserOriginGuard } from "./middlewares/browserOriginGuard";
+import { AUTH_ERROR_CODES } from "./modules/Auth/auth.codes";
 
 const app = express();
 
@@ -57,6 +58,8 @@ if (effectiveTrustProxyHops > 0) app.set("trust proxy", effectiveTrustProxyHops)
 // Assign a correlation ID before any parser/CORS/router work so even early
 // failures can be traced from the browser to server logs.
 app.use(requestContext);
+// Log before parsers/CORS so malformed or rejected auth requests still receive correlation.
+app.use(logRequestResponse);
 
 app.set("view engine", "ejs");
 app.set("views", path.resolve(process.cwd(), `src/lib/templates`));
@@ -145,19 +148,20 @@ app.use(async (req, res, next) => {
     return publicWebsiteCors(req, res, next);
   }
 
+  res.locals.authErrorCode = AUTH_ERROR_CODES.AUTH_ORIGIN_NOT_ALLOWED;
   return res.status(403).json({
     statusCode: 403,
     success: false,
-    code: "CORS_ORIGIN_NOT_ALLOWED",
+    code: AUTH_ERROR_CODES.AUTH_ORIGIN_NOT_ALLOWED,
     message: "Origin is not allowed",
     retryable: false,
     errorSources: [],
     fieldErrors: {},
+    requestId: typeof res.locals.requestId === "string" ? res.locals.requestId : undefined,
   });
 });
 
 app.use(compression());
-app.use(logRequestResponse);
 
 // ─── Health / performance diagnostics ───────────────────────────────────────
 const safeDurationMs = (started: bigint) =>

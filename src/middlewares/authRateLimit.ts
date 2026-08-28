@@ -1,8 +1,14 @@
+import { AUTH_ERROR_CODES } from "../modules/Auth/auth.codes";
 import { rateLimit } from "express-rate-limit";
 
 const jsonHandler = (message: string) => ({
+    statusCode: 429,
     success: false,
+    code: AUTH_ERROR_CODES.RATE_LIMITED,
     message,
+    errorSources: [],
+    fieldErrors: {},
+    retryable: true,
 });
 
 const baseOptions = {

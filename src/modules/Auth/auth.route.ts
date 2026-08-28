@@ -16,6 +16,13 @@ import {
 
 const router = Router();
 
+// Auth responses contain session state/Set-Cookie headers and must never be cached.
+router.use((_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    next();
+});
+
 // Auth Routes
 router.post(
     "/register",

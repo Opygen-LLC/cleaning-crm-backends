@@ -96,6 +96,14 @@ const logRequestResponse = (
     const traceId = trace?.traceId ?? (typeof res.locals.traceId === "string" ? res.locals.traceId : "unknown");
     const tenantId = req.user?.adminId ?? req.user?.id ?? null;
     const userId = req.user?.id ?? null;
+    const isAuthRoute = (req.originalUrl || req.path).split("?", 1)[0].startsWith("/api/v1/auth");
+    const authErrorCode = isAuthRoute
+      ? typeof res.locals.authErrorCode === "string" && res.locals.authErrorCode.trim()
+        ? res.locals.authErrorCode.trim()
+        : res.statusCode < 400
+          ? "AUTH_OK"
+          : `HTTP_${res.statusCode}`
+      : null;
     const cacheAttempts = (trace?.responseCacheHits ?? 0) + (trace?.responseCacheMisses ?? 0);
     const redisAttempts = (trace?.redisHits ?? 0) + (trace?.redisMisses ?? 0);
 
@@ -139,6 +147,7 @@ const logRequestResponse = (
       userHash: hashIdentity(userId),
       tenantHash: hashIdentity(tenantId),
       releaseSha: RELEASE_VERSION,
+      ...(isAuthRoute ? { authErrorCode } : {}),
       processRole: process.env.PROCESS_ROLE || "api",
     });
   });

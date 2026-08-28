@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   getAccessToken: vi.fn(),
   getRefreshToken: vi.fn(),
   verifyToken: vi.fn(),
+  signOut: vi.fn(),
+  provisionRegisteredAdmin: vi.fn(),
+  getPlatformConfig: vi.fn(),
 }));
 
 vi.mock("../../lib/prisma/prisma", () => ({
@@ -34,6 +37,7 @@ vi.mock("../../lib/auth", () => ({
   auth: {
     api: {
       signInEmail: mocks.signInEmail,
+      signOut: mocks.signOut,
     },
   },
 }));
@@ -54,12 +58,12 @@ vi.mock("../../config/ENV", () => ({
 }));
 
 vi.mock("./accountProvisioning.service", () => ({
-  AccountProvisioningService: { provisionRegisteredAdmin: vi.fn() },
+  AccountProvisioningService: { provisionRegisteredAdmin: mocks.provisionRegisteredAdmin },
 }));
 vi.mock("./accountIntegrity.service", () => ({
   AccountIntegrityService: { assertAdminReadyForActivation: vi.fn() },
 }));
-vi.mock("../../lib/utils/platformConfig", () => ({ getPlatformConfig: vi.fn() }));
+vi.mock("../../lib/utils/platformConfig", () => ({ getPlatformConfig: mocks.getPlatformConfig }));
 vi.mock("../../lib/outbox/authEmailOutbox", () => ({
   AuthEmailOutbox: { enqueueEmailVerification: vi.fn() },
 }));
@@ -108,6 +112,9 @@ beforeEach(() => {
   });
   mocks.sessionFindFirst.mockResolvedValue({ id: "session-1", token: "session-token" });
   mocks.sessionUpdate.mockResolvedValue({ token: "session-token" });
+  mocks.signOut.mockResolvedValue({ success: true });
+  mocks.getPlatformConfig.mockResolvedValue({ registrationOpen: true, defaultTrialDays: 14 });
+  mocks.provisionRegisteredAdmin.mockResolvedValue({ userId: "user-1", reservedSubdomain: "jamie-cleaning" });
 });
 
 describe("login deterministic session contract", () => {
@@ -239,5 +246,32 @@ describe("refresh deterministic session contract", () => {
       code: "REFRESH_SESSION_EXPIRED",
       retryable: false,
     });
+  });
+});
+
+
+describe("complete auth lifecycle service regression", () => {
+  it("register delegates to the canonical provisioning transaction", async () => {
+    const result = await authService.register({ businessName: "Jamie Cleaning", name: "Jamie Doe", email: "jamie@example.com", password: "correct-password" });
+    expect(mocks.provisionRegisteredAdmin).toHaveBeenCalledWith({ businessName: "Jamie Cleaning", name: "Jamie Doe", email: "jamie@example.com", password: "correct-password", trialDays: 14, mobileNumber: undefined, businessType: undefined, licenseNumber: undefined });
+    expect(result).toEqual({ userId: "user-1", reservedSubdomain: "jamie-cleaning" });
+  });
+  it("returns completed onboarding state for an existing ADMIN", async () => {
+    mocks.userFindUnique.mockResolvedValue({ ...activeAdmin, admin: { onboardingCompletedAt: new Date() } });
+    const result = await authService.login({ email: "jamie@example.com", password: "correct-password" });
+    expect(result.isOnboardingComplete).toBe(true);
+  });
+  it("returns forced password-change state for STAFF", async () => {
+    mocks.userFindUnique.mockResolvedValue({ ...activeAdmin, role: "STAFF", needPasswordChange: true, staff: { status: "ACTIVE" }, admin: null });
+    const result = await authService.login({ email: "jamie@example.com", password: "correct-password" });
+    expect(result.needPasswordChange).toBe(true); expect(result.isOnboardingComplete).toBeUndefined(); expect(result.user.role).toBe("STAFF");
+  });
+  it("me reads current database account state", async () => {
+    mocks.userFindUnique.mockResolvedValue({ ...activeAdmin, emailVerified: true });
+    const result = await authService.me({ id: "user-1", email: "jamie@example.com", role: "ADMIN" } as never);
+    expect(mocks.userFindUnique).toHaveBeenCalledWith({ where: { id: "user-1" }, include: { admin: true, staff: true } }); expect(result.id).toBe("user-1");
+  });
+  it("logout revokes the Better Auth session and remains idempotent", async () => {
+    await expect(authService.logout("session-token")).resolves.toEqual({ success: true }); expect(mocks.signOut).toHaveBeenCalledOnce(); const headers=mocks.signOut.mock.calls[0][0].headers as Headers; expect(headers.get("Authorization")).toBe("Bearer session-token"); mocks.signOut.mockClear(); await expect(authService.logout()).resolves.toEqual({ success: true }); expect(mocks.signOut).not.toHaveBeenCalled();
   });
 });

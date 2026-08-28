@@ -66,7 +66,10 @@
     "load:phase7:cold": "k6 run -e CACHE_MODE=cold scripts/load/phase7-load.js",
     "verify:phase7:release": "node scripts/phase7/verifyPhase7Release.mjs",
     "release:phase7:verify": "pnpm run verify:phase7:release && pnpm run test:phase7:qualification && pnpm run release:phase6:verify && pnpm run typecheck",
-    "dev:all": "INCLUDE_SCHEDULER=true node scripts/devProcesses.mjs"
+    "dev:all": "INCLUDE_SCHEDULER=true node scripts/devProcesses.mjs",
+    "test:auth:phase3": "vitest run src/modules/Auth/auth.service.login.test.ts src/modules/Auth/auth.service.verifyEmail.test.ts src/modules/Auth/auth.controller.contract.test.ts src/modules/Auth/auth.cookie-contract.test.ts src/middlewares/logger.auth-observability.test.ts",
+    "smoke:auth:phase3": "node scripts/authPhase3Smoke.mjs",
+    "release:auth:phase3:verify": "pnpm run test:auth:phase3 && pnpm run security:phase5 && pnpm run observability:phase6 && pnpm run typecheck"
   },
   "keywords": [],
   "author": "opygen",

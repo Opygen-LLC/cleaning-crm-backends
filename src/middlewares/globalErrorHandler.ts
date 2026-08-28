@@ -22,6 +22,7 @@ import {
 import logger from "../lib/logger";
 import { ErrorMonitor } from "../lib/monitoring/errorMonitor";
 import { isAPIError } from "better-auth/api";
+import { AUTH_ERROR_CODES } from "../modules/Auth/auth.codes";
 
 const BETTER_AUTH_STATUS_CODES: Record<string, number> = {
     BAD_REQUEST: status.BAD_REQUEST,
@@ -61,13 +62,13 @@ const parseBetterAuthError = (error: unknown) => {
             ? record.body.code
             : typeof record.code === "string"
               ? record.code
-              : "AUTHENTICATION_SERVICE_ERROR";
+              : AUTH_ERROR_CODES.AUTHENTICATION_SERVICE_ERROR;
     const normalizedCode = rawCode.trim().toUpperCase();
 
     if (["INVALID_EMAIL_OR_PASSWORD", "INVALID_PASSWORD", "USER_NOT_FOUND"].includes(normalizedCode)) {
         return {
             statusCode: status.UNAUTHORIZED,
-            code: "INVALID_CREDENTIALS",
+            code: AUTH_ERROR_CODES.INVALID_CREDENTIALS,
             message: "Email or password is incorrect.",
             retryable: false,
         };
@@ -76,7 +77,7 @@ const parseBetterAuthError = (error: unknown) => {
     if (normalizedCode === "EMAIL_NOT_VERIFIED") {
         return {
             statusCode: status.FORBIDDEN,
-            code: "EMAIL_NOT_VERIFIED",
+            code: AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED,
             message: "Please verify your email before signing in.",
             retryable: false,
         };
@@ -85,7 +86,7 @@ const parseBetterAuthError = (error: unknown) => {
     if (["SESSION_EXPIRED", "INVALID_TOKEN", "FAILED_TO_GET_SESSION", "UNAUTHORIZED"].includes(normalizedCode)) {
         return {
             statusCode: status.UNAUTHORIZED,
-            code: "INVALID_SESSION",
+            code: AUTH_ERROR_CODES.INVALID_SESSION,
             message: "Your session is invalid or has expired.",
             retryable: false,
         };
@@ -94,7 +95,7 @@ const parseBetterAuthError = (error: unknown) => {
     if (normalizedCode === "FAILED_TO_CREATE_SESSION") {
         return {
             statusCode: status.INTERNAL_SERVER_ERROR,
-            code: "AUTH_SESSION_NOT_CREATED",
+            code: AUTH_ERROR_CODES.AUTH_SESSION_NOT_CREATED,
             message: "Your credentials were accepted, but a secure session could not be created.",
             retryable: true,
         };
@@ -103,7 +104,7 @@ const parseBetterAuthError = (error: unknown) => {
     if (statusCode >= 500) {
         return {
             statusCode,
-            code: "AUTHENTICATION_SERVICE_ERROR",
+            code: AUTH_ERROR_CODES.AUTHENTICATION_SERVICE_ERROR,
             message: "The authentication service could not complete the request. Please try again.",
             retryable: true,
         };
@@ -241,6 +242,9 @@ export const globalErrorHandler = async (
 
     const requestId = getRequestId(req, res);
     res.setHeader("X-Request-Id", requestId);
+    if ((req.originalUrl || req.path).startsWith("/api/v1/auth")) {
+        res.locals.authErrorCode = code;
+    }
 
     const traceId = typeof res.locals.traceId === "string" ? res.locals.traceId : null;
     const errorMessage = err instanceof Error ? err.message : String(err);

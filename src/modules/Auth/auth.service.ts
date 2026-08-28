@@ -22,6 +22,7 @@ import { AccountIntegrityService } from "./accountIntegrity.service";
 import { getPlatformConfig } from "../../lib/utils/platformConfig";
 import { AuthEmailOutbox } from "../../lib/outbox/authEmailOutbox";
 import { randomBytes, randomUUID } from "node:crypto";
+import { AUTH_ERROR_CODES } from "./auth.codes";
 
 //? Max sessions per user
 const MAX_SESSIONS = 3;
@@ -42,7 +43,7 @@ const assertAccountCanUseAuthenticatedApp = (user: {
         throw new AppError(
             status.FORBIDDEN,
             "Please verify your email before signing in.",
-            { code: "EMAIL_NOT_VERIFIED", retryable: false },
+            { code: AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED, retryable: false },
         );
     }
 
@@ -50,7 +51,7 @@ const assertAccountCanUseAuthenticatedApp = (user: {
         throw new AppError(
             status.FORBIDDEN,
             "Your account is suspended. Please contact support.",
-            { code: "ACCOUNT_SUSPENDED", retryable: false },
+            { code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED, retryable: false },
         );
     }
 
@@ -58,7 +59,7 @@ const assertAccountCanUseAuthenticatedApp = (user: {
         throw new AppError(
             status.FORBIDDEN,
             "This account is no longer active.",
-            { code: "ACCOUNT_DISABLED", retryable: false },
+            { code: AUTH_ERROR_CODES.ACCOUNT_DISABLED, retryable: false },
         );
     }
 
@@ -66,7 +67,7 @@ const assertAccountCanUseAuthenticatedApp = (user: {
         throw new AppError(
             status.FORBIDDEN,
             "This account is not active yet.",
-            { code: "ACCOUNT_NOT_ACTIVE", retryable: false },
+            { code: AUTH_ERROR_CODES.ACCOUNT_NOT_ACTIVE, retryable: false },
         );
     }
 
@@ -77,7 +78,7 @@ const assertAccountCanUseAuthenticatedApp = (user: {
         throw new AppError(
             status.FORBIDDEN,
             "Your staff access has been disabled. Please contact your administrator.",
-            { code: "ACCOUNT_SUSPENDED", retryable: false },
+            { code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED, retryable: false },
         );
     }
 };
@@ -115,7 +116,7 @@ const ensureVerifiedSessionToken = async (
             status.INTERNAL_SERVER_ERROR,
             "Email verified, but the authenticated session could not be established.",
             {
-                code: "AUTH_VERIFICATION_SESSION_FAILED",
+                code: AUTH_ERROR_CODES.AUTH_VERIFICATION_SESSION_FAILED,
                 retryable: true,
             },
         );
@@ -178,7 +179,7 @@ const login = async ({ email, password }: ILoginUserPayload) => {
         throw new AppError(
             status.INTERNAL_SERVER_ERROR,
             "Your credentials were accepted, but a secure session could not be created.",
-            { code: "AUTH_SESSION_NOT_CREATED", retryable: true },
+            { code: AUTH_ERROR_CODES.AUTH_SESSION_NOT_CREATED, retryable: true },
         );
     }
 
@@ -205,7 +206,7 @@ const login = async ({ email, password }: ILoginUserPayload) => {
             throw new AppError(
                 status.INTERNAL_SERVER_ERROR,
                 "The authenticated identity could not be reconciled with the application account.",
-                { code: "AUTH_IDENTITY_STATE_INVALID", retryable: true },
+                { code: AUTH_ERROR_CODES.AUTH_IDENTITY_STATE_INVALID, retryable: true },
             );
         }
 
@@ -225,7 +226,7 @@ const login = async ({ email, password }: ILoginUserPayload) => {
             throw new AppError(
                 status.INTERNAL_SERVER_ERROR,
                 "Your credentials were accepted, but the secure session was not persisted.",
-                { code: "AUTH_SESSION_NOT_CREATED", retryable: true },
+                { code: AUTH_ERROR_CODES.AUTH_SESSION_NOT_CREATED, retryable: true },
             );
         }
 
@@ -246,7 +247,7 @@ const login = async ({ email, password }: ILoginUserPayload) => {
             throw new AppError(
                 status.INTERNAL_SERVER_ERROR,
                 "The secure login tokens could not be created.",
-                { code: "AUTH_TOKEN_CREATION_FAILED", retryable: true },
+                { code: AUTH_ERROR_CODES.AUTH_TOKEN_CREATION_FAILED, retryable: true },
             );
         }
 
@@ -328,7 +329,7 @@ const getNewToken = async (
         throw new AppError(
             status.UNAUTHORIZED,
             "Refresh session is missing.",
-            { code: "REFRESH_SESSION_MISSING", retryable: false },
+            { code: AUTH_ERROR_CODES.REFRESH_SESSION_MISSING, retryable: false },
         );
     }
 
@@ -341,7 +342,7 @@ const getNewToken = async (
         throw new AppError(
             status.UNAUTHORIZED,
             "The refresh token is invalid or expired.",
-            { code: "INVALID_REFRESH_TOKEN", retryable: false },
+            { code: AUTH_ERROR_CODES.REFRESH_SESSION_EXPIRED, retryable: false },
         );
     }
 
@@ -355,7 +356,7 @@ const getNewToken = async (
         throw new AppError(
             status.UNAUTHORIZED,
             "The refresh token is invalid.",
-            { code: "INVALID_REFRESH_TOKEN", retryable: false },
+            { code: AUTH_ERROR_CODES.REFRESH_SESSION_EXPIRED, retryable: false },
         );
     }
 
@@ -372,7 +373,7 @@ const getNewToken = async (
         throw new AppError(
             status.UNAUTHORIZED,
             "The refresh session has expired or was revoked.",
-            { code: "REFRESH_SESSION_EXPIRED", retryable: false },
+            { code: AUTH_ERROR_CODES.REFRESH_SESSION_EXPIRED, retryable: false },
         );
     }
 
@@ -396,7 +397,7 @@ const getNewToken = async (
         throw new AppError(
             status.UNAUTHORIZED,
             "The authenticated account no longer exists.",
-            { code: "REFRESH_SESSION_EXPIRED", retryable: false },
+            { code: AUTH_ERROR_CODES.REFRESH_SESSION_EXPIRED, retryable: false },
         );
     }
 
@@ -478,7 +479,7 @@ const verifyEmail = async (email: string, otp: string) => {
         throw new AppError(
             status.INTERNAL_SERVER_ERROR,
             "Email verification did not produce a verified account.",
-            { code: "EMAIL_VERIFICATION_STATE_INVALID", retryable: true },
+            { code: AUTH_ERROR_CODES.EMAIL_VERIFICATION_STATE_INVALID, retryable: true },
         );
     }
 

@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { NODE_ENV } from "../config/ENV";
 import { getAuthenticatedOrigins } from "../config/authSecurity";
+import { AUTH_ERROR_CODES } from "../modules/Auth/auth.codes";
 
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const AUTH_COOKIE_NAMES = ["accessToken", "refreshToken", "better-auth.session_token"];
@@ -22,10 +23,16 @@ export const browserOriginGuard = (req: Request, res: Response, next: NextFuncti
     if (!origin && NODE_ENV !== "production") return next();
 
     if (!origin || !getAuthenticatedOrigins().includes(origin)) {
+        res.locals.authErrorCode = AUTH_ERROR_CODES.AUTH_ORIGIN_NOT_ALLOWED;
         return res.status(403).json({
+            statusCode: 403,
             success: false,
+            code: AUTH_ERROR_CODES.AUTH_ORIGIN_NOT_ALLOWED,
             message: "Request origin is not allowed",
-            error: { code: "AUTH_ORIGIN_NOT_ALLOWED", retryable: false },
+            errorSources: [],
+            fieldErrors: {},
+            retryable: false,
+            requestId: typeof res.locals.requestId === "string" ? res.locals.requestId : undefined,
         });
     }
 

@@ -4,6 +4,7 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { tokenUtils } from "../../lib/utils/token";
 import AppError from "../../errorHelper/AppError";
+import { AUTH_ERROR_CODES } from "./auth.codes";
 
 const setAuthenticatedCookies = (
     res: Parameters<typeof tokenUtils.setAccessTokenCookie>[0],
@@ -37,7 +38,7 @@ const login = catchAsync(async (req, res) => {
         throw new AppError(
             httpStatus.INTERNAL_SERVER_ERROR,
             "The authenticated session is incomplete.",
-            { code: "AUTH_LOGIN_STATE_INCOMPLETE", retryable: true },
+            { code: AUTH_ERROR_CODES.AUTH_LOGIN_STATE_INCOMPLETE, retryable: true },
         );
     }
 
@@ -77,7 +78,7 @@ const getNewToken = catchAsync(async (req, res) => {
         throw new AppError(
             httpStatus.UNAUTHORIZED,
             "Refresh session is missing.",
-            { code: "REFRESH_SESSION_MISSING", retryable: false },
+            { code: AUTH_ERROR_CODES.REFRESH_SESSION_MISSING, retryable: false },
         );
     }
 
@@ -153,7 +154,12 @@ const resetPassword = catchAsync(async (req, res) => {
 
 const changePassword = catchAsync(async (req, res) => {
     const sessionToken = req.cookies["better-auth.session_token"];
-    if (!sessionToken) throw new AppError(httpStatus.UNAUTHORIZED, "Session is missing");
+    if (!sessionToken) {
+        throw new AppError(httpStatus.UNAUTHORIZED, "Session is missing", {
+            code: AUTH_ERROR_CODES.INVALID_SESSION,
+            retryable: false,
+        });
+    }
 
     const result = await authService.changePassword(req.body, sessionToken);
     const { accessToken, refreshToken, token, ...clientSafe } = result;
