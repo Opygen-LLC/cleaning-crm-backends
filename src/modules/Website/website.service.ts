@@ -19,6 +19,7 @@ import type {
   WebsitePublishInput,
   WebsiteRevisionRestoreInput,
   WebsiteUpdateInput,
+  WebsiteEditorSurface,
 } from "./website.interface";
 import { assertSafeHttpsUrl, normalizeSubdomain } from "./websiteIdentity";
 import { TemplateRegistry } from "./templateRegistry";
@@ -319,27 +320,32 @@ const loadDraftSnapshot = async (websiteId: string, db: any) => {
 const loadWebsiteDetailsWhere = async (
   where: { id: string } | { adminId: string },
   db: any = prisma,
-  options: { includeDomains?: boolean } = {},
+  options: { surface?: WebsiteEditorSurface | "full" } = {},
 ) => {
-  const includeDomains = options.includeDomains !== false;
+  const surface = options.surface ?? "full";
+  const includePages = surface === "full" || surface === "content" || surface === "seo";
+  const includeDomains = surface === "full";
+  const includeAssets = surface === "full" || surface === "branding" || surface === "seo";
+  const includeAliases = surface === "full" || surface === "domain";
+  const includePrimaryForms = surface === "full" || surface === "booking";
+
   const website = await db.businessWebsite.findUnique({
     where,
     include: {
-      pages: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
+      ...(includePages ? { pages: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] } } : {}),
       ...(includeDomains ? { domains: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] } } : {}),
-      assets: { orderBy: { createdAt: "desc" } },
-      subdomainAliases: { orderBy: { createdAt: "desc" } },
-      primaryBookingForm: { select: { id: true, slug: true, published: true, headline: true } },
-      primaryEstimateForm: { select: { id: true, slug: true, published: true, headline: true } },
+      ...(includeAssets ? { assets: { orderBy: { createdAt: "desc" } } } : {}),
+      ...(includeAliases ? { subdomainAliases: { orderBy: { createdAt: "desc" } } } : {}),
+      ...(includePrimaryForms
+        ? {
+            primaryBookingForm: { select: { id: true, slug: true, published: true, headline: true } },
+            primaryEstimateForm: { select: { id: true, slug: true, published: true, headline: true } },
+          }
+        : {}),
     },
   });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website not found");
 
-  const latest = await db.websiteRevision.aggregate({
-    where: { websiteId: website.id },
-    _max: { revisionNumber: true },
-  });
-  const draftRevisionNumber = latest._max.revisionNumber ?? 0;
   const { publishedSnapshot: _publishedSnapshot, ...safeWebsite } = website;
   const websiteDomains = Array.isArray((website as any).domains) ? (website as any).domains : [];
   const presentedDomains = websiteDomains.map((domain: any) => presentWebsiteDomain(domain as any));
@@ -347,15 +353,23 @@ const loadWebsiteDetailsWhere = async (
   const primaryDomain = WEBSITE_CUSTOM_DOMAINS_ENABLED
     ? websiteDomains.find((domain: any) => domain.isPrimary && isWebsiteDomainRoutingReady(domain))?.domain ?? null
     : null;
+  const draftRevisionNumber = Number(website.draftRevisionNumber ?? 0);
+
   return {
     ...safeWebsite,
+    // Omitted relations are explicit empty/null values so old clients never
+    // crash, while the Studio can request only the relations needed by the
+    // active tab. No omitted relation is interpreted as a delete by saveDraft.
+    pages: Array.isArray((website as any).pages) ? (website as any).pages : [],
     domains: presentedDomains,
+    assets: Array.isArray((website as any).assets) ? (website as any).assets : [],
+    subdomainAliases: Array.isArray((website as any).subdomainAliases) ? (website as any).subdomainAliases : [],
+    primaryBookingForm: (website as any).primaryBookingForm ?? null,
+    primaryEstimateForm: (website as any).primaryEstimateForm ?? null,
+    editorSurface: surface === "full" ? null : surface,
     platformUrl,
     publicUrl: primaryDomain ? `https://${primaryDomain}` : platformUrl,
     draftRevisionNumber,
-    // Publication state and draft dirtiness are separate concerns. A
-    // SUSPENDED website may still have a perfectly current published snapshot,
-    // while PROVISIONED/DRAFT sites have no published revision yet.
     hasUnpublishedChanges:
       website.publishedRevisionNumber === null ||
       draftRevisionNumber > website.publishedRevisionNumber,
@@ -363,20 +377,24 @@ const loadWebsiteDetailsWhere = async (
 };
 
 const loadWebsiteDetails = (websiteId: string, db: any = prisma) =>
-  loadWebsiteDetailsWhere({ id: websiteId }, db);
+  loadWebsiteDetailsWhere({ id: websiteId }, db, { surface: "full" });
 
 const loadWebsiteDetailsForAdmin = (adminId: string, db: any = prisma) =>
-  loadWebsiteDetailsWhere({ adminId }, db);
+  loadWebsiteDetailsWhere({ adminId }, db, { surface: "full" });
 
-const loadWebsiteEditorDetailsForAdmin = (adminId: string, db: any = prisma) =>
-  loadWebsiteDetailsWhere({ adminId }, db, { includeDomains: false });
+const loadWebsiteEditorDetailsForAdmin = (
+  adminId: string,
+  surface: WebsiteEditorSurface,
+  db: any = prisma,
+) => loadWebsiteDetailsWhere({ adminId }, db, { surface });
 
 const getLatestRevisionNumber = async (db: any, websiteId: string): Promise<number> => {
-  const latest = await db.websiteRevision.aggregate({
-    where: { websiteId },
-    _max: { revisionNumber: true },
+  const website = await db.businessWebsite.findUnique({
+    where: { id: websiteId },
+    select: { draftRevisionNumber: true },
   });
-  return latest._max.revisionNumber ?? 0;
+  if (!website) throw new AppError(status.NOT_FOUND, "Business website not found");
+  return Number(website.draftRevisionNumber ?? 0);
 };
 
 const assertExpectedRevision = async (
@@ -437,16 +455,22 @@ const createRevisionSnapshot = async (
 ) => {
   await acquireTextTransactionAdvisoryLock(db, websiteId);
   const currentRevisionNumber = baseRevisionNumber ?? await getLatestRevisionNumber(db, websiteId);
+  const nextRevisionNumber = currentRevisionNumber + 1;
   const snapshot = normalizeDraftPageContent(await loadDraftSnapshot(websiteId, db));
-  return db.websiteRevision.create({
+  const revision = await db.websiteRevision.create({
     data: {
       websiteId,
-      revisionNumber: currentRevisionNumber + 1,
+      revisionNumber: nextRevisionNumber,
       snapshot: JSON.parse(JSON.stringify(snapshot)) as any,
       reason,
       createdByUserId,
     },
   });
+  await db.businessWebsite.update({
+    where: { id: websiteId },
+    data: { draftRevisionNumber: nextRevisionNumber },
+  });
+  return revision;
 };
 
 /**
@@ -457,20 +481,16 @@ const createRevisionSnapshot = async (
 const ensurePublishedSnapshotBeforeDraftMutationTx = async (db: any, websiteId: string) => {
   const current = await db.businessWebsite.findUnique({
     where: { id: websiteId },
-    select: { status: true, publishedSnapshot: true, publishedRevisionNumber: true },
+    select: { status: true, publishedSnapshot: true, publishedRevisionNumber: true, draftRevisionNumber: true },
   });
   if (!current || current.status !== "PUBLISHED" || current.publishedSnapshot) return;
 
   const draft = normalizeDraftPageContent(await loadDraftSnapshot(websiteId, db));
-  const latest = await db.websiteRevision.aggregate({
-    where: { websiteId },
-    _max: { revisionNumber: true },
-  });
   await db.businessWebsite.update({
     where: { id: websiteId },
     data: {
       publishedSnapshot: buildPublishedSnapshot(draft) as any,
-      publishedRevisionNumber: current.publishedRevisionNumber ?? latest._max.revisionNumber ?? null,
+      publishedRevisionNumber: current.publishedRevisionNumber ?? current.draftRevisionNumber ?? null,
     },
   });
 };
@@ -525,23 +545,26 @@ const createWebsite = async (payload: WebsiteCreateInput, user: IRequestUser) =>
 };
 
 const getWebsiteForAdmin = async (adminId: string) => loadWebsiteDetailsForAdmin(adminId);
-const getWebsiteEditorForAdmin = async (adminId: string) => loadWebsiteEditorDetailsForAdmin(adminId);
+const getWebsiteEditorForAdmin = async (adminId: string, surface: WebsiteEditorSurface) =>
+  WebsiteProjectionCacheService.getOrLoadStudio(adminId, surface, () =>
+    loadWebsiteEditorDetailsForAdmin(adminId, surface),
+  );
 
 const getWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
   return getWebsiteForAdmin(adminId);
 };
 
-const getWebsiteEditor = async (user: IRequestUser) => {
+const getWebsiteEditor = async (user: IRequestUser, surface: WebsiteEditorSurface = "content") => {
   const adminId = await getAdminId(user);
-  return getWebsiteEditorForAdmin(adminId);
+  return getWebsiteEditorForAdmin(adminId, surface);
 };
 
 const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const [current, entitlements] = await Promise.all([getWebsiteOrThrow(adminId), WebsiteEntitlementService.getForAdminId(adminId)]);
 
-  return prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
 
     // Re-read after acquiring the website lock. Two concurrent editors may both
@@ -570,6 +593,8 @@ const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) =>
     await createRevisionSnapshot(tx, lockedCurrent.id, user.id, "Website settings updated");
     return loadWebsiteDetails(lockedCurrent.id, tx);
   });
+  await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
+  return result;
 };
 
 const listPages = async (user: IRequestUser) => {
@@ -591,7 +616,7 @@ const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user:
   });
   if (!page) throw new AppError(status.NOT_FOUND, "Website page not found");
 
-  return prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, website.id);
     const lockedWebsite = await tx.businessWebsite.findUnique({
       where: { id: website.id },
@@ -612,6 +637,8 @@ const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user:
     await createRevisionSnapshot(tx, website.id, user.id, `Page updated: ${pageId}`);
     return updated;
   });
+  await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
+  return result;
 };
 
 const applyPagePatchesBatch = async (
@@ -670,7 +697,7 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
     throw new AppError(status.BAD_REQUEST, "A website page can only be updated once per draft save");
   }
 
-  return prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
 
     const lockedCurrent = await tx.businessWebsite.findFirst({
@@ -729,6 +756,8 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
     await createRevisionSnapshot(tx, lockedCurrent.id, user.id, "Draft saved", baseRevisionNumber);
     return loadWebsiteDetails(lockedCurrent.id, tx);
   });
+  await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
+  return result;
 };
 
 const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) => {
@@ -1031,7 +1060,7 @@ const listRevisions = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await prisma.businessWebsite.findUnique({
     where: { adminId },
-    select: { id: true, publishedRevisionNumber: true },
+    select: { id: true, publishedRevisionNumber: true, draftRevisionNumber: true },
   });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
 
@@ -1041,7 +1070,7 @@ const listRevisions = async (user: IRequestUser) => {
     orderBy: { revisionNumber: "desc" },
     take: 100,
   });
-  const latestRevisionNumber = revisions[0]?.revisionNumber ?? 0;
+  const latestRevisionNumber = website.draftRevisionNumber ?? revisions[0]?.revisionNumber ?? 0;
   return revisions.map((revision) => ({
     ...revision,
     isCurrentDraft: revision.revisionNumber === latestRevisionNumber,
@@ -1066,7 +1095,7 @@ const restoreRevision = async (revisionId: string, payload: WebsiteRevisionResto
   const adminId = await getAdminId(user);
   const website = await getWebsiteOrThrow(adminId);
 
-  return prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, website.id);
 
     const current = await tx.businessWebsite.findFirst({
@@ -1213,13 +1242,15 @@ const restoreRevision = async (revisionId: string, payload: WebsiteRevisionResto
       website: await loadWebsiteDetails(current.id, tx),
     };
   });
+  await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
+  return result;
 };
 
 const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await getWebsiteOrThrow(adminId);
 
-  return prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx: any) => {
     await acquireTextTransactionAdvisoryLock(tx, website.id);
     const locked = await tx.businessWebsite.findFirst({
       where: { id: website.id, adminId },
@@ -1269,6 +1300,8 @@ const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, u
 
     return { asset, website: await loadWebsiteDetails(website.id, tx) };
   });
+  await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
+  return result;
 };
 
 const listAssets = async (user: IRequestUser) => {
@@ -1282,7 +1315,7 @@ const registerAsset = async (payload: WebsiteAssetCreateInput, user: IRequestUse
   const website = await getWebsiteOrThrow(adminId);
   const url = assertSafeHttpsUrl(payload.url, "Asset URL");
   if (!url) throw new AppError(status.BAD_REQUEST, "Asset URL is required");
-  return prisma.websiteAsset.create({
+  const asset = await prisma.websiteAsset.create({
     data: {
       ...payload,
       url,
@@ -1292,6 +1325,8 @@ const registerAsset = async (payload: WebsiteAssetCreateInput, user: IRequestUse
       metadata: { provider: "external", kind: "legacy" } as any,
     },
   });
+  await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
+  return asset;
 };
 
 
@@ -1394,7 +1429,7 @@ const uploadContentAsset = async (
     throw new AppError(status.BAD_REQUEST, "Website image dimensions or file size are not supported");
   }
 
-  return prisma.websiteAsset.create({
+  const asset = await prisma.websiteAsset.create({
     data: {
       websiteId: website.id,
       publicId: uploaded.public_id,
@@ -1408,6 +1443,8 @@ const uploadContentAsset = async (
       metadata: { provider: "cloudinary", kind: "content", slot: normalizedSlot, immutable: true },
     },
   });
+  await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
+  return asset;
 };
 
 const deleteAsset = async (assetId: string, user: IRequestUser) => {
@@ -1442,6 +1479,7 @@ const deleteAsset = async (assetId: string, user: IRequestUser) => {
   }
 
   await prisma.websiteAsset.delete({ where: { id: assetId } });
+  await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
   return { id: assetId, deleted: true };
 };
 

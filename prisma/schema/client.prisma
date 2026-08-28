@@ -60,6 +60,10 @@ model Client {
 
   @@unique([email, adminId])
   @@index([adminId])
+  // Phase 3 hot-list/keyset paths: tenant filter + common status filter +
+  // deterministic newest-first ordering.
+  @@index([adminId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([adminId, status, createdAt(sort: Desc), id(sort: Desc)])
   @@index([status])
   // NOTE: `name` and `email` also have GIN trigram indexes (pg_trgm) applied
   // via a raw-SQL migration — see

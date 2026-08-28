@@ -44,6 +44,8 @@ model Review {
   admin           AdminProfile  @relation(fields: [adminId],       references: [id], onDelete: Cascade)
 
   @@index([adminId, status])
+  @@index([adminId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([adminId, status, createdAt(sort: Desc), id(sort: Desc)])
   @@index([staffId])
   @@index([jobId])
   @@map("review")

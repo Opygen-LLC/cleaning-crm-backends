@@ -5,10 +5,13 @@ import {
   WEBSITE_PROJECTION_REBUILD_LOCK_SECONDS,
   WEBSITE_PROJECTION_STALE_TTL_SECONDS,
   WEBSITE_PROJECTION_WAIT_FOR_FILL_MS,
+  WEBSITE_STUDIO_CACHE_TTL_SECONDS,
 } from "../../config/ENV";
 import redis from "../../config/redis";
 import { PublicWebsiteCacheOutbox } from "../../lib/outbox/publicWebsiteCacheOutbox";
-import { CacheNamespaces } from "../../lib/cache/cachePolicy";
+import { CacheNamespaces, ttlForKey } from "../../lib/cache/cachePolicy";
+import { singleFlight } from "../../lib/utils/singleFlight";
+import { WEBSITE_EDITOR_SURFACES, type WebsiteEditorSurface } from "./website.interface";
 import { prisma } from "../../lib/prisma/prisma";
 
 const CACHE_VERSION = 9 as const;
@@ -18,6 +21,14 @@ const GENERATION_PREFIX = `site-projection-generation:v${CACHE_VERSION}:`;
 const ADMIN_WEBSITE_PREFIX = `site-projection-admin:v${CACHE_VERSION}:`;
 const WEBSITE_ADMIN_PREFIX = `site-projection-owner:v${CACHE_VERSION}:`;
 const ADMIN_WEBSITE_TTL_SECONDS = 24 * 60 * 60;
+const STUDIO_CACHE_VERSION = 1 as const;
+const STUDIO_CACHE_SURFACES = [...WEBSITE_EDITOR_SURFACES] as const;
+
+interface StudioCacheEnvelope<T> {
+  version: typeof STUDIO_CACHE_VERSION;
+  cachedAt: string;
+  data: T;
+}
 
 interface ProjectionCacheEnvelope<T> {
   version: typeof CACHE_VERSION;
@@ -217,6 +228,64 @@ const getOrLoad = async <T>(websiteId: string, loader: () => Promise<T>): Promis
   return loadAndCacheCurrentGeneration(websiteId, loader);
 };
 
+const studioKeyFor = (adminId: string, surface: WebsiteEditorSurface) =>
+  CacheNamespaces.websiteStudio(adminId, surface);
+
+const getStudio = async <T>(adminId: string, surface: WebsiteEditorSurface): Promise<T | null> => {
+  try {
+    const raw = await redis.get(studioKeyFor(adminId, surface));
+    if (!raw) return null;
+    const envelope = JSON.parse(raw) as StudioCacheEnvelope<T>;
+    if (envelope.version !== STUDIO_CACHE_VERSION) return null;
+    return envelope.data;
+  } catch {
+    return null;
+  }
+};
+
+const setStudio = async <T>(adminId: string, surface: WebsiteEditorSurface, data: T): Promise<void> => {
+  const key = studioKeyFor(adminId, surface);
+  const envelope: StudioCacheEnvelope<T> = {
+    version: STUDIO_CACHE_VERSION,
+    cachedAt: new Date().toISOString(),
+    data,
+  };
+  try {
+    await redis.setex(key, ttlForKey(WEBSITE_STUDIO_CACHE_TTL_SECONDS, key), JSON.stringify(envelope));
+  } catch {
+    // PostgreSQL remains authoritative during a Redis outage.
+  }
+};
+
+const getOrLoadStudio = async <T>(
+  adminId: string,
+  surface: WebsiteEditorSurface,
+  loader: () => Promise<T>,
+): Promise<T> => {
+  const cached = await getStudio<T>(adminId, surface);
+  if (cached) return cached;
+
+  return singleFlight(`website-studio:${adminId}:${surface}`, async () => {
+    const filled = await getStudio<T>(adminId, surface);
+    if (filled) return filled;
+    const loaded = await loader();
+    await setStudio(adminId, surface, loaded);
+    return loaded;
+  });
+};
+
+const invalidateStudioAdmin = async (adminId: string | null | undefined): Promise<void> => {
+  if (!adminId) return;
+  try {
+    await redis.del(
+      ...STUDIO_CACHE_SURFACES.map((surface) => studioKeyFor(adminId, surface)),
+      CacheNamespaces.websiteStudioOverview(adminId),
+    );
+  } catch {
+    // Cache invalidation must never make an otherwise-successful write fail.
+  }
+};
+
 const rememberAdminWebsite = async (adminId: string | null | undefined, websiteId: string | null | undefined): Promise<void> => {
   if (!adminId || !websiteId) return;
   try {
@@ -252,6 +321,7 @@ const getAdminIdForWebsite = async (websiteId: string): Promise<string | null> =
 
 const invalidateWebsite = async (websiteId: string | null | undefined): Promise<void> => {
   if (!websiteId) return;
+  const adminId = await getAdminIdForWebsite(websiteId);
   try {
     // Generation bump + fresh/stale/lock deletion are atomic. This closes the
     // stale-repopulation race and guarantees CRM writes are visible on the next
@@ -278,11 +348,15 @@ const invalidateWebsite = async (websiteId: string | null | undefined): Promise<
   // published Review, BookingForm, domain/subdomain and Publish writes all share
   // one correctness boundary. The outbox helper is non-throwing; its one-hour
   // frontend safety window is the fallback if this durable event cannot queue.
-  await PublicWebsiteCacheOutbox.enqueue({ websiteId });
+  await Promise.all([
+    PublicWebsiteCacheOutbox.enqueue({ websiteId }),
+    invalidateStudioAdmin(adminId),
+  ]);
 };
 
 const invalidateAdminWebsite = async (adminId: string | null | undefined): Promise<void> => {
   if (!adminId) return;
+  await invalidateStudioAdmin(adminId);
   try {
     // The public loader remembers this one-to-one relation. On warm tenants a
     // CRM mutation therefore invalidates Redis without an extra SQL lookup.
@@ -312,6 +386,10 @@ export const WebsiteProjectionCacheService = {
   get,
   set,
   getOrLoad,
+  getStudio,
+  setStudio,
+  getOrLoadStudio,
+  invalidateStudioAdmin,
   rememberAdminWebsite,
   getAdminIdForWebsite,
   invalidateWebsite,

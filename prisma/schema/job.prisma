@@ -45,12 +45,14 @@ model Job {
   // on every job creation. Without this, that query (and the STAFF/admin
   // job-history-by-recency access patterns generally) forces a sort over
   // every row for the admin instead of an index-backed lookup.
-  @@index([adminId, createdAt])
+  @@index([adminId, createdAt(sort: Desc), id(sort: Desc)])
   // PERF FIX (Phase 4): getDashboardOverview's "jobs completed" counts/chart
   // and getJobStats' groupBy both filter by adminId + status = COMPLETED and
   // (for the chart) range on updatedAt. [adminId, status] alone still leaves
   // the updatedAt range unindexed; this covers the full filter+range.
   @@index([adminId, status, updatedAt])
+  @@index([adminId, scheduledDate(sort: Desc), id(sort: Desc)])
+  @@index([adminId, status, scheduledDate(sort: Desc), id(sort: Desc)])
   @@map("job")
 }
 

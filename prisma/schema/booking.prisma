@@ -33,6 +33,8 @@ model Booking {
 
   @@index([adminId, status])
   @@index([adminId, status, createdAt(sort: Desc)])
+  @@index([adminId, scheduledDate(sort: Desc), id(sort: Desc)])
+  @@index([adminId, status, scheduledDate(sort: Desc), id(sort: Desc)])
   @@index([clientId])
   @@index([scheduledDate])
   @@index([serviceCatalogId])

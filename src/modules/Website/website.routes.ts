@@ -22,7 +22,7 @@ router.use(isAdmin);
 
 router.post("/", zodValidate(websiteValidation.createWebsite, ValidationProperty.BODY), websiteController.createWebsite);
 router.get("/me", websiteController.getWebsite);
-router.get("/editor", websiteController.getWebsiteEditor);
+router.get("/editor", zodValidate(websiteValidation.editorSurfaceQuery, ValidationProperty.QUERY), websiteController.getWebsiteEditor);
 router.get("/studio/overview", websiteController.getStudioOverview);
 router.get("/studio", websiteController.getStudio);
 router.get("/booking-setup", websiteController.getWebsiteBookingSetup);

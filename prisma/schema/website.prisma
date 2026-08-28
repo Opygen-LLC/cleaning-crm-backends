@@ -48,6 +48,10 @@ model BusinessWebsite {
   // immutable snapshot until Publish is pressed again.
   publishedSnapshot       Json?
   publishedRevisionNumber Int?
+  // Canonical latest draft revision. Keeping this on the website row removes
+  // the extra MAX(revisionNumber) round-trip from every authenticated Studio read.
+  // It is advanced in the same transaction that inserts WebsiteRevision.
+  draftRevisionNumber     Int           @default(0)
 
   admin                   AdminProfile  @relation(fields: [adminId], references: [id], onDelete: Cascade)
   primaryBookingForm      BookingForm?  @relation("WebsitePrimaryBookingForm", fields: [primaryBookingFormId], references: [id], onDelete: SetNull)

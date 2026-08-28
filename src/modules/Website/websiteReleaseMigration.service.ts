@@ -221,6 +221,10 @@ const reconcileAdminWebsiteTx = async (
         createdByUserId: input.userId,
       },
     });
+    await db.businessWebsite.update({
+      where: { id: website.id },
+      data: { draftRevisionNumber: revisionNumber },
+    });
     latestRevisionNumber = revisionNumber;
     if (revisionNumber === 1) actions.push("INITIAL_REVISION_CREATED");
   }

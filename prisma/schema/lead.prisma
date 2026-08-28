@@ -27,6 +27,8 @@ model Lead {
 
     @@unique([email, adminId])
     @@index([adminId])
+    @@index([adminId, createdAt(sort: Desc), id(sort: Desc)])
+    @@index([adminId, stage, createdAt(sort: Desc), id(sort: Desc)])
     @@index([adminId, phone])
     @@index([adminId, serviceCatalogId])
     @@index([sourceWebsiteId, createdAt])

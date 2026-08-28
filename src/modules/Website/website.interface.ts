@@ -1,3 +1,17 @@
+
+export const WEBSITE_EDITOR_SURFACES = [
+  "content",
+  "templates",
+  "branding",
+  "booking",
+  "seo",
+  "domain",
+  "analytics",
+  "history",
+] as const;
+
+export type WebsiteEditorSurface = (typeof WEBSITE_EDITOR_SURFACES)[number];
+
 export interface WebsiteCreateInput {
   subdomain: string;
   templateId?: string;

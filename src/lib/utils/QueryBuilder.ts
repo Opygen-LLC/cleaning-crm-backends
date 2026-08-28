@@ -1,3 +1,5 @@
+import status from "http-status";
+import AppError from "../../errorHelper/AppError";
 import {
     IQueryConfig,
     IQueryParams,
@@ -24,6 +26,7 @@ export class QueryBuilder<
     private sortBy: string = "createdAt";
     private sortOrder: "asc" | "desc" = "desc";
     private selectFields: Record<string, boolean> | undefined;
+    private cursorMode = false;
 
     constructor(
         private model: PrismaModelDelegate,
@@ -200,6 +203,7 @@ export class QueryBuilder<
             "sortOrder",
             "fields",
             "include",
+            "cursor",
         ];
 
         const filterParams: Record<string, unknown> = {};
@@ -347,13 +351,45 @@ export class QueryBuilder<
 
     paginate(): this {
         if (!this.queryParams) return this;
-        const page = Number(this.queryParams.page) || 1;
-        const limit = Number(this.queryParams.limit) || 10;
+        const page = Math.max(1, Number(this.queryParams.page) || 1);
+        const limit = Math.min(200, Math.max(1, Number(this.queryParams.limit) || 10));
 
         this.page = page;
         this.limit = limit;
-        this.skip = (page - 1) * limit;
 
+        const rawCursor = this.queryParams.cursor;
+        const sortBy = this.queryParams.sortBy || "createdAt";
+        if (rawCursor && sortBy === "createdAt") {
+            const decoded = this.decodeCursor(rawCursor);
+            this.cursorMode = true;
+            this.skip = 0;
+            delete this.query.skip;
+            // Fetch one extra row so nextCursor/hasMore does not require a
+            // second probe. The count query intentionally ignores the cursor.
+            this.query.take = this.limit + 1;
+
+            const direction = this.queryParams.sortOrder === "asc" ? "asc" : "desc";
+            const dateOperator = direction === "asc" ? "gt" : "lt";
+            const idOperator = direction === "asc" ? "gt" : "lt";
+            const existingWhere = (this.query.where ?? {}) as Record<string, unknown>;
+            this.query.where = {
+                AND: [
+                    existingWhere,
+                    {
+                        OR: [
+                            { createdAt: { [dateOperator]: decoded.createdAt } },
+                            {
+                                createdAt: { equals: decoded.createdAt },
+                                id: { [idOperator]: decoded.id },
+                            },
+                        ],
+                    },
+                ],
+            };
+            return this;
+        }
+
+        this.skip = (page - 1) * limit;
         this.query.skip = this.skip;
         this.query.take = this.limit;
 
@@ -396,6 +432,13 @@ export class QueryBuilder<
                     [sortBy]: sortOrder,
                 };
             }
+        } else if (sortBy === "createdAt") {
+            // Stable ordering is required for keyset pagination and also lets
+            // Postgres use tenant + createdAt + id composite indexes.
+            this.query.orderBy = [
+                { createdAt: sortOrder },
+                { id: sortOrder },
+            ];
         } else {
             this.query.orderBy = {
                 [sortBy]: sortOrder,
@@ -509,14 +552,23 @@ export class QueryBuilder<
         ]);
 
         const totalPages = Math.ceil(total / this.limit);
+        const rows = data as T[];
+        const hasMore = this.cursorMode && rows.length > this.limit;
+        const pageData = hasMore ? rows.slice(0, this.limit) : rows;
+        const last = pageData[pageData.length - 1] as unknown as { createdAt?: Date | string; id?: string } | undefined;
+        const nextCursor = this.cursorMode && hasMore && last?.createdAt && last?.id
+            ? this.encodeCursor(last.createdAt, last.id)
+            : null;
 
         return {
-            data: data as T[],
+            data: pageData,
             meta: {
                 page: this.page,
                 limit: this.limit,
                 total,
                 totalPages,
+                paginationMode: this.cursorMode ? "cursor" : "offset",
+                ...(this.cursorMode ? { hasMore, nextCursor } : {}),
             },
         };
     }
@@ -529,6 +581,22 @@ export class QueryBuilder<
 
     getQuery(): PrismaFindManyArgs {
         return this.query;
+    }
+
+    private decodeCursor(cursor: string): { createdAt: Date; id: string } {
+        try {
+            const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as { createdAt?: string; id?: string };
+            const createdAt = new Date(parsed.createdAt ?? "");
+            if (!parsed.id || Number.isNaN(createdAt.getTime())) throw new Error("invalid cursor");
+            return { createdAt, id: parsed.id };
+        } catch {
+            throw new AppError(status.BAD_REQUEST, "Invalid pagination cursor");
+        }
+    }
+
+    private encodeCursor(createdAt: Date | string, id: string): string {
+        const date = createdAt instanceof Date ? createdAt : new Date(createdAt);
+        return Buffer.from(JSON.stringify({ createdAt: date.toISOString(), id }), "utf8").toString("base64url");
     }
 
     private deepMerge(

@@ -28,7 +28,12 @@ const createWebsite = catchAsync(async (req, res) => created(res, "Website creat
 const getWebsite = catchAsync(async (req, res) => ok(res, "Website retrieved successfully", await WebsiteService.getWebsite(req.user)));
 const getWebsiteEditor = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
-  return ok(res, "Website editor retrieved successfully", await WebsiteService.getWebsiteEditor(req.user));
+  const surface = paramStr(req.query.surface as string | string[] | undefined) || "content";
+  return ok(
+    res,
+    "Website editor projection retrieved successfully",
+    await WebsiteService.getWebsiteEditor(req.user, surface as import("./website.interface").WebsiteEditorSurface),
+  );
 });
 const getStudioOverview = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");

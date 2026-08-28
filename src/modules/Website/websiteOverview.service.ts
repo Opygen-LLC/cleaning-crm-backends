@@ -1,6 +1,7 @@
 import { startOfMonth, subDays } from "date-fns";
 import redis from "../../config/redis";
 import { prisma } from "../../lib/prisma/prisma";
+import { CacheNamespaces } from "../../lib/cache/cachePolicy";
 
 export interface WebsiteOverviewSummary {
   days: number;
@@ -18,11 +19,8 @@ interface WebsiteOverviewRow {
 }
 
 const OVERVIEW_DAYS = 30;
-const CACHE_VERSION = 2 as const;
-const CACHE_PREFIX = `website-studio-overview:v${CACHE_VERSION}:`;
 const CACHE_TTL_SECONDS = 45;
-
-const cacheKey = (adminId: string) => `${CACHE_PREFIX}${adminId}`;
+const cacheKey = (adminId: string) => CacheNamespaces.websiteStudioOverview(adminId);
 
 const getCached = async (adminId: string): Promise<WebsiteOverviewSummary | null> => {
   try {
@@ -110,4 +108,8 @@ const getForAdminId = async (adminId: string): Promise<WebsiteOverviewSummary> =
   return summary;
 };
 
-export const WebsiteOverviewService = { getForAdminId };
+const invalidateForAdminId = async (adminId: string): Promise<void> => {
+  await redis.del(cacheKey(adminId)).catch(() => 0);
+};
+
+export const WebsiteOverviewService = { getForAdminId, invalidateForAdminId };

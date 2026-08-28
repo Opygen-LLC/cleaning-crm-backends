@@ -1,8 +1,13 @@
+import { WEBSITE_EDITOR_SURFACES } from "./website.interface";
 import { z } from "zod";
 
 const color = z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Use a 6-digit hex color");
 const nullableText = (max: number) => z.string().trim().max(max).nullable();
 const pageContent = z.record(z.string(), z.unknown()).refine((value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= 32 * 1024, "Website page content is too large");
+
+const editorSurfaceQuery = z.object({
+  surface: z.enum(WEBSITE_EDITOR_SURFACES).default("content"),
+}).passthrough();
 
 const createWebsite = z.object({
   subdomain: z.string().trim().min(3).max(63),
@@ -149,6 +154,7 @@ const publicContact = z.object({
 }).strict();
 
 export const websiteValidation = {
+  editorSurfaceQuery,
   createWebsite,
   updateWebsite,
   updatePage,

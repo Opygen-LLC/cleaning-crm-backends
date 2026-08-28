@@ -45,7 +45,10 @@
     "provisioning:reconcile:dry-run": "tsx src/scripts/phase2/reconcileAdminProvisioning.ts --dry-run",
     "provisioning:reconcile:prod": "node dist/reconcileAdminProvisioning.js",
     "test:phase2:provisioning": "vitest run src/modules/Auth/accountIntegrity.service.test.ts src/modules/Auth/accountProvisioning.test.ts src/modules/Auth/auth.service.verifyEmail.test.ts",
-    "release:phase2:verify": "pnpm run check:repo-hygiene && pnpm run test:phase1:onboarding && pnpm run test:phase2:provisioning && pnpm run typecheck"
+    "release:phase2:verify": "pnpm run check:repo-hygiene && pnpm run test:phase1:onboarding && pnpm run test:phase2:provisioning && pnpm run typecheck",
+    "perf:phase3:explain": "tsx src/scripts/phase3/explainHotPaths.ts",
+    "test:phase3:latency": "vitest run src/lib/utils/QueryBuilder.cursor.test.ts",
+    "release:phase3:verify": "pnpm run release:phase2:verify && pnpm run test:phase3:latency && pnpm run typecheck"
   },
   "keywords": [],
   "author": "opygen",

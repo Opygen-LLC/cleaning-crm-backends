@@ -30,17 +30,13 @@ const getOverview = async (user: IRequestUser) => {
         templateVersion: true,
         publishedAt: true,
         publishedRevisionNumber: true,
+        draftRevisionNumber: true,
         metaTitle: true,
         primaryBookingFormId: true,
         bookingEnabled: true,
         pages: {
           where: { kind: "HOME" },
           select: { isEnabled: true },
-          take: 1,
-        },
-        revisions: {
-          orderBy: { revisionNumber: "desc" },
-          select: { revisionNumber: true },
           take: 1,
         },
         domains: {
@@ -69,7 +65,7 @@ const getOverview = async (user: IRequestUser) => {
       ? website.domains[0]?.domain ?? null
       : null;
   const publicUrl = getCanonicalWebsiteOrigin(website.subdomain, primaryCustomDomain);
-  const draftRevisionNumber = website.revisions[0]?.revisionNumber ?? 0;
+  const draftRevisionNumber = website.draftRevisionNumber ?? 0;
   const businessName = business?.businessName?.trim() || "Your cleaning business";
 
   return {

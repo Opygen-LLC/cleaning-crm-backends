@@ -113,6 +113,10 @@ const createInitialRevisionTx = async (
       createdByUserId,
     },
   });
+  await db.businessWebsite.update({
+    where: { id: websiteId },
+    data: { draftRevisionNumber: 1 },
+  });
 };
 
 const createWebsiteRecordTx = async (

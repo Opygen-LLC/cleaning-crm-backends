@@ -35,6 +35,8 @@ export interface IQueryParams {
   sortOrder?: "asc" | "desc";
   fields?: string;
   includes?: string;
+  /** Opaque base64url cursor for deterministic createdAt + id keyset pagination. */
+  cursor?: string;
   [key: string]: string | undefined;
 }
 
@@ -84,6 +86,10 @@ export interface IQueryResult<T> {
     limit: number;
     total: number;
     totalPages: number;
+    /** Present when cursor pagination is requested. Legacy page pagination remains unchanged. */
+    nextCursor?: string | null;
+    hasMore?: boolean;
+    paginationMode?: "offset" | "cursor";
   };
 }
 

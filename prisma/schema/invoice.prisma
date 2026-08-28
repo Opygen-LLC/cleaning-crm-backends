@@ -52,6 +52,8 @@ model Invoice {
 
   @@index([adminId])
   @@index([adminId, status])
+  @@index([adminId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([adminId, status, createdAt(sort: Desc), id(sort: Desc)])
   @@index([dueDate])
   // PERF FIX (Phase 4): getDashboardOverview / getRevenuePage both
   // date_trunc-aggregate PAID invoices by adminId + paidDate range. The
