@@ -104,11 +104,9 @@ const getNewToken = catchAsync(async (req, res) => {
         // client only for 400/401/403 refresh failures.
         if (
             error instanceof AppError &&
-            [
-                httpStatus.BAD_REQUEST,
-                httpStatus.UNAUTHORIZED,
-                httpStatus.FORBIDDEN,
-            ].includes(error.statusCode)
+            (error.statusCode === httpStatus.BAD_REQUEST ||
+                error.statusCode === httpStatus.UNAUTHORIZED ||
+                error.statusCode === httpStatus.FORBIDDEN)
         ) {
             tokenUtils.clearAuthCookies(res);
         }
