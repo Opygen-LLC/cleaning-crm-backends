@@ -23,6 +23,7 @@ import { getPlatformConfig } from "../../lib/utils/platformConfig";
 import { AuthEmailOutbox } from "../../lib/outbox/authEmailOutbox";
 import { randomBytes, randomUUID } from "node:crypto";
 import { AUTH_ERROR_CODES } from "./auth.codes";
+import { ACCOUNT_SETUP_STEPS } from "../Admin/admin.constant";
 
 //? Max sessions per user
 const MAX_SESSIONS = 3;
@@ -196,9 +197,7 @@ const login = async ({ email, password }: ILoginUserPayload) => {
                 emailVerified: true,
                 role: true,
                 status: true,
-                needPasswordChange: true,
                 staff: { select: { status: true } },
-                admin: { select: { onboardingCompletedAt: true } },
             },
         });
 
@@ -288,11 +287,6 @@ const login = async ({ email, password }: ILoginUserPayload) => {
                 role: user.role,
                 status: user.status,
             },
-            needPasswordChange: user.needPasswordChange,
-            isOnboardingComplete:
-                user.role === UserRole.ADMIN
-                    ? user.admin?.onboardingCompletedAt != null
-                    : undefined,
             sessionToken,
             accessToken,
             refreshToken,
@@ -319,6 +313,105 @@ const me = async (user: IRequestUser) => {
     }
 
     return isUserExist;
+};
+
+/**
+ * Canonical browser-session snapshot. This endpoint is intentionally narrower
+ * than /auth/me: it validates the Better Auth session and selects only the
+ * account/onboarding fields required to decide where the browser may navigate.
+ * It is the authoritative contract used after login, OTP verification, refresh
+ * and dashboard bootstrap.
+ */
+const session = async (user: IRequestUser, sessionToken?: string | null) => {
+    if (!sessionToken?.trim()) {
+        throw new AppError(
+            status.UNAUTHORIZED,
+            "The authenticated session is missing.",
+            { code: AUTH_ERROR_CODES.INVALID_SESSION, retryable: false },
+        );
+    }
+
+    const persisted = await prisma.session.findFirst({
+        where: {
+            token: sessionToken,
+            userId: user.id,
+            expiresAt: { gt: new Date() },
+        },
+        select: {
+            expiresAt: true,
+            user: {
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    emailVerified: true,
+                    role: true,
+                    status: true,
+                    needPasswordChange: true,
+                    staff: { select: { status: true } },
+                    admin: {
+                        select: {
+                            onboardingCompletedAt: true,
+                            onboardingCompletedSteps: true,
+                        },
+                    },
+                },
+            },
+        },
+    });
+
+    if (!persisted) {
+        throw new AppError(
+            status.UNAUTHORIZED,
+            "The authenticated session has expired or was revoked.",
+            { code: AUTH_ERROR_CODES.INVALID_SESSION, retryable: false },
+        );
+    }
+
+    const account = persisted.user;
+    assertAccountCanUseAuthenticatedApp(account);
+
+    if (account.role === UserRole.ADMIN && !account.admin) {
+        throw new AppError(
+            status.INTERNAL_SERVER_ERROR,
+            "The authenticated admin profile is incomplete.",
+            { code: AUTH_ERROR_CODES.AUTH_IDENTITY_STATE_INVALID, retryable: true },
+        );
+    }
+
+    let onboardingCompleted = true;
+    let currentStep: string | null = null;
+
+    if (account.role === UserRole.ADMIN) {
+        onboardingCompleted = account.admin?.onboardingCompletedAt != null;
+        if (!onboardingCompleted) {
+            const completed = new Set(account.admin?.onboardingCompletedSteps ?? []);
+            currentStep =
+                ACCOUNT_SETUP_STEPS.find((step) => !completed.has(step.key))?.key ??
+                ACCOUNT_SETUP_STEPS[ACCOUNT_SETUP_STEPS.length - 1]?.key ??
+                null;
+        }
+    }
+
+    return {
+        authenticated: true as const,
+        user: {
+            id: account.id,
+            name: account.name,
+            email: account.email,
+            role: account.role,
+            status: account.status,
+            emailVerified: account.emailVerified,
+        },
+        onboarding: {
+            completed: onboardingCompleted,
+            currentStep,
+        },
+        needPasswordChange: account.needPasswordChange,
+        session: {
+            expiresAt: persisted.expiresAt,
+        },
+    };
 };
 
 const getNewToken = async (
@@ -427,7 +520,6 @@ const getNewToken = async (
         accessToken: newAccessToken,
         refreshToken: newRefreshToken,
         sessionToken: token,
-        role: user.role,
     };
 };
 
@@ -460,11 +552,11 @@ const verifyEmail = async (email: string, otp: string) => {
         );
     }
 
-    let isOnboardingComplete: boolean | undefined = undefined;
-
     if (user.role === UserRole.ADMIN) {
-        const readiness = await AccountIntegrityService.assertAdminReadyForActivation(user.id);
-        isOnboardingComplete = readiness.isOnboardingComplete;
+        // Activation readiness remains a server-side integrity gate. Its routing
+        // state is intentionally not returned by verify-email; /auth/session is
+        // the sole browser authority after the cookies are issued.
+        await AccountIntegrityService.assertAdminReadyForActivation(user.id);
     }
 
     const result = await auth.api.verifyEmailOTP({
@@ -508,7 +600,6 @@ const verifyEmail = async (email: string, otp: string) => {
     return {
         ...result,
         token: sessionToken,
-        isOnboardingComplete,
         accessToken: tokenUtils.getAccessToken(tokenPayload),
         refreshToken: tokenUtils.getRefreshToken(tokenPayload),
     };
@@ -694,6 +785,7 @@ const userService = {
     register,
     login,
     me,
+    session,
     getNewToken,
     verifyEmail,
     resendOtp,

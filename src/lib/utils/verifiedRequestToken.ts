@@ -14,9 +14,11 @@ import { ACCESS_TOKEN_SECRET } from "../../config/ENV";
 // This helper verifies the token once and caches the result on `req`, so
 // every middleware in the chain that needs the decoded payload reuses the
 // same result instead of re-running jwt.verify().
+export type VerifiedTokenFailureReason = "MISSING" | "EXPIRED" | "INVALID";
+
 export type VerifiedTokenResult =
     | { success: true; data: JwtPayload }
-    | { success: false };
+    | { success: false; reason: VerifiedTokenFailureReason };
 
 export function getVerifiedAccessToken(
     req: Request,
@@ -27,16 +29,24 @@ export function getVerifiedAccessToken(
     }
 
     if (!accessToken) {
-        const result: VerifiedTokenResult = { success: false };
+        const result: VerifiedTokenResult = { success: false, reason: "MISSING" };
         req.verifiedAccessToken = result;
         return result;
     }
 
     const verified = jwtUtils.verifyToken(accessToken, ACCESS_TOKEN_SECRET);
+    const verificationError = "error" in verified ? verified.error : undefined;
     const result: VerifiedTokenResult =
         verified.success && verified.data
             ? { success: true, data: verified.data }
-            : { success: false };
+            : {
+                  success: false,
+                  reason:
+                      verificationError instanceof Error &&
+                      verificationError.name === "TokenExpiredError"
+                          ? "EXPIRED"
+                          : "INVALID",
+              };
 
     req.verifiedAccessToken = result;
     return result;

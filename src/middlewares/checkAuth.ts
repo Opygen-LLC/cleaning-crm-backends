@@ -14,6 +14,7 @@ import {
 } from "../lib/cache/authRuntimeCache";
 import { privateResponseCache } from "./privateResponseCache";
 import { recordTraceSpan } from "../lib/monitoring/requestTrace";
+import { AUTH_ERROR_CODES } from "../modules/Auth/auth.codes";
 
 // Browser authentication is cookie-first. Authorization: Bearer remains
 // supported for explicit server-to-server/integration callers, but cannot
@@ -39,7 +40,8 @@ export const checkAuth =
             if (!accessToken) {
                 throw new AppError(
                     status.UNAUTHORIZED,
-                    "Unauthorized access! No access token provided.",
+                    "Authentication is required.",
+                    { code: AUTH_ERROR_CODES.ACCESS_TOKEN_MISSING, retryable: true },
                 );
             }
 
@@ -50,7 +52,19 @@ export const checkAuth =
             // request — avoids a second jwt.verify() call per request.
             const verifiedToken = getVerifiedAccessToken(req, accessToken);
             if (!verifiedToken.success) {
-                throw new AppError(status.UNAUTHORIZED, "Invalid access token.");
+                if (verifiedToken.reason === "EXPIRED") {
+                    throw new AppError(
+                        status.UNAUTHORIZED,
+                        "The access token has expired.",
+                        { code: AUTH_ERROR_CODES.ACCESS_TOKEN_EXPIRED, retryable: true },
+                    );
+                }
+
+                throw new AppError(
+                    status.UNAUTHORIZED,
+                    "The access token is invalid.",
+                    { code: AUTH_ERROR_CODES.ACCESS_TOKEN_INVALID, retryable: false },
+                );
             }
 
             const tokenData = verifiedToken.data;
@@ -98,6 +112,7 @@ export const checkAuth =
                 throw new AppError(
                     status.UNAUTHORIZED,
                     "Account not found. Please log in again.",
+                    { code: AUTH_ERROR_CODES.INVALID_SESSION, retryable: false },
                 );
             }
 
@@ -152,6 +167,7 @@ export const checkAuth =
                     throw new AppError(
                         status.UNAUTHORIZED,
                         "Session has been revoked. Please log in again.",
+                        { code: AUTH_ERROR_CODES.INVALID_SESSION, retryable: false },
                     );
                 }
             }

@@ -52,11 +52,9 @@ const login = catchAsync(async (req, res) => {
         httpStatusCode: httpStatus.OK,
         success: true,
         message: "User Login Successful",
-        data: {
-            user: result.user,
-            needPasswordChange: result.needPasswordChange,
-            isOnboardingComplete: result.isOnboardingComplete,
-        },
+        // The login response intentionally carries no routing/account state.
+        // The browser must confirm GET /auth/session before navigation.
+        data: { sessionCreated: true },
     });
 });
 
@@ -71,12 +69,13 @@ const me = catchAsync(async (req, res) => {
 });
 
 const session = catchAsync(async (req, res) => {
-    const user = await authService.me(req.user);
+    const sessionToken = req.cookies["better-auth.session_token"];
+    const result = await authService.session(req.user, sessionToken);
     sendResponse(res, {
         httpStatusCode: httpStatus.OK,
         success: true,
         message: "Authenticated session confirmed",
-        data: { authenticated: true, user },
+        data: result,
     });
 });
 
@@ -104,7 +103,9 @@ const getNewToken = catchAsync(async (req, res) => {
             httpStatusCode: httpStatus.OK,
             success: true,
             message: "Session refreshed successfully",
-            data: { refreshed: true, role: result.role },
+            // Refresh only rotates credentials. Current identity/routing state
+            // remains authoritative exclusively through GET /auth/session.
+            data: { refreshed: true },
         });
     } catch (error) {
         // Clear credentials only when refresh state is definitively invalid. A
@@ -127,7 +128,7 @@ const getNewToken = catchAsync(async (req, res) => {
 const verifyEmail = catchAsync(async (req, res) => {
     const { email, otp } = req.body;
     const result = await authService.verifyEmail(email, otp);
-    const { accessToken, refreshToken, token, ...clientSafe } = result;
+    const { accessToken, refreshToken, token } = result;
 
     setAuthenticatedCookies(res, {
         accessToken,
@@ -139,7 +140,9 @@ const verifyEmail = catchAsync(async (req, res) => {
         httpStatusCode: httpStatus.OK,
         success: true,
         message: "Email verified successfully",
-        data: clientSafe,
+        // OTP acceptance is not authentication/routing authority. The client
+        // must confirm the newly issued cookies through GET /auth/session.
+        data: { verified: true },
     });
 });
 

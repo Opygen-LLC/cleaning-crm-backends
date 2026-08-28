@@ -6,6 +6,7 @@ import {
 } from "../../middlewares/validations/zodValidation.middleware";
 import authValidator from "./auth.validation";
 import { checkAuth } from "../../middlewares/checkAuth";
+import { checkAuthSession } from "../../middlewares/checkAuthSession";
 import { UserRole } from "../../generated/prisma/enums";
 import {
     loginRateLimit,
@@ -46,7 +47,7 @@ router.get(
 
 router.get(
     "/session",
-    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    checkAuthSession,
     authController.session,
 );
 

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NextFunction, Request, Response } from "express";
 
 const mocks = vi.hoisted(() => ({
-    register: vi.fn(), login: vi.fn(), me: vi.fn(), getNewToken: vi.fn(),
+    register: vi.fn(), login: vi.fn(), me: vi.fn(), session: vi.fn(), getNewToken: vi.fn(),
     verifyEmail: vi.fn(), resendOtp: vi.fn(), forgotPassword: vi.fn(),
     resetPassword: vi.fn(), changePassword: vi.fn(), logout: vi.fn(),
 }));
@@ -32,7 +32,14 @@ beforeEach(()=>{
     mocks.register.mockResolvedValue({ userId:"user-1", reservedSubdomain:"jamie-cleaning" });
     mocks.login.mockResolvedValue({ user, needPasswordChange:false, isOnboardingComplete:false, accessToken:"access-secret", refreshToken:"refresh-secret", sessionToken:"session-secret" });
     mocks.me.mockResolvedValue({ ...user, emailVerified:true });
-    mocks.getNewToken.mockResolvedValue({ accessToken:"access-next", refreshToken:"refresh-next", sessionToken:"session-secret", role:"ADMIN" });
+    mocks.session.mockResolvedValue({
+        authenticated: true,
+        user: { ...user, emailVerified: true },
+        onboarding: { completed: false, currentStep: "business_profile" },
+        needPasswordChange: false,
+        session: { expiresAt: new Date("2026-10-01T00:00:00.000Z") },
+    });
+    mocks.getNewToken.mockResolvedValue({ accessToken:"access-next", refreshToken:"refresh-next", sessionToken:"session-secret" });
     mocks.verifyEmail.mockResolvedValue({ user:{...user,emailVerified:true}, isOnboardingComplete:false, accessToken:"access-secret", refreshToken:"refresh-secret", token:"session-secret" });
     mocks.logout.mockResolvedValue({ success:true });
 });
@@ -46,30 +53,46 @@ describe("auth HTTP/controller contract",()=>{
     it("login sets all server credential cookies and never returns tokens in JSON",async()=>{
         const r=await call(authController.login,{body:{email:"jamie@example.com",password:"correct-password"}});
         expect(r.statusCode).toBe(200);
-        expect(r.body).toMatchObject({success:true,data:{user,needPasswordChange:false,isOnboardingComplete:false}});
+        expect(r.body).toMatchObject({success:true,data:{sessionCreated:true}});
         expect(r.cookies.map(c=>c.name)).toEqual(["accessToken","refreshToken","better-auth.session_token"]);
         expect(JSON.stringify(r.body)).not.toMatch(/access-secret|refresh-secret|session-secret/);
     });
-    it("verifyEmail establishes the same cookie contract and returns application state only",async()=>{
+    it("verifyEmail establishes the cookie contract without returning routing authority",async()=>{
         const r=await call(authController.verifyEmail,{body:{email:"jamie@example.com",otp:"123456"}});
         expect(r.statusCode).toBe(200); expect(r.cookies.map(c=>c.name)).toEqual(["accessToken","refreshToken","better-auth.session_token"]);
-        expect(r.body).toMatchObject({success:true,data:{user:{id:"user-1",emailVerified:true},isOnboardingComplete:false}});
+        expect(r.body).toMatchObject({success:true,data:{verified:true}});
         expect(JSON.stringify(r.body)).not.toMatch(/access-secret|refresh-secret|session-secret/);
     });
     it("me returns current authenticated account state",async()=>{
         const r=await call(authController.me,{user:{id:"user-1",role:"ADMIN",email:"jamie@example.com"} as never});
         expect(r.statusCode).toBe(200); expect(r.body).toMatchObject({success:true,data:{id:"user-1",emailVerified:true,status:"ACTIVE"}});
     });
-    it("session confirms the browser-authenticated account without exposing credentials",async()=>{
-        const r=await call(authController.session,{user:{id:"user-1",role:"ADMIN",email:"jamie@example.com"} as never});
+    it("session returns the lightweight canonical routing snapshot without exposing credentials",async()=>{
+        const r=await call(authController.session,{
+            user:{id:"user-1",role:"ADMIN",email:"jamie@example.com"} as never,
+            cookies:{"better-auth.session_token":"session-secret"},
+        } as never);
         expect(r.statusCode).toBe(200);
-        expect(r.body).toMatchObject({success:true,data:{authenticated:true,user:{id:"user-1",emailVerified:true,status:"ACTIVE"}}});
+        expect(mocks.session).toHaveBeenCalledWith(
+            expect.objectContaining({id:"user-1",role:"ADMIN"}),
+            "session-secret",
+        );
+        expect(r.body).toMatchObject({
+            success:true,
+            data:{
+                authenticated:true,
+                user:{id:"user-1",emailVerified:true,status:"ACTIVE"},
+                onboarding:{completed:false,currentStep:"business_profile"},
+                needPasswordChange:false,
+                session:{expiresAt:expect.any(Date)},
+            },
+        });
         expect(JSON.stringify(r.body)).not.toMatch(/access-secret|refresh-secret|session-secret/);
     });
-    it("refresh rotates cookies but exposes only refreshed + role",async()=>{
+    it("refresh rotates cookies without returning routing authority",async()=>{
         const r=await call(authController.getNewToken,{cookies:{refreshToken:"refresh-secret","better-auth.session_token":"session-secret"}} as never);
         expect(r.statusCode).toBe(200); expect(r.cookies.map(c=>c.name)).toEqual(["accessToken","refreshToken","better-auth.session_token"]);
-        expect(r.body).toMatchObject({success:true,data:{refreshed:true,role:"ADMIN"}});
+        expect(r.body).toMatchObject({success:true,data:{refreshed:true}});
         expect(JSON.stringify(r.body)).not.toMatch(/access-next|refresh-next|session-secret/);
     });
     it("logout revokes the session and clears all auth cookies",async()=>{

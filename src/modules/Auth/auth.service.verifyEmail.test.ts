@@ -91,7 +91,6 @@ describe("verifyEmail deterministic ADMIN activation", () => {
       data: { status: "ACTIVE" },
     });
     expect(result).toMatchObject({
-      isOnboardingComplete: false,
       accessToken: "access-token",
       refreshToken: "refresh-token",
       token: "better-auth-token",

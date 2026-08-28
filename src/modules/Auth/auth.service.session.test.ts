@@ -1,0 +1,118 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  sessionFindFirst: vi.fn(),
+}));
+
+vi.mock("../../lib/prisma/prisma", () => ({
+  prisma: {
+    session: {
+      findFirst: mocks.sessionFindFirst,
+      deleteMany: vi.fn(),
+    },
+  },
+}));
+vi.mock("../../lib/auth", () => ({ auth: { api: {} } }));
+vi.mock("../../lib/utils/token", () => ({ tokenUtils: {} }));
+vi.mock("../../lib/utils/jwt", () => ({ jwtUtils: {} }));
+vi.mock("../../config/ENV", () => ({ REFRESH_TOKEN_SECRET: "test-refresh-secret" }));
+vi.mock("./accountProvisioning.service", () => ({ AccountProvisioningService: {} }));
+vi.mock("./accountIntegrity.service", () => ({ AccountIntegrityService: {} }));
+vi.mock("../../lib/utils/platformConfig", () => ({ getPlatformConfig: vi.fn() }));
+vi.mock("../../lib/outbox/authEmailOutbox", () => ({ AuthEmailOutbox: {} }));
+
+import authService from "./auth.service";
+
+const requestUser = {
+  id: "user-1",
+  email: "jamie@example.com",
+  role: "ADMIN",
+} as never;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.sessionFindFirst.mockResolvedValue({
+    expiresAt: new Date("2026-10-01T00:00:00.000Z"),
+    user: {
+      id: "user-1",
+      name: "Jamie Doe",
+      email: "jamie@example.com",
+      emailVerified: true,
+      role: "ADMIN",
+      status: "ACTIVE",
+      needPasswordChange: false,
+      staff: null,
+      admin: {
+        onboardingCompletedAt: null,
+        onboardingCompletedSteps: ["business_profile", "branding"],
+      },
+    },
+  });
+});
+
+describe("canonical auth session snapshot", () => {
+  it("returns the first incomplete onboarding key from one narrow session lookup", async () => {
+    const result = await authService.session(requestUser, "session-token");
+
+    expect(mocks.sessionFindFirst).toHaveBeenCalledWith({
+      where: {
+        token: "session-token",
+        userId: "user-1",
+        expiresAt: { gt: expect.any(Date) },
+      },
+      select: expect.objectContaining({
+        expiresAt: true,
+        user: expect.any(Object),
+      }),
+    });
+    expect(result).toMatchObject({
+      authenticated: true,
+      user: {
+        id: "user-1",
+        role: "ADMIN",
+        status: "ACTIVE",
+        emailVerified: true,
+      },
+      onboarding: { completed: false, currentStep: "services" },
+      needPasswordChange: false,
+      session: { expiresAt: expect.any(Date) },
+    });
+  });
+
+  it("returns completed onboarding after launch", async () => {
+    mocks.sessionFindFirst.mockResolvedValue({
+      expiresAt: new Date("2026-10-01T00:00:00.000Z"),
+      user: {
+        id: "user-1",
+        name: "Jamie Doe",
+        email: "jamie@example.com",
+        emailVerified: true,
+        role: "ADMIN",
+        status: "ACTIVE",
+        needPasswordChange: false,
+        staff: null,
+        admin: {
+          onboardingCompletedAt: new Date("2026-08-28T00:00:00.000Z"),
+          onboardingCompletedSteps: [],
+        },
+      },
+    });
+
+    await expect(authService.session(requestUser, "session-token")).resolves.toMatchObject({
+      onboarding: { completed: true, currentStep: null },
+    });
+  });
+
+  it("rejects a missing or revoked Better Auth session as INVALID_SESSION", async () => {
+    await expect(authService.session(requestUser, undefined)).rejects.toMatchObject({
+      statusCode: 401,
+      code: "INVALID_SESSION",
+    });
+
+    mocks.sessionFindFirst.mockResolvedValue(null);
+    await expect(authService.session(requestUser, "revoked-token")).rejects.toMatchObject({
+      statusCode: 401,
+      code: "INVALID_SESSION",
+    });
+  });
+});

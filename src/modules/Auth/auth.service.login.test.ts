@@ -135,8 +135,6 @@ describe("login deterministic session contract", () => {
         role: "ADMIN",
         status: "ACTIVE",
       },
-      needPasswordChange: false,
-      isOnboardingComplete: false,
       sessionToken: "session-token",
       accessToken: "access-token",
       refreshToken: "refresh-token",
@@ -256,15 +254,17 @@ describe("complete auth lifecycle service regression", () => {
     expect(mocks.provisionRegisteredAdmin).toHaveBeenCalledWith({ businessName: "Jamie Cleaning", name: "Jamie Doe", email: "jamie@example.com", password: "correct-password", trialDays: 14, mobileNumber: undefined, businessType: undefined, licenseNumber: undefined });
     expect(result).toEqual({ userId: "user-1", reservedSubdomain: "jamie-cleaning" });
   });
-  it("returns completed onboarding state for an existing ADMIN", async () => {
+  it("does not return onboarding state from login; canonical /auth/session owns routing", async () => {
     mocks.userFindUnique.mockResolvedValue({ ...activeAdmin, admin: { onboardingCompletedAt: new Date() } });
     const result = await authService.login({ email: "jamie@example.com", password: "correct-password" });
-    expect(result.isOnboardingComplete).toBe(true);
+    expect(result).not.toHaveProperty("isOnboardingComplete");
+    expect(result).not.toHaveProperty("needPasswordChange");
   });
-  it("returns forced password-change state for STAFF", async () => {
+  it("returns STAFF identity for token creation without exposing password-routing state", async () => {
     mocks.userFindUnique.mockResolvedValue({ ...activeAdmin, role: "STAFF", needPasswordChange: true, staff: { status: "ACTIVE" }, admin: null });
     const result = await authService.login({ email: "jamie@example.com", password: "correct-password" });
-    expect(result.needPasswordChange).toBe(true); expect(result.isOnboardingComplete).toBeUndefined(); expect(result.user.role).toBe("STAFF");
+    expect(result.user.role).toBe("STAFF");
+    expect(result).not.toHaveProperty("needPasswordChange");
   });
   it("me reads current database account state", async () => {
     mocks.userFindUnique.mockResolvedValue({ ...activeAdmin, emailVerified: true });
