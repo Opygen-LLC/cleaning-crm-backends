@@ -146,9 +146,13 @@ app.use(async (req, res, next) => {
   }
 
   return res.status(403).json({
+    statusCode: 403,
     success: false,
+    code: "CORS_ORIGIN_NOT_ALLOWED",
     message: "Origin is not allowed",
-    error: { code: "CORS_ORIGIN_NOT_ALLOWED", retryable: false },
+    retryable: false,
+    errorSources: [],
+    fieldErrors: {},
   });
 });
 

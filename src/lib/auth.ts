@@ -6,10 +6,12 @@ import { AccountStatus, UserRole } from "../generated/prisma/enums";
 import { bearer, emailOTP } from "better-auth/plugins";
 import { sendEmail } from "./email";
 import logger from "./logger";
+import { getAuthenticatedOrigins } from "../config/authSecurity";
 
 export const auth = betterAuth({
     baseURL: BETTER_AUTH_URL,
     secret: BETTER_AUTH_SECRET,
+    trustedOrigins: getAuthenticatedOrigins(),
     database: prismaAdapter(prisma, {
         provider: "postgresql",
     }),

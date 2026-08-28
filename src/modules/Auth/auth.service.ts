@@ -27,6 +27,61 @@ import { randomBytes, randomUUID } from "node:crypto";
 const MAX_SESSIONS = 3;
 const BETTER_AUTH_SESSION_TTL_MS = 60 * 24 * 60 * 60 * 1000;
 
+const revokeSessionSilently = async (sessionToken?: string | null): Promise<void> => {
+    if (!sessionToken?.trim()) return;
+    await prisma.session.deleteMany({ where: { token: sessionToken } }).catch(() => undefined);
+};
+
+const assertAccountCanUseAuthenticatedApp = (user: {
+    status: AccountStatus;
+    role: UserRole;
+    emailVerified: boolean;
+    staff?: { status: StaffStatus } | null;
+}): void => {
+    if (!user.emailVerified) {
+        throw new AppError(
+            status.FORBIDDEN,
+            "Please verify your email before signing in.",
+            { code: "EMAIL_NOT_VERIFIED", retryable: false },
+        );
+    }
+
+    if (user.status === AccountStatus.SUSPENDED) {
+        throw new AppError(
+            status.FORBIDDEN,
+            "Your account is suspended. Please contact support.",
+            { code: "ACCOUNT_SUSPENDED", retryable: false },
+        );
+    }
+
+    if (user.status === AccountStatus.DELETED) {
+        throw new AppError(
+            status.FORBIDDEN,
+            "This account is no longer active.",
+            { code: "ACCOUNT_DISABLED", retryable: false },
+        );
+    }
+
+    if (user.status !== AccountStatus.ACTIVE) {
+        throw new AppError(
+            status.FORBIDDEN,
+            "This account is not active yet.",
+            { code: "ACCOUNT_NOT_ACTIVE", retryable: false },
+        );
+    }
+
+    if (
+        user.role === UserRole.STAFF &&
+        user.staff?.status === StaffStatus.DEACTIVE
+    ) {
+        throw new AppError(
+            status.FORBIDDEN,
+            "Your staff access has been disabled. Please contact your administrator.",
+            { code: "ACCOUNT_SUSPENDED", retryable: false },
+        );
+    }
+};
+
 /**
  * Email OTP verification is configured to auto-sign-in, so Better Auth should
  * normally return a session token. This fallback guarantees the application
@@ -104,84 +159,147 @@ const register = async ({
 };
 
 const login = async ({ email, password }: ILoginUserPayload) => {
-    // ✅ Minimal select — also fetch needPasswordChange so the client can
-    //    redirect staff to the forced password-change screen on first login.
-    const user = await prisma.user.findUnique({
-        where: { email },
-        select: {
-            id: true,
-            role: true,
-            needPasswordChange: true,          // ← added
-            staff: { select: { status: true } },
-            admin: { select: { onboardingCompletedAt: true } },
-        },
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Better Auth performs credential verification first and intentionally
+    // returns the same invalid-credential error for unknown users/bad passwords.
+    // Application/account state is reconciled only after credentials succeed.
+    const signIn = await auth.api.signInEmail({
+        body: { email: normalizedEmail, password },
     });
 
-    if (!user) {
-        throw new AppError(status.NOT_FOUND, "User not found");
-    }
+    const sessionToken =
+        typeof signIn?.token === "string" && signIn.token.trim()
+            ? signIn.token
+            : null;
 
-    if (
-        user.role === UserRole.STAFF &&
-        user.staff?.status === StaffStatus.DEACTIVE
-    ) {
+    if (!signIn?.user?.id || !sessionToken) {
+        await revokeSessionSilently(sessionToken);
         throw new AppError(
-            status.FORBIDDEN,
-            "You are not allowed to login. Please contact with admin.",
+            status.INTERNAL_SERVER_ERROR,
+            "Your credentials were accepted, but a secure session could not be created.",
+            { code: "AUTH_SESSION_NOT_CREATED", retryable: true },
         );
     }
 
-    // ✅ signInEmail includes password verification (scrypt) — but we can run session cleanup
-    //    concurrently AFTER we know the user is valid, not after signIn resolves
-    const signIn = await auth.api.signInEmail({
-        body: { email, password },
-    });
-
-    if (!signIn.user.emailVerified) {
-        return { data: signIn, accessToken: null, refreshToken: null };
-    }
-
-    // ✅ Let DB do the counting + deleting instead of fetching all rows into JS
-    const sessionCount = await prisma.session.count({
-        where: { userId: signIn.user.id },
-    });
-
-    if (sessionCount > MAX_SESSIONS) {
-        // ✅ DB-side: find oldest excess session IDs and delete in one query
-        const oldest = await prisma.session.findMany({
-            where: { userId: signIn.user.id },
-            orderBy: { createdAt: "asc" },
-            take: sessionCount - MAX_SESSIONS + 1, // +1 accounts for new session
-            select: { id: true }, // only fetch id, not full row
+    // From this point onward the newly-created Better Auth session is treated
+    // as provisional. Any application/database/token failure revokes it so the
+    // server never returns (or leaves behind) a partially-completed login.
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: signIn.user.id },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                emailVerified: true,
+                role: true,
+                status: true,
+                needPasswordChange: true,
+                staff: { select: { status: true } },
+                admin: { select: { onboardingCompletedAt: true } },
+            },
         });
 
-        await prisma.session.deleteMany({
-            where: { id: { in: oldest.map((s) => s.id) } },
+        if (!user || user.email.toLowerCase() !== normalizedEmail) {
+            throw new AppError(
+                status.INTERNAL_SERVER_ERROR,
+                "The authenticated identity could not be reconciled with the application account.",
+                { code: "AUTH_IDENTITY_STATE_INVALID", retryable: true },
+            );
+        }
+
+        assertAccountCanUseAuthenticatedApp(user);
+
+        const now = new Date();
+        const persistedSession = await prisma.session.findUnique({
+            where: { token: sessionToken },
+            select: { id: true, userId: true, expiresAt: true },
         });
+
+        if (
+            !persistedSession ||
+            persistedSession.userId !== user.id ||
+            persistedSession.expiresAt <= now
+        ) {
+            throw new AppError(
+                status.INTERNAL_SERVER_ERROR,
+                "Your credentials were accepted, but the secure session was not persisted.",
+                { code: "AUTH_SESSION_NOT_CREATED", retryable: true },
+            );
+        }
+
+        const tokenPayload = {
+            userId: user.id,
+            role: user.role,
+            name: user.name,
+            email: user.email,
+            emailVerified: user.emailVerified,
+        };
+
+        let accessToken: string;
+        let refreshToken: string;
+        try {
+            accessToken = tokenUtils.getAccessToken(tokenPayload);
+            refreshToken = tokenUtils.getRefreshToken(tokenPayload);
+        } catch {
+            throw new AppError(
+                status.INTERNAL_SERVER_ERROR,
+                "The secure login tokens could not be created.",
+                { code: "AUTH_TOKEN_CREATION_FAILED", retryable: true },
+            );
+        }
+
+        // Enforce the active-session cap only after every required login
+        // artifact exists. The current session is always preserved and expired
+        // sessions are excluded from the active-session calculation/removal.
+        const sessionCount = await prisma.session.count({
+            where: {
+                userId: user.id,
+                expiresAt: { gt: now },
+            },
+        });
+
+        if (sessionCount > MAX_SESSIONS) {
+            const excess = await prisma.session.findMany({
+                where: {
+                    userId: user.id,
+                    token: { not: sessionToken },
+                    expiresAt: { gt: now },
+                },
+                orderBy: { createdAt: "asc" },
+                take: sessionCount - MAX_SESSIONS,
+                select: { id: true },
+            });
+
+            if (excess.length > 0) {
+                await prisma.session.deleteMany({
+                    where: { id: { in: excess.map((entry) => entry.id) } },
+                });
+            }
+        }
+
+        return {
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                status: user.status,
+            },
+            needPasswordChange: user.needPasswordChange,
+            isOnboardingComplete:
+                user.role === UserRole.ADMIN
+                    ? user.admin?.onboardingCompletedAt != null
+                    : undefined,
+            sessionToken,
+            accessToken,
+            refreshToken,
+        };
+    } catch (error) {
+        await revokeSessionSilently(sessionToken);
+        throw error;
     }
-
-    const tokenPayload = {
-        userId: signIn.user.id,
-        role: signIn.user.role,
-        name: signIn.user.name,
-        email: signIn.user.email,
-        emailVerified: signIn.user.emailVerified,
-    };
-
-    let isOnboardingComplete: boolean | undefined = undefined;
-    if (user.role === UserRole.ADMIN) {
-        isOnboardingComplete = user.admin?.onboardingCompletedAt != null;
-    }
-
-    return {
-        ...signIn,
-        // ✅ Expose needPasswordChange so LoginForm can redirect to /set-password
-        //    before granting access to any dashboard route.
-        needPasswordChange: user.needPasswordChange,
-        isOnboardingComplete,
-        accessToken: tokenUtils.getAccessToken(tokenPayload),
-        refreshToken: tokenUtils.getRefreshToken(tokenPayload),
-    };
 };
 
 const me = async (user: IRequestUser) => {
@@ -206,8 +324,12 @@ const getNewToken = async (
     refreshToken: string,
     sessionToken?: string,
 ) => {
-    if (!sessionToken) {
-        throw new AppError(status.UNAUTHORIZED, "Session token is missing");
+    if (!sessionToken?.trim()) {
+        throw new AppError(
+            status.UNAUTHORIZED,
+            "Refresh session is missing.",
+            { code: "REFRESH_SESSION_MISSING", retryable: false },
+        );
     }
 
     const verifiedRefreshToken = jwtUtils.verifyToken(
@@ -216,59 +338,85 @@ const getNewToken = async (
     );
 
     if (!verifiedRefreshToken.success || !verifiedRefreshToken.data) {
-        throw new AppError(status.UNAUTHORIZED, "Invalid refresh token");
+        throw new AppError(
+            status.UNAUTHORIZED,
+            "The refresh token is invalid or expired.",
+            { code: "INVALID_REFRESH_TOKEN", retryable: false },
+        );
     }
 
     const data = verifiedRefreshToken.data as JwtPayload;
-    const refreshUserId = data.userId as string | undefined;
+    const refreshUserId =
+        typeof data.userId === "string" && data.userId.trim()
+            ? data.userId
+            : null;
+
     if (!refreshUserId) {
-        throw new AppError(status.UNAUTHORIZED, "Invalid refresh token");
+        throw new AppError(
+            status.UNAUTHORIZED,
+            "The refresh token is invalid.",
+            { code: "INVALID_REFRESH_TOKEN", retryable: false },
+        );
     }
 
-    // Bind the Better Auth session and refresh token to the same user. This is
-    // both safer and more deterministic than first looking up an arbitrary
-    // session and only verifying the refresh token afterwards.
     const session = await prisma.session.findFirst({
         where: {
             token: sessionToken,
             userId: refreshUserId,
+            expiresAt: { gt: new Date() },
         },
-        select: {
-            id: true,
-            token: true,
-        },
+        select: { id: true, token: true },
     });
 
     if (!session) {
-        throw new AppError(status.UNAUTHORIZED, "Invalid session token");
+        throw new AppError(
+            status.UNAUTHORIZED,
+            "The refresh session has expired or was revoked.",
+            { code: "REFRESH_SESSION_EXPIRED", retryable: false },
+        );
     }
 
-    const newAccessToken = tokenUtils.getAccessToken({
-        userId: refreshUserId,
-        role: data.role,
-        name: data.name,
-        email: data.email,
-        status: data.status,
-        isDeleted: data.isDeleted,
-        emailVerified: data.emailVerified,
+    // Refresh from current database state rather than trusting stale role/status
+    // claims from the old refresh JWT. Suspensions and role changes therefore
+    // take effect immediately on the next refresh.
+    const user = await prisma.user.findUnique({
+        where: { id: refreshUserId },
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            emailVerified: true,
+            role: true,
+            status: true,
+            staff: { select: { status: true } },
+        },
     });
 
-    const newRefreshToken = tokenUtils.getRefreshToken({
-        userId: refreshUserId,
-        role: data.role,
-        name: data.name,
-        email: data.email,
-        status: data.status,
-        isDeleted: data.isDeleted,
-        emailVerified: data.emailVerified,
-    });
+    if (!user) {
+        throw new AppError(
+            status.UNAUTHORIZED,
+            "The authenticated account no longer exists.",
+            { code: "REFRESH_SESSION_EXPIRED", retryable: false },
+        );
+    }
+
+    assertAccountCanUseAuthenticatedApp(user);
+
+    const tokenPayload = {
+        userId: user.id,
+        role: user.role,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.emailVerified,
+    };
+
+    const newAccessToken = tokenUtils.getAccessToken(tokenPayload);
+    const newRefreshToken = tokenUtils.getRefreshToken(tokenPayload);
 
     const { token } = await prisma.session.update({
-        where: {
-            id: session.id,
-        },
+        where: { id: session.id },
         data: {
-            expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
+            expiresAt: new Date(Date.now() + BETTER_AUTH_SESSION_TTL_MS),
             updatedAt: new Date(),
         },
         select: { token: true },
@@ -278,7 +426,7 @@ const getNewToken = async (
         accessToken: newAccessToken,
         refreshToken: newRefreshToken,
         sessionToken: token,
-        role: typeof data.role === "string" ? data.role : undefined,
+        role: user.role,
     };
 };
 

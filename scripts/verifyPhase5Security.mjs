@@ -18,8 +18,9 @@ const controller = read("src/modules/Auth/auth.controller.ts");
 if (/data:\s*\{\s*(accessToken|refreshToken|sessionToken|token)\s*:/m.test(controller)) {
   fail("auth controller appears to expose credentials in JSON");
 }
-if (!controller.includes("data: clientSafe") || !controller.includes("data: { refreshed: true }")) {
-  fail("auth controller must return sanitized login/verification payloads and token-free refresh responses");
+const hasSafeRefreshPayload = /data:\s*\{\s*refreshed:\s*true(?:,\s*role:\s*result\.role)?\s*\}/m.test(controller);
+if (!controller.includes("data: clientSafe") || !hasSafeRefreshPayload) {
+  fail("auth controller must return sanitized verification/password payloads and token-free refresh responses");
 }
 
 const server = read("src/server.ts");

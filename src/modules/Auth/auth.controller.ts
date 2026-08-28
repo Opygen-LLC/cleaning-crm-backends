@@ -26,23 +26,36 @@ const register = catchAsync(async (req, res) => {
 
 const login = catchAsync(async (req, res) => {
     const result = await authService.login(req.body);
-    if (!result.accessToken || !result.refreshToken) {
-        throw new AppError(httpStatus.FORBIDDEN, "Email not verified. Please verify your email.");
+
+    if (
+        !result.user ||
+        !result.user.role ||
+        !result.sessionToken ||
+        !result.accessToken ||
+        !result.refreshToken
+    ) {
+        throw new AppError(
+            httpStatus.INTERNAL_SERVER_ERROR,
+            "The authenticated session is incomplete.",
+            { code: "AUTH_LOGIN_STATE_INCOMPLETE", retryable: true },
+        );
     }
 
-    const { accessToken, refreshToken, token, ...clientSafe } = result;
     setAuthenticatedCookies(res, {
-        accessToken,
-        refreshToken,
-        sessionToken: token,
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        sessionToken: result.sessionToken,
     });
 
     sendResponse(res, {
         httpStatusCode: httpStatus.OK,
         success: true,
         message: "User Login Successful",
-        // Never return bearer/session credentials to browser JavaScript.
-        data: clientSafe,
+        data: {
+            user: result.user,
+            needPasswordChange: result.needPasswordChange,
+            isOnboardingComplete: result.isOnboardingComplete,
+        },
     });
 });
 
@@ -61,7 +74,11 @@ const getNewToken = catchAsync(async (req, res) => {
     const sessionToken = req.cookies["better-auth.session_token"];
     if (!refreshToken || !sessionToken) {
         tokenUtils.clearAuthCookies(res);
-        throw new AppError(httpStatus.UNAUTHORIZED, "Refresh session is missing");
+        throw new AppError(
+            httpStatus.UNAUTHORIZED,
+            "Refresh session is missing.",
+            { code: "REFRESH_SESSION_MISSING", retryable: false },
+        );
     }
 
     try {
@@ -76,12 +93,24 @@ const getNewToken = catchAsync(async (req, res) => {
             httpStatusCode: httpStatus.OK,
             success: true,
             message: "Session refreshed successfully",
-            data: { refreshed: true },
+            data: { refreshed: true, role: result.role },
         });
     } catch (error) {
-        // Expired/revoked refresh state must also clear the shared route hint so
-        // the frontend cannot remain in a stale authenticated shell.
-        tokenUtils.clearAuthCookies(res);
+        // Clear credentials only when refresh state is definitively invalid. A
+        // transient 5xx/database outage must not destroy an otherwise valid
+        // browser session; the frontend will surface the temporary failure and
+        // can retry later. The frontend-owned route hint is cleared by the
+        // client only for 400/401/403 refresh failures.
+        if (
+            error instanceof AppError &&
+            [
+                httpStatus.BAD_REQUEST,
+                httpStatus.UNAUTHORIZED,
+                httpStatus.FORBIDDEN,
+            ].includes(error.statusCode)
+        ) {
+            tokenUtils.clearAuthCookies(res);
+        }
         throw error;
     }
 });

@@ -24,6 +24,8 @@ x-app-common: &app-common
     BETTER_AUTH_URL: https://api.opygen.com
     COOKIE_DOMAIN: .opygen.com
     AUTH_ALLOWED_ORIGINS: https://cleaningcrm.opygen.com,https://api.opygen.com
+    ACCESS_TOKEN_EXPIRES_IN: 15m
+    REFRESH_TOKEN_EXPIRES_IN: 30d
   depends_on:
     redis:
       condition: service_healthy

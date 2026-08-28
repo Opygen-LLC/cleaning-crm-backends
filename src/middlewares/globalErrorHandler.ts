@@ -21,6 +21,108 @@ import {
 } from "../errorHelper/errorContract";
 import logger from "../lib/logger";
 import { ErrorMonitor } from "../lib/monitoring/errorMonitor";
+import { isAPIError } from "better-auth/api";
+
+const BETTER_AUTH_STATUS_CODES: Record<string, number> = {
+    BAD_REQUEST: status.BAD_REQUEST,
+    UNAUTHORIZED: status.UNAUTHORIZED,
+    FORBIDDEN: status.FORBIDDEN,
+    NOT_FOUND: status.NOT_FOUND,
+    CONFLICT: status.CONFLICT,
+    TOO_MANY_REQUESTS: status.TOO_MANY_REQUESTS,
+    INTERNAL_SERVER_ERROR: status.INTERNAL_SERVER_ERROR,
+    SERVICE_UNAVAILABLE: status.SERVICE_UNAVAILABLE,
+};
+
+const parseBetterAuthError = (error: unknown) => {
+    const record = error as {
+        status?: unknown;
+        statusCode?: unknown;
+        body?: { code?: unknown; message?: unknown };
+        code?: unknown;
+        message?: unknown;
+    };
+
+    const statusValue = record.statusCode ?? record.status;
+    const numericStatus =
+        typeof statusValue === "string" && /^\d{3}$/.test(statusValue)
+            ? Number(statusValue)
+            : undefined;
+    const statusCode =
+        typeof statusValue === "number"
+            ? statusValue
+            : numericStatus ??
+              (typeof statusValue === "string"
+                  ? BETTER_AUTH_STATUS_CODES[statusValue.toUpperCase()] ?? status.INTERNAL_SERVER_ERROR
+                  : status.INTERNAL_SERVER_ERROR);
+
+    const rawCode =
+        typeof record.body?.code === "string"
+            ? record.body.code
+            : typeof record.code === "string"
+              ? record.code
+              : "AUTHENTICATION_SERVICE_ERROR";
+    const normalizedCode = rawCode.trim().toUpperCase();
+
+    if (["INVALID_EMAIL_OR_PASSWORD", "INVALID_PASSWORD", "USER_NOT_FOUND"].includes(normalizedCode)) {
+        return {
+            statusCode: status.UNAUTHORIZED,
+            code: "INVALID_CREDENTIALS",
+            message: "Email or password is incorrect.",
+            retryable: false,
+        };
+    }
+
+    if (normalizedCode === "EMAIL_NOT_VERIFIED") {
+        return {
+            statusCode: status.FORBIDDEN,
+            code: "EMAIL_NOT_VERIFIED",
+            message: "Please verify your email before signing in.",
+            retryable: false,
+        };
+    }
+
+    if (["SESSION_EXPIRED", "INVALID_TOKEN", "FAILED_TO_GET_SESSION", "UNAUTHORIZED"].includes(normalizedCode)) {
+        return {
+            statusCode: status.UNAUTHORIZED,
+            code: "INVALID_SESSION",
+            message: "Your session is invalid or has expired.",
+            retryable: false,
+        };
+    }
+
+    if (normalizedCode === "FAILED_TO_CREATE_SESSION") {
+        return {
+            statusCode: status.INTERNAL_SERVER_ERROR,
+            code: "AUTH_SESSION_NOT_CREATED",
+            message: "Your credentials were accepted, but a secure session could not be created.",
+            retryable: true,
+        };
+    }
+
+    if (statusCode >= 500) {
+        return {
+            statusCode,
+            code: "AUTHENTICATION_SERVICE_ERROR",
+            message: "The authentication service could not complete the request. Please try again.",
+            retryable: true,
+        };
+    }
+
+    const safeMessage =
+        typeof record.body?.message === "string" && record.body.message.trim()
+            ? record.body.message.trim()
+            : typeof record.message === "string" && record.message.trim()
+              ? record.message.trim()
+              : "Authentication request failed.";
+
+    return {
+        statusCode,
+        code: normalizedCode || getErrorCodeFromStatus(statusCode),
+        message: safeMessage,
+        retryable: isRetryableStatus(statusCode),
+    };
+};
 
 const getRequestId = (req: Request, res: Response): string => {
     const existing = res.locals.requestId;
@@ -50,7 +152,15 @@ export const globalErrorHandler = async (
     let retryable = true;
     let stack: string | undefined;
 
-    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (isAPIError(err)) {
+        const simplified = parseBetterAuthError(err);
+        statusCode = simplified.statusCode;
+        code = simplified.code;
+        message = simplified.message;
+        retryable = simplified.retryable;
+        errorSources = [{ path: "", message }];
+        stack = err instanceof Error ? err.stack : undefined;
+    } else if (err instanceof Prisma.PrismaClientKnownRequestError) {
         const simplified = handlePrismaClientKnownRequestError(err);
         statusCode = simplified.statusCode ?? status.INTERNAL_SERVER_ERROR;
         code = simplified.code ?? getErrorCodeFromStatus(statusCode);

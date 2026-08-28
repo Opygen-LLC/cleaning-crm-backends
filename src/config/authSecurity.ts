@@ -51,8 +51,14 @@ export const assertAuthSecurityConfiguration = (): void => {
     if (NODE_ENV !== "production") return;
 
     const frontend = normalizeOrigin(FRONTEND_URL);
+    const app = normalizeOrigin(APP_URL);
     const api = normalizeOrigin(BETTER_AUTH_URL);
-    if (!frontend || !api) throw new Error("FRONTEND_URL and BETTER_AUTH_URL must be absolute production URLs");
+    if (!frontend || !app || !api) {
+        throw new Error("FRONTEND_URL, APP_URL and BETTER_AUTH_URL must be absolute production URLs");
+    }
+    if (app !== frontend) {
+        throw new Error("APP_URL and FRONTEND_URL must point to the same production frontend origin");
+    }
 
     const frontendUrl = new URL(frontend);
     const apiUrl = new URL(api);
@@ -69,12 +75,15 @@ export const assertAuthSecurityConfiguration = (): void => {
     }
 
     const accessMs = parseDurationMs(ACCESS_TOKEN_EXPIRES_IN);
-    if (!accessMs || accessMs < 5 * 60_000 || accessMs > 30 * 60_000) {
-        throw new Error("ACCESS_TOKEN_EXPIRES_IN must be between 5m and 30m in production (recommended: 15m)");
+    if (accessMs !== 15 * 60_000) {
+        throw new Error("ACCESS_TOKEN_EXPIRES_IN must be exactly 15m in production");
     }
 
-    if (!getAuthenticatedOrigins().includes(frontend)) {
-        throw new Error("FRONTEND_URL must be included in authenticated origin policy");
+    const explicitAllowedOrigins = AUTH_ALLOWED_ORIGINS
+        .map(normalizeOrigin)
+        .filter((value): value is string => Boolean(value));
+    if (!explicitAllowedOrigins.includes(frontend) || !explicitAllowedOrigins.includes(api)) {
+        throw new Error("AUTH_ALLOWED_ORIGINS must explicitly include both FRONTEND_URL and BETTER_AUTH_URL");
     }
 };
 
