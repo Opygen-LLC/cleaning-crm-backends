@@ -8,10 +8,10 @@ import { AUTH_ERROR_CODES } from "./auth.codes";
 
 const setAuthenticatedCookies = (
     res: Parameters<typeof tokenUtils.setAccessTokenCookie>[0],
-    payload: { accessToken: string; refreshToken: string; sessionToken?: string | null },
+    payload: { accessToken: string; refreshToken?: string | null; sessionToken?: string | null },
 ) => {
     tokenUtils.setAccessTokenCookie(res, payload.accessToken);
-    tokenUtils.setRefreshTokenCookie(res, payload.refreshToken);
+    if (payload.refreshToken) tokenUtils.setRefreshTokenCookie(res, payload.refreshToken);
     if (payload.sessionToken) tokenUtils.setBetterAuthSessionCookie(res, payload.sessionToken);
 };
 
@@ -26,7 +26,10 @@ const register = catchAsync(async (req, res) => {
 });
 
 const login = catchAsync(async (req, res) => {
-    const result = await authService.login(req.body);
+    const result = await authService.login(req.body, {
+        ipAddress: req.ip,
+        userAgent: typeof req.get === "function" ? req.get("user-agent") : undefined,
+    });
 
     if (
         !result.user ||
@@ -127,7 +130,10 @@ const getNewToken = catchAsync(async (req, res) => {
 
 const verifyEmail = catchAsync(async (req, res) => {
     const { email, otp } = req.body;
-    const result = await authService.verifyEmail(email, otp);
+    const result = await authService.verifyEmail(email, otp, {
+        ipAddress: req.ip,
+        userAgent: typeof req.get === "function" ? req.get("user-agent") : undefined,
+    });
     const { accessToken, refreshToken, token } = result;
 
     setAuthenticatedCookies(res, {

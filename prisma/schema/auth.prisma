@@ -43,17 +43,27 @@ model PushSubscription {
 }
 
 model Session {
-  id        String   @id
-  expiresAt DateTime
-  token     String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  ipAddress String?
-  userAgent String?
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                       String    @id
+  expiresAt                DateTime
+  token                    String    @unique
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+  lastUsedAt               DateTime?
+  ipAddress                String?
+  userAgent                String?
+  userId                   String
+  user                     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Phase 5 refresh-rotation state. Only SHA-256 digests are stored; the
+  // browser refresh credential itself remains HttpOnly and never enters DB/logs.
+  refreshTokenHash         String?
+  previousRefreshTokenHash String?
+  refreshFamilyId          String?
+  refreshRotatedAt         DateTime?
 
   @@index([userId])
+  @@index([userId, expiresAt, createdAt])
+  @@index([refreshFamilyId])
   @@map("session")
 }
 

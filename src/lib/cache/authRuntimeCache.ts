@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { UserRole } from "../../generated/prisma/enums";
 import redis from "../../config/redis";
 import { prisma } from "../prisma/prisma";
@@ -242,20 +243,44 @@ export function invalidateRuntimeTenantOwnerStatus(adminId: string | null | unde
   void redis.del(`auth:tenant-owner-status:${adminId}`).catch(() => {});
 }
 
+const sessionValidityKey = (token: string) =>
+  `session:v2:${createHash("sha256").update(token).digest("hex")}`;
+
+/**
+ * Better Auth session validity remains PostgreSQL-authoritative. Redis only
+ * caches the derived boolean for a short period, using a hash of the opaque
+ * session token so credentials never appear in Redis keyspace/diagnostics.
+ */
 export async function getRuntimeSessionValidity(token: string): Promise<boolean> {
-  const redisKey = `session:${token}`;
+  const redisKey = sessionValidityKey(token);
   const shared = await redis.get(redisKey).catch(() => null);
   if (shared !== null) return shared === "true";
 
-  const session = await singleFlight(`session-valid:${token}`, () =>
+  const flightKey = `session-valid:${createHash("sha256").update(token).digest("base64url")}`;
+  const session = await singleFlight(flightKey, () =>
     prisma.session.findFirst({
       where: { token, expiresAt: { gt: new Date() } },
       select: { id: true },
     }),
   );
   const valid = Boolean(session);
-  void redis.setex(redisKey, 60, valid ? "true" : "false").catch(() => {});
+  void redis.setex(redisKey, 30, valid ? "true" : "false").catch(() => {});
   return valid;
+}
+
+export async function invalidateRuntimeSessionValidity(token: string | null | undefined): Promise<void> {
+  if (!token) return;
+  // Delete the hashed Phase-5 key and the legacy plaintext-token key during
+  // rollout so revocation is immediate across mixed-version instances.
+  await redis.del(sessionValidityKey(token), `session:${token}`).catch(() => {});
+}
+
+export async function invalidateRuntimeSessionValidities(tokens: Array<string | null | undefined>): Promise<void> {
+  const keys = tokens
+    .filter((token): token is string => Boolean(token))
+    .flatMap((token) => [sessionValidityKey(token), `session:${token}`]);
+  if (keys.length === 0) return;
+  await redis.del(...keys).catch(() => {});
 }
 
 

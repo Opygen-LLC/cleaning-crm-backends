@@ -11,7 +11,7 @@ import { tokenUtils } from "../../lib/utils/token";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { JwtPayload } from "jsonwebtoken";
 import { jwtUtils } from "../../lib/utils/jwt";
-import { REFRESH_TOKEN_SECRET } from "../../config/ENV";
+import { REFRESH_TOKEN_REUSE_GRACE_MS, REFRESH_TOKEN_SECRET } from "../../config/ENV";
 import {
     AccountStatus,
     StaffStatus,
@@ -24,6 +24,17 @@ import { AuthEmailOutbox } from "../../lib/outbox/authEmailOutbox";
 import { randomBytes, randomUUID } from "node:crypto";
 import { AUTH_ERROR_CODES } from "./auth.codes";
 import { ACCOUNT_SETUP_STEPS } from "../Admin/admin.constant";
+import logger from "../../lib/logger";
+import {
+    bindRefreshCredentialToSession,
+    createRefreshFamilyId,
+    hashRefreshCredential,
+    revokeAllSessionsForUser,
+    revokeOtherSessionsForUser,
+    revokeSessionByToken,
+    type SessionRequestMetadata,
+} from "./sessionSecurity.service";
+import { invalidateRuntimeAuth, invalidateRuntimeSessionValidities, invalidateRuntimeSessionValidity } from "../../lib/cache/authRuntimeCache";
 
 //? Max sessions per user
 const MAX_SESSIONS = 3;
@@ -31,7 +42,7 @@ const BETTER_AUTH_SESSION_TTL_MS = 60 * 24 * 60 * 60 * 1000;
 
 const revokeSessionSilently = async (sessionToken?: string | null): Promise<void> => {
     if (!sessionToken?.trim()) return;
-    await prisma.session.deleteMany({ where: { token: sessionToken } }).catch(() => undefined);
+    await revokeSessionByToken(sessionToken).catch(() => undefined);
 };
 
 const assertAccountCanUseAuthenticatedApp = (user: {
@@ -160,12 +171,15 @@ const register = async ({
     });
 };
 
-const login = async ({ email, password }: ILoginUserPayload) => {
+const login = async (
+    { email, password }: ILoginUserPayload,
+    metadata: SessionRequestMetadata = {},
+) => {
     const normalizedEmail = email.trim().toLowerCase();
 
-    // Better Auth is the credential/session authority. Its successful sign-in
-    // response already contains the freshly-loaded user and persisted opaque
-    // session token, so re-reading both rows here only adds database latency.
+    // Better Auth remains the credential/session authority. Its successful
+    // sign-in gives us the persisted opaque session token; Phase 5 only binds
+    // our rotating refresh credential to that session row.
     const signIn = await auth.api.signInEmail({
         body: { email: normalizedEmail, password },
     });
@@ -199,8 +213,6 @@ const login = async ({ email, password }: ILoginUserPayload) => {
             );
         }
 
-        // STAFF has one application-specific state that Better Auth does not
-        // carry in its user row. ADMIN/SUPER_ADMIN therefore need no extra read.
         const staff = signedInUser.role === UserRole.STAFF
             ? await prisma.staffProfile.findUnique({
                 where: { userId: signedInUser.id },
@@ -223,11 +235,12 @@ const login = async ({ email, password }: ILoginUserPayload) => {
             emailVerified: signedInUser.emailVerified,
         };
 
+        const refreshFamilyId = createRefreshFamilyId();
         let accessToken: string;
         let refreshToken: string;
         try {
             accessToken = tokenUtils.getAccessToken(tokenPayload);
-            refreshToken = tokenUtils.getRefreshToken(tokenPayload);
+            refreshToken = tokenUtils.getRefreshToken(tokenPayload, refreshFamilyId);
         } catch {
             throw new AppError(
                 status.INTERNAL_SERVER_ERROR,
@@ -236,23 +249,23 @@ const login = async ({ email, password }: ILoginUserPayload) => {
             );
         }
 
-        // Keep the current session plus the newest MAX_SESSIONS-1 active
-        // sessions. One SQL statement replaces count -> list -> delete and does
-        // not put session housekeeping on a multi-round-trip critical path.
-        const keepOtherSessions = Math.max(0, MAX_SESSIONS - 1);
-        await prisma.$executeRaw`
-            WITH excess_sessions AS (
-                SELECT id
-                FROM "session"
-                WHERE "userId" = ${signedInUser.id}
-                  AND token <> ${sessionToken}
-                  AND "expiresAt" > NOW()
-                ORDER BY "createdAt" DESC
-                OFFSET ${keepOtherSessions}
-            )
-            DELETE FROM "session"
-            WHERE id IN (SELECT id FROM excess_sessions)
-        `;
+        const binding = await bindRefreshCredentialToSession({
+            userId: signedInUser.id,
+            sessionToken,
+            refreshToken,
+            refreshFamilyId,
+            maxSessions: MAX_SESSIONS,
+            metadata,
+        });
+        if (!binding.bound) {
+            throw new AppError(
+                status.INTERNAL_SERVER_ERROR,
+                "Your credentials were accepted, but the secure session could not be finalized.",
+                { code: AUTH_ERROR_CODES.AUTH_SESSION_NOT_CREATED, retryable: true },
+            );
+        }
+
+        invalidateRuntimeAuth(signedInUser.id);
 
         return {
             user: {
@@ -417,11 +430,7 @@ const getNewToken = async (
         );
     }
 
-    const verifiedRefreshToken = jwtUtils.verifyToken(
-        refreshToken,
-        REFRESH_TOKEN_SECRET,
-    );
-
+    const verifiedRefreshToken = jwtUtils.verifyToken(refreshToken, REFRESH_TOKEN_SECRET);
     if (!verifiedRefreshToken.success || !verifiedRefreshToken.data) {
         throw new AppError(
             status.UNAUTHORIZED,
@@ -431,12 +440,13 @@ const getNewToken = async (
     }
 
     const data = verifiedRefreshToken.data as JwtPayload;
-    const refreshUserId =
-        typeof data.userId === "string" && data.userId.trim()
-            ? data.userId
-            : null;
+    const refreshUserId = typeof data.userId === "string" && data.userId.trim() ? data.userId : null;
+    const claimedFamilyId = typeof data.refreshFamilyId === "string" && data.refreshFamilyId.trim()
+        ? data.refreshFamilyId
+        : null;
+    const tokenType = typeof data.tokenType === "string" ? data.tokenType : null;
 
-    if (!refreshUserId) {
+    if (!refreshUserId || (tokenType && tokenType !== "refresh")) {
         throw new AppError(
             status.UNAUTHORIZED,
             "The refresh token is invalid.",
@@ -444,72 +454,171 @@ const getNewToken = async (
         );
     }
 
-    // One joined session lookup validates revocation/expiry and refreshes the
-    // current account state. This replaces the previous session read followed
-    // by a separate user read, while still making suspensions/role changes take
-    // effect on the next refresh.
-    const session = await prisma.session.findFirst({
-        where: {
-            token: sessionToken,
-            userId: refreshUserId,
-            expiresAt: { gt: new Date() },
-        },
-        select: {
-            id: true,
-            token: true,
-            user: {
-                select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    emailVerified: true,
-                    role: true,
-                    status: true,
-                    staff: { select: { status: true } },
-                },
-            },
-        },
+    const presentedHash = hashRefreshCredential(refreshToken);
+    type LockedSessionRow = {
+        id: string;
+        token: string;
+        refreshTokenHash: string | null;
+        previousRefreshTokenHash: string | null;
+        refreshFamilyId: string | null;
+        refreshRotatedAt: Date | null;
+        userId: string;
+        name: string;
+        email: string;
+        emailVerified: boolean;
+        role: UserRole;
+        status: AccountStatus;
+        staffStatus: StaffStatus | null;
+    };
+
+    type RotationResult =
+        | { kind: "rotated"; accessToken: string; refreshToken: string; sessionToken: string }
+        | { kind: "grace"; accessToken: string; refreshToken: null; sessionToken: string }
+        | { kind: "reuse"; userId: string; sessionId: string; familyId: string | null; revokedTokens: string[] };
+
+    const rotation = await prisma.$transaction(async (tx): Promise<RotationResult> => {
+        const rows = await tx.$queryRaw<LockedSessionRow[]>`
+            SELECT
+                s.id, s.token, s."refreshTokenHash", s."previousRefreshTokenHash",
+                s."refreshFamilyId", s."refreshRotatedAt",
+                u.id AS "userId", u.name, u.email, u."emailVerified",
+                u.role::text AS role, u.status::text AS status,
+                sp.status::text AS "staffStatus"
+            FROM "session" s
+            JOIN "user" u ON u.id = s."userId"
+            LEFT JOIN "StaffProfile" sp ON sp."userId" = u.id
+            WHERE s.token = ${sessionToken}
+              AND s."userId" = ${refreshUserId}
+              AND s."expiresAt" > NOW()
+            LIMIT 1
+            FOR UPDATE OF s
+        `;
+
+        const current = rows[0];
+        if (!current) {
+            throw new AppError(
+                status.UNAUTHORIZED,
+                "The refresh session has expired or was revoked.",
+                { code: AUTH_ERROR_CODES.REFRESH_SESSION_EXPIRED, retryable: false },
+            );
+        }
+
+        assertAccountCanUseAuthenticatedApp({
+            status: current.status,
+            role: current.role,
+            emailVerified: current.emailVerified,
+            staff: current.staffStatus ? { status: current.staffStatus } : null,
+        });
+
+        const familyMismatch = Boolean(
+            claimedFamilyId && current.refreshFamilyId && claimedFamilyId !== current.refreshFamilyId,
+        );
+        const currentHashMatches = !current.refreshTokenHash || current.refreshTokenHash === presentedHash;
+        const withinGrace = Boolean(
+            current.previousRefreshTokenHash === presentedHash &&
+            current.refreshRotatedAt &&
+            Date.now() - current.refreshRotatedAt.getTime() <= REFRESH_TOKEN_REUSE_GRACE_MS,
+        );
+
+        const tokenPayload = {
+            userId: current.userId,
+            role: current.role,
+            name: current.name,
+            email: current.email,
+            emailVerified: current.emailVerified,
+        };
+
+        if (!familyMismatch && !currentHashMatches && withinGrace) {
+            // A near-simultaneous second refresh from another browser tab is
+            // allowed only inside the tiny grace window. It receives a fresh
+            // access token but DOES NOT overwrite the newly rotated refresh
+            // cookie from the winning request.
+            await tx.$executeRaw`
+                UPDATE "session"
+                SET "lastUsedAt" = NOW(),
+                    "expiresAt" = ${new Date(Date.now() + BETTER_AUTH_SESSION_TTL_MS)},
+                    "updatedAt" = NOW()
+                WHERE id = ${current.id}
+            `;
+            return {
+                kind: "grace",
+                accessToken: tokenUtils.getAccessToken(tokenPayload),
+                refreshToken: null,
+                sessionToken: current.token,
+            };
+        }
+
+        if (familyMismatch || !currentHashMatches) {
+            type RevokedRow = { token: string };
+            const revoked = current.refreshFamilyId
+                ? await tx.$queryRaw<RevokedRow[]>`
+                    DELETE FROM "session"
+                    WHERE "refreshFamilyId" = ${current.refreshFamilyId}
+                    RETURNING token
+                `
+                : await tx.$queryRaw<RevokedRow[]>`
+                    DELETE FROM "session"
+                    WHERE id = ${current.id}
+                    RETURNING token
+                `;
+            return {
+                kind: "reuse",
+                userId: current.userId,
+                sessionId: current.id,
+                familyId: current.refreshFamilyId,
+                revokedTokens: revoked.map((row) => row.token),
+            };
+        }
+
+        // Existing pre-Phase-5 sessions have no stored family/hash. Upgrade
+        // them lazily on first refresh; all newly issued credentials carry a
+        // family identifier and a unique refreshId.
+        const refreshFamilyId = current.refreshFamilyId || claimedFamilyId || createRefreshFamilyId();
+        const newAccessToken = tokenUtils.getAccessToken(tokenPayload);
+        const newRefreshToken = tokenUtils.getRefreshToken(tokenPayload, refreshFamilyId);
+        const newHash = hashRefreshCredential(newRefreshToken);
+
+        await tx.$executeRaw`
+            UPDATE "session"
+            SET "previousRefreshTokenHash" = ${current.refreshTokenHash ?? presentedHash},
+                "refreshTokenHash" = ${newHash},
+                "refreshFamilyId" = ${refreshFamilyId},
+                "refreshRotatedAt" = NOW(),
+                "lastUsedAt" = NOW(),
+                "expiresAt" = ${new Date(Date.now() + BETTER_AUTH_SESSION_TTL_MS)},
+                "updatedAt" = NOW()
+            WHERE id = ${current.id}
+        `;
+
+        return {
+            kind: "rotated",
+            accessToken: newAccessToken,
+            refreshToken: newRefreshToken,
+            sessionToken: current.token,
+        };
     });
 
-    if (!session) {
+    if (rotation.kind === "reuse") {
+        await invalidateRuntimeSessionValidities(rotation.revokedTokens);
+        invalidateRuntimeAuth(rotation.userId);
+        logger.warn("Refresh token reuse detected; session family revoked", {
+            event: "auth_refresh_token_reuse",
+            userId: rotation.userId,
+            sessionId: rotation.sessionId,
+            familyId: rotation.familyId,
+            revokedSessionCount: rotation.revokedTokens.length,
+        });
         throw new AppError(
             status.UNAUTHORIZED,
-            "The refresh session has expired or was revoked.",
-            { code: AUTH_ERROR_CODES.REFRESH_SESSION_EXPIRED, retryable: false },
+            "This session was revoked because an old refresh credential was reused.",
+            { code: AUTH_ERROR_CODES.REFRESH_TOKEN_REUSE_DETECTED, retryable: false },
         );
     }
 
-    const user = session.user;
-    assertAccountCanUseAuthenticatedApp(user);
-
-    const tokenPayload = {
-        userId: user.id,
-        role: user.role,
-        name: user.name,
-        email: user.email,
-        emailVerified: user.emailVerified,
-    };
-
-    const newAccessToken = tokenUtils.getAccessToken(tokenPayload);
-    const newRefreshToken = tokenUtils.getRefreshToken(tokenPayload);
-
-    const { token } = await prisma.session.update({
-        where: { id: session.id },
-        data: {
-            expiresAt: new Date(Date.now() + BETTER_AUTH_SESSION_TTL_MS),
-            updatedAt: new Date(),
-        },
-        select: { token: true },
-    });
-
-    return {
-        accessToken: newAccessToken,
-        refreshToken: newRefreshToken,
-        sessionToken: token,
-    };
+    return rotation;
 };
 
-const verifyEmail = async (email: string, otp: string) => {
+const verifyEmail = async (email: string, otp: string, metadata: SessionRequestMetadata = {}) => {
     // Resolve identity and credential ownership first. ADMIN provisioning is
     // checked before the OTP is consumed so an incomplete tenant cannot become
     // stuck in a verified-but-unusable state.
@@ -589,11 +698,32 @@ const verifyEmail = async (email: string, otp: string) => {
         emailVerified: activatedUser.emailVerified,
     };
 
+    const refreshFamilyId = createRefreshFamilyId();
+    const accessToken = tokenUtils.getAccessToken(tokenPayload);
+    const refreshToken = tokenUtils.getRefreshToken(tokenPayload, refreshFamilyId);
+    const binding = await bindRefreshCredentialToSession({
+        userId: activatedUser.id,
+        sessionToken,
+        refreshToken,
+        refreshFamilyId,
+        maxSessions: MAX_SESSIONS,
+        metadata,
+    });
+    if (!binding.bound) {
+        await revokeSessionSilently(sessionToken);
+        throw new AppError(
+            status.INTERNAL_SERVER_ERROR,
+            "Email verified, but the authenticated session could not be finalized.",
+            { code: AUTH_ERROR_CODES.AUTH_VERIFICATION_SESSION_FAILED, retryable: true },
+        );
+    }
+
+    invalidateRuntimeAuth(activatedUser.id);
     return {
         ...result,
         token: sessionToken,
-        accessToken: tokenUtils.getAccessToken(tokenPayload),
-        refreshToken: tokenUtils.getRefreshToken(tokenPayload),
+        accessToken,
+        refreshToken,
     };
 };
 
@@ -651,9 +781,8 @@ const resetPassword = async (
     newPassword: string,
 ) => {
     const isUserExist = await prisma.user.findUnique({
-        where: {
-            email,
-        },
+        where: { email },
+        select: { id: true },
     });
 
     if (!isUserExist) {
@@ -683,11 +812,7 @@ const resetPassword = async (
         },
     });
 
-    await prisma.session.deleteMany({
-        where: {
-            userId: isUserExist.id,
-        },
-    });
+    await revokeAllSessionsForUser(isUserExist.id);
 };
 
 const changePassword = async (
@@ -695,49 +820,47 @@ const changePassword = async (
     sessionToken: string,
 ) => {
     const session = await auth.api.getSession({
-        headers: new Headers({
-            Authorization: `Bearer ${sessionToken}`,
-        }),
+        headers: new Headers({ Authorization: `Bearer ${sessionToken}` }),
     });
 
     if (!session) {
-        throw new AppError(status.UNAUTHORIZED, "Invalid session token");
+        throw new AppError(status.UNAUTHORIZED, "Invalid session token", {
+            code: AUTH_ERROR_CODES.INVALID_SESSION,
+            retryable: false,
+        });
     }
 
-    const isGoogleAccount = await prisma.account.count({
-        where: {
-            userId: session.user.id,
-            providerId: "google",
-        },
+    const socialAccount = await prisma.account.findFirst({
+        where: { userId: session.user.id, providerId: "google" },
+        select: { id: true },
     });
-
-    if (isGoogleAccount > 0) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "Password cannot be changed for Google accounts.",
-        );
+    if (socialAccount) {
+        throw new AppError(status.BAD_REQUEST, "Password cannot be changed for Google accounts.");
     }
 
     const { currentPassword, newPassword } = payload;
-
     const result = await auth.api.changePassword({
         body: {
             currentPassword,
             newPassword,
-            revokeOtherSessions: true,
+            // Phase 5 revokes other sessions itself so their Redis validity
+            // entries are invalidated immediately instead of surviving TTL.
+            revokeOtherSessions: false,
         },
-        headers: new Headers({
-            Authorization: `Bearer ${sessionToken}`,
-        }),
+        headers: new Headers({ Authorization: `Bearer ${sessionToken}` }),
     });
 
-    // ✅ Clear the forced-password-change flag now that the staff member has
-    //    chosen their own password.  We do this after the password change
-    //    succeeds so the flag is only cleared on a real credential update.
+    const currentSessionToken =
+        typeof (result as { token?: unknown }).token === "string" &&
+        (result as { token: string }).token.trim()
+            ? (result as { token: string }).token
+            : sessionToken;
+
     await prisma.user.update({
         where: { id: session.user.id },
         data: { needPasswordChange: false },
     });
+    await revokeOtherSessionsForUser(session.user.id, currentSessionToken);
 
     const tokenPayload = {
         userId: result.user.id,
@@ -746,31 +869,50 @@ const changePassword = async (
         email: result.user.email,
         emailVerified: result.user.emailVerified,
     };
-
+    const refreshFamilyId = createRefreshFamilyId();
     const accessToken = tokenUtils.getAccessToken(tokenPayload);
-    const refreshToken = tokenUtils.getRefreshToken(tokenPayload);
+    const refreshToken = tokenUtils.getRefreshToken(tokenPayload, refreshFamilyId);
+    const binding = await bindRefreshCredentialToSession({
+        userId: session.user.id,
+        sessionToken: currentSessionToken,
+        refreshToken,
+        refreshFamilyId,
+        maxSessions: 1,
+    });
+    if (!binding.bound) {
+        throw new AppError(status.UNAUTHORIZED, "The password changed, but the current session is no longer valid.", {
+            code: AUTH_ERROR_CODES.INVALID_SESSION,
+            retryable: false,
+        });
+    }
+
+    invalidateRuntimeAuth(session.user.id);
+    await invalidateRuntimeSessionValidity(currentSessionToken);
 
     return {
         ...result,
+        token: currentSessionToken,
         accessToken,
         refreshToken,
     };
 };
 
 const logout = async (sessionToken?: string) => {
-    // Logout is deliberately idempotent. Clearing browser credentials should
-    // still succeed if the server-side session has already expired/revoked.
+    // Logout is idempotent, but server-side revocation must be authoritative.
+    // If Better Auth signOut cannot find an already-removed row, the direct
+    // delete remains a safe no-op and clears any cached session-validity key.
     if (!sessionToken) return { success: true };
 
     try {
-        return await auth.api.signOut({
-            headers: new Headers({
-                Authorization: `Bearer ${sessionToken}`,
-            }),
+        await auth.api.signOut({
+            headers: new Headers({ Authorization: `Bearer ${sessionToken}` }),
         });
     } catch {
-        return { success: true };
+        await revokeSessionByToken(sessionToken);
+    } finally {
+        await invalidateRuntimeSessionValidity(sessionToken);
     }
+    return { success: true };
 };
 
 const userService = {

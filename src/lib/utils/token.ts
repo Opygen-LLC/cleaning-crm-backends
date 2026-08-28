@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Response } from "express";
 import { JwtPayload, SignOptions } from "jsonwebtoken";
 import { CookieUtils } from "./cookie";
@@ -21,10 +22,17 @@ const getAccessToken = (payload: JwtPayload) =>
         expiresIn: ACCESS_TOKEN_EXPIRES_IN,
     } as SignOptions);
 
-const getRefreshToken = (payload: JwtPayload) =>
-    jwtUtils.createToken(payload, REFRESH_TOKEN_SECRET, {
-        expiresIn: REFRESH_TOKEN_EXPIRES_IN,
-    } as SignOptions);
+const getRefreshToken = (payload: JwtPayload, refreshFamilyId?: string) =>
+    jwtUtils.createToken(
+        {
+            ...payload,
+            tokenType: "refresh",
+            refreshFamilyId: refreshFamilyId || randomUUID(),
+            refreshId: randomUUID(),
+        },
+        REFRESH_TOKEN_SECRET,
+        { expiresIn: REFRESH_TOKEN_EXPIRES_IN } as SignOptions,
+    );
 
 /**
  * Canonical browser credentials are host-only. When the API is reached through

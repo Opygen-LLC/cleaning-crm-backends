@@ -8,6 +8,7 @@ import authValidator from "./auth.validation";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { checkAuthSession } from "../../middlewares/checkAuthSession";
 import { UserRole } from "../../generated/prisma/enums";
+import { sessionController } from "../Session/session.controller";
 import {
     loginRateLimit,
     otpRateLimit,
@@ -49,6 +50,24 @@ router.get(
     "/session",
     checkAuthSession,
     authController.session,
+);
+
+// Canonical session-management surface. The legacy /session/my-session routes
+// remain mounted during rollout, but new clients use these auth-scoped paths.
+router.get(
+    "/sessions",
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    sessionController.getMySessions,
+);
+router.post(
+    "/sessions/revoke-others",
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    sessionController.revokeOtherSessions,
+);
+router.delete(
+    "/sessions/:id",
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    sessionController.deleteMySession,
 );
 
 router.post("/refresh-token", authController.getNewToken);

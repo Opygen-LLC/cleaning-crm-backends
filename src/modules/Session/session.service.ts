@@ -2,52 +2,63 @@ import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import { prisma } from "../../lib/prisma/prisma";
 import { IRequestUser } from "../../types/requestUser.interface";
+import {
+    revokeOtherSessionsForUser,
+    revokeSessionByIdForUser,
+} from "../Auth/sessionSecurity.service";
 
 const getMySessions = async (user: IRequestUser, currentSessionToken?: string) => {
-    const sessions = await prisma.session.findMany({
-        where: { userId: user.id },
-        orderBy: { createdAt: "desc" },
-        select: {
-            id: true,
-            userId: true,
-            expiresAt: true,
-            createdAt: true,
-            updatedAt: true,
-            ipAddress: true,
-            userAgent: true,
-            token: true,
-        },
-    });
+    type SessionRow = {
+        id: string;
+        userId: string;
+        expiresAt: Date;
+        createdAt: Date;
+        updatedAt: Date;
+        lastUsedAt: Date;
+        ipAddress: string | null;
+        userAgent: string | null;
+        isCurrentDevice: boolean;
+    };
 
-    return sessions.map(({ token, ...session }) => ({
-        ...session,
-        isCurrentDevice: Boolean(currentSessionToken && token === currentSessionToken),
-    }));
+    // Never expose the opaque Better Auth token. Current-device comparison is
+    // performed inside PostgreSQL and only the resulting boolean is returned.
+    return prisma.$queryRaw<SessionRow[]>`
+        SELECT
+            id,
+            "userId",
+            "expiresAt",
+            "createdAt",
+            "updatedAt",
+            COALESCE("lastUsedAt", "updatedAt", "createdAt") AS "lastUsedAt",
+            "ipAddress",
+            "userAgent",
+            CASE WHEN token = ${currentSessionToken ?? ""} THEN TRUE ELSE FALSE END AS "isCurrentDevice"
+        FROM "session"
+        WHERE "userId" = ${user.id}
+          AND "expiresAt" > NOW()
+        ORDER BY "lastUsedAt" DESC NULLS LAST, "createdAt" DESC
+        LIMIT 20
+    `;
 };
 
-const deleteMySession = async (user: IRequestUser, sessionId: string) => {
-    const existing = await prisma.session.findFirst({
-        where: { id: sessionId, userId: user.id },
-        select: { id: true },
-    });
-    if (!existing) throw new AppError(status.NOT_FOUND, "Session not found");
-    await prisma.session.delete({ where: { id: sessionId } });
-    return { id: sessionId };
+const deleteMySession = async (
+    user: IRequestUser,
+    sessionId: string,
+    currentSessionToken?: string,
+) => {
+    const result = await revokeSessionByIdForUser(user.id, sessionId, currentSessionToken);
+    if (!result.found) throw new AppError(status.NOT_FOUND, "Session not found");
+    return { id: sessionId, revokedCurrent: result.revokedCurrent };
 };
 
 const revokeOtherSessions = async (user: IRequestUser, currentSessionToken?: string) => {
     if (!currentSessionToken) throw new AppError(status.UNAUTHORIZED, "Current session is missing");
 
-    const current = await prisma.session.findFirst({
-        where: { token: currentSessionToken, userId: user.id, expiresAt: { gt: new Date() } },
-        select: { id: true },
-    });
-    if (!current) throw new AppError(status.UNAUTHORIZED, "Current session is invalid");
-
-    const result = await prisma.session.deleteMany({
-        where: { userId: user.id, id: { not: current.id } },
-    });
-    return { revokedCount: result.count };
+    const result = await revokeOtherSessionsForUser(user.id, currentSessionToken);
+    if (!result.currentValid) {
+        throw new AppError(status.UNAUTHORIZED, "Current session is invalid");
+    }
+    return result;
 };
 
 export const sessionService = { getMySessions, deleteMySession, revokeOtherSessions };

@@ -41,6 +41,7 @@ import { getPerformanceSnapshot } from "./lib/monitoring/performanceMetrics";
 import { getInfrastructureAlignment } from "./lib/monitoring/infrastructure";
 import { getAuthenticatedOrigins } from "./config/authSecurity";
 import { browserOriginGuard } from "./middlewares/browserOriginGuard";
+import { getRedisCircuitSnapshot } from "./config/redis";
 import { AUTH_ERROR_CODES } from "./modules/Auth/auth.codes";
 
 const app = express();
@@ -85,7 +86,7 @@ const authenticatedCors = cors({
   allowedHeaders: [
     "Content-Type", "Authorization", "Cookie", "X-Requested-With", "Accept",
     "Origin", "Idempotency-Key", "X-Form-Started-At", "X-Turnstile-Token",
-    "X-Request-Id", "X-Trace-Id", "Traceparent",
+    "X-Request-Id", "X-Trace-Id", "Traceparent", "X-CSRF-Protection",
   ],
   exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Trace-Id", "X-Response-Time", "Server-Timing", "X-Bootstrap-Schema-Version", "X-Release-Sha"],
   origin: true,
@@ -246,6 +247,7 @@ app.get("/health/details", async (req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     checks,
     infrastructure,
+    redisCircuit: getRedisCircuitSnapshot(),
     databasePool: {
       min: DB_POOL_MIN,
       max: DB_POOL_MAX,

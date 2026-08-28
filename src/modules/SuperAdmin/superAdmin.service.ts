@@ -41,6 +41,7 @@ import type {
 import { invalidateSubscriptionAccessCache } from "../../middlewares/checkSubscription";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { invalidateRuntimeAuth, invalidateRuntimeTenantOwnerStatus } from "../../lib/cache/authRuntimeCache";
+import { revokeAllSessionsForUser } from "../Auth/sessionSecurity.service";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -516,6 +517,7 @@ const suspendAdminAccount = async (adminId: string) => {
         data: { status: AccountStatus.SUSPENDED },
         select: { id: true, name: true, email: true, status: true },
     });
+    await revokeAllSessionsForUser(adminId);
     invalidateRuntimeAuth(adminId);
     invalidateRuntimeTenantOwnerStatus(admin.admin?.id);
     await invalidateSubscriptionAccessCache(adminId);

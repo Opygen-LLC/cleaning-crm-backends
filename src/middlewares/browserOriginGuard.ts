@@ -5,13 +5,34 @@ import { AUTH_ERROR_CODES } from "../modules/Auth/auth.codes";
 
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const AUTH_COOKIE_NAMES = ["accessToken", "refreshToken", "better-auth.session_token"];
+export const CSRF_PROTECTION_HEADER = "x-csrf-protection";
+export const CSRF_PROTECTION_VALUE = "1";
+
+const deny = (res: Response, code: string, message: string) => {
+    res.locals.authErrorCode = code;
+    return res.status(403).json({
+        statusCode: 403,
+        success: false,
+        code,
+        message,
+        errorSources: [],
+        fieldErrors: {},
+        retryable: false,
+        requestId: typeof res.locals.requestId === "string" ? res.locals.requestId : undefined,
+    });
+};
 
 /**
- * Cookie authentication re-introduces CSRF risk if state-changing requests are
- * accepted from arbitrary browser origins. CORS alone is not a CSRF control,
- * so any unsafe request carrying our auth cookies must come from an explicitly
- * trusted application/API origin. Server-to-server requests without cookies are
- * unaffected.
+ * CSRF boundary for cookie-authenticated mutations.
+ *
+ * We intentionally use three independent browser signals:
+ *  1. trusted Origin,
+ *  2. Fetch Metadata when the browser supplies it,
+ *  3. a required non-simple custom header added by our first-party clients.
+ *
+ * A cross-site HTML form cannot set the custom header, and cross-origin JS
+ * cannot send it unless CORS explicitly authorizes that origin. SameSite=Lax
+ * remains defense-in-depth rather than the only CSRF control.
  */
 export const browserOriginGuard = (req: Request, res: Response, next: NextFunction) => {
     if (!UNSAFE_METHODS.has(req.method.toUpperCase())) return next();
@@ -23,17 +44,16 @@ export const browserOriginGuard = (req: Request, res: Response, next: NextFuncti
     if (!origin && NODE_ENV !== "production") return next();
 
     if (!origin || !getAuthenticatedOrigins().includes(origin)) {
-        res.locals.authErrorCode = AUTH_ERROR_CODES.AUTH_ORIGIN_NOT_ALLOWED;
-        return res.status(403).json({
-            statusCode: 403,
-            success: false,
-            code: AUTH_ERROR_CODES.AUTH_ORIGIN_NOT_ALLOWED,
-            message: "Request origin is not allowed",
-            errorSources: [],
-            fieldErrors: {},
-            retryable: false,
-            requestId: typeof res.locals.requestId === "string" ? res.locals.requestId : undefined,
-        });
+        return deny(res, AUTH_ERROR_CODES.AUTH_ORIGIN_NOT_ALLOWED, "Request origin is not allowed");
+    }
+
+    const fetchSite = req.get("Sec-Fetch-Site")?.trim().toLowerCase();
+    if (fetchSite === "cross-site") {
+        return deny(res, AUTH_ERROR_CODES.CSRF_VALIDATION_FAILED, "Cross-site authenticated mutation blocked");
+    }
+
+    if (req.get(CSRF_PROTECTION_HEADER) !== CSRF_PROTECTION_VALUE) {
+        return deny(res, AUTH_ERROR_CODES.CSRF_VALIDATION_FAILED, "CSRF protection header is missing or invalid");
     }
 
     return next();

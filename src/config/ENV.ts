@@ -75,6 +75,8 @@ export const REDIS_MAX_RETRIES_PER_REQUEST: number = Math.min(
     3,
     Math.max(0, Math.trunc(Number.isFinite(parsedRedisMaxRetries) ? parsedRedisMaxRetries : 1)),
 );
+export const REDIS_CIRCUIT_FAILURE_THRESHOLD: number = Math.min(10, Math.max(1, Math.trunc(Number(process.env.REDIS_CIRCUIT_FAILURE_THRESHOLD) || 3)));
+export const REDIS_CIRCUIT_OPEN_MS: number = Math.min(60_000, Math.max(1_000, Number(process.env.REDIS_CIRCUIT_OPEN_MS) || 5_000));
 
 export const DB_KEEPALIVE_ENABLED: boolean = process.env.DB_KEEPALIVE_ENABLED !== "false";
 export const DB_KEEPALIVE_CRON: string = process.env.DB_KEEPALIVE_CRON?.trim() || "*/2 * * * *";
@@ -125,6 +127,10 @@ export const ACCESS_TOKEN_EXPIRES_IN: string = process.env
     .ACCESS_TOKEN_EXPIRES_IN as string;
 export const REFRESH_TOKEN_EXPIRES_IN: string = process.env
     .REFRESH_TOKEN_EXPIRES_IN as string;
+// A short grace window prevents two near-simultaneous browser refreshes from
+// revoking the session after the first request rotates the credential. The old
+// refresh credential is never accepted beyond this bounded window.
+export const REFRESH_TOKEN_REUSE_GRACE_MS: number = Math.min(30_000, Math.max(0, Number(process.env.REFRESH_TOKEN_REUSE_GRACE_MS) || 8_000));
 
 export const SUPER_ADMIN_EMAIL: string = process.env
     .SUPER_ADMIN_EMAIL as string;

@@ -24,6 +24,8 @@ import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 import { uploadToCloudinary } from "../../lib/utils/cloudinary";
 import { geocodeAddressSafely } from "../../lib/utils/geocoding";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { revokeAllSessionsForUser } from "../Auth/sessionSecurity.service";
+import { invalidateRuntimeAuth } from "../../lib/cache/authRuntimeCache";
 
 /**
  * [Phase 2 — location-aware dispatch] Best-effort geocode of a staff
@@ -281,15 +283,12 @@ const resetStaffPassword = async (id: string, adminUser: IRequestUser) => {
         hashedPassword,
     );
 
-    await prisma.$transaction([
-        prisma.user.update({
-            where: { id: staffProfile.userId },
-            data: { needPasswordChange: true },
-        }),
-        prisma.session.deleteMany({
-            where: { userId: staffProfile.userId },
-        }),
-    ]);
+    await prisma.user.update({
+        where: { id: staffProfile.userId },
+        data: { needPasswordChange: true },
+    });
+    await revokeAllSessionsForUser(staffProfile.userId);
+    invalidateRuntimeAuth(staffProfile.userId);
 
     waitUntil(
         sendEmailSafely({

@@ -1,53 +1,41 @@
 import Redis from "ioredis";
-import { REDIS_COMMAND_TIMEOUT_MS, REDIS_CONNECT_TIMEOUT_MS, REDIS_KEEPALIVE_MS, REDIS_MAX_RETRIES_PER_REQUEST } from "./ENV";
+import {
+    REDIS_COMMAND_TIMEOUT_MS,
+    REDIS_CONNECT_TIMEOUT_MS,
+    REDIS_KEEPALIVE_MS,
+    REDIS_MAX_RETRIES_PER_REQUEST,
+} from "./ENV";
 import dotenv from "dotenv";
 import logger from "../lib/logger";
 import { recordRedisReadMetric } from "../lib/monitoring/performanceMetrics";
 import { recordTraceRedisCommand } from "../lib/monitoring/requestTrace";
+import {
+    RedisCircuitOpenError,
+    acquireRedisCircuitPermit,
+    forceCloseRedisCircuit,
+    forceOpenRedisCircuit,
+    getRedisCircuitSnapshot,
+    recordRedisCircuitFailure,
+    recordRedisCircuitSuccess,
+} from "../lib/cache/redisCircuitBreaker";
 
 dotenv.config();
 
 /**
- * Redis — the shared cache for authenticated responses, runtime auth data,
- * subscriptions, dashboard analytics, reports, sessions, and Socket.IO.
- *
- * This is a pure cache layer, never a source of truth, so Redis being slow,
- * misconfigured, or completely absent must NEVER crash the app or hang a
- * request. Two failure modes had to be handled explicitly (neither was
- * before):
- *
- *  1. ioredis is an EventEmitter. Connection-level errors (ECONNREFUSED on
- *     boot, the host disappearing later, auth failures, etc.) are emitted as
- *     "error" events. Node's rule for EventEmitter is: an "error" event with
- *     no listener attached is thrown as an uncaught exception, which crashes
- *     the process. There was no listener here — meaning a Redis outage would
- *     have taken the whole API down with it, not just degraded caching.
- *     The listener below is what makes "Redis is down" a background warning
- *     instead of a process crash.
- *
- *  2. `host`/`port` were read straight from `process.env` with no fallback,
- *     so a missing REDIS_HOST/REDIS_PORT produced `host: undefined` /
- *     `port: NaN` instead of failing predictably.
- *
- * An eager background connection plus strict command/connect timeouts mean
- * the first request does not pay setup cost and, if Redis is unreachable,
- * an individual command fails fast instead of hanging the request —
- * `getCached`/`setCache` in reports.service.ts already treat that rejection
- * as a cache miss, so requests fall back to querying Postgres directly.
- * `retryStrategy` keeps a background reconnect loop going (capped backoff) so
- * Redis coming back online is picked up automatically without a restart.
+ * Redis is a cache/coordination layer, never the source of truth for customer
+ * authorization. Commands fail fast and callers fall back to PostgreSQL where
+ * safe. The circuit breaker below prevents every request from paying the Redis
+ * timeout while an outage is already known, then permits a bounded recovery
+ * probe after the cooldown.
  */
-
 const redis = new Redis({
     host: process.env.REDIS_HOST || "127.0.0.1",
     port: Number(process.env.REDIS_PORT) || 6379,
     password: process.env.REDIS_PASSWORD || undefined,
     db: Number(process.env.REDIS_DB) || 0,
-    // Connect during process startup so the first user request never pays
-    // the Redis TCP/TLS handshake. Errors remain non-fatal via the listener.
     lazyConnect: false,
-    enableOfflineQueue: false, // reject commands immediately if Redis is not connected instead of queuing/hanging
-    maxRetriesPerRequest: REDIS_MAX_RETRIES_PER_REQUEST, // fail a pending command fast instead of queueing/retrying it repeatedly
+    enableOfflineQueue: false,
+    maxRetriesPerRequest: REDIS_MAX_RETRIES_PER_REQUEST,
     connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
     commandTimeout: REDIS_COMMAND_TIMEOUT_MS,
     keepAlive: REDIS_KEEPALIVE_MS,
@@ -56,30 +44,75 @@ const redis = new Redis({
     },
 });
 
-// REQUIRED — see file header. Without this, any connection-level Redis
-// error is an unhandled EventEmitter "error" and crashes the process.
+// Circuit-break at ioredis' common command dispatch point so existing services
+// automatically gain fail-fast behavior without a risky application-wide API
+// rewrite. PING is always allowed to become the recovery probe.
+const installRedisCircuit = () => {
+    const target = redis as any;
+    const originalSendCommand = target.sendCommand.bind(redis);
+
+    target.sendCommand = (...args: any[]) => {
+        const command = args[0];
+        const commandName = String(command?.name ?? "").toUpperCase();
+        const isRecoveryProbe = commandName === "PING";
+        const permit = acquireRedisCircuitPermit({ forceProbe: isRecoveryProbe });
+        if (!permit) {
+            const snapshot = getRedisCircuitSnapshot();
+            return Promise.reject(new RedisCircuitOpenError(snapshot.retryAfterMs));
+        }
+
+        try {
+            const result = originalSendCommand(...args);
+            return Promise.resolve(result).then(
+                (value) => {
+                    recordRedisCircuitSuccess();
+                    return value;
+                },
+                (error) => {
+                    recordRedisCircuitFailure(error);
+                    throw error;
+                },
+            );
+        } catch (error) {
+            recordRedisCircuitFailure(error);
+            throw error;
+        }
+    };
+};
+
+installRedisCircuit();
+
+// REQUIRED: without an error listener a Redis connection error can terminate
+// the Node process. Connection-level failures open the circuit immediately;
+// PostgreSQL-backed fallbacks therefore do not wait on Redis on every request.
 let hasLoggedOutage = false;
 redis.on("error", (err) => {
+    forceOpenRedisCircuit();
     if (!hasLoggedOutage) {
-        logger.warn(
-            `Redis unavailable — shared caching disabled, falling back to live queries until it recovers. (${err.message})`,
-        );
+        logger.warn("Redis unavailable; cache circuit opened and live-query fallback enabled", {
+            event: "redis_circuit_open",
+            error: err.message,
+            circuit: getRedisCircuitSnapshot(),
+        });
         hasLoggedOutage = true;
     }
 });
 
-redis.on("connect", () => {
+redis.on("ready", () => {
+    forceCloseRedisCircuit();
     if (hasLoggedOutage) {
-        logger.info("Redis connection restored — caching re-enabled.");
+        logger.info("Redis connection restored; cache circuit closed", {
+            event: "redis_circuit_closed",
+        });
     }
     hasLoggedOutage = false;
 });
 
-
-// Instrument the cache read commands used throughout the application without
-// forcing every service to adopt a new Redis wrapper. This preserves the
-// existing ioredis API while providing global hit/miss/latency metrics.
-const instrumentRedisReads = () => {
+// Instrument the cache commands used throughout the application without
+// forcing every service to adopt a new Redis wrapper. Fast circuit-open
+// rejections are recorded as Redis errors and are expected to be caught by
+// cache callers, which then use PostgreSQL/source-of-truth paths.
+const instrumentRedisCommands = () => {
     const target = redis as any;
 
     const wrapSingle = (command: "get" | "hget") => {
@@ -137,11 +170,14 @@ const instrumentRedisReads = () => {
 
     wrapSingle("get");
     wrapSingle("hget");
-    // Writes and set/index operations matter to request-level Redis duration as
-    // well, even though only reads contribute to hit/miss metrics.
-    ["set", "setex", "del", "unlink", "sadd", "srem", "expire", "hset", "incr", "incrby", "decr", "scan", "sscan", "smembers", "eval", "publish", "ping"].forEach(wrapCommand);
+    [
+        "set", "setex", "del", "unlink", "sadd", "srem", "expire", "hset",
+        "incr", "incrby", "decr", "scan", "sscan", "smembers", "eval",
+        "publish", "ping", "call",
+    ].forEach(wrapCommand);
 };
 
-instrumentRedisReads();
+instrumentRedisCommands();
 
+export { getRedisCircuitSnapshot };
 export default redis;

@@ -2,42 +2,49 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   signInEmail: vi.fn(),
+  signOut: vi.fn(),
   userFindUnique: vi.fn(),
   staffFindUnique: vi.fn(),
-  sessionFindFirst: vi.fn(),
-  sessionDeleteMany: vi.fn(),
-  sessionUpdate: vi.fn(),
-  executeRaw: vi.fn(),
   getAccessToken: vi.fn(),
   getRefreshToken: vi.fn(),
-  verifyToken: vi.fn(),
-  signOut: vi.fn(),
   provisionRegisteredAdmin: vi.fn(),
   getPlatformConfig: vi.fn(),
+  bindRefreshCredentialToSession: vi.fn(),
+  createRefreshFamilyId: vi.fn(),
+  revokeSessionByToken: vi.fn(),
+  invalidateRuntimeAuth: vi.fn(),
+  invalidateRuntimeSessionValidity: vi.fn(),
 }));
 
 vi.mock("../../lib/prisma/prisma", () => ({
   prisma: {
-    $executeRaw: mocks.executeRaw,
     user: { findUnique: mocks.userFindUnique },
     staffProfile: { findUnique: mocks.staffFindUnique },
-    session: {
-      findFirst: mocks.sessionFindFirst,
-      deleteMany: mocks.sessionDeleteMany,
-      update: mocks.sessionUpdate,
-      create: vi.fn(),
-    },
+    session: { create: vi.fn() },
     account: { findFirst: vi.fn() },
   },
 }));
 vi.mock("../../lib/auth", () => ({ auth: { api: { signInEmail: mocks.signInEmail, signOut: mocks.signOut } } }));
 vi.mock("../../lib/utils/token", () => ({ tokenUtils: { getAccessToken: mocks.getAccessToken, getRefreshToken: mocks.getRefreshToken } }));
-vi.mock("../../lib/utils/jwt", () => ({ jwtUtils: { verifyToken: mocks.verifyToken } }));
-vi.mock("../../config/ENV", () => ({ REFRESH_TOKEN_SECRET: "test-refresh-secret" }));
+vi.mock("../../lib/utils/jwt", () => ({ jwtUtils: {} }));
+vi.mock("../../config/ENV", () => ({ REFRESH_TOKEN_SECRET: "test-refresh-secret", REFRESH_TOKEN_REUSE_GRACE_MS: 8_000 }));
 vi.mock("./accountProvisioning.service", () => ({ AccountProvisioningService: { provisionRegisteredAdmin: mocks.provisionRegisteredAdmin } }));
 vi.mock("./accountIntegrity.service", () => ({ AccountIntegrityService: { assertAdminReadyForActivation: vi.fn() } }));
 vi.mock("../../lib/utils/platformConfig", () => ({ getPlatformConfig: mocks.getPlatformConfig }));
 vi.mock("../../lib/outbox/authEmailOutbox", () => ({ AuthEmailOutbox: { enqueueEmailVerification: vi.fn() } }));
+vi.mock("./sessionSecurity.service", () => ({
+  bindRefreshCredentialToSession: mocks.bindRefreshCredentialToSession,
+  createRefreshFamilyId: mocks.createRefreshFamilyId,
+  hashRefreshCredential: vi.fn((value: string) => `hash:${value}`),
+  revokeAllSessionsForUser: vi.fn(),
+  revokeOtherSessionsForUser: vi.fn(),
+  revokeSessionByToken: mocks.revokeSessionByToken,
+}));
+vi.mock("../../lib/cache/authRuntimeCache", () => ({
+  invalidateRuntimeAuth: mocks.invalidateRuntimeAuth,
+  invalidateRuntimeSessionValidities: vi.fn(),
+  invalidateRuntimeSessionValidity: mocks.invalidateRuntimeSessionValidity,
+}));
 
 import authService from "./auth.service";
 
@@ -55,29 +62,35 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.signInEmail.mockResolvedValue({ user: { ...signedInAdmin }, token: "session-token", redirect: false });
   mocks.staffFindUnique.mockResolvedValue(null);
-  mocks.sessionDeleteMany.mockResolvedValue({ count: 0 });
-  mocks.executeRaw.mockResolvedValue(0);
   mocks.getAccessToken.mockReturnValue("access-token");
   mocks.getRefreshToken.mockReturnValue("refresh-token");
-  mocks.verifyToken.mockReturnValue({ success: true, data: { userId: "user-1", role: "ADMIN" } });
-  mocks.sessionFindFirst.mockResolvedValue({
-    id: "session-1",
-    token: "session-token",
-    user: { ...signedInAdmin, staff: null },
-  });
-  mocks.sessionUpdate.mockResolvedValue({ token: "session-token" });
+  mocks.createRefreshFamilyId.mockReturnValue("family-1");
+  mocks.bindRefreshCredentialToSession.mockResolvedValue({ bound: true, revokedTokens: [] });
+  mocks.revokeSessionByToken.mockResolvedValue(true);
   mocks.signOut.mockResolvedValue({ success: true });
   mocks.getPlatformConfig.mockResolvedValue({ registrationOpen: true, defaultTrialDays: 14 });
   mocks.provisionRegisteredAdmin.mockResolvedValue({ userId: "user-1", reservedSubdomain: "jamie-cleaning" });
 });
 
-describe("login optimized deterministic session contract", () => {
-  it("uses Better Auth identity directly and performs one session-cap cleanup statement", async () => {
-    const result = await authService.login({ email: "JAMIE@example.com", password: "correct-password" });
+describe("login Better Auth + rotating refresh contract", () => {
+  it("uses Better Auth identity and binds the refresh hash/family without a duplicate user lookup", async () => {
+    const result = await authService.login(
+      { email: "JAMIE@example.com", password: "correct-password" },
+      { ipAddress: "203.0.113.10", userAgent: "Phase5 Browser" },
+    );
+
     expect(mocks.signInEmail).toHaveBeenCalledWith({ body: { email: "jamie@example.com", password: "correct-password" } });
     expect(mocks.userFindUnique).not.toHaveBeenCalled();
     expect(mocks.staffFindUnique).not.toHaveBeenCalled();
-    expect(mocks.executeRaw).toHaveBeenCalledOnce();
+    expect(mocks.getRefreshToken).toHaveBeenCalledWith(expect.any(Object), "family-1");
+    expect(mocks.bindRefreshCredentialToSession).toHaveBeenCalledWith({
+      userId: "user-1",
+      sessionToken: "session-token",
+      refreshToken: "refresh-token",
+      refreshFamilyId: "family-1",
+      maxSessions: 3,
+      metadata: { ipAddress: "203.0.113.10", userAgent: "Phase5 Browser" },
+    });
     expect(result).toEqual({
       user: { id: "user-1", name: "Jamie Doe", email: "jamie@example.com", role: "ADMIN", status: "ACTIVE" },
       sessionToken: "session-token",
@@ -86,14 +99,14 @@ describe("login optimized deterministic session contract", () => {
     });
   });
 
-  it("fails instead of returning a partial 200 when Better Auth omits the session token", async () => {
+  it("fails and revokes the partial session when Better Auth omits its session token", async () => {
     mocks.signInEmail.mockResolvedValue({ user: { ...signedInAdmin }, redirect: false });
     await expect(authService.login({ email: "jamie@example.com", password: "correct-password" })).rejects.toMatchObject({
       statusCode: 500,
       code: "AUTH_SESSION_NOT_CREATED",
       retryable: true,
     });
-    expect(mocks.executeRaw).not.toHaveBeenCalled();
+    expect(mocks.bindRefreshCredentialToSession).not.toHaveBeenCalled();
   });
 
   it("revokes a newly-created Better Auth session when the account is suspended", async () => {
@@ -102,7 +115,7 @@ describe("login optimized deterministic session contract", () => {
       statusCode: 403,
       code: "ACCOUNT_SUSPENDED",
     });
-    expect(mocks.sessionDeleteMany).toHaveBeenCalledWith({ where: { token: "session-token" } });
+    expect(mocks.revokeSessionByToken).toHaveBeenCalledWith("session-token");
     expect(mocks.getAccessToken).not.toHaveBeenCalled();
   });
 
@@ -112,27 +125,6 @@ describe("login optimized deterministic session contract", () => {
     const result = await authService.login({ email: "jamie@example.com", password: "correct-password" });
     expect(mocks.staffFindUnique).toHaveBeenCalledWith({ where: { userId: "user-1" }, select: { status: true } });
     expect(result.user.role).toBe("STAFF");
-  });
-});
-
-describe("refresh optimized session contract", () => {
-  it("loads the session and current database account state in one read", async () => {
-    const result = await authService.getNewToken("refresh-token-old", "session-token");
-    expect(mocks.sessionFindFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: { token: "session-token", userId: "user-1", expiresAt: { gt: expect.any(Date) } },
-      select: expect.objectContaining({ id: true, token: true, user: expect.any(Object) }),
-    }));
-    expect(mocks.userFindUnique).not.toHaveBeenCalled();
-    expect(result).toEqual({ accessToken: "access-token", refreshToken: "refresh-token", sessionToken: "session-token" });
-  });
-
-  it("does not refresh a revoked or expired Better Auth session", async () => {
-    mocks.sessionFindFirst.mockResolvedValue(null);
-    await expect(authService.getNewToken("refresh-token-old", "session-token")).rejects.toMatchObject({
-      statusCode: 401,
-      code: "REFRESH_SESSION_EXPIRED",
-      retryable: false,
-    });
   });
 });
 
@@ -156,9 +148,10 @@ describe("complete auth lifecycle service regression", () => {
     expect(result.id).toBe("user-1");
   });
 
-  it("logout revokes the Better Auth session and remains idempotent", async () => {
+  it("logout remains idempotent and invalidates the runtime session cache", async () => {
     await expect(authService.logout("session-token")).resolves.toEqual({ success: true });
     expect(mocks.signOut).toHaveBeenCalledOnce();
+    expect(mocks.invalidateRuntimeSessionValidity).toHaveBeenCalledWith("session-token");
     mocks.signOut.mockClear();
     await expect(authService.logout()).resolves.toEqual({ success: true });
     expect(mocks.signOut).not.toHaveBeenCalled();

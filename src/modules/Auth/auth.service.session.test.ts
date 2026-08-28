@@ -11,11 +11,13 @@ vi.mock("../../lib/prisma/prisma", () => ({
 vi.mock("../../lib/auth", () => ({ auth: { api: {} } }));
 vi.mock("../../lib/utils/token", () => ({ tokenUtils: {} }));
 vi.mock("../../lib/utils/jwt", () => ({ jwtUtils: {} }));
-vi.mock("../../config/ENV", () => ({ REFRESH_TOKEN_SECRET: "test-refresh-secret" }));
+vi.mock("../../config/ENV", () => ({ REFRESH_TOKEN_SECRET: "test-refresh-secret", REFRESH_TOKEN_REUSE_GRACE_MS: 8_000 }));
 vi.mock("./accountProvisioning.service", () => ({ AccountProvisioningService: {} }));
 vi.mock("./accountIntegrity.service", () => ({ AccountIntegrityService: {} }));
 vi.mock("../../lib/utils/platformConfig", () => ({ getPlatformConfig: vi.fn() }));
 vi.mock("../../lib/outbox/authEmailOutbox", () => ({ AuthEmailOutbox: {} }));
+vi.mock("./sessionSecurity.service", () => ({ bindRefreshCredentialToSession: vi.fn(), createRefreshFamilyId: vi.fn(), hashRefreshCredential: vi.fn(), revokeAllSessionsForUser: vi.fn(), revokeOtherSessionsForUser: vi.fn(), revokeSessionByToken: vi.fn() }));
+vi.mock("../../lib/cache/authRuntimeCache", () => ({ invalidateRuntimeAuth: vi.fn(), invalidateRuntimeSessionValidities: vi.fn(), invalidateRuntimeSessionValidity: vi.fn() }));
 
 import authService from "./auth.service";
 

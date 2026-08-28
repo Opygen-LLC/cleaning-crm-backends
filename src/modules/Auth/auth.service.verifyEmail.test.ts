@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   getAccessToken: vi.fn(),
   getRefreshToken: vi.fn(),
   sessionCreate: vi.fn(),
+  bindRefreshCredentialToSession: vi.fn(),
+  createRefreshFamilyId: vi.fn(),
+  invalidateRuntimeAuth: vi.fn(),
 }));
 
 vi.mock("../../lib/prisma/prisma", () => ({
@@ -19,11 +22,24 @@ vi.mock("../../lib/prisma/prisma", () => ({
 vi.mock("../../lib/auth", () => ({ auth: { api: { verifyEmailOTP: mocks.verifyEmailOTP } } }));
 vi.mock("../../lib/utils/token", () => ({ tokenUtils: { getAccessToken: mocks.getAccessToken, getRefreshToken: mocks.getRefreshToken } }));
 vi.mock("../../lib/utils/jwt", () => ({ jwtUtils: {} }));
-vi.mock("../../config/ENV", () => ({ REFRESH_TOKEN_SECRET: "test-refresh-secret" }));
+vi.mock("../../config/ENV", () => ({ REFRESH_TOKEN_SECRET: "test-refresh-secret", REFRESH_TOKEN_REUSE_GRACE_MS: 8_000 }));
 vi.mock("./accountProvisioning.service", () => ({ AccountProvisioningService: { provisionRegisteredAdmin: vi.fn() } }));
 vi.mock("./accountIntegrity.service", () => ({ AccountIntegrityService: { assertAdminReadyForActivation: mocks.assertReadyForActivation } }));
 vi.mock("../../lib/utils/platformConfig", () => ({ getPlatformConfig: vi.fn() }));
 vi.mock("../../lib/outbox/authEmailOutbox", () => ({ AuthEmailOutbox: { enqueueEmailVerification: vi.fn() } }));
+vi.mock("./sessionSecurity.service", () => ({
+  bindRefreshCredentialToSession: mocks.bindRefreshCredentialToSession,
+  createRefreshFamilyId: mocks.createRefreshFamilyId,
+  hashRefreshCredential: vi.fn((value: string) => `hash:${value}`),
+  revokeAllSessionsForUser: vi.fn(),
+  revokeOtherSessionsForUser: vi.fn(),
+  revokeSessionByToken: vi.fn(),
+}));
+vi.mock("../../lib/cache/authRuntimeCache", () => ({
+  invalidateRuntimeAuth: mocks.invalidateRuntimeAuth,
+  invalidateRuntimeSessionValidities: vi.fn(),
+  invalidateRuntimeSessionValidity: vi.fn(),
+}));
 
 import authService from "./auth.service";
 
@@ -45,6 +61,8 @@ beforeEach(() => {
   mocks.getAccessToken.mockReturnValue("access-token");
   mocks.getRefreshToken.mockReturnValue("refresh-token");
   mocks.sessionCreate.mockResolvedValue({ token: "fallback-session-token" });
+  mocks.createRefreshFamilyId.mockReturnValue("family-verify");
+  mocks.bindRefreshCredentialToSession.mockResolvedValue({ bound: true, revokedTokens: [] });
 });
 
 describe("verifyEmail optimized ADMIN activation", () => {
@@ -62,6 +80,9 @@ describe("verifyEmail optimized ADMIN activation", () => {
       select: { id: true, name: true, email: true, emailVerified: true, role: true },
     });
     expect(result).toMatchObject({ accessToken: "access-token", refreshToken: "refresh-token", token: "better-auth-token" });
+    expect(mocks.bindRefreshCredentialToSession).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-1", sessionToken: "better-auth-token", refreshToken: "refresh-token", refreshFamilyId: "family-verify", maxSessions: 3,
+    }));
     expect(mocks.sessionCreate).not.toHaveBeenCalled();
   });
 

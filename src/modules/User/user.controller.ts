@@ -29,7 +29,7 @@ const getAllUsers = catchAsync(async (req, res) => {
 
 const getUserById = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const result = await userService.getUserById(id as string);
+    const result = await userService.getUserById(id as string, req.user);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -56,7 +56,7 @@ const updateUser = catchAsync(async (req, res) => {
         payload.image = uploadResult.secure_url;
     }
 
-    const result = await userService.updateUser(id as string, payload);
+    const result = await userService.updateUser(id as string, payload, req.user);
 
     sendResponse(res, {
         httpStatusCode: status.OK,

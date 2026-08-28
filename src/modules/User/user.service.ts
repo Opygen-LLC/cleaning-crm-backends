@@ -4,6 +4,10 @@ import { prisma } from "../../lib/prisma/prisma";
 import { UpdateUserPayload, UploadAvatarResult } from "./user.interface";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
+import { AccountStatus, UserRole } from "../../generated/prisma/enums";
+import { IRequestUser } from "../../types/requestUser.interface";
+import { invalidateRuntimeAuth } from "../../lib/cache/authRuntimeCache";
+import { revokeAllSessionsForUser } from "../Auth/sessionSecurity.service";
 
 const ALLOWED_AVATAR_TYPES = [
     "image/jpeg",
@@ -35,17 +39,15 @@ const getAllUsers = async () => {
     });
 };
 
-const getUserById = async (id: string) => {
+const getUserById = async (id: string, requester: IRequestUser) => {
+    if (requester.id !== id && requester.role !== UserRole.SUPER_ADMIN) {
+        throw new AppError(status.FORBIDDEN, "You are not allowed to view this user.");
+    }
     const user = await prisma.user.findUnique({
         where: { id },
-        include: {
-            admin: true,
-            staff: true,
-        },
+        include: { admin: true, staff: true },
     });
-    if (!user) {
-        throw new Error("User not found");
-    }
+    if (!user) throw new AppError(status.NOT_FOUND, "User not found");
     return user;
 };
 
@@ -94,20 +96,34 @@ const uploadMyAvatar = async (
     return { avatarUrl: result.secure_url as string };
 };
 
-const updateUser = async (id: string, payload: UpdateUserPayload) => {
-    const user = await prisma.user.findUnique({ where: { id } });
-    if (!user) {
-        throw new Error("User not found");
+const updateUser = async (id: string, payload: UpdateUserPayload, requester: IRequestUser) => {
+    const isSelf = requester.id === id;
+    const isSuperAdmin = requester.role === UserRole.SUPER_ADMIN;
+    if (!isSelf && !isSuperAdmin) {
+        throw new AppError(status.FORBIDDEN, "You are not allowed to update this user.");
+    }
+    if (payload.status !== undefined && !isSuperAdmin) {
+        throw new AppError(status.FORBIDDEN, "Only a super administrator can change account status.");
     }
 
-    if (user.image && payload.image) {
-        await deleteFileFromCloudinary(user.image);
-    }
+    const user = await prisma.user.findUnique({
+        where: { id },
+        select: { id: true, image: true, status: true },
+    });
+    if (!user) throw new AppError(status.NOT_FOUND, "User not found");
 
-    return await prisma.user.update({
+    if (user.image && payload.image) await deleteFileFromCloudinary(user.image);
+
+    const updated = await prisma.user.update({
         where: { id },
         data: payload,
     });
+
+    invalidateRuntimeAuth(id);
+    if (payload.status === AccountStatus.SUSPENDED || payload.status === AccountStatus.DELETED) {
+        await revokeAllSessionsForUser(id);
+    }
+    return updated;
 };
 
 export const userService = {
