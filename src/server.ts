@@ -98,7 +98,7 @@ const authenticatedCors = cors({
     "Content-Type", "Authorization", "Cookie", "X-Requested-With", "Accept",
     "Origin", "Idempotency-Key", "X-Form-Started-At", "X-Turnstile-Token",
   ],
-  exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Response-Time", "Server-Timing"],
+  exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Response-Time", "Server-Timing", "X-Bootstrap-Schema-Version"],
   origin: true,
   credentials: true,
 });
@@ -112,7 +112,7 @@ const publicWebsiteCors = cors({
     "Content-Type", "Accept", "Origin", "Idempotency-Key",
     "X-Form-Started-At", "X-Turnstile-Token",
   ],
-  exposedHeaders: ["X-Request-Id", "X-Response-Time", "Server-Timing", "X-Website-Resolver-Source"],
+  exposedHeaders: ["X-Request-Id", "X-Response-Time", "Server-Timing", "X-Website-Resolver-Source", "X-Bootstrap-Schema-Version"],
   origin: true,
   credentials: false,
 });

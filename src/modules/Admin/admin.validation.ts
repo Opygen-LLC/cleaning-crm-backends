@@ -73,10 +73,26 @@ const skipOnboardingStepSchema = z
   })
   .strict();
 
+const onboardingClientErrorSchema = z
+  .object({
+    message: z.string().trim().min(1).max(1000),
+    stack: z.string().max(6000).nullable().optional(),
+    digest: z.string().max(256).nullable().optional(),
+    route: z.string().trim().min(1).max(800),
+    releaseVersion: z.string().trim().min(1).max(160),
+    apiRequestId: z.string().trim().max(160).nullable().optional(),
+    browser: z.string().trim().min(1).max(600),
+    bootstrapSchemaVersion: z.number().int().min(1).max(1000),
+    section: z.enum(["route", "active-step", "preview", "bootstrap"]),
+    componentStack: z.string().max(6000).nullable().optional(),
+  })
+  .strict();
+
 export const adminValidation = {
   createAdmin: createAdminSchema,
   updateAdmin: updateAdminSchema,
   updateWorkLocation: updateWorkLocationSchema,
   completeOnboardingStep: completeOnboardingStepSchema,
   skipOnboardingStep: skipOnboardingStepSchema,
+  onboardingClientError: onboardingClientErrorSchema,
 };

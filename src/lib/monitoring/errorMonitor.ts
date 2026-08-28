@@ -11,7 +11,7 @@ import logger from "../logger";
 
 interface MonitorEvent {
   level: "error" | "warning";
-  source: "backend" | "public-website";
+  source: "backend" | "public-website" | "dashboard-client";
   message: string;
   requestId?: string | null;
   path?: string | null;
@@ -21,6 +21,12 @@ interface MonitorEvent {
   stack?: string | null;
   websiteId?: string | null;
   digest?: string | null;
+  userIdHash?: string | null;
+  tenantIdHash?: string | null;
+  apiRequestId?: string | null;
+  releaseVersion?: string | null;
+  browser?: string | null;
+  bootstrapSchemaVersion?: number | null;
   metadata?: Record<string, unknown>;
 }
 
@@ -40,6 +46,32 @@ const sanitizePath = (value: string | null | undefined): string | null => {
     return trimmed.split("?", 1)[0]!.split("#", 1)[0]!.slice(0, 800);
   } catch {
     return "/";
+  }
+};
+
+const shouldSendDashboardClientError = async (event: MonitorEvent): Promise<boolean> => {
+  const fingerprint = createHash("sha256")
+    .update([
+      event.userIdHash ?? "unknown",
+      event.tenantIdHash ?? "unknown",
+      event.digest ?? "",
+      event.message,
+      sanitizePath(event.path) ?? "",
+      event.metadata?.section ? String(event.metadata.section) : "",
+    ].join("|"))
+    .digest("hex");
+
+  try {
+    const result = await redis.set(
+      `dashboard-error-dedupe:v1:${fingerprint}`,
+      "1",
+      "EX",
+      WEBSITE_ERROR_DEDUPE_TTL_SECONDS,
+      "NX",
+    );
+    return result === "OK";
+  } catch {
+    return true;
   }
 };
 
@@ -112,7 +144,20 @@ const capturePublicWebsiteError = async (event: Omit<MonitorEvent, "source" | "l
   await post(normalized);
 };
 
+const captureDashboardClientError = async (event: Omit<MonitorEvent, "source" | "level">) => {
+  const normalized: MonitorEvent = { ...event, source: "dashboard-client", level: "error" };
+  if (!await shouldSendDashboardClientError(normalized)) return;
+  logger.error(
+    `[dashboard-client-error] route=${sanitizePath(normalized.path) ?? "/"} ` +
+    `section=${String(normalized.metadata?.section ?? "unknown")} ` +
+    `user=${normalized.userIdHash ?? "unknown"} tenant=${normalized.tenantIdHash ?? "unknown"} ` +
+    `release=${normalized.releaseVersion ?? "unknown"} message=${trim(normalized.message, 400) ?? "unknown"}`,
+  );
+  await post(normalized);
+};
+
 export const ErrorMonitor = {
   captureBackendError,
   capturePublicWebsiteError,
+  captureDashboardClientError,
 };

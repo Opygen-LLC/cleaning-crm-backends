@@ -30,7 +30,10 @@
     "load:phase10:public": "tsx src/scripts/load/phase10LoadTest.ts --mode=public --users=500",
     "load:phase10:dashboard": "tsx src/scripts/load/phase10LoadTest.ts --mode=dashboard --users=500",
     "release:phase10:verify": "pnpm test && pnpm typecheck",
-    "release:phase10:preflight": "pnpm run release:phase10:verify && pnpm run migrate:phase10-websites:dry-run"
+    "release:phase10:preflight": "pnpm run release:phase10:verify && pnpm run migrate:phase10-websites:dry-run",
+    "test:phase1:onboarding": "vitest run src/modules/Auth/accountProvisioning.test.ts src/modules/Auth/auth.service.verifyEmail.test.ts src/modules/Admin/admin.service.onboarding.test.ts",
+    "release:phase1:verify": "pnpm run test:phase1:onboarding && pnpm run typecheck",
+    "prebuild": "pnpm run test:phase1:onboarding"
   },
   "keywords": [],
   "author": "opygen",

@@ -92,6 +92,28 @@ const getAdminUsage = catchAsync(async (req, res) => {
 
 // ─── Onboarding handlers (unchanged) ─────────────────────────────────────────
 
+const getOnboardingBootstrap = catchAsync(async (req, res) => {
+  const userId = req.user.id;
+  const result = await adminService.getOnboardingBootstrap(userId);
+  res.setHeader("X-Bootstrap-Schema-Version", "1");
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Onboarding bootstrap fetched successfully",
+    data: result,
+  });
+});
+
+const reportOnboardingClientError = catchAsync(async (req, res) => {
+  await adminService.reportOnboardingClientError(
+    req.user.id,
+    req.user.adminId,
+    req.body,
+    typeof res.locals.requestId === "string" ? res.locals.requestId : null,
+  );
+  res.status(status.NO_CONTENT).send();
+});
+
 const getOnboardingStatus = catchAsync(async (req, res) => {
   const userId = req.user.id;
   const result = await adminService.getOnboardingStatus(userId);
@@ -167,6 +189,8 @@ export const adminController = {
   deleteWorkLocation,
   getAdminUsage,
   getOnboardingStatus,
+  getOnboardingBootstrap,
+  reportOnboardingClientError,
   completeOnboardingStep,
   skipWebsiteOnboardingSetup,
   finalizeOnboardingSetup,

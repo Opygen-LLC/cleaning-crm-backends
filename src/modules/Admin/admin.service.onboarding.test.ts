@@ -47,6 +47,39 @@ const statusRow = (completed: string[] = [], finished: Date | null = null) => ({
   onboardingCompletedSteps: completed,
 });
 
+
+const bootstrapRow = (overrides: Record<string, unknown> = {}) => ({
+  id: ADMIN_ID,
+  businessName: "Bio Cleaning",
+  businessEmail: "hello@example.com",
+  mobileNumber: "+44000000000",
+  businessDescription: "Reliable cleaners",
+  businessHours: null,
+  address: "1 Main Street",
+  city: "London",
+  zipcode: "SW1A 1AA",
+  currency: "GBP",
+  updatedAt: new Date("2026-08-18T00:00:00Z"),
+  onboardingCompletedAt: null,
+  onboardingCompletedSteps: ["business_profile"],
+  user: { id: USER_ID, role: "ADMIN", status: "ACTIVE" },
+  businessWebsite: {
+    id: "website-1",
+    subdomain: "bio-cleaning",
+    status: "PROVISIONED",
+    logo: null,
+    primaryColor: "#0F766E",
+    secondaryColor: "#0F172A",
+    accentColor: "#14B8A6",
+    font: "Sora",
+    bookingEnabled: false,
+    templateId: "clean-modern",
+    updatedAt: new Date("2026-08-18T00:01:00Z"),
+  },
+  subscription: [{ id: "trial-subscription-1" }],
+  ...overrides,
+});
+
 const optionalCounts = () => {
   db.workLocation.count.mockResolvedValue(0);
   db.staffProfile.count.mockResolvedValue(0);
@@ -196,6 +229,85 @@ describe("website-first onboarding status", () => {
     expect(result.onboarding.completedCount).toBe(5);
     expect(result.onboarding.isComplete).toBe(false);
     expect(result.publicUrl).toBe("https://bio-cleaning.sites.example.com");
+  });
+});
+
+
+describe("onboarding bootstrap contract", () => {
+  it("returns one compact validated snapshot for a verified fresh account", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(bootstrapRow());
+
+    const result = await adminService.getOnboardingBootstrap(USER_ID);
+
+    expect(result.user).toEqual({ id: USER_ID, role: "ADMIN", status: "ACTIVE" });
+    expect(result.onboarding).toMatchObject({
+      currentStep: 2,
+      completedSteps: ["business_profile"],
+      isComplete: false,
+    });
+    expect(result.profile).toMatchObject({
+      businessName: "Bio Cleaning",
+      postcode: "SW1A 1AA",
+      currency: "GBP",
+    });
+    expect(result.website).toMatchObject({
+      id: "website-1",
+      subdomain: "bio-cleaning",
+      templateId: "clean-modern",
+      bookingEnabled: false,
+    });
+
+    const select = db.adminProfile.findUnique.mock.calls[0]?.[0]?.select;
+    const serializedSelect = JSON.stringify(select);
+    for (const forbidden of ["pages", "assets", "revisions", "domains", "analyticsEvents", "bookingForms", "estimateForms"]) {
+      expect(serializedSelect).not.toContain(`\"${forbidden}\"`);
+    }
+  });
+
+  it("resumes the same bootstrap step after refresh/login", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(bootstrapRow({
+      onboardingCompletedSteps: ["business_profile", "branding", "services"],
+    }));
+
+    const first = await adminService.getOnboardingBootstrap(USER_ID);
+    const second = await adminService.getOnboardingBootstrap(USER_ID);
+
+    expect(first.onboarding.currentStep).toBe(4);
+    expect(second.onboarding.currentStep).toBe(4);
+    expect(second.onboarding.completedSteps).toEqual([
+      "business_profile",
+      "branding",
+      "services",
+    ]);
+  });
+
+  it("fails deterministically while account activation is incomplete", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(bootstrapRow({
+      user: { id: USER_ID, role: "ADMIN", status: "PENDING" },
+    }));
+
+    await expect(adminService.getOnboardingBootstrap(USER_ID)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "ACCOUNT_ACTIVATION_INCOMPLETE",
+    });
+  });
+
+  it("fails deterministically if trial/subscription provisioning is missing", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(bootstrapRow({ subscription: [] }));
+
+    await expect(adminService.getOnboardingBootstrap(USER_ID)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "SUBSCRIPTION_PROVISIONING_INCOMPLETE",
+    });
+  });
+
+  it("fails deterministically if website provisioning is missing", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(bootstrapRow({ businessWebsite: null }));
+
+    await expect(adminService.getOnboardingBootstrap(USER_ID)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "WEBSITE_PROVISIONING_INCOMPLETE",
+    });
   });
 });
 

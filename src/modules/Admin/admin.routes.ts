@@ -54,6 +54,28 @@ router.delete(
 router.get("/usage", checkAuth(UserRole.ADMIN), adminController.getAdminUsage);
 
 router.get(
+  "/bootstrap",
+  checkAuth(UserRole.ADMIN),
+  (req, res, next) => {
+    if (req.query.surface !== "onboarding") {
+      return res.status(400).json({
+        success: false,
+        message: "Unsupported bootstrap surface",
+        code: "INVALID_BOOTSTRAP_SURFACE",
+      });
+    }
+    return adminController.getOnboardingBootstrap(req, res, next);
+  },
+);
+
+router.post(
+  "/client-errors/onboarding",
+  checkAuth(UserRole.ADMIN),
+  zodValidate(adminValidation.onboardingClientError, ValidationProperty.BODY),
+  adminController.reportOnboardingClientError,
+);
+
+router.get(
   "/onboarding-status",
   checkAuth(UserRole.ADMIN),
   adminController.getOnboardingStatus,

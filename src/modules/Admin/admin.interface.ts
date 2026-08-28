@@ -61,3 +61,16 @@ export type OnboardingStepStatus = "completed" | "pending";
 export interface CompleteOnboardingStepPayload {
   step: OnboardingStepKey;
 }
+
+export interface OnboardingClientErrorPayload {
+  message: string;
+  stack?: string | null;
+  digest?: string | null;
+  route: string;
+  releaseVersion: string;
+  apiRequestId?: string | null;
+  browser: string;
+  bootstrapSchemaVersion: number;
+  section: "route" | "active-step" | "preview" | "bootstrap";
+  componentStack?: string | null;
+}

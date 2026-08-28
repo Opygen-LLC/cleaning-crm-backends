@@ -187,6 +187,7 @@ export const TURNSTILE_SECRET_KEY: string | undefined = process.env.TURNSTILE_SE
 export const ERROR_MONITOR_WEBHOOK_URL: string | undefined = process.env.ERROR_MONITOR_WEBHOOK_URL?.trim();
 export const ERROR_MONITOR_WEBHOOK_TOKEN: string | undefined = process.env.ERROR_MONITOR_WEBHOOK_TOKEN?.trim();
 export const ERROR_MONITOR_SERVICE_NAME: string = process.env.ERROR_MONITOR_SERVICE_NAME?.trim() || "cleaning-crm-api";
+export const RELEASE_VERSION: string = process.env.RELEASE_VERSION?.trim() || process.env.GIT_SHA?.trim() || "unknown";
 export const WEBSITE_ANALYTICS_RETENTION_DAYS: number = Math.min(730, Math.max(30, Number(process.env.WEBSITE_ANALYTICS_RETENTION_DAYS) || 180));
 export const WEBSITE_PROJECTION_CACHE_TTL_SECONDS: number = Math.min(1800, Math.max(30, Number(process.env.WEBSITE_PROJECTION_CACHE_TTL_SECONDS) || 180));
 export const WEBSITE_PROJECTION_CACHE_JITTER_RATIO: number = Math.min(0.4, Math.max(0, Number(process.env.WEBSITE_PROJECTION_CACHE_JITTER_RATIO) || 0.15));

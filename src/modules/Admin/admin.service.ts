@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { startOfMonth } from "date-fns";
 import status from "http-status";
 import { prisma } from "../../lib/prisma/prisma";
@@ -12,11 +13,15 @@ import redis from "../../config/redis";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { WEBSITE_STATUS } from "../Website/websiteLifecycle";
 import { WebsiteService } from "../Website/website.service";
+import { WEBSITE_BASE_DOMAIN, RELEASE_VERSION } from "../../config/ENV";
+import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
+import { AccountStatus, SubscriptionStatus } from "../../generated/prisma/enums";
 import type {
   GettingStartedStepKey,
   LegacySkippableOnboardingStepKey,
   OnboardingStepKey,
   OnboardingStepStatus,
+  OnboardingClientErrorPayload,
   UpdateAdminPayload,
   UpdateWorkLocationPayload,
 } from "./admin.interface";
@@ -542,6 +547,212 @@ const getOnboardingStatus = async (
   };
 };
 
+export const ONBOARDING_BOOTSTRAP_SCHEMA_VERSION = 1 as const;
+
+export interface OnboardingBootstrapResult {
+  user: {
+    id: string;
+    role: string;
+    status: string;
+  };
+  onboarding: {
+    currentStep: number;
+    completedSteps: OnboardingStepKey[];
+    isComplete: boolean;
+    savedAt: Date;
+  };
+  profile: {
+    businessName: string;
+    businessEmail: string | null;
+    mobileNumber: string | null;
+    businessDescription: string | null;
+    businessHours: unknown;
+    address: string | null;
+    city: string | null;
+    postcode: string | null;
+    currency: string;
+  };
+  website: {
+    id: string;
+    subdomain: string;
+    publicUrl: string | null;
+    status: string;
+    logo: string | null;
+    primaryColor: string;
+    secondaryColor: string;
+    accentColor: string;
+    font: string | null;
+    bookingEnabled: boolean;
+    templateId: string;
+  };
+}
+
+/**
+ * One-query bootstrap for the onboarding route. This deliberately avoids the
+ * Website Studio editor aggregate and never loads pages, assets, revisions,
+ * domains, forms or analytics. It also validates the registration invariants
+ * that must exist before a verified ADMIN can enter onboarding.
+ */
+const getOnboardingBootstrap = async (userId: string): Promise<OnboardingBootstrapResult> => {
+  const admin = await prisma.adminProfile.findUnique({
+    where: { userId },
+    select: {
+      id: true,
+      businessName: true,
+      businessEmail: true,
+      mobileNumber: true,
+      businessDescription: true,
+      businessHours: true,
+      address: true,
+      city: true,
+      zipcode: true,
+      currency: true,
+      updatedAt: true,
+      onboardingCompletedAt: true,
+      onboardingCompletedSteps: true,
+      user: {
+        select: { id: true, role: true, status: true },
+      },
+      businessWebsite: {
+        select: {
+          id: true,
+          subdomain: true,
+          status: true,
+          logo: true,
+          primaryColor: true,
+          secondaryColor: true,
+          accentColor: true,
+          font: true,
+          bookingEnabled: true,
+          templateId: true,
+          updatedAt: true,
+        },
+      },
+      subscription: {
+        where: { status: SubscriptionStatus.ACTIVE },
+        select: { id: true },
+        take: 1,
+      },
+    },
+  });
+
+  if (!admin) {
+    throw new AppError(status.NOT_FOUND, "Admin profile not found", {
+      code: "ADMIN_PROFILE_NOT_FOUND",
+      retryable: false,
+    });
+  }
+
+  if (admin.user.status !== AccountStatus.ACTIVE) {
+    throw new AppError(status.CONFLICT, "Account activation is not complete yet.", {
+      code: "ACCOUNT_ACTIVATION_INCOMPLETE",
+      retryable: true,
+    });
+  }
+
+  if (admin.subscription.length === 0) {
+    throw new AppError(status.CONFLICT, "Subscription provisioning is not complete yet.", {
+      code: "SUBSCRIPTION_PROVISIONING_INCOMPLETE",
+      retryable: true,
+    });
+  }
+
+  const website = admin.businessWebsite;
+  if (!website) {
+    throw new AppError(status.CONFLICT, "Website provisioning is not complete yet.", {
+      code: "WEBSITE_PROVISIONING_INCOMPLETE",
+      retryable: true,
+    });
+  }
+
+  const completed = normalizeCompletedSetupSteps(
+    admin.onboardingCompletedSteps,
+    admin.onboardingCompletedAt,
+  );
+  const completedSteps = REQUIRED_SETUP_KEYS.filter((step) => completed.has(step));
+  const firstIncompleteIndex = REQUIRED_SETUP_KEYS.findIndex((step) => !completed.has(step));
+  const isComplete = Boolean(admin.onboardingCompletedAt);
+  const currentStep = isComplete
+    ? REQUIRED_SETUP_KEYS.length
+    : firstIncompleteIndex === -1
+      ? REQUIRED_SETUP_KEYS.length
+      : firstIncompleteIndex + 1;
+  const savedAt = website.updatedAt > admin.updatedAt ? website.updatedAt : admin.updatedAt;
+
+  return {
+    user: {
+      id: admin.user.id,
+      role: admin.user.role,
+      status: admin.user.status,
+    },
+    onboarding: {
+      currentStep,
+      completedSteps,
+      isComplete,
+      savedAt,
+    },
+    profile: {
+      businessName: admin.businessName,
+      businessEmail: admin.businessEmail,
+      mobileNumber: admin.mobileNumber,
+      businessDescription: admin.businessDescription,
+      businessHours: admin.businessHours,
+      address: admin.address,
+      city: admin.city,
+      postcode: admin.zipcode,
+      currency: admin.currency,
+    },
+    website: {
+      id: website.id,
+      subdomain: website.subdomain,
+      publicUrl: WEBSITE_BASE_DOMAIN
+        ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}`
+        : null,
+      status: website.status,
+      logo: website.logo,
+      primaryColor: website.primaryColor,
+      secondaryColor: website.secondaryColor,
+      accentColor: website.accentColor,
+      font: website.font,
+      bookingEnabled: website.bookingEnabled,
+      templateId: website.templateId,
+    },
+  };
+};
+
+const hashTelemetryId = (value: string | null | undefined): string | null =>
+  value ? createHash("sha256").update(value).digest("hex").slice(0, 24) : null;
+
+const reportOnboardingClientError = async (
+  userId: string,
+  knownAdminId: string | null | undefined,
+  payload: OnboardingClientErrorPayload,
+  requestId: string | null,
+): Promise<void> => {
+  const adminId = knownAdminId ?? (await prisma.adminProfile.findUnique({
+    where: { userId },
+    select: { id: true },
+  }))?.id ?? null;
+  await ErrorMonitor.captureDashboardClientError({
+    message: payload.message,
+    stack: payload.stack ?? null,
+    digest: payload.digest ?? null,
+    path: payload.route,
+    requestId,
+    apiRequestId: payload.apiRequestId ?? null,
+    userIdHash: hashTelemetryId(userId),
+    tenantIdHash: hashTelemetryId(adminId),
+    releaseVersion: payload.releaseVersion || RELEASE_VERSION,
+    browser: payload.browser,
+    bootstrapSchemaVersion: payload.bootstrapSchemaVersion,
+    metadata: {
+      section: payload.section,
+      componentStack: payload.componentStack ?? null,
+      serverReleaseVersion: RELEASE_VERSION,
+    },
+  });
+};
+
 export interface OnboardingMutationResult {
   onboarding: OnboardingStatusResult;
   website: Awaited<ReturnType<typeof WebsiteService.getWebsiteForAdmin>>;
@@ -801,6 +1012,8 @@ export const adminService = {
   createAdmin,
   getAdminUsage,
   getOnboardingStatus,
+  getOnboardingBootstrap,
+  reportOnboardingClientError,
   completeOnboardingStep,
   skipWebsiteOnboardingSetup,
   finalizeOnboardingSetup,
