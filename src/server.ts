@@ -38,6 +38,7 @@ import { inspectWebsiteWildcardInfrastructure } from "./modules/Website/websiteP
 import logRequestResponse from "./middlewares/logger.middleware";
 import { requestContext } from "./middlewares/requestContext";
 import { getPerformanceSnapshot } from "./lib/monitoring/performanceMetrics";
+import { getMonitoringAlerts } from "./lib/monitoring/alerting";
 import { getInfrastructureAlignment } from "./lib/monitoring/infrastructure";
 import { getAuthenticatedOrigins } from "./config/authSecurity";
 import { browserOriginGuard } from "./middlewares/browserOriginGuard";
@@ -272,6 +273,13 @@ app.get("/health/performance", (req: Request, res: Response) => {
       },
     },
   });
+});
+
+app.get("/health/alerts", (req: Request, res: Response) => {
+  if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
+  const data = getMonitoringAlerts();
+  res.setHeader("Cache-Control", "private, no-store");
+  return res.status(data.healthy ? 200 : 503).json({ success: data.healthy, data });
 });
 
 app.get("/health/website-routing", async (req: Request, res: Response) => {

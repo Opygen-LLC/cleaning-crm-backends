@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { getPerformanceSnapshot, recordRequestMetric } from "./performanceMetrics";
+import { beforeEach, describe, expect, it } from "vitest";
+import { getPerformanceSnapshot, recordRequestMetric, resetPerformanceMetricsForTests } from "./performanceMetrics";
 
 describe("performanceMetrics", () => {
+  beforeEach(() => resetPerformanceMetricsForTests());
   it("publishes p50/p95/p99 plus DB, Redis and response-cache diagnostics by route", () => {
     for (let index = 1; index <= 20; index += 1) {
       recordRequestMetric({

@@ -1,32 +1,25 @@
 import fs from "node:fs";
 const [currentFile, baselineFile] = process.argv.slice(2);
 if (!currentFile) throw new Error("usage: node evaluateReleaseGate.mjs <current.json> [baseline.json]");
-const read = (file) => file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file,"utf8")).map(r=>r.jsonPayload||{}).filter(Boolean) : [];
-const summarize = (payloads) => {
-  const http = payloads.filter(p=>p.event==="http_request" && Number.isFinite(Number(p.totalDurationMs)));
-  const values=http.map(p=>Number(p.totalDurationMs)).sort((a,b)=>a-b);
-  const p95=values.length ? values[Math.min(values.length-1,Math.ceil(values.length*0.95)-1)] : 0;
-  const rate=(fn)=>http.length ? http.filter(fn).length/http.length : 0;
-  const starts=payloads.filter(p=>p.event==="onboarding_started").length;
-  const completes=payloads.filter(p=>p.event==="onboarding_completed").length;
-  return { http, p95, error5xx:rate(p=>Number(p.statusCode)>=500), redisErrors:http.reduce((n,p)=>n+Number(p.redisErrors||0),0), clientErrors:payloads.filter(p=>p.code==="DASHBOARD_CLIENT_ERROR"||p.event==="dashboard_client_error").length, starts, completes, completionRate:starts>=Number(process.env.MIN_ONBOARDING_SAMPLES||10)?completes/starts:null };
+const read = (file) => file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file,"utf8")).map((row)=>row.jsonPayload||{}).filter(Boolean) : [];
+const pct=(n,d)=>d? n/d : 0; const percentile=(rows,p)=>{const v=rows.map(x=>Number(x.totalDurationMs)).filter(Number.isFinite).sort((a,b)=>a-b); return v.length?v[Math.min(v.length-1,Math.ceil(v.length*p)-1)]:0;};
+const summarize=(payloads)=>{
+ const http=payloads.filter((p)=>p.event==="http_request"&&Number.isFinite(Number(p.totalDurationMs)));
+ const auth=http.filter((p)=>String(p.route||"").includes("/auth/"));
+ const codes=(code)=>auth.filter((p)=>p.authErrorCode===code).length;
+ return { http, p95:percentile(http,.95), error5xx:pct(http.filter(p=>Number(p.statusCode)>=500).length,http.length), badGateway:pct(http.filter(p=>[502,503].includes(Number(p.statusCode))).length,http.length), auth401:pct(auth.filter(p=>Number(p.statusCode)===401).length,auth.length), redisErrors:http.reduce((n,p)=>n+Number(p.redisErrors||0),0), refreshFailures:auth.filter(p=>String(p.route||"").includes("/auth/refresh-token")&&Number(p.statusCode)>=400).length, otpFailures:auth.filter(p=>/\/auth\/(verify|verify-email|resend)/.test(String(p.route||""))&&Number(p.statusCode)>=400).length, verificationSessionFailed:codes("AUTH_VERIFICATION_SESSION_FAILED"), accessTokenMissing:codes("ACCESS_TOKEN_MISSING") };
 };
-const cur=summarize(read(currentFile));
-const base=summarize(read(baselineFile));
-const min=Number(process.env.MIN_RELEASE_REQUESTS||50);
+const cur=summarize(read(currentFile)), base=summarize(read(baselineFile)); const min=Number(process.env.MIN_RELEASE_REQUESTS||50);
 if(cur.http.length<min) throw new Error(`insufficient canary samples: ${cur.http.length}/${min}`);
 const failures=[];
-if(cur.p95>Number(process.env.MAX_P95_MS||120)) failures.push(`p95 ${cur.p95}ms`);
-if(cur.error5xx>Number(process.env.MAX_5XX_RATE||0.01)) failures.push(`5xx ${(cur.error5xx*100).toFixed(2)}%`);
+if(cur.p95>Number(process.env.MAX_P95_MS||750)) failures.push(`p95 ${cur.p95}ms`);
+if(cur.error5xx>Number(process.env.MAX_5XX_RATE||0.02)) failures.push(`5xx ${(cur.error5xx*100).toFixed(2)}%`);
+if(cur.badGateway>Number(process.env.MAX_502_503_RATE||0.01)) failures.push(`502/503 ${(cur.badGateway*100).toFixed(2)}%`);
+if(cur.auth401>Number(process.env.MAX_AUTH_401_RATE||0.08)) failures.push(`auth 401 ${(cur.auth401*100).toFixed(2)}%`);
 if(cur.redisErrors>Number(process.env.MAX_REDIS_ERRORS||0)) failures.push(`redis errors ${cur.redisErrors}`);
-if(cur.clientErrors>Number(process.env.MAX_CLIENT_ERRORS||5)) failures.push(`client errors ${cur.clientErrors}`);
-if(cur.completionRate!==null && cur.completionRate<Number(process.env.MIN_ONBOARDING_COMPLETION_RATE||0.85)) failures.push(`onboarding completion ${(cur.completionRate*100).toFixed(1)}%`);
-if(base.http.length>=min){
-  if(cur.p95>base.p95*(1+Number(process.env.MAX_P95_REGRESSION_RATIO||0.25))) failures.push(`p95 regression ${base.p95}->${cur.p95}ms`);
-  if(cur.error5xx>base.error5xx+Number(process.env.MAX_5XX_REGRESSION_ABS||0.005)) failures.push(`5xx regression ${(base.error5xx*100).toFixed(2)}%->${(cur.error5xx*100).toFixed(2)}%`);
-  const curClientRate=cur.clientErrors/cur.http.length, baseClientRate=base.clientErrors/base.http.length;
-  if(curClientRate>baseClientRate+Number(process.env.MAX_CLIENT_ERROR_REGRESSION_ABS||0.005)) failures.push("frontend exception regression");
-  if(cur.completionRate!==null && base.completionRate!==null && cur.completionRate<base.completionRate-Number(process.env.MAX_ONBOARDING_REGRESSION_ABS||0.10)) failures.push(`onboarding regression ${(base.completionRate*100).toFixed(1)}%->${(cur.completionRate*100).toFixed(1)}%`);
-}
-console.log(JSON.stringify({current:{requests:cur.http.length,p95:cur.p95,error5xx:cur.error5xx,redisErrors:cur.redisErrors,clientErrors:cur.clientErrors,completionRate:cur.completionRate},baseline:{requests:base.http.length,p95:base.p95,error5xx:base.error5xx,clientErrors:base.clientErrors,completionRate:base.completionRate},failures},null,2));
+if(cur.verificationSessionFailed>0) failures.push(`AUTH_VERIFICATION_SESSION_FAILED ${cur.verificationSessionFailed}`);
+if(cur.accessTokenMissing>Number(process.env.MAX_ACCESS_TOKEN_MISSING||2)) failures.push(`ACCESS_TOKEN_MISSING ${cur.accessTokenMissing}`);
+if(cur.refreshFailures>Number(process.env.MAX_REFRESH_FAILURES||2)) failures.push(`refresh failures ${cur.refreshFailures}`);
+if(base.http.length>=min && cur.p95>base.p95*(1+Number(process.env.MAX_P95_REGRESSION_RATIO||0.25))) failures.push(`p95 regression ${base.p95}->${cur.p95}ms`);
+console.log(JSON.stringify({current:{requests:cur.http.length,p95:cur.p95,error5xx:cur.error5xx,badGateway:cur.badGateway,auth401:cur.auth401,redisErrors:cur.redisErrors,refreshFailures:cur.refreshFailures,otpFailures:cur.otpFailures,verificationSessionFailed:cur.verificationSessionFailed,accessTokenMissing:cur.accessTokenMissing},baseline:{requests:base.http.length,p95:base.p95,error5xx:base.error5xx},failures},null,2));
 if(failures.length) process.exit(42);

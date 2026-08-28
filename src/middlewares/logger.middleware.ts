@@ -79,6 +79,15 @@ const logRequestResponse = (
     const trace = getRequestTrace() ?? requestTrace;
     const geography = resolveRequestGeography(req);
 
+    const isAuthRoute = (req.originalUrl || req.path).split("?", 1)[0].startsWith("/api/v1/auth");
+    const authErrorCode = isAuthRoute
+      ? typeof res.locals.authErrorCode === "string" && res.locals.authErrorCode.trim()
+        ? res.locals.authErrorCode.trim()
+        : res.statusCode < 400
+          ? "AUTH_OK"
+          : `HTTP_${res.statusCode}`
+      : null;
+
     recordRequestMetric({
       method: req.method,
       route,
@@ -92,7 +101,9 @@ const logRequestResponse = (
       authDurationMs: trace?.authDurationMs,
       cacheHits: trace?.responseCacheHits,
       cacheMisses: trace?.responseCacheMisses,
+      externalDurationMs: trace?.externalDurationMs,
       market: geography.market,
+      authErrorCode,
     });
 
     const level = durationMs >= SLOW_REQUEST_THRESHOLD_MS || res.statusCode >= 500 ? "warn" : "info";
@@ -100,14 +111,6 @@ const logRequestResponse = (
     const traceId = trace?.traceId ?? (typeof res.locals.traceId === "string" ? res.locals.traceId : "unknown");
     const tenantId = req.user?.adminId ?? req.user?.id ?? null;
     const userId = req.user?.id ?? null;
-    const isAuthRoute = (req.originalUrl || req.path).split("?", 1)[0].startsWith("/api/v1/auth");
-    const authErrorCode = isAuthRoute
-      ? typeof res.locals.authErrorCode === "string" && res.locals.authErrorCode.trim()
-        ? res.locals.authErrorCode.trim()
-        : res.statusCode < 400
-          ? "AUTH_OK"
-          : `HTTP_${res.statusCode}`
-      : null;
     const cacheAttempts = (trace?.responseCacheHits ?? 0) + (trace?.responseCacheMisses ?? 0);
     const redisAttempts = (trace?.redisHits ?? 0) + (trace?.redisMisses ?? 0);
 

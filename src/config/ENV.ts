@@ -40,6 +40,20 @@ export const TRUST_PROXY_HOPS: number = Math.min(5, Math.max(0, Math.trunc(Numbe
 
 export const PERFORMANCE_METRICS_TOKEN: string | undefined = process.env.PERFORMANCE_METRICS_TOKEN?.trim() || undefined;
 
+// Phase 7 rolling-window alert thresholds. Percent values are expressed as
+// human percentages (for example 5 = 5%). These alerts are evaluated from
+// the bounded in-process telemetry window and complemented by Cloud SQL
+// provider metrics during canary rollout.
+export const ALERT_MIN_REQUESTS: number = Math.max(5, Math.trunc(Number(process.env.ALERT_MIN_REQUESTS) || 25));
+export const ALERT_5XX_RATE_PERCENT: number = Math.max(0.1, Number(process.env.ALERT_5XX_RATE_PERCENT) || 2);
+export const ALERT_BAD_GATEWAY_RATE_PERCENT: number = Math.max(0.1, Number(process.env.ALERT_BAD_GATEWAY_RATE_PERCENT) || 1);
+export const ALERT_401_RATE_PERCENT: number = Math.max(0.1, Number(process.env.ALERT_401_RATE_PERCENT) || 8);
+export const ALERT_P95_MS: number = Math.max(50, Number(process.env.ALERT_P95_MS) || 750);
+export const ALERT_DB_P95_MS: number = Math.max(25, Number(process.env.ALERT_DB_P95_MS) || 400);
+export const ALERT_REFRESH_FAILURE_RATE_PERCENT: number = Math.max(0.1, Number(process.env.ALERT_REFRESH_FAILURE_RATE_PERCENT) || 5);
+export const ALERT_OTP_FAILURE_RATE_PERCENT: number = Math.max(0.1, Number(process.env.ALERT_OTP_FAILURE_RATE_PERCENT) || 15);
+export const ALERT_ACCESS_TOKEN_MISSING_COUNT: number = Math.max(1, Math.trunc(Number(process.env.ALERT_ACCESS_TOKEN_MISSING_COUNT) || 5));
+
 // Phase 3 global-ready / primary-region placement contract.
 //
 // The product is global (USA primary, plus Canada, UK, Europe and Australia),

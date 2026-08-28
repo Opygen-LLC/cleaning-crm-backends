@@ -65,7 +65,7 @@
     "load:phase7:warm": "k6 run -e CACHE_MODE=warm scripts/load/phase7-load.js",
     "load:phase7:cold": "k6 run -e CACHE_MODE=cold scripts/load/phase7-load.js",
     "verify:phase7:release": "node scripts/phase7/verifyPhase7Release.mjs",
-    "release:phase7:verify": "pnpm run verify:phase7:release && pnpm run test:phase7:qualification && pnpm run release:phase6:verify && pnpm run typecheck",
+    "release:phase7:verify": "pnpm run check:repo-hygiene && pnpm run check:secrets && pnpm run verify:phase7:release && pnpm run test:phase7:qualification && pnpm run test:phase7:observability && pnpm run release:phase6:verify && pnpm run typecheck",
     "dev:all": "INCLUDE_SCHEDULER=true node scripts/devProcesses.mjs",
     "test:auth:phase3": "vitest run src/modules/Auth/auth.service.login.test.ts src/modules/Auth/auth.service.verifyEmail.test.ts src/modules/Auth/auth.controller.contract.test.ts src/modules/Auth/auth.cookie-contract.test.ts src/middlewares/logger.auth-observability.test.ts",
     "smoke:auth:phase3": "node scripts/authPhase3Smoke.mjs",
@@ -76,7 +76,10 @@
     "test:phase5:security": "vitest run src/modules/Auth/auth.service.refreshRotation.test.ts src/middlewares/browserOriginGuard.test.ts src/lib/cache/redisCircuitBreaker.test.ts src/modules/Auth/auth.service.login.test.ts src/modules/Auth/auth.service.verifyEmail.test.ts src/modules/Auth/auth.controller.contract.test.ts",
     "verify:auth:phase6": "node scripts/verifyAuthPhase6.mjs",
     "test:auth:phase6": "vitest run src/modules/Auth/auth.service.session.test.ts src/modules/Auth/auth.controller.contract.test.ts",
-    "release:auth:phase6:verify": "pnpm run verify:auth:phase6 && pnpm run test:auth:phase6 && pnpm run security:phase5 && pnpm run typecheck"
+    "release:auth:phase6:verify": "pnpm run verify:auth:phase6 && pnpm run test:auth:phase6 && pnpm run security:phase5 && pnpm run typecheck",
+    "check:secrets": "node scripts/phase7/checkSecretSafety.mjs",
+    "monitoring:alerts": "node scripts/phase7/checkMonitoringAlerts.mjs",
+    "test:phase7:observability": "vitest run src/lib/monitoring/alerting.test.ts src/lib/monitoring/performanceMetrics.test.ts src/lib/monitoring/requestTrace.test.ts src/middlewares/logger.auth-observability.test.ts"
   },
   "keywords": [],
   "author": "opygen",

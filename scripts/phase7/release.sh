@@ -2,24 +2,27 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CLIENT_DIR="${CLIENT_DIR:?Set CLIENT_DIR to the Cleaning CRM frontend checkout}"
-: "${STAGING_DEPLOY_CMD:?Set STAGING_DEPLOY_CMD}" "${E2E_FRONTEND_URL:?}" "${E2E_API_URL:?}" "${E2E_TEST_TOKEN:?}"
+: "${STAGING_DEPLOY_CMD:?Set STAGING_DEPLOY_CMD}" "${E2E_FRONTEND_URL:?}" "${E2E_API_URL:?}" "${E2E_TEST_TOKEN:?}" "${E2E_ACCESS_TOKEN_TTL_SECONDS:?}" "${PERFORMANCE_METRICS_TOKEN:?}"
 
-echo '[phase7] frontend lint/typecheck/unit/build'
-( cd "$CLIENT_DIR" && pnpm run lint && pnpm run typecheck && pnpm run test:unit && pnpm run build )
+echo '[phase7] frontend static/unit/build qualification'
+( cd "$CLIENT_DIR" && pnpm install --frozen-lockfile && pnpm run release:phase7:verify )
 
-echo '[phase7] backend tests/typecheck/migration preflight/build'
-( cd "$ROOT" && pnpm test && pnpm run typecheck && pnpm run db:migrate:preflight && pnpm run build )
+echo '[phase7] backend schema/tests/security/build qualification'
+( cd "$ROOT" && pnpm install --frozen-lockfile && pnpm prisma validate && pnpm prisma generate && pnpm run release:phase7:verify && pnpm run db:migrate:preflight && pnpm run build )
 
-echo '[phase7] deploy staging'
+echo '[phase7] deploy production-equivalent staging'
 bash -lc "$STAGING_DEPLOY_CMD"
 
-echo '[phase7] Playwright critical path against staging'
-( cd "$CLIENT_DIR" && E2E_FRONTEND_URL="$E2E_FRONTEND_URL" E2E_API_URL="$E2E_API_URL" E2E_TEST_TOKEN="$E2E_TEST_TOKEN" pnpm run test:e2e:critical )
+echo '[phase7] Playwright real-browser critical path against staging'
+( cd "$CLIENT_DIR" && E2E_FRONTEND_URL="$E2E_FRONTEND_URL" E2E_API_URL="$E2E_API_URL" E2E_TEST_TOKEN="$E2E_TEST_TOKEN" E2E_TEST_EMAIL_DOMAIN="${E2E_TEST_EMAIL_DOMAIN:-e2e.invalid}" E2E_TEST_PASSWORD="${E2E_TEST_PASSWORD:-Phase7!Test123}" E2E_ACCESS_TOKEN_TTL_SECONDS="$E2E_ACCESS_TOKEN_TTL_SECONDS" pnpm run test:e2e:phase7 )
 
-echo '[phase7] warm load smoke'
-( cd "$ROOT" && pnpm run load:phase7:warm )
-echo '[phase7] cold load smoke'
-( cd "$ROOT" && pnpm run load:phase7:cold )
+echo '[phase7] monitoring alert gate'
+( cd "$ROOT" && API_URL="${STAGING_API_ORIGIN:-${E2E_API_URL%/api/v1}}" PERFORMANCE_METRICS_TOKEN="$PERFORMANCE_METRICS_TOKEN" pnpm run monitoring:alerts )
 
-echo '[phase7] production MIG canary 5% -> 25% -> 100%'
+echo '[phase7] warm load smoke (primary-region baseline)'
+( cd "$ROOT" && TEST_ENVIRONMENT=staging-primary-region pnpm run load:phase7:warm )
+echo '[phase7] cold load smoke (primary-region baseline)'
+( cd "$ROOT" && TEST_ENVIRONMENT=staging-primary-region pnpm run load:phase7:cold )
+
+echo '[phase7] production canary 5% -> 25% -> 100%'
 exec "$ROOT/scripts/gcp/phase7-canary.sh"
