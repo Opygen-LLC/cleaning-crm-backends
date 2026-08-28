@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   verifyEmailOTP: vi.fn(),
   getAccessToken: vi.fn(),
   getRefreshToken: vi.fn(),
+  sessionCreate: vi.fn(),
 }));
 
 vi.mock("../../lib/prisma/prisma", () => ({
@@ -19,6 +20,7 @@ vi.mock("../../lib/prisma/prisma", () => ({
     },
     account: { findFirst: mocks.accountFindFirst },
     adminProfile: { findUnique: mocks.adminFindUnique },
+    session: { create: mocks.sessionCreate },
   },
 }));
 
@@ -69,10 +71,11 @@ beforeEach(() => {
     adminId: "admin-1",
     isOnboardingComplete: false,
   });
-  mocks.verifyEmailOTP.mockResolvedValue({ user: { ...verifiedAdmin } });
+  mocks.verifyEmailOTP.mockResolvedValue({ user: { ...verifiedAdmin }, token: "better-auth-token" });
   mocks.userUpdate.mockResolvedValue({ ...verifiedAdmin, status: "ACTIVE" });
   mocks.getAccessToken.mockReturnValue("access-token");
   mocks.getRefreshToken.mockReturnValue("refresh-token");
+  mocks.sessionCreate.mockResolvedValue({ token: "fallback-session-token" });
 });
 
 describe("verifyEmail deterministic ADMIN activation", () => {
@@ -91,8 +94,10 @@ describe("verifyEmail deterministic ADMIN activation", () => {
       isOnboardingComplete: false,
       accessToken: "access-token",
       refreshToken: "refresh-token",
+      token: "better-auth-token",
       user: { status: "ACTIVE" },
     });
+    expect(mocks.sessionCreate).not.toHaveBeenCalled();
   });
 
   it("does not consume the OTP or activate the user when website provisioning is incomplete", async () => {
@@ -133,4 +138,34 @@ describe("verifyEmail deterministic ADMIN activation", () => {
     expect(mocks.verifyEmailOTP).not.toHaveBeenCalled();
     expect(mocks.userUpdate).not.toHaveBeenCalled();
   });
+
+  it("creates a server-side fallback session when Better Auth omits the auto-sign-in token", async () => {
+    mocks.verifyEmailOTP.mockResolvedValue({ user: { ...verifiedAdmin } });
+
+    const result = await authService.verifyEmail("jamie@example.com", "123456");
+
+    expect(mocks.sessionCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: "user-1",
+        token: expect.any(String),
+        expiresAt: expect.any(Date),
+      }),
+      select: { token: true },
+    });
+    expect(result.token).toBe("fallback-session-token");
+  });
+
+  it("returns AUTH_VERIFICATION_SESSION_FAILED when a fallback session cannot be persisted", async () => {
+    mocks.verifyEmailOTP.mockResolvedValue({ user: { ...verifiedAdmin } });
+    mocks.sessionCreate.mockRejectedValue(new Error("database unavailable"));
+
+    await expect(
+      authService.verifyEmail("jamie@example.com", "123456"),
+    ).rejects.toMatchObject({
+      statusCode: 500,
+      code: "AUTH_VERIFICATION_SESSION_FAILED",
+      retryable: true,
+    });
+  });
+
 });

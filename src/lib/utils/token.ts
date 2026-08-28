@@ -14,7 +14,6 @@ import {
 const ACCESS_COOKIE_MAX_AGE_MS = 15 * 60 * 1000;
 const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_COOKIE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
-const ROLE_HINT_MAX_AGE_MS = REFRESH_COOKIE_MAX_AGE_MS;
 const SECURE_COOKIE = NODE_ENV === "production";
 
 const getAccessToken = (payload: JwtPayload) =>
@@ -66,18 +65,6 @@ const setBetterAuthSessionCookie = (res: Response, token: string) => {
     });
 };
 
-/** Route-role marker used by Next.js middleware; never exposed to JS. */
-const setRoleCookie = (res: Response, role: string) => {
-    CookieUtils.setCookie(res, "user_role", role, {
-        httpOnly: true,
-        secure: SECURE_COOKIE,
-        sameSite: "lax",
-        path: "/",
-        domain: COOKIE_DOMAIN,
-        maxAge: ROLE_HINT_MAX_AGE_MS,
-    });
-};
-
 const clearAuthCookies = (res: Response) => {
     const host = { httpOnly: true, secure: SECURE_COOKIE, sameSite: "lax" as const, path: "/" };
     const sharedRole = { ...host, domain: COOKIE_DOMAIN };
@@ -105,6 +92,5 @@ export const tokenUtils = {
     setAccessTokenCookie,
     setRefreshTokenCookie,
     setBetterAuthSessionCookie,
-    setRoleCookie,
     clearAuthCookies,
 };

@@ -21,9 +21,51 @@ import { AccountProvisioningService } from "./accountProvisioning.service";
 import { AccountIntegrityService } from "./accountIntegrity.service";
 import { getPlatformConfig } from "../../lib/utils/platformConfig";
 import { AuthEmailOutbox } from "../../lib/outbox/authEmailOutbox";
+import { randomBytes, randomUUID } from "node:crypto";
 
 //? Max sessions per user
 const MAX_SESSIONS = 3;
+const BETTER_AUTH_SESSION_TTL_MS = 60 * 24 * 60 * 60 * 1000;
+
+/**
+ * Email OTP verification is configured to auto-sign-in, so Better Auth should
+ * normally return a session token. This fallback guarantees the application
+ * contract even if a rolling Better Auth/plugin version verifies the email but
+ * omits the token from the server API result. Better Auth sessions are opaque
+ * random tokens backed by the Session table, so the fallback remains fully
+ * server-side and HttpOnly when the controller sets the cookie.
+ */
+const ensureVerifiedSessionToken = async (
+    userId: string,
+    returnedToken?: string | null,
+): Promise<string> => {
+    if (typeof returnedToken === "string" && returnedToken.trim()) {
+        return returnedToken;
+    }
+
+    try {
+        const session = await prisma.session.create({
+            data: {
+                id: randomUUID(),
+                userId,
+                token: randomBytes(32).toString("base64url"),
+                expiresAt: new Date(Date.now() + BETTER_AUTH_SESSION_TTL_MS),
+            },
+            select: { token: true },
+        });
+
+        return session.token;
+    } catch {
+        throw new AppError(
+            status.INTERNAL_SERVER_ERROR,
+            "Email verified, but the authenticated session could not be established.",
+            {
+                code: "AUTH_VERIFICATION_SESSION_FAILED",
+                retryable: true,
+            },
+        );
+    }
+};
 
 /**
  * Registration has one canonical persistence path: AccountProvisioningService.
@@ -284,12 +326,27 @@ const verifyEmail = async (email: string, otp: string) => {
         throw new AppError(status.BAD_REQUEST, "Invalid OTP.");
     }
 
-    if (result.user.emailVerified) {
-        result.user = await prisma.user.update({
-            where: { email },
-            data: { status: AccountStatus.ACTIVE },
-        });
+    if (!result.user.emailVerified) {
+        throw new AppError(
+            status.INTERNAL_SERVER_ERROR,
+            "Email verification did not produce a verified account.",
+            { code: "EMAIL_VERIFICATION_STATE_INVALID", retryable: true },
+        );
     }
+
+    result.user = await prisma.user.update({
+        where: { email },
+        data: { status: AccountStatus.ACTIVE },
+    });
+
+    const returnedSessionToken =
+        typeof (result as { token?: unknown }).token === "string"
+            ? (result as { token: string }).token
+            : undefined;
+    const sessionToken = await ensureVerifiedSessionToken(
+        result.user.id,
+        returnedSessionToken,
+    );
 
     const tokenPayload = {
         userId: result.user.id,
@@ -301,6 +358,7 @@ const verifyEmail = async (email: string, otp: string) => {
 
     return {
         ...result,
+        token: sessionToken,
         isOnboardingComplete,
         accessToken: tokenUtils.getAccessToken(tokenPayload),
         refreshToken: tokenUtils.getRefreshToken(tokenPayload),

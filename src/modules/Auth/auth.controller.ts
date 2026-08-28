@@ -7,12 +7,11 @@ import AppError from "../../errorHelper/AppError";
 
 const setAuthenticatedCookies = (
     res: Parameters<typeof tokenUtils.setAccessTokenCookie>[0],
-    payload: { accessToken: string; refreshToken: string; sessionToken?: string | null; role?: string | null },
+    payload: { accessToken: string; refreshToken: string; sessionToken?: string | null },
 ) => {
     tokenUtils.setAccessTokenCookie(res, payload.accessToken);
     tokenUtils.setRefreshTokenCookie(res, payload.refreshToken);
     if (payload.sessionToken) tokenUtils.setBetterAuthSessionCookie(res, payload.sessionToken);
-    if (payload.role) tokenUtils.setRoleCookie(res, payload.role);
 };
 
 const register = catchAsync(async (req, res) => {
@@ -36,7 +35,6 @@ const login = catchAsync(async (req, res) => {
         accessToken,
         refreshToken,
         sessionToken: token,
-        role: result.user?.role,
     });
 
     sendResponse(res, {
@@ -72,7 +70,6 @@ const getNewToken = catchAsync(async (req, res) => {
             accessToken: result.accessToken,
             refreshToken: result.refreshToken,
             sessionToken: result.sessionToken,
-            role: result.role,
         });
 
         sendResponse(res, {
@@ -98,7 +95,6 @@ const verifyEmail = catchAsync(async (req, res) => {
         accessToken,
         refreshToken,
         sessionToken: token,
-        role: result.user?.role,
     });
 
     sendResponse(res, {
@@ -136,7 +132,6 @@ const changePassword = catchAsync(async (req, res) => {
         accessToken,
         refreshToken,
         sessionToken: token,
-        role: result.user?.role,
     });
 
     sendResponse(res, {

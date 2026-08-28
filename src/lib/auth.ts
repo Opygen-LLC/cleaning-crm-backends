@@ -13,9 +13,9 @@ export const auth = betterAuth({
     database: prismaAdapter(prisma, {
         provider: "postgresql",
     }),
-    // Better Auth session cookies are intentionally host-only to the API.
-    // Only the short-lived access/role cookies created by tokenUtils are
-    // shared with the frontend parent domain for Next.js route gating.
+    // Better Auth/session credentials are intentionally host-only to the API.
+    // The frontend creates its own HttpOnly `user_role` route hint after an
+    // authenticated response; that hint is never an authorization credential.
     advanced: {
         defaultCookieAttributes: {
             sameSite: "lax",
