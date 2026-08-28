@@ -1,5 +1,6 @@
 import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../prisma/prisma";
+import { getTracePropagationMetadata, traceAsyncOperation } from "../monitoring/requestTrace";
 
 export const AUTH_EMAIL_OUTBOX_TOPIC = Object.freeze({
   EMAIL_VERIFICATION_REQUESTED: "AUTH_EMAIL_VERIFICATION_REQUESTED",
@@ -10,34 +11,39 @@ export interface EmailVerificationOutboxPayload {
   email: string;
 }
 
+const withTraceMetadata = <T extends Record<string, unknown>>(payload: T) => {
+  const trace = getTracePropagationMetadata();
+  return trace ? { ...payload, _trace: trace } : payload;
+};
+
 const enqueueEmailVerificationTx = async (
   db: Prisma.TransactionClient,
   payload: EmailVerificationOutboxPayload,
   options: { dedupeKey?: string | null } = {},
-) => db.outboxEvent.create({
+) => traceAsyncOperation("queue", "outbox.enqueue.auth-email", () => db.outboxEvent.create({
   data: {
     topic: AUTH_EMAIL_OUTBOX_TOPIC.EMAIL_VERIFICATION_REQUESTED,
     dedupeKey: options.dedupeKey ?? null,
-    payload: {
+    payload: withTraceMetadata({
       userId: payload.userId,
       email: payload.email.trim().toLowerCase(),
-    },
+    }),
   },
   select: { id: true },
-});
+}));
 
 const enqueueEmailVerification = async (
   payload: EmailVerificationOutboxPayload,
-) => prisma.outboxEvent.create({
+) => traceAsyncOperation("queue", "outbox.enqueue.auth-email", () => prisma.outboxEvent.create({
   data: {
     topic: AUTH_EMAIL_OUTBOX_TOPIC.EMAIL_VERIFICATION_REQUESTED,
-    payload: {
+    payload: withTraceMetadata({
       userId: payload.userId,
       email: payload.email.trim().toLowerCase(),
-    },
+    }),
   },
   select: { id: true },
-});
+}));
 
 export const AuthEmailOutbox = {
   enqueueEmailVerificationTx,

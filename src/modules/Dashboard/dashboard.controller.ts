@@ -22,6 +22,28 @@ const getDashboardOverview = catchAsync(async (req, res) => {
 });
 
 
+
+const getDashboardRevenueInsight = catchAsync(async (req, res) => {
+    const period = (req.query.period as string | undefined) ?? "30d";
+    const validPeriods = ["7d", "30d", "90d", "12m"];
+    if (!validPeriods.includes(period)) {
+        sendResponse(res, {
+            httpStatusCode: status.BAD_REQUEST,
+            success: false,
+            message: `Invalid period. Must be one of: ${validPeriods.join(", ")}`,
+        });
+        return;
+    }
+
+    const result = await dashboardService.getDashboardRevenueInsight(req.user, period);
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Dashboard revenue insight fetched successfully",
+        data: result,
+    });
+});
+
 const getRevenueData = catchAsync(async (req, res) => {
     const period = (req.query.period as "7d" | "30d" | "90d" | "12m") ?? "30d";
 
@@ -60,6 +82,7 @@ const getStaffDashboard = catchAsync(async (req, res) => {
 
 export const dashboardController = {
     getDashboardOverview,
+    getDashboardRevenueInsight,
     getRevenueData,
     getStaffDashboard,
 };

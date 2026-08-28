@@ -89,12 +89,12 @@ const instrumentRedisReads = () => {
             try {
                 const value = await original(...args);
                 const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-                recordTraceRedisCommand(durationMs);
+                recordTraceRedisCommand(durationMs, { hits: value == null ? 0 : 1, misses: value == null ? 1 : 0 });
                 recordRedisReadMetric({ durationMs, hits: value == null ? 0 : 1, misses: value == null ? 1 : 0 });
                 return value;
             } catch (error) {
                 const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-                recordTraceRedisCommand(durationMs);
+                recordTraceRedisCommand(durationMs, { error: true });
                 recordRedisReadMetric({ durationMs, hits: 0, misses: 0, error: true });
                 throw error;
             }
@@ -108,19 +108,38 @@ const instrumentRedisReads = () => {
             const values = await originalMget(...args) as Array<string | null>;
             const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
             const hits = values.filter((value) => value != null).length;
-            recordTraceRedisCommand(durationMs);
+            recordTraceRedisCommand(durationMs, { hits, misses: Math.max(0, values.length - hits) });
             recordRedisReadMetric({ durationMs, hits, misses: Math.max(0, values.length - hits) });
             return values;
         } catch (error) {
             const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-            recordTraceRedisCommand(durationMs);
+            recordTraceRedisCommand(durationMs, { error: true });
             recordRedisReadMetric({ durationMs, hits: 0, misses: 0, error: true });
             throw error;
         }
     };
 
+    const wrapCommand = (command: string) => {
+        if (typeof target[command] !== "function") return;
+        const original = target[command].bind(redis);
+        target[command] = async (...args: unknown[]) => {
+            const started = process.hrtime.bigint();
+            try {
+                const value = await original(...args);
+                recordTraceRedisCommand(Number(process.hrtime.bigint() - started) / 1_000_000);
+                return value;
+            } catch (error) {
+                recordTraceRedisCommand(Number(process.hrtime.bigint() - started) / 1_000_000, { error: true });
+                throw error;
+            }
+        };
+    };
+
     wrapSingle("get");
     wrapSingle("hget");
+    // Writes and set/index operations matter to request-level Redis duration as
+    // well, even though only reads contribute to hit/miss metrics.
+    ["set", "setex", "del", "unlink", "sadd", "srem", "expire", "hset", "incr", "incrby", "decr", "scan", "sscan", "smembers", "eval", "publish", "ping"].forEach(wrapCommand);
 };
 
 instrumentRedisReads();

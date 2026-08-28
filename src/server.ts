@@ -71,8 +71,9 @@ const authenticatedCors = cors({
   allowedHeaders: [
     "Content-Type", "Authorization", "Cookie", "X-Requested-With", "Accept",
     "Origin", "Idempotency-Key", "X-Form-Started-At", "X-Turnstile-Token",
+    "X-Request-Id", "X-Trace-Id", "Traceparent",
   ],
-  exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Response-Time", "Server-Timing", "X-Bootstrap-Schema-Version"],
+  exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Trace-Id", "X-Response-Time", "Server-Timing", "X-Bootstrap-Schema-Version"],
   origin: true,
   credentials: true,
 });
@@ -86,7 +87,7 @@ const publicWebsiteCors = cors({
     "Content-Type", "Accept", "Origin", "Idempotency-Key",
     "X-Form-Started-At", "X-Turnstile-Token",
   ],
-  exposedHeaders: ["X-Request-Id", "X-Response-Time", "Server-Timing", "X-Website-Resolver-Source", "X-Bootstrap-Schema-Version"],
+  exposedHeaders: ["X-Request-Id", "X-Trace-Id", "X-Response-Time", "Server-Timing", "X-Website-Resolver-Source", "X-Bootstrap-Schema-Version"],
   origin: true,
   credentials: false,
 });
@@ -180,15 +181,23 @@ const dependencyHealth = async () => {
   };
 };
 
-// Liveness must never depend on Postgres/Redis. Process managers should use
-// this endpoint to decide whether the Node process itself needs restarting.
+if (NODE_ENV === "production" && (!PERFORMANCE_METRICS_TOKEN || PERFORMANCE_METRICS_TOKEN.length < 32)) {
+  throw new Error("PERFORMANCE_METRICS_TOKEN must be configured with at least 32 characters in production");
+}
+
+const monitoringTokenAllowed = (req: Request): boolean => {
+  if (NODE_ENV !== "production") return true;
+  const supplied = req.get("x-monitoring-token") || req.get("authorization")?.replace(/^Bearer\s+/i, "");
+  return Boolean(PERFORMANCE_METRICS_TOKEN && supplied === PERFORMANCE_METRICS_TOKEN);
+};
+
+// Public load-balancer probes deliberately expose no dependency names,
+// regions, pool sizes or provider details. Detailed diagnostics live behind
+// the monitoring token below.
 app.get("/livez", (_req: Request, res: Response) => {
-  return res.status(200).json({ success: true, status: "alive", timestamp: new Date().toISOString(), uptimeSeconds: Math.round(process.uptime()) });
+  return res.status(200).json({ success: true, status: "alive" });
 });
 
-// Readiness requires the source-of-truth database. Redis is deliberately
-// reported as degraded rather than fatal because every cache path has a DB
-// fallback. This prevents a cache outage from causing a restart storm.
 app.get("/readyz", async (_req: Request, res: Response) => {
   const checks = await dependencyHealth();
   const infrastructure = getInfrastructureAlignment();
@@ -197,15 +206,18 @@ app.get("/readyz", async (_req: Request, res: Response) => {
   return res.status(ready ? 200 : 503).json({
     success: ready,
     status: ready ? (degraded ? "degraded" : "ready") : "not-ready",
-    timestamp: new Date().toISOString(),
-    checks,
-    infrastructure,
   });
 });
 
-// Backward-compatible health endpoint. Keep existing monitors working while
-// deployment health checks move to /livez and /readyz.
 app.get("/health", async (_req: Request, res: Response) => {
+  const checks = await dependencyHealth();
+  const infrastructure = getInfrastructureAlignment();
+  const ready = checks.database.ok && (!infrastructure.enforcementEnabled || infrastructure.aligned);
+  return res.status(ready ? 200 : 503).json({ success: ready, status: ready ? "ok" : "not-ready" });
+});
+
+app.get("/health/details", async (req: Request, res: Response) => {
+  if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
   const checks = await dependencyHealth();
   const infrastructure = getInfrastructureAlignment();
   const ready = checks.database.ok && (!infrastructure.enforcementEnabled || infrastructure.aligned);
@@ -215,15 +227,17 @@ app.get("/health", async (_req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     checks,
     infrastructure,
+    databasePool: {
+      min: DB_POOL_MIN,
+      max: DB_POOL_MAX,
+      idleTimeoutMs: DB_POOL_IDLE_TIMEOUT_MS,
+      connectionTimeoutMs: DB_POOL_CONNECTION_TIMEOUT_MS,
+    },
   });
 });
 
 app.get("/health/performance", (req: Request, res: Response) => {
-  const supplied = req.get("x-monitoring-token") || req.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (NODE_ENV === "production" && (!PERFORMANCE_METRICS_TOKEN || supplied !== PERFORMANCE_METRICS_TOKEN)) {
-    return res.status(404).json({ success: false, message: "Not found" });
-  }
-
+  if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
   return res.status(200).json({
     success: true,
     data: {
@@ -240,11 +254,7 @@ app.get("/health/performance", (req: Request, res: Response) => {
 });
 
 app.get("/health/website-routing", async (req: Request, res: Response) => {
-  const supplied = req.get("x-monitoring-token") || req.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (NODE_ENV === "production" && (!PERFORMANCE_METRICS_TOKEN || supplied !== PERFORMANCE_METRICS_TOKEN)) {
-    return res.status(404).json({ success: false, message: "Not found" });
-  }
-
+  if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
   const data = await inspectWebsiteWildcardInfrastructure();
   return res.status(data.ok ? 200 : 503).json({
     success: data.ok,

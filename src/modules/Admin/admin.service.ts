@@ -749,6 +749,7 @@ const reportOnboardingClientError = async (
       section: payload.section,
       componentStack: payload.componentStack ?? null,
       serverReleaseVersion: RELEASE_VERSION,
+      relatedTraceId: payload.relatedTraceId ?? null,
     },
   });
 };

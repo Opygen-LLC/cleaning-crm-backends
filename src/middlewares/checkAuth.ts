@@ -13,6 +13,7 @@ import {
     getRuntimeUserStatus,
 } from "../lib/cache/authRuntimeCache";
 import { privateResponseCache } from "./privateResponseCache";
+import { recordTraceSpan } from "../lib/monitoring/requestTrace";
 
 // Browser authentication is cookie-first. Authorization: Bearer remains
 // supported for explicit server-to-server/integration callers, but cannot
@@ -31,6 +32,7 @@ const getAccessTokenFromRequest = (req: Request): string | undefined => {
 export const checkAuth =
     (...authRoles: UserRole[]) =>
     async (req: Request, res: Response, next: NextFunction) => {
+        const authStarted = process.hrtime.bigint();
         try {
             const accessToken = getAccessTokenFromRequest(req);
 
@@ -164,5 +166,7 @@ export const checkAuth =
             await privateResponseCache(req, res, next);
         } catch (error) {
             next(error);
+        } finally {
+            recordTraceSpan("auth", Number(process.hrtime.bigint() - authStarted) / 1_000_000, "auth.middleware");
         }
     };

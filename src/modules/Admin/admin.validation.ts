@@ -81,6 +81,7 @@ const onboardingClientErrorSchema = z
     route: z.string().trim().min(1).max(800),
     releaseVersion: z.string().trim().min(1).max(160),
     apiRequestId: z.string().trim().max(160).nullable().optional(),
+    relatedTraceId: z.string().trim().regex(/^[0-9a-f]{32}$/i).nullable().optional(),
     browser: z.string().trim().min(1).max(600),
     bootstrapSchemaVersion: z.number().int().min(1).max(1000),
     section: z.enum(["route", "active-step", "preview", "bootstrap"]),

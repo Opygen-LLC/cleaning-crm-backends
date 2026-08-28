@@ -72,6 +72,7 @@ interface DashboardOverviewQuery {
   status?: string;
   search?: string;
   limit?: string | number;
+  includeRevenueInsight?: string | boolean;
 }
 
 /**
@@ -90,9 +91,10 @@ const getDashboardOverview = async (
   const statusEnum = mapStatusToEnum(query?.status);
   const search = query?.search?.trim();
   const takeLimit = Math.min(50, Math.max(1, Number(query?.limit) || 10));
+  const includeRevenueInsight = query?.includeRevenueInsight !== false && query?.includeRevenueInsight !== "false";
 
   const filterHash = createHash("sha1")
-    .update(JSON.stringify({ status: statusEnum ?? "all", search: search ?? "", limit: takeLimit }))
+    .update(JSON.stringify({ status: statusEnum ?? "all", search: search ?? "", limit: takeLimit, includeRevenueInsight }))
     .digest("hex")
     .slice(0, 12);
   const cacheKey = CacheNamespaces.dashboardSummary(adminId, `${period}:${filterHash}`);
@@ -156,7 +158,7 @@ const getDashboardOverview = async (
           FROM "recurring_schedule" rs WHERE rs."adminId" = ${adminId} AND rs.status = 'ACTIVE') AS "monthlyRecurringValue",
         (SELECT ap.currency::text FROM "AdminProfile" ap WHERE ap.id = ${adminId} LIMIT 1) AS currency
     `,
-    prisma.$queryRaw<ChartRow[]>`
+    includeRevenueInsight ? prisma.$queryRaw<ChartRow[]>`
       SELECT bucket,
              COALESCE(SUM(revenue), 0) AS revenue,
              COALESCE(SUM("jobsCompleted"), 0)::bigint AS "jobsCompleted",
@@ -182,7 +184,7 @@ const getDashboardOverview = async (
       ) metrics
       GROUP BY bucket
       ORDER BY bucket
-    `,
+    ` : Promise.resolve([] as ChartRow[]),
     prisma.booking.findMany({
       where: recentBookingsWhere,
       orderBy: { createdAt: "desc" },
@@ -306,6 +308,93 @@ const getDashboardOverview = async (
   };
 
   await redis.setex(cacheKey, ttlForKey(CacheTtl.dashboardSummary, cacheKey), JSON.stringify(result)).catch(() => {});
+  return result;
+};
+
+
+const getDashboardRevenueInsight = async (
+  user: IRequestUser | string,
+  period = "30d",
+) => {
+  const adminId = typeof user === "string" ? user : await getAdminId(user);
+  const safePeriod = ["7d", "30d", "90d", "12m"].includes(period) ? period : "30d";
+  const cacheKey = `dashboard:revenue-insight:${adminId}:${safePeriod}`;
+  const cached = await redis.get(cacheKey).catch(() => null);
+  if (cached) {
+    try { return JSON.parse(cached); } catch { /* rebuild corrupt cache */ }
+  }
+
+  const now = new Date();
+  const days = safePeriod === "7d" ? 7 : safePeriod === "90d" ? 90 : safePeriod === "12m" ? 365 : 30;
+  const periodStart = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  const bucketUnit: "day" | "month" = safePeriod === "90d" || safePeriod === "12m" ? "month" : "day";
+  type ChartRow = { bucket: Date; revenue: string | number | null; jobsCompleted: bigint | number; newClients: bigint | number };
+
+  const chartRows = await prisma.$queryRaw<ChartRow[]>`
+    SELECT bucket,
+           COALESCE(SUM(revenue), 0) AS revenue,
+           COALESCE(SUM("jobsCompleted"), 0)::bigint AS "jobsCompleted",
+           COALESCE(SUM("newClients"), 0)::bigint AS "newClients"
+    FROM (
+      SELECT date_trunc(${bucketUnit}, i."paidDate") AS bucket,
+             SUM(i.total) AS revenue, 0::bigint AS "jobsCompleted", 0::bigint AS "newClients"
+      FROM "invoice" i
+      WHERE i."adminId" = ${adminId} AND i.status = 'PAID' AND i."paidDate" BETWEEN ${periodStart} AND ${now}
+      GROUP BY 1
+      UNION ALL
+      SELECT date_trunc(${bucketUnit}, j."updatedAt") AS bucket,
+             0::numeric AS revenue, COUNT(*)::bigint AS "jobsCompleted", 0::bigint AS "newClients"
+      FROM "job" j
+      WHERE j."adminId" = ${adminId} AND j.status = 'COMPLETED' AND j."updatedAt" BETWEEN ${periodStart} AND ${now}
+      GROUP BY 1
+      UNION ALL
+      SELECT date_trunc(${bucketUnit}, c."createdAt") AS bucket,
+             0::numeric AS revenue, 0::bigint AS "jobsCompleted", COUNT(*)::bigint AS "newClients"
+      FROM "client" c
+      WHERE c."adminId" = ${adminId} AND c."createdAt" BETWEEN ${periodStart} AND ${now}
+      GROUP BY 1
+    ) metrics
+    GROUP BY bucket
+    ORDER BY bucket
+  `;
+
+  const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const revenueMap = new Map<string, { revenue: number; jobsCompleted: number; newClients: number }>();
+  const putEmpty = (label: string) => revenueMap.set(label, { revenue: 0, jobsCompleted: 0, newClients: 0 });
+  const dailyLabel = (d: Date) => safePeriod === "7d" ? DAYS[d.getDay()]! : `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  const monthLabel = (d: Date) => MONTHS[d.getMonth()]!;
+
+  if (safePeriod === "7d" || safePeriod === "30d") {
+    const points = safePeriod === "7d" ? 7 : 30;
+    for (let i = points - 1; i >= 0; i--) {
+      const d = new Date(now); d.setDate(now.getDate() - i); putEmpty(dailyLabel(d));
+    }
+  } else {
+    const points = safePeriod === "90d" ? 4 : 12;
+    for (let i = points - 1; i >= 0; i--) {
+      const d = new Date(now); d.setDate(1); d.setMonth(now.getMonth() - i); putEmpty(monthLabel(d));
+    }
+  }
+
+  for (const row of chartRows) {
+    if (!row.bucket) continue;
+    const d = new Date(row.bucket);
+    const label = bucketUnit === "month" ? monthLabel(d) : dailyLabel(d);
+    const entry = revenueMap.get(label) ?? { revenue: 0, jobsCompleted: 0, newClients: 0 };
+    entry.revenue += Number(row.revenue ?? 0);
+    entry.jobsCompleted += Number(row.jobsCompleted ?? 0);
+    entry.newClients += Number(row.newClients ?? 0);
+    revenueMap.set(label, entry);
+  }
+
+  const result = Array.from(revenueMap.entries()).map(([day, data]) => ({
+    day,
+    revenue: Math.round(data.revenue),
+    jobsCompleted: data.jobsCompleted,
+    newClients: data.newClients,
+  }));
+  await redis.setex(cacheKey, 300, JSON.stringify(result)).catch(() => {});
   return result;
 };
 
@@ -934,6 +1023,7 @@ const getStaffDashboard = async (userId: string) => {
 
 export const dashboardService = {
   getDashboardOverview,
+  getDashboardRevenueInsight,
   getRevenuePage,
   getStaffDashboard,
 };

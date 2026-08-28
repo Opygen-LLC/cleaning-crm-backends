@@ -39,6 +39,13 @@ router.get(
   dashboardController.getDashboardOverview,
 );
 
+
+router.get(
+  "/revenue-insight",
+  checkAuth(UserRole.ADMIN),
+  dashboardController.getDashboardRevenueInsight,
+);
+
 /**
  * GET /api/v1/dashboard/revenue?period=7d|30d|90d|12m
  * Revenue breakdown for the admin's revenue analytics page.

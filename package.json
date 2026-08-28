@@ -33,7 +33,7 @@
     "release:phase10:preflight": "pnpm run release:phase10:verify && pnpm run migrate:phase10-websites:dry-run",
     "test:phase1:onboarding": "vitest run src/modules/Auth/accountProvisioning.test.ts src/modules/Auth/auth.service.verifyEmail.test.ts src/modules/Admin/admin.service.onboarding.test.ts",
     "release:phase1:verify": "pnpm run test:phase1:onboarding && pnpm run typecheck",
-    "prebuild": "pnpm run check:repo-hygiene && pnpm run security:phase5 && pnpm run test:phase1:onboarding && pnpm run test:phase2:provisioning",
+    "prebuild": "pnpm run check:repo-hygiene && pnpm run security:phase5 && pnpm run test:phase1:onboarding && pnpm run test:phase2:provisioning && pnpm run observability:phase6",
     "db:migrate:dev": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:migrate:status": "prisma migrate status",
@@ -57,7 +57,10 @@
     "start:scheduler": "PROCESS_ROLE=scheduler node ./dist/scheduler.js",
     "start:bootstrap": "PROCESS_ROLE=bootstrap node ./dist/bootstrap.js",
     "security:phase5": "node scripts/verifyPhase5Security.mjs",
-    "release:phase5:verify": "pnpm run security:phase5 && pnpm run release:phase3:verify && pnpm run typecheck"
+    "release:phase5:verify": "pnpm run security:phase5 && pnpm run release:phase3:verify && pnpm run typecheck",
+    "observability:phase6": "node scripts/verifyPhase6Observability.mjs",
+    "release:phase6:verify": "pnpm run observability:phase6 && pnpm run test:phase6:observability && pnpm run release:phase5:verify && pnpm run typecheck",
+    "test:phase6:observability": "vitest run src/lib/monitoring/requestTrace.test.ts src/lib/monitoring/performanceMetrics.test.ts"
   },
   "keywords": [],
   "author": "opygen",

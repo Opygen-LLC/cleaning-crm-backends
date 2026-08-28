@@ -69,6 +69,7 @@ export interface OnboardingClientErrorPayload {
   route: string;
   releaseVersion: string;
   apiRequestId?: string | null;
+  relatedTraceId?: string | null;
   browser: string;
   bootstrapSchemaVersion: number;
   section: "route" | "active-step" | "preview" | "bootstrap";

@@ -1,5 +1,6 @@
 import { auth } from "../lib/auth";
 import logger from "../lib/logger";
+import { getRequestTrace, runWithRequestTrace, traceAsyncOperation } from "../lib/monitoring/requestTrace";
 import { prisma } from "../lib/prisma/prisma";
 import {
   NEXT_REVALIDATE_SECRET,
@@ -36,6 +37,17 @@ let processing = false;
 const normalizeError = (error: unknown) => {
   if (error instanceof Error) return error.message.slice(0, 2_000);
   return String(error).slice(0, 2_000);
+};
+
+const extractTraceMetadata = (payload: unknown): { traceId: string; requestId: string } | null => {
+  if (!payload || typeof payload !== "object") return null;
+  const trace = (payload as Record<string, unknown>)._trace;
+  if (!trace || typeof trace !== "object") return null;
+  const value = trace as Record<string, unknown>;
+  const traceId = typeof value.traceId === "string" ? value.traceId : "";
+  const requestId = typeof value.requestId === "string" ? value.requestId : "";
+  if (!/^[0-9a-f]{32}$/i.test(traceId) || !requestId || requestId.length > 128) return null;
+  return { traceId: traceId.toLowerCase(), requestId };
 };
 
 const claimBatch = async (): Promise<ClaimedOutboxEvent[]> => {
@@ -155,10 +167,14 @@ const deliverPublicWebsiteCacheInvalidation = async (payload: PublicWebsiteCache
 const processEvent = async (event: ClaimedOutboxEvent) => {
   switch (event.topic) {
     case AUTH_EMAIL_OUTBOX_TOPIC.EMAIL_VERIFICATION_REQUESTED:
-      await deliverVerificationEmail(parseVerificationPayload(event.payload));
+      await traceAsyncOperation("external", "email.verification-delivery", () =>
+        deliverVerificationEmail(parseVerificationPayload(event.payload)),
+      );
       return;
     case PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC.INVALIDATION_REQUESTED:
-      await deliverPublicWebsiteCacheInvalidation(parsePublicWebsiteCachePayload(event.payload));
+      await traceAsyncOperation("external", "frontend.cache-revalidation", () =>
+        deliverPublicWebsiteCacheInvalidation(parsePublicWebsiteCachePayload(event.payload)),
+      );
       return;
     default:
       throw new Error(`Unsupported outbox topic: ${event.topic}`);
@@ -209,12 +225,28 @@ export const processEmailOutboxOnce = async () => {
   try {
     const events = await claimBatch();
     for (const event of events) {
-      try {
-        await processEvent(event);
-        await markProcessed(event.id);
-      } catch (error) {
-        await markFailed(event, error);
-      }
+      const execute = async () => {
+        try {
+          await processEvent(event);
+          await markProcessed(event.id);
+          const trace = getRequestTrace();
+          logger.info("outbox_event_processed", {
+            event: "outbox_event_processed",
+            outboxEventId: event.id,
+            topic: event.topic,
+            requestId: trace?.requestId ?? null,
+            traceId: trace?.traceId ?? null,
+            dbDurationMs: trace ? Math.round(trace.dbDurationMs * 10) / 10 : 0,
+            externalDurationMs: trace ? Math.round(trace.externalDurationMs * 10) / 10 : 0,
+          });
+        } catch (error) {
+          await markFailed(event, error);
+        }
+      };
+
+      const propagation = extractTraceMetadata(event.payload);
+      if (propagation) await runWithRequestTrace(propagation, execute);
+      else await execute();
     }
     return { claimed: events.length };
   } finally {

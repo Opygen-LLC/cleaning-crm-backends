@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { TURNSTILE_SECRET_KEY } from "../config/ENV";
+import { traceAsyncOperation } from "../lib/monitoring/requestTrace";
 
 const trapFields = ["companyWebsite", "website", "_gotcha", "fax"] as const;
 const MIN_FORM_AGE_MS = 750;
@@ -53,12 +54,16 @@ const guard = async (
     try {
       const form = new URLSearchParams({ secret: TURNSTILE_SECRET_KEY, response: token });
       if (req.ip) form.set("remoteip", req.ip);
-      const response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: form,
-        signal: AbortSignal.timeout(2500),
-      });
+      const response = await traceAsyncOperation(
+        "external",
+        "cloudflare.turnstile.verify",
+        () => fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: form,
+          signal: AbortSignal.timeout(2500),
+        }),
+      );
       const result = await response.json() as {
         success?: boolean;
         hostname?: string;

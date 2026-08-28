@@ -8,12 +8,14 @@ import {
 } from "../../config/ENV";
 import redis from "../../config/redis";
 import logger from "../logger";
+import { traceAsyncOperation } from "./requestTrace";
 
 interface MonitorEvent {
   level: "error" | "warning";
   source: "backend" | "public-website" | "dashboard-client";
   message: string;
   requestId?: string | null;
+  traceId?: string | null;
   path?: string | null;
   method?: string | null;
   statusCode?: number | null;
@@ -106,25 +108,27 @@ const post = async (event: MonitorEvent): Promise<void> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1500);
   try {
-    await fetch(ERROR_MONITOR_WEBHOOK_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(ERROR_MONITOR_WEBHOOK_TOKEN
-          ? { Authorization: `Bearer ${ERROR_MONITOR_WEBHOOK_TOKEN}` }
-          : {}),
-      },
-      body: JSON.stringify({
-        service: ERROR_MONITOR_SERVICE_NAME,
-        environment: NODE_ENV || "unknown",
-        timestamp: new Date().toISOString(),
-        ...event,
-        message: trim(event.message, 1000),
-        stack: trim(event.stack, 6000),
-        path: sanitizePath(event.path),
+    await traceAsyncOperation("external", "monitoring.webhook", () =>
+      fetch(ERROR_MONITOR_WEBHOOK_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(ERROR_MONITOR_WEBHOOK_TOKEN
+            ? { Authorization: `Bearer ${ERROR_MONITOR_WEBHOOK_TOKEN}` }
+            : {}),
+        },
+        body: JSON.stringify({
+          service: ERROR_MONITOR_SERVICE_NAME,
+          environment: NODE_ENV || "unknown",
+          timestamp: new Date().toISOString(),
+          ...event,
+          message: trim(event.message, 1000),
+          stack: trim(event.stack, 6000),
+          path: sanitizePath(event.path),
+        }),
+        signal: controller.signal,
       }),
-      signal: controller.signal,
-    });
+    );
   } catch (error) {
     // Monitoring must never create a second application failure loop.
     if (NODE_ENV === "development") {
@@ -147,12 +151,20 @@ const capturePublicWebsiteError = async (event: Omit<MonitorEvent, "source" | "l
 const captureDashboardClientError = async (event: Omit<MonitorEvent, "source" | "level">) => {
   const normalized: MonitorEvent = { ...event, source: "dashboard-client", level: "error" };
   if (!await shouldSendDashboardClientError(normalized)) return;
-  logger.error(
-    `[dashboard-client-error] route=${sanitizePath(normalized.path) ?? "/"} ` +
-    `section=${String(normalized.metadata?.section ?? "unknown")} ` +
-    `user=${normalized.userIdHash ?? "unknown"} tenant=${normalized.tenantIdHash ?? "unknown"} ` +
-    `release=${normalized.releaseVersion ?? "unknown"} message=${trim(normalized.message, 400) ?? "unknown"}`,
-  );
+  logger.error("dashboard_client_error", {
+    event: "dashboard_client_error",
+    route: sanitizePath(normalized.path) ?? "/",
+    section: String(normalized.metadata?.section ?? "unknown"),
+    userHash: normalized.userIdHash ?? null,
+    tenantHash: normalized.tenantIdHash ?? null,
+    releaseSha: normalized.releaseVersion ?? "unknown",
+    requestId: normalized.requestId ?? null,
+    traceId: normalized.traceId ?? normalized.metadata?.traceId ?? null,
+    relatedTraceId: normalized.metadata?.relatedTraceId ?? null,
+    apiRequestId: normalized.apiRequestId ?? null,
+    digest: normalized.digest ?? null,
+    errorMessage: trim(normalized.message, 400) ?? "unknown",
+  });
   await post(normalized);
 };
 

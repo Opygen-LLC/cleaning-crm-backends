@@ -34,6 +34,7 @@ import { websiteRoutes } from "../modules/Website/website.routes";
 import { publicWebsiteRoutes } from "../modules/Website/publicWebsite.routes";
 import { checkSubscription } from "../middlewares/checkSubscription";
 import express from "express";
+import { telemetryRoutes } from "../modules/Telemetry/telemetry.routes";
 
 const router = Router();
 
@@ -49,6 +50,7 @@ const openRoutes: { path: string; route: Router }[] = [
     { path: "/quote/public",    route: quotePublicRoutes },
     { path: "/website/public", route: publicWebsiteRoutes },
     { path: "/super-admin",     route: superAdminRoutes },
+    { path: "/telemetry",       route: telemetryRoutes },
 ];
 
 // ─── Gated routes (subscription required) ────────────────────────────────────

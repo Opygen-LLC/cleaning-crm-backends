@@ -64,3 +64,8 @@ The API container never runs migrations, seeds, cron schedules, or the email out
 ## Credential rotation
 
 The historical project archive contained a populated `.env`. If that archive was shared outside the trusted deployment environment, rotate database, JWT/auth, SMTP, Cloudinary and third-party credentials before this release and store the new values only in Google Secret Manager.
+
+
+## Phase 6 observability
+
+Use [`deploy/gcp/OBSERVABILITY.md`](./OBSERVABILITY.md) for Cloud Logging field contracts, p50/p95/p99 dashboards, trace correlation, protected diagnostic endpoints, and alert policies. Set `RELEASE_VERSION` to the deployed Git SHA and keep `PERFORMANCE_METRICS_TOKEN` in Google Secret Manager. Load balancers/uptime checks should use only `/livez` and `/readyz`.

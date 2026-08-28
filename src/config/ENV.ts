@@ -32,10 +32,6 @@ export const API_RESPONSE_CACHE_TTL_SECONDS: number = Math.max(
 export const WEBSITE_STUDIO_CACHE_TTL_SECONDS: number = Math.min(300, Math.max(15,
     Number(process.env.WEBSITE_STUDIO_CACHE_TTL_SECONDS) || 60,
 ));
-export const REQUEST_LOG_SAMPLE_RATE: number = Math.min(
-    1,
-    Math.max(0, Number(process.env.REQUEST_LOG_SAMPLE_RATE ?? 0.01)),
-);
 export const SLOW_REQUEST_THRESHOLD_MS: number = Math.max(
     50,
     Number(process.env.SLOW_REQUEST_THRESHOLD_MS) || 250,

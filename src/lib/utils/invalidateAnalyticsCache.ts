@@ -16,6 +16,7 @@ export const invalidateAnalyticsCache = (adminId: string): void => {
       // Rolling-deploy compatibility with pre-Phase-9 workers.
       `dashboard:overview:${adminId}:*`,
       `dashboard:revenue:${adminId}:*`,
+      `dashboard:revenue-insight:${adminId}:*`,
       `reports:*:${adminId}:*`,
     ];
 

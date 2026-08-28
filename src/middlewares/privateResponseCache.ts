@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from "express";
 import redis from "../config/redis";
 import { API_RESPONSE_CACHE_TTL_SECONDS } from "../config/ENV";
 import logger from "../lib/logger";
+import { recordTraceResponseCache } from "../lib/monitoring/requestTrace";
 
 interface CachedResponse {
   body: string;
@@ -153,10 +154,12 @@ export async function privateResponseCache(
   const sharedRaw = await redis.get(key).catch(() => null);
   const shared = sharedRaw ? parseSharedEntry(sharedRaw) : null;
   if (shared) {
+    recordTraceResponseCache("hit");
     sendHit(req, res, shared);
     return;
   }
 
+  recordTraceResponseCache("miss");
   res.setHeader("X-Response-Cache", "MISS");
   res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
   const originalSend = res.send.bind(res);

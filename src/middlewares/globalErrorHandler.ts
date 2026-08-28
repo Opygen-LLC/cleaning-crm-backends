@@ -6,7 +6,7 @@ import { TErrorResponse, TErrorSources, TFieldErrors } from "../interface/error.
 import AppError from "../errorHelper/AppError";
 import { handleZodError } from "../errorHelper/handleZodError";
 import { Prisma } from "../generated/prisma/client";
-import { NODE_ENV } from "../config/ENV";
+import { NODE_ENV, RELEASE_VERSION } from "../config/ENV";
 import {
     handlePrismaClientKnownRequestError,
     handlePrismaClientUnknownError,
@@ -132,22 +132,36 @@ export const globalErrorHandler = async (
     const requestId = getRequestId(req, res);
     res.setHeader("X-Request-Id", requestId);
 
-    const logMessage = `[${requestId}] ${req.method} ${req.path} -> ${statusCode} ${code}: ${
-        err instanceof Error ? err.stack ?? err.message : String(err)
-    }`;
+    const traceId = typeof res.locals.traceId === "string" ? res.locals.traceId : null;
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    const monitoredMessage = NODE_ENV === "production" ? message : errorMessage;
+    const errorStack = err instanceof Error ? err.stack ?? null : null;
     if (statusCode >= 500) {
-        logger.error(logMessage);
-        void ErrorMonitor.captureBackendError({
-            message: err instanceof Error ? err.message : String(err),
+        logger.error("http_error", {
+            event: "http_error",
             requestId,
+            traceId,
+            route: req.path,
+            method: req.method,
+            statusCode,
+            code,
+            releaseSha: RELEASE_VERSION,
+            errorMessage: monitoredMessage,
+            stack: NODE_ENV === "development" ? errorStack : undefined,
+        });
+        void ErrorMonitor.captureBackendError({
+            message: monitoredMessage,
+            requestId,
+            traceId,
             path: req.originalUrl || req.path,
             method: req.method,
             statusCode,
             code,
-            stack: err instanceof Error ? err.stack ?? null : null,
+            stack: errorStack,
+            releaseVersion: RELEASE_VERSION,
         });
     } else if (NODE_ENV === "development") {
-        logger.warn(logMessage);
+        logger.warn("http_client_error", { requestId, traceId, method: req.method, route: req.path, statusCode, code, errorMessage });
     }
 
     const errorResponse: TErrorResponse = {

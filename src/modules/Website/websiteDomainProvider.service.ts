@@ -11,6 +11,7 @@ import {
   WEBSITE_DOMAIN_PROVIDER,
   WEBSITE_TLS_PROBE_TIMEOUT_MS,
 } from "../../config/ENV";
+import { traceAsyncOperation } from "../../lib/monitoring/requestTrace";
 
 export type WebsiteProviderName = "VERCEL" | "MANUAL";
 export type WebsiteTlsStatus = "PENDING" | "PROVISIONING" | "READY" | "EXTERNAL" | "ERROR";
@@ -132,16 +133,20 @@ const vercelRequest = async <T>(path: string, init: RequestInit = {}, allow404 =
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);
   try {
-    const response = await fetch(`https://api.vercel.com${path}`, {
-      ...init,
-      signal: controller.signal,
-      headers: {
-        Authorization: `Bearer ${VERCEL_ACCESS_TOKEN}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...(init.headers ?? {}),
-      },
-    });
+    const response = await traceAsyncOperation(
+      "external",
+      "vercel.domain-api",
+      () => fetch(`https://api.vercel.com${path}`, {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${VERCEL_ACCESS_TOKEN}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...(init.headers ?? {}),
+        },
+      }),
+    );
 
     let body: any = null;
     try {

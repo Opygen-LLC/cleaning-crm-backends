@@ -1,8 +1,8 @@
+import { createHash } from "node:crypto";
 import { Request, Response, NextFunction } from "express";
 import logger from "../lib/logger";
 import {
-  NODE_ENV,
-  REQUEST_LOG_SAMPLE_RATE,
+  RELEASE_VERSION,
   SLOW_REQUEST_THRESHOLD_MS,
 } from "../config/ENV";
 import { recordRequestMetric } from "../lib/monitoring/performanceMetrics";
@@ -13,34 +13,46 @@ const compactPath = (req: Request): string => {
   const routePath = typeof req.route?.path === "string" ? req.route.path : "";
   if (routePath) return `${base}${routePath}` || "/";
 
-  // Fallback for middleware/not-found paths. Redact ids to keep the metrics
-  // bucket count bounded and avoid exposing tenant/customer identifiers.
   return req.path
     .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, ":id")
     .replace(/\/[0-9]{2,}(?=\/|$)/g, "/:id")
     .slice(0, 300);
 };
 
+const hashIdentity = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  return createHash("sha256").update(`observability:v1:${value}`).digest("hex").slice(0, 20);
+};
+
+const round = (value: number) => Math.round(value * 10) / 10;
+
 const logRequestResponse = (
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) => {
   const start = process.hrtime.bigint();
+  // Keep a direct reference to the mutable ALS trace state. Some Node/Express
+  // event-emitter callbacks can execute outside the active ALS lookup context;
+  // the object itself remains valid and continues accumulating timings.
+  const requestTrace = getRequestTrace();
   const originalSend = res.send.bind(res);
   let durationMs = 0;
   let routeLabel: string | null = null;
 
   res.send = ((body: unknown) => {
     durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
-    const rounded = Math.round(durationMs * 10) / 10;
+    const rounded = round(durationMs);
     routeLabel = compactPath(req);
     if (!res.headersSent) {
-      const trace = getRequestTrace();
+      const trace = getRequestTrace() ?? requestTrace;
       const timings = [`app;dur=${rounded}`];
       if (trace) {
-        timings.push(`db;dur=${Math.round(trace.dbDurationMs * 10) / 10}`);
-        timings.push(`redis;dur=${Math.round(trace.redisDurationMs * 10) / 10}`);
+        timings.push(`auth;dur=${round(trace.authDurationMs)}`);
+        timings.push(`db;dur=${round(trace.dbDurationMs)}`);
+        timings.push(`redis;dur=${round(trace.redisDurationMs)}`);
+        if (trace.queueDurationMs > 0) timings.push(`queue;dur=${round(trace.queueDurationMs)}`);
+        if (trace.externalDurationMs > 0) timings.push(`external;dur=${round(trace.externalDurationMs)}`);
       }
       res.setHeader("X-Response-Time", `${rounded}ms`);
       const existingServerTiming = res.getHeader("Server-Timing");
@@ -51,7 +63,7 @@ const logRequestResponse = (
           : "";
       res.setHeader(
         "Server-Timing",
-        [existingTimings, ...timings].filter(Boolean).join(", ")
+        [existingTimings, ...timings].filter(Boolean).join(", "),
       );
     }
     return originalSend(body);
@@ -59,26 +71,60 @@ const logRequestResponse = (
 
   res.once("finish", () => {
     if (!durationMs) durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
-    const rounded = Math.round(durationMs * 10) / 10;
+    const rounded = round(durationMs);
     const route = routeLabel ?? compactPath(req);
-    recordRequestMetric({ method: req.method, route, statusCode: res.statusCode, durationMs });
+    const trace = getRequestTrace() ?? requestTrace;
 
-    const shouldLog =
-      NODE_ENV !== "production" ||
-      durationMs >= SLOW_REQUEST_THRESHOLD_MS ||
-      res.statusCode >= 500 ||
-      req.method !== "GET" ||
-      Math.random() < REQUEST_LOG_SAMPLE_RATE;
+    recordRequestMetric({
+      method: req.method,
+      route,
+      statusCode: res.statusCode,
+      durationMs,
+      dbDurationMs: trace?.dbDurationMs,
+      dbQueryCount: trace?.dbQueryCount,
+      redisDurationMs: trace?.redisDurationMs,
+      redisHits: trace?.redisHits,
+      redisMisses: trace?.redisMisses,
+      authDurationMs: trace?.authDurationMs,
+      cacheHits: trace?.responseCacheHits,
+      cacheMisses: trace?.responseCacheMisses,
+    });
 
-    if (!shouldLog) return;
-
-    const trace = getRequestTrace();
     const level = durationMs >= SLOW_REQUEST_THRESHOLD_MS || res.statusCode >= 500 ? "warn" : "info";
-    const requestId =
-      typeof res.locals.requestId === "string" ? res.locals.requestId : "no-request-id";
-    const db = trace ? `${trace.dbQueryCount}q/${Math.round(trace.dbDurationMs * 10) / 10}ms` : "n/a";
-    const cache = trace ? `${trace.redisCommandCount}cmd/${Math.round(trace.redisDurationMs * 10) / 10}ms` : "n/a";
-    logger[level](`[${requestId}] ${req.method} ${route} ${res.statusCode} - ${rounded}ms db=${db} redis=${cache}`);
+    const requestId = trace?.requestId ?? (typeof res.locals.requestId === "string" ? res.locals.requestId : "unknown");
+    const traceId = trace?.traceId ?? (typeof res.locals.traceId === "string" ? res.locals.traceId : "unknown");
+    const tenantId = req.user?.adminId ?? req.user?.id ?? null;
+    const userId = req.user?.id ?? null;
+    const cacheAttempts = (trace?.responseCacheHits ?? 0) + (trace?.responseCacheMisses ?? 0);
+    const redisAttempts = (trace?.redisHits ?? 0) + (trace?.redisMisses ?? 0);
+
+    logger.log(level, "http_request", {
+      event: "http_request",
+      route,
+      method: req.method,
+      statusCode: res.statusCode,
+      totalDurationMs: rounded,
+      dbDurationMs: round(trace?.dbDurationMs ?? 0),
+      dbQueryCount: trace?.dbQueryCount ?? 0,
+      redisDurationMs: round(trace?.redisDurationMs ?? 0),
+      redisCommandCount: trace?.redisCommandCount ?? 0,
+      redisHits: trace?.redisHits ?? 0,
+      redisMisses: trace?.redisMisses ?? 0,
+      redisErrors: trace?.redisErrors ?? 0,
+      redisHitRate: redisAttempts > 0 ? round(((trace?.redisHits ?? 0) / redisAttempts) * 100) : null,
+      responseCacheHits: trace?.responseCacheHits ?? 0,
+      responseCacheMisses: trace?.responseCacheMisses ?? 0,
+      responseCacheHitRate: cacheAttempts > 0 ? round(((trace?.responseCacheHits ?? 0) / cacheAttempts) * 100) : null,
+      authDurationMs: round(trace?.authDurationMs ?? 0),
+      queueDurationMs: round(trace?.queueDurationMs ?? 0),
+      externalDurationMs: round(trace?.externalDurationMs ?? 0),
+      requestId,
+      traceId,
+      userHash: hashIdentity(userId),
+      tenantHash: hashIdentity(tenantId),
+      releaseSha: RELEASE_VERSION,
+      processRole: process.env.PROCESS_ROLE || "api",
+    });
   });
 
   next();

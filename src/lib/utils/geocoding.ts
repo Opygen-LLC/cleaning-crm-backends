@@ -22,6 +22,7 @@ import {
     MAPBOX_ACCESS_TOKEN,
 } from "../../config/ENV";
 import logger from "../logger";
+import { traceAsyncOperation } from "../monitoring/requestTrace";
 
 export interface GeocodeResult {
     latitude: number;
@@ -135,17 +136,18 @@ export const geocodeAddressSafely = async (
 
     try {
         if (GEOCODING_PROVIDER === "google") {
-            return await geocodeWithGoogle(trimmed);
+            return await traceAsyncOperation("external", "geocoding.google", () => geocodeWithGoogle(trimmed));
         }
         if (GEOCODING_PROVIDER === "mapbox") {
-            return await geocodeWithMapbox(trimmed);
+            return await traceAsyncOperation("external", "geocoding.mapbox", () => geocodeWithMapbox(trimmed));
         }
         return null;
     } catch (err) {
-        logger.warn(
-            `[GEOCODING] Failed to geocode "${trimmed}" via ${GEOCODING_PROVIDER}`,
-            err,
-        );
+        logger.warn("geocoding_provider_failure", {
+            event: "external_provider_failure",
+            provider: GEOCODING_PROVIDER,
+            errorMessage: err instanceof Error ? err.message : String(err),
+        });
         return null;
     }
 };

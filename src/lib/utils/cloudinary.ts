@@ -1,5 +1,6 @@
 import { v2 as cloudinary } from "cloudinary";
 import { UploadApiOptions } from "cloudinary";
+import { traceAsyncOperation } from "../monitoring/requestTrace";
 
 /**
  * Uploads a single file to Cloudinary
@@ -11,7 +12,7 @@ export const uploadToCloudinary = async (
   fileBuffer: Buffer,
   options?: UploadApiOptions
 ): Promise<any> => {
-  return new Promise((resolve, reject) => {
+  return traceAsyncOperation("external", "cloudinary.upload", () => new Promise((resolve, reject) => {
     const uploadOptions: UploadApiOptions = {
       resource_type: "image",
       ...options,
@@ -26,7 +27,7 @@ export const uploadToCloudinary = async (
         }
       })
       .end(fileBuffer);
-  });
+  }));
 };
 
 /**
@@ -52,5 +53,5 @@ export const uploadMultipleToCloudinary = async (
  * @returns The result of the deletion
  */
 export const deleteFromCloudinary = async (publicId: string): Promise<any> => {
-  return cloudinary.uploader.destroy(publicId);
+  return traceAsyncOperation("external", "cloudinary.destroy", () => cloudinary.uploader.destroy(publicId));
 };

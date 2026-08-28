@@ -15,6 +15,7 @@ import { prisma } from "../lib/prisma/prisma";
 import AppError from "../errorHelper/AppError";
 import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import { CookieUtils } from "../lib/utils/cookie";
+import { recordTraceSpan } from "../lib/monitoring/requestTrace";
 import {
   normalizeSubscriptionPlanFeatures,
   type SubscriptionPlanFeature,
@@ -134,6 +135,7 @@ export const checkSubscription = async (
   _res: Response,
   next: NextFunction,
 ): Promise<void> => {
+  const authStarted = process.hrtime.bigint();
   try {
     const accessToken = getAccessToken(req);
     if (!accessToken) return next();
@@ -230,6 +232,12 @@ export const checkSubscription = async (
     next();
   } catch (error) {
     next(error);
+  } finally {
+    recordTraceSpan(
+      "auth",
+      Number(process.hrtime.bigint() - authStarted) / 1_000_000,
+      "auth.subscription-gate",
+    );
   }
 };
 
