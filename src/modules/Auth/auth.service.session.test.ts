@@ -29,6 +29,7 @@ const snapshot = {
   name: "Jamie Doe",
   email: "jamie@example.com",
   emailVerified: true,
+  image: "https://cdn.example.com/jamie.jpg",
   role: "ADMIN",
   status: "ACTIVE",
   needPasswordChange: false,
@@ -48,7 +49,7 @@ describe("canonical auth session snapshot", () => {
     expect(mocks.queryRaw).toHaveBeenCalledOnce();
     expect(result).toMatchObject({
       authenticated: true,
-      user: { id: "user-1", role: "ADMIN", status: "ACTIVE", emailVerified: true },
+      user: { id: "user-1", role: "ADMIN", status: "ACTIVE", emailVerified: true, image: "https://cdn.example.com/jamie.jpg" },
       onboarding: { completed: false, currentStep: "services" },
       needPasswordChange: false,
       session: { expiresAt: expect.any(Date) },

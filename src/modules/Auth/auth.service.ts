@@ -325,6 +325,7 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
         name: string;
         email: string;
         emailVerified: boolean;
+        image: string | null;
         role: UserRole;
         status: AccountStatus;
         needPasswordChange: boolean;
@@ -342,6 +343,7 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
             u.id,
             u.name,
             u.email,
+            u.image,
             u."emailVerified",
             u.role::text AS role,
             u.status::text AS status,
@@ -403,6 +405,7 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
             id: account.id,
             name: account.name,
             email: account.email,
+            image: account.image,
             role: account.role,
             status: account.status,
             emailVerified: account.emailVerified,
@@ -466,6 +469,7 @@ const getNewToken = async (
         name: string;
         email: string;
         emailVerified: boolean;
+        image: string | null;
         role: UserRole;
         status: AccountStatus;
         staffStatus: StaffStatus | null;

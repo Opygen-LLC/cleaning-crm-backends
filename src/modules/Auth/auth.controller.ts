@@ -74,6 +74,10 @@ const me = catchAsync(async (req, res) => {
 const session = catchAsync(async (req, res) => {
     const sessionToken = req.cookies["better-auth.session_token"];
     const result = await authService.session(req.user, sessionToken);
+    // The canonical session snapshot is user-specific security state and must
+    // never be cached by a CDN/BFF/shared intermediary.
+    res.setHeader("Cache-Control", "private, no-store");
+    res.vary("Cookie");
     sendResponse(res, {
         httpStatusCode: httpStatus.OK,
         success: true,

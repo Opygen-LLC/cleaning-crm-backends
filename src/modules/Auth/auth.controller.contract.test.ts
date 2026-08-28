@@ -9,15 +9,17 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./auth.service", () => ({ default: mocks }));
 import authController from "./auth.controller";
 
-type Captured = { statusCode: number; body: unknown; cookies: Array<{name:string;value:string;options:Record<string,unknown>}>; cleared: Array<{name:string;options:Record<string,unknown>}> };
+type Captured = { statusCode: number; body: unknown; cookies: Array<{name:string;value:string;options:Record<string,unknown>}>; cleared: Array<{name:string;options:Record<string,unknown>}>; headers: Record<string,string> };
 const makeResponse = () => {
-    const captured: Captured = { statusCode: 200, body: undefined, cookies: [], cleared: [] };
+    const captured: Captured = { statusCode: 200, body: undefined, cookies: [], cleared: [], headers: {} };
     const res = {
         locals: {},
         status(code:number){ captured.statusCode=code; return this; },
         json(body:unknown){ captured.body=body; return this; },
         cookie(name:string,value:string,options:Record<string,unknown>){ captured.cookies.push({name,value,options}); return this; },
         clearCookie(name:string,options:Record<string,unknown>){ captured.cleared.push({name,options}); return this; },
+        setHeader(name:string,value:string){ captured.headers[name.toLowerCase()]=value; return this; },
+        vary(name:string){ captured.headers.vary = captured.headers.vary ? `${captured.headers.vary}, ${name}` : name; return this; },
     } as unknown as Response;
     return { res, captured };
 };
@@ -34,7 +36,7 @@ beforeEach(()=>{
     mocks.me.mockResolvedValue({ ...user, emailVerified:true });
     mocks.session.mockResolvedValue({
         authenticated: true,
-        user: { ...user, emailVerified: true },
+        user: { ...user, emailVerified: true, image: null },
         onboarding: { completed: false, currentStep: "business_profile" },
         needPasswordChange: false,
         session: { expiresAt: new Date("2026-10-01T00:00:00.000Z") },
@@ -77,11 +79,13 @@ describe("auth HTTP/controller contract",()=>{
             expect.objectContaining({id:"user-1",role:"ADMIN"}),
             "session-secret",
         );
+        expect(r.headers["cache-control"]).toBe("private, no-store");
+        expect(r.headers.vary).toBe("Cookie");
         expect(r.body).toMatchObject({
             success:true,
             data:{
                 authenticated:true,
-                user:{id:"user-1",emailVerified:true,status:"ACTIVE"},
+                user:{id:"user-1",emailVerified:true,status:"ACTIVE",image:null},
                 onboarding:{completed:false,currentStep:"business_profile"},
                 needPasswordChange:false,
                 session:{expiresAt:expect.any(Date)},
