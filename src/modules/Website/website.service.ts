@@ -436,12 +436,20 @@ const loadWebsiteEditorDetailsForAdmin = (
 ) => loadWebsiteDetailsWhere({ adminId }, db, { surface });
 
 const getLatestRevisionNumber = async (db: WebsiteDb, websiteId: string): Promise<number> => {
-  const website = await db.businessWebsite.findUnique({
-    where: { id: websiteId },
-    select: { draftRevisionNumber: true },
-  });
+  const [website, maxRevision] = await Promise.all([
+    db.businessWebsite.findUnique({
+      where: { id: websiteId },
+      select: { draftRevisionNumber: true },
+    }),
+    db.websiteRevision.aggregate({
+      where: { websiteId },
+      _max: { revisionNumber: true },
+    }),
+  ]);
   if (!website) throw new AppError(status.NOT_FOUND, "Business website not found");
-  return Number(website.draftRevisionNumber ?? 0);
+  const draftNum = Number(website.draftRevisionNumber ?? 0);
+  const maxNum = Number(maxRevision._max.revisionNumber ?? 0);
+  return Math.max(draftNum, maxNum);
 };
 
 const assertExpectedRevision = async (
