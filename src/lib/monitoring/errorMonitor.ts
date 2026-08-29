@@ -60,6 +60,7 @@ const shouldSendDashboardClientError = async (event: MonitorEvent): Promise<bool
       event.message,
       sanitizePath(event.path) ?? "",
       event.metadata?.section ? String(event.metadata.section) : "",
+      event.metadata?.onboardingStep ? String(event.metadata.onboardingStep) : "",
     ].join("|"))
     .digest("hex");
 
@@ -156,6 +157,9 @@ const captureDashboardClientError = async (event: Omit<MonitorEvent, "source" | 
     event: "dashboard_client_error",
     route: sanitizePath(normalized.path) ?? "/",
     section: String(normalized.metadata?.section ?? "unknown"),
+    errorName: String(normalized.metadata?.errorName ?? "Error"),
+    errorKind: String(normalized.metadata?.errorKind ?? "unknown"),
+    onboardingStep: normalized.metadata?.onboardingStep ?? null,
     userHash: normalized.userIdHash ?? null,
     tenantHash: normalized.tenantIdHash ?? null,
     releaseSha: normalized.releaseVersion ?? "unknown",

@@ -9,6 +9,7 @@ import status from "http-status";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { inferLegacyServiceType } from "../../lib/utils/serviceIdentity";
+import { normalizeServiceCategory } from "./serviceCatalog.contract";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import redis from "../../config/redis";
 import { CacheNamespaces, CacheTtl, ttlForKey } from "../../lib/cache/cachePolicy";
@@ -48,6 +49,11 @@ const invalidateServiceCatalogReadModels = async (adminId: string) => {
   ]);
 };
 
+const normalizeServiceForApi = <T extends { category: string }>(service: T) => ({
+  ...service,
+  category: normalizeServiceCategory(service.category),
+});
+
 const createServiceCatalog = async (
   payload: IServiceCatalogCreate,
   user: IRequestUser,
@@ -66,7 +72,7 @@ const createServiceCatalog = async (
     },
   });
   await invalidateServiceCatalogReadModels(adminId);
-  return created;
+  return normalizeServiceForApi(created);
 };
 
 
@@ -126,7 +132,7 @@ const bulkUpsertServiceCatalogs = async (
   );
 
   await invalidateServiceCatalogReadModels(adminId);
-  return result;
+  return result.map(normalizeServiceForApi);
 };
 
 const getAllServiceCatalogs = async (
@@ -139,21 +145,21 @@ const getAllServiceCatalogs = async (
   const needle = searchTerm?.trim().toLocaleLowerCase("en-GB") ?? "";
 
   return services.filter((service) => {
-    if (category && service.category !== category) return false;
+    if (category && normalizeServiceCategory(service.category) !== category) return false;
     if (serviceStatus && String(service.status).toUpperCase() !== String(serviceStatus).toUpperCase()) return false;
     if (!needle) return true;
     return (
       service.serviceName.toLocaleLowerCase("en-GB").includes(needle) ||
       service.description.toLocaleLowerCase("en-GB").includes(needle)
     );
-  });
+  }).map(normalizeServiceForApi);
 };
 
 const getServiceCatalogById = async (id: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const service = (await loadCanonicalServiceCatalog(adminId)).find((item) => item.id === id) ?? null;
   if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
-  return service;
+  return normalizeServiceForApi(service);
 };
 
 const updateServiceCatalog = async (
@@ -180,7 +186,7 @@ const updateServiceCatalog = async (
     },
   });
   await invalidateServiceCatalogReadModels(adminId);
-  return updated;
+  return normalizeServiceForApi(updated);
 };
 
 const deleteServiceCatalog = async (id: string, user: IRequestUser) => {
@@ -189,7 +195,7 @@ const deleteServiceCatalog = async (id: string, user: IRequestUser) => {
   if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
   const deleted = await prisma.serviceCatalog.delete({ where: { id } });
   await invalidateServiceCatalogReadModels(adminId);
-  return deleted;
+  return normalizeServiceForApi(deleted);
 };
 
 export const serviceCatalogService = {

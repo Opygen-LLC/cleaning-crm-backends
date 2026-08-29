@@ -76,6 +76,8 @@ const skipOnboardingStepSchema = z
 const onboardingClientErrorSchema = z
   .object({
     message: z.string().trim().min(1).max(1000),
+    errorName: z.string().trim().min(1).max(160),
+    errorKind: z.enum(["chunk-load", "api-contract", "type-error", "react-render", "unknown"]),
     stack: z.string().max(6000).nullable().optional(),
     digest: z.string().max(256).nullable().optional(),
     route: z.string().trim().min(1).max(800),
@@ -85,6 +87,7 @@ const onboardingClientErrorSchema = z
     browser: z.string().trim().min(1).max(600),
     bootstrapSchemaVersion: z.number().int().min(1).max(1000),
     section: z.enum(["route", "active-step", "preview", "bootstrap"]),
+    onboardingStep: z.enum(onboardingStepKeys).nullable().optional(),
     componentStack: z.string().max(6000).nullable().optional(),
   })
   .strict();

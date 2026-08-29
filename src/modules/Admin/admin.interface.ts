@@ -64,6 +64,8 @@ export interface CompleteOnboardingStepPayload {
 
 export interface OnboardingClientErrorPayload {
   message: string;
+  errorName: string;
+  errorKind: "chunk-load" | "api-contract" | "type-error" | "react-render" | "unknown";
   stack?: string | null;
   digest?: string | null;
   route: string;
@@ -73,5 +75,6 @@ export interface OnboardingClientErrorPayload {
   browser: string;
   bootstrapSchemaVersion: number;
   section: "route" | "active-step" | "preview" | "bootstrap";
+  onboardingStep?: OnboardingStepKey | null;
   componentStack?: string | null;
 }

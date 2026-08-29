@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ServiceStatus, ServiceType } from "../../generated/prisma/enums";
+import { SERVICE_CATEGORIES } from "./serviceCatalog.contract";
 
 const addOnInputSchema = z
     .object({
@@ -32,7 +33,7 @@ const serviceCatalogBaseSchema = z.object({
     // the API edge and never propagated into new internal code.
     basePriceGbp: z.number().nonnegative("Price must be non-negative").optional(),
     duration: z.string().trim().min(1, "Duration is required"),
-    category: z.string().trim().min(1, "Category is required"),
+    category: z.enum(SERVICE_CATEGORIES),
     status: z.nativeEnum(ServiceStatus).optional(),
     onlineBookingEnabled: z.boolean().optional(),
     addOns: z.array(addOnInputSchema).optional(),

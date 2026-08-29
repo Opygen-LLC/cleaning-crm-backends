@@ -17,6 +17,7 @@ import { WebsiteService } from "../Website/website.service";
 import { WEBSITE_BASE_DOMAIN, RELEASE_VERSION } from "../../config/ENV";
 import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
 import { AccountStatus, SubscriptionStatus } from "../../generated/prisma/enums";
+import { businessHoursSchema, type BusinessHours } from "./businessHours";
 import type {
   GettingStartedStepKey,
   LegacySkippableOnboardingStepKey,
@@ -574,7 +575,7 @@ export interface OnboardingBootstrapResult {
     businessEmail: string | null;
     mobileNumber: string | null;
     businessDescription: string | null;
-    businessHours: unknown;
+    businessHours: BusinessHours | null;
     address: string | null;
     city: string | null;
     postcode: string | null;
@@ -686,6 +687,19 @@ const getOnboardingBootstrap = async (userId: string): Promise<OnboardingBootstr
       ? REQUIRED_SETUP_KEYS.length
       : firstIncompleteIndex + 1;
   const savedAt = website.updatedAt > admin.updatedAt ? website.updatedAt : admin.updatedAt;
+  const parsedBusinessHours = admin.businessHours == null
+    ? { success: true as const, data: null }
+    : businessHoursSchema.safeParse(admin.businessHours);
+  const businessHours = parsedBusinessHours.success ? parsedBusinessHours.data : null;
+
+  if (!parsedBusinessHours.success) {
+    logger.warn("onboarding_legacy_business_hours_normalized", {
+      event: "onboarding_legacy_business_hours_normalized",
+      tenantHash: hashTelemetryId(admin.id),
+      releaseSha: RELEASE_VERSION,
+      issueCount: parsedBusinessHours.error.issues.length,
+    });
+  }
 
   return {
     user: {
@@ -704,7 +718,7 @@ const getOnboardingBootstrap = async (userId: string): Promise<OnboardingBootstr
       businessEmail: admin.businessEmail,
       mobileNumber: admin.mobileNumber,
       businessDescription: admin.businessDescription,
-      businessHours: admin.businessHours,
+      businessHours,
       address: admin.address,
       city: admin.city,
       postcode: admin.zipcode,
@@ -755,6 +769,9 @@ const reportOnboardingClientError = async (
     bootstrapSchemaVersion: payload.bootstrapSchemaVersion,
     metadata: {
       section: payload.section,
+      errorName: payload.errorName,
+      errorKind: payload.errorKind,
+      onboardingStep: payload.onboardingStep ?? null,
       componentStack: payload.componentStack ?? null,
       serverReleaseVersion: RELEASE_VERSION,
       relatedTraceId: payload.relatedTraceId ?? null,

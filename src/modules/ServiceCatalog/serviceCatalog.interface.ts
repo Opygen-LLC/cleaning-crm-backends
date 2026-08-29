@@ -1,4 +1,5 @@
 import { ServiceStatus, ServiceType } from "../../generated/prisma/enums";
+import type { ServiceCategory } from "./serviceCatalog.contract";
 
 export interface IServiceAddOn {
     name: string;
@@ -10,7 +11,7 @@ export interface IServiceCatalogCreate {
     description: string;
     basePrice: number;
     duration: string;
-    category: string;
+    category: ServiceCategory;
     status?: ServiceStatus;
     onlineBookingEnabled?: boolean;
     addOns?: IServiceAddOn[];
@@ -22,7 +23,7 @@ export interface IServiceCatalogUpdate {
     description?: string;
     basePrice?: number;
     duration?: string;
-    category?: string;
+    category?: ServiceCategory;
     status?: ServiceStatus;
     onlineBookingEnabled?: boolean;
     addOns?: IServiceAddOn[];
@@ -31,6 +32,6 @@ export interface IServiceCatalogUpdate {
 
 export interface IServiceCatalogFilters {
     searchTerm?: string;
-    category?: string;
+    category?: ServiceCategory;
     status?: ServiceStatus;
 }

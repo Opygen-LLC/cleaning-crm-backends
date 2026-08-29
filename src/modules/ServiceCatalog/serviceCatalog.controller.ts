@@ -33,7 +33,7 @@ const bulkUpsertServiceCatalogs = catchAsync(async (req, res) => {
 const getAllServiceCatalogs = catchAsync(async (req, res) => {
   const filters: IServiceCatalogFilters = {
     searchTerm: req.query.searchTerm as string,
-    category: req.query.category as string,
+    category: req.query.category as IServiceCatalogFilters["category"],
     status: req.query.status as ServiceStatus,
   };
 

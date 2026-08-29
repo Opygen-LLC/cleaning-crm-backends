@@ -258,6 +258,16 @@ describe("onboarding bootstrap contract", () => {
     }
   });
 
+  it("normalizes malformed legacy business hours instead of breaking onboarding", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(bootstrapRow({
+      businessHours: { monday: { isOpen: true, opensAt: "9am", closesAt: "5pm" } },
+    }));
+
+    const result = await adminService.getOnboardingBootstrap(USER_ID);
+
+    expect(result.profile.businessHours).toBeNull();
+  });
+
   it("resumes the same bootstrap step after refresh/login", async () => {
     db.adminProfile.findUnique.mockResolvedValue(bootstrapRow({
       onboardingCompletedSteps: ["business_profile", "branding", "services"],
