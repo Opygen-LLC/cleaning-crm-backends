@@ -1,12 +1,13 @@
 import cron from "node-cron";
 import { RecurringStatus, BookingStatus } from "../generated/prisma/enums";
+import type { Prisma } from "../generated/prisma/client";
 import { prisma } from "../lib/prisma/prisma";
 import { advanceNextRunAt } from "../modules/RecurringBooking/recurringBooking.service";
 import { fail, log } from "./index.cron";
 
 // ─── Booking ref generator (mirrors booking.service.ts) ───────────────────────
 
-export const generateBookingRef = async (tx: any): Promise<string> => {
+export const generateBookingRef = async (tx: Prisma.TransactionClient): Promise<string> => {
     const last = await tx.booking.findFirst({
         orderBy: { createdAt: "desc" },
         select: { bookingRef: true },
@@ -36,7 +37,7 @@ export interface RecurringBookingEngineResult {
  * this lets tests use vi.fn()-based stubs.
  */
 export const runRecurringBookingEngine = async (
-    prismaClient: any = prisma,
+    prismaClient: Pick<typeof prisma, "recurringSchedule" | "$transaction"> = prisma,
     now: Date = new Date(),
 ): Promise<RecurringBookingEngineResult> => {
     log("Running recurring booking engine...");
@@ -65,7 +66,7 @@ export const runRecurringBookingEngine = async (
 
     for (const schedule of dueSchedules) {
         try {
-            await prismaClient.$transaction(async (tx) => {
+            await prismaClient.$transaction(async (tx: Prisma.TransactionClient) => {
                 const bookingRef = await generateBookingRef(tx);
 
                 // Build the scheduledDate from the schedule's nextRunAt

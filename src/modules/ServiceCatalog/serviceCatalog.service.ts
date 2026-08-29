@@ -15,6 +15,7 @@ import redis from "../../config/redis";
 import { CacheNamespaces, CacheTtl, ttlForKey } from "../../lib/cache/cachePolicy";
 import { invalidateBookingFormsForAdmin } from "../BookingForm/bookingForm.cache";
 import { ServiceStatus } from "../../generated/prisma/enums";
+import type { Prisma } from "../../generated/prisma/client";
 
 
 const invalidateServiceCatalogCache = async (adminId: string) => {
@@ -56,7 +57,7 @@ const normalizeServiceForApi = <T extends { category: string }>(service: T) => (
 });
 
 export const syncServiceCatalogSelectionTx = async (
-  tx: any,
+  tx: Prisma.TransactionClient,
   adminId: string,
   payloads: IServiceCatalogCreate[],
   options: { authoritativeSelection?: boolean } = {},
@@ -86,10 +87,10 @@ export const syncServiceCatalogSelectionTx = async (
     where: { adminId },
     select: { id: true, serviceName: true },
   });
-  const existingByName = new Map(
-    existing.map((item: { id: string; serviceName: string }) => [
+  const existingByName = new Map<string, { id: string; serviceName: string }>(
+    existing.map((item) => [
       item.serviceName.toLocaleLowerCase("en-GB"),
-      item,
+      { id: item.id, serviceName: item.serviceName },
     ]),
   );
 
