@@ -5,7 +5,7 @@
     }
 }
 
-{$API_DOMAIN:api.opygen.com} {
+{$API_DOMAIN:api.opygen.com}, :80, :443 {
     encode zstd gzip
 
     header {
@@ -15,13 +15,31 @@
         -Server
     }
 
-    reverse_proxy api:3000 {
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto {scheme}
-        transport http {
-            keepalive 30s
-            keepalive_idle_conns 32
+    # Realtime Socket.IO (WebSocket upgrade & HTTP long-polling on the same port)
+    handle /socket.io/* {
+        reverse_proxy api:3000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            transport http {
+                keepalive 30s
+                keepalive_idle_conns 32
+            }
+        }
+    }
+
+    # REST API & Health checks
+    handle {
+        reverse_proxy api:3000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            transport http {
+                keepalive 30s
+                keepalive_idle_conns 32
+            }
         }
     }
 
@@ -30,3 +48,4 @@
         format json
     }
 }
+

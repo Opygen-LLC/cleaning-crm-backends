@@ -147,7 +147,7 @@ const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
 const getLeads = async (query: IQueryParams, user: IRequestUser) => {
     const adminProfile = await resolveAdminProfile(user);
 
-    const normalizedQuery: Record<string, unknown> = { ...query };
+    const normalizedQuery: IQueryParams = { ...query };
     if (normalizedQuery.stage) {
         const rawStage = String(normalizedQuery.stage).trim();
         if (rawStage.toLowerCase() === "all") {

@@ -11,29 +11,25 @@ x-app-common: &app-common
     target: production
   restart: always
   env_file:
-    - .env.runtime
+    - .env
   environment: &common-environment
     NODE_ENV: production
     DEPLOYMENT_PROFILE: primary-region
     REDIS_HOST: redis
     REDIS_PORT: 6379
     REDIS_DB: 0
-    # PRIMARY_REGION, APP_REGION and DATABASE_REGION must be set in .env.runtime.
-    # REDIS_REGION=local resolves to APP_REGION at runtime. PROCESS_REGION
-    # defaults to APP_REGION for these colocated API/worker/scheduler services.
     REDIS_REGION: local
     REQUIRE_COLOCATED_INFRA: "true"
-    # Exactly one trusted reverse-proxy hop: Caddy -> API.
     TRUST_PROXY_HOPS: 1
     FRONTEND_URL: https://cleaningcrm.opygen.com
     APP_URL: https://cleaningcrm.opygen.com
     BETTER_AUTH_URL: https://api.opygen.com
-    # Optional rollout-only cleanup scope for legacy Domain=.opygen.com cookies.
-    # Canonical access/refresh/session cookies are host-only.
     COOKIE_DOMAIN: .opygen.com
     AUTH_ALLOWED_ORIGINS: https://cleaningcrm.opygen.com
     ACCESS_TOKEN_EXPIRES_IN: 15m
     REFRESH_TOKEN_EXPIRES_IN: 30d
+    CHOKIDAR_USEPOLLING: "1"
+    WATCHPACK_POLLING: "true"
   depends_on:
     redis:
       condition: service_healthy
@@ -63,7 +59,7 @@ services:
   worker:
     <<: *app-common
     container_name: cleaning_crm_worker
-    command: ["node", "dist/worker.js"]
+    command: ["node", "dist/processes/worker.js"]
     environment:
       <<: *common-environment
       PROCESS_ROLE: worker
@@ -72,11 +68,10 @@ services:
   scheduler:
     <<: *app-common
     container_name: cleaning_crm_scheduler
-    command: ["node", "dist/scheduler.js"]
+    command: ["node", "dist/processes/scheduler.js"]
     environment:
       <<: *common-environment
       PROCESS_ROLE: scheduler
-      # Cloud SQL is always-on; disable DB keepalive unless your provider needs it.
       DB_KEEPALIVE_ENABLED: "false"
 
   # Explicit one-shot seed/bootstrap task. Never runs with normal compose up.
@@ -84,7 +79,7 @@ services:
     <<: *app-common
     profiles: ["bootstrap"]
     restart: "no"
-    command: ["node", "dist/bootstrap.js"]
+    command: ["node", "dist/processes/bootstrap.js"]
     environment:
       <<: *common-environment
       PROCESS_ROLE: bootstrap
@@ -97,7 +92,7 @@ services:
     profiles: ["release"]
     restart: "no"
     env_file:
-      - .env.runtime
+      - .env
     environment:
       NODE_ENV: production
       DEPLOYMENT_PROFILE: primary-region
