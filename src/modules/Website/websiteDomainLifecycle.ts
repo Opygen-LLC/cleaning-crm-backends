@@ -1,12 +1,7 @@
+import type { DomainLifecycleStatusApi } from "../../contracts/apiContract";
 import { isWebsiteDomainRoutingReady, WEBSITE_READY_TLS_STATUSES } from "./websiteDomainReadiness";
 
-export type WebsiteCustomDomainLifecycleStatus =
-  | "PENDING_VERIFICATION"
-  | "OWNERSHIP_VERIFIED"
-  | "DNS_PENDING"
-  | "SSL_PROVISIONING"
-  | "ACTIVE"
-  | "FAILED";
+export type WebsiteCustomDomainLifecycleStatus = DomainLifecycleStatusApi;
 
 export type WebsiteCustomDomainStepStatus = "PENDING" | "COMPLETE" | "FAILED";
 

@@ -78,6 +78,7 @@ model Subscription {
   updatedAt DateTime @updatedAt
 
   @@index([adminId])
+  @@index([adminId, createdAt(sort: Desc)])
   // PERF FIX (Phase 3, performance audit): checkSubscription.ts's status
   // gate runs on every gated request for every ADMIN user (cache miss or
   // not, this is what actually populates that cache), and

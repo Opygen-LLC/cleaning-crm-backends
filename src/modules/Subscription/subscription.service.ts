@@ -93,9 +93,18 @@ const getMySubscription = async (user: IRequestUser) => {
 
 // ─── Existing: create trial subscription ─────────────────────────────────────
 
+type SubscriptionDb = Prisma.TransactionClient | typeof prisma;
+
+interface CreateTrialSubscriptionOptions {
+    db?: SubscriptionDb;
+    trialDays?: number;
+    skipExistingCheck?: boolean;
+    preloadedPlan?: { id: string; subscriptionPlanId: string };
+}
+
 const createTrialSubscription = async (
     adminId: string,
-    options: { db?: any; trialDays?: number; skipExistingCheck?: boolean } = {},
+    options: CreateTrialSubscriptionOptions = {},
 ) => {
     const db = options.db ?? prisma;
 
@@ -103,13 +112,15 @@ const createTrialSubscription = async (
     // an active subscription cannot already exist. Skip that defensive lookup
     // only for this trusted internal path; every other caller keeps the guard.
     const [plan, existing] = await Promise.all([
-        db.plan.findFirst({
-            where: {
-                subscriptionPlan: { name: SubscriptionName.GROWTH },
-                interval: SubscriptionPlanInterval.MONTHLY,
-            },
-            select: { id: true, subscriptionPlanId: true },
-        }),
+        options.preloadedPlan
+            ? Promise.resolve(options.preloadedPlan)
+            : db.plan.findFirst({
+                where: {
+                    subscriptionPlan: { name: SubscriptionName.GROWTH },
+                    interval: SubscriptionPlanInterval.MONTHLY,
+                },
+                select: { id: true, subscriptionPlanId: true },
+            }),
         options.skipExistingCheck
             ? Promise.resolve(null)
             : db.subscription.findFirst({

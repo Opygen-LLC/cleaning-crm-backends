@@ -1,3 +1,4 @@
+import { API_SCHEMA } from "../../contracts/apiContract";
 import { z } from "zod";
 
 // ─── Create Admin Account (super-admin endpoint) ───────────────────────────────
@@ -129,7 +130,7 @@ export const createSubscriptionPlanSchema = z
     .object({
         name: z.enum(["STARTER", "GROWTH", "PRO", "CUSTOM"]),
         description: z.string().trim().max(500).optional(),
-        currency: z.enum(["USD", "EUR", "GBP", "CAD", "AUD", "NZD", "SGD", "ZAR", "INR", "AED"]).default("USD"),
+        currency: API_SCHEMA.currency.default("USD"),
         features: planFeaturesSchema.default([]),
         plans: z.array(pricingTierSchema).length(2),
     })
@@ -148,7 +149,7 @@ export const createSubscriptionPlanSchema = z
 export const updateSubscriptionPlanSchema = z
     .object({
         description: z.string().trim().max(500).optional(),
-        currency: z.enum(["USD", "EUR", "GBP", "CAD", "AUD", "NZD", "SGD", "ZAR", "INR", "AED"]).optional(),
+        currency: API_SCHEMA.currency.optional(),
         features: planFeaturesSchema.optional(),
         isActive: z.boolean().optional(),
         plans: z.array(pricingTierUpdateSchema).min(1).max(2).optional(),

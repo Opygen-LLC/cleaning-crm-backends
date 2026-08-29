@@ -43,6 +43,7 @@ const {
     publishedAt: null,
     publishedSnapshot: null,
     publishedRevisionNumber: null,
+    draftRevisionNumber: 5,
     pages: [
       { id: "home", kind: "HOME", slug: "/", title: "Home", content: {}, seoTitle: null, seoDescription: null, showInNavigation: true, isEnabled: true, sortOrder: 0, createdAt: new Date(), updatedAt: new Date() },
       { id: "book", kind: "BOOK", slug: "/book", title: "Book Online", content: {}, seoTitle: null, seoDescription: null, showInNavigation: true, isEnabled: true, sortOrder: 5, createdAt: new Date(), updatedAt: new Date() },
@@ -183,13 +184,23 @@ beforeEach(() => {
   owner.businessWebsite.publishedSnapshot = null;
   owner.businessWebsite.publishedRevisionNumber = null;
   revisionState.latest = 5;
+  state.draftRevisionNumber = 5;
 });
 
 describe("first website launch", () => {
   it("publishes booking + snapshot + revision + onboarding in one transaction", async () => {
     const result = await WebsiteService.launchWebsite({}, { id: "user-1" } as never);
 
-    expect(bookingProvisioningMock.ensureAttachedForLaunchTx).toHaveBeenCalledWith(txMock, "admin-1", "website-1");
+    expect(bookingProvisioningMock.ensureAttachedForLaunchTx).toHaveBeenCalledWith(
+      txMock,
+      "admin-1",
+      "website-1",
+      expect.objectContaining({
+        id: "admin-1",
+        businessName: "Bio Cleaning",
+        businessWebsite: expect.objectContaining({ id: "website-1" }),
+      }),
+    );
     expect(txMock.websiteRevision.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ reason: "Website launched", revisionNumber: 6 }),
     }));

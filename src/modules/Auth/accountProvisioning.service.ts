@@ -4,6 +4,8 @@ import { hashPassword } from "better-auth/crypto";
 import {
   AccountStatus,
   Prisma,
+  SubscriptionName,
+  SubscriptionPlanInterval,
   UserRole,
 } from "../../generated/prisma/client";
 import { WEBSITE_BASE_DOMAIN } from "../../config/ENV";
@@ -84,7 +86,25 @@ const provisionRegisteredAdmin = async (
   // Avoid SELECT -> INSERT here: it adds a round trip and still cannot prevent
   // a concurrent-registration race. P2002 below maps duplicates to the same
   // enumeration-safe error. Password hashing remains outside the transaction.
-  const passwordHash = await hashPassword(input.password);
+  // Resolve CPU work and immutable trial-plan metadata concurrently before
+  // opening the transaction. This shortens connection/lock hold time on the
+  // registration hot path without weakening atomicity of tenant writes.
+  const [passwordHash, trialPlan] = await Promise.all([
+    hashPassword(input.password),
+    prisma.plan.findFirst({
+      where: {
+        subscriptionPlan: { name: SubscriptionName.GROWTH },
+        interval: SubscriptionPlanInterval.MONTHLY,
+      },
+      select: { id: true, subscriptionPlanId: true },
+    }),
+  ]);
+  if (!trialPlan) {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Default trial plan is not configured", {
+      code: "DEFAULT_TRIAL_PLAN_NOT_CONFIGURED",
+      retryable: false,
+    });
+  }
   const userId = randomUUID();
   const credentialAccountId = randomUUID();
 
@@ -94,6 +114,7 @@ const provisionRegisteredAdmin = async (
     passwordHash,
     userId,
     credentialAccountId,
+    trialPlan,
   }).catch((error: unknown) => {
     // A concurrent signup can pass the pre-check and lose the unique-email
     // race inside the transaction. Fail closed without leaking account state.
@@ -140,6 +161,7 @@ const runProvisioningTransaction = async (
     passwordHash: string;
     userId: string;
     credentialAccountId: string;
+    trialPlan: { id: string; subscriptionPlanId: string };
   },
 ) =>
   prisma.$transaction(
@@ -196,6 +218,7 @@ const runProvisioningTransaction = async (
             adminId: admin.id,
             businessName: input.businessName.trim(),
             createdByUserId: input.userId,
+            skipExistingCheck: true,
           },
         );
 
@@ -204,6 +227,7 @@ const runProvisioningTransaction = async (
           db: tx,
           trialDays: input.trialDays,
           skipExistingCheck: true,
+          preloadedPlan: input.trialPlan,
         });
 
       // The durable outbox row commits with the account. Registration returns

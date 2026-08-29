@@ -8,6 +8,9 @@ export interface RequestTraceState {
   startedAtNs: bigint;
   dbQueryCount: number;
   dbDurationMs: number;
+  dbPoolWaitMs: number;
+  handlerDurationMs: number;
+  serializationDurationMs: number;
   slowestDbQuery: { durationMs: number; operation: string; table: string } | null;
   redisCommandCount: number;
   redisDurationMs: number;
@@ -34,6 +37,9 @@ export const runWithRequestTrace = <T>(
     startedAtNs: process.hrtime.bigint(),
     dbQueryCount: 0,
     dbDurationMs: 0,
+    dbPoolWaitMs: 0,
+    handlerDurationMs: 0,
+    serializationDurationMs: 0,
     slowestDbQuery: null,
     redisCommandCount: 0,
     redisDurationMs: 0,
@@ -75,6 +81,26 @@ export const recordTraceDatabaseQuery = (
       operation: query.operation,
       table: query.table,
     };
+  }
+};
+
+export const recordTraceDatabasePoolWait = (durationMs: number): void => {
+  const trace = storage.getStore();
+  if (!trace) return;
+  trace.dbPoolWaitMs += Math.max(0, durationMs);
+};
+
+export const recordTraceRequestPhases = (input: {
+  handlerDurationMs?: number;
+  serializationDurationMs?: number;
+}): void => {
+  const trace = storage.getStore();
+  if (!trace) return;
+  if (input.handlerDurationMs !== undefined) {
+    trace.handlerDurationMs = Math.max(0, input.handlerDurationMs);
+  }
+  if (input.serializationDurationMs !== undefined) {
+    trace.serializationDurationMs += Math.max(0, input.serializationDurationMs);
   }
 };
 

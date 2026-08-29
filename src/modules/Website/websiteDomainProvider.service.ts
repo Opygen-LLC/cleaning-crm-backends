@@ -34,6 +34,38 @@ export interface WebsiteDomainProviderState {
   providerData: Record<string, unknown>;
 }
 
+interface VercelProjectDomain {
+  verified?: boolean;
+  verification?: unknown[];
+}
+
+interface VercelDomainConfig {
+  misconfigured?: boolean;
+  recommendedCNAME?: unknown;
+  recommendedIPv4?: unknown;
+  configuredBy?: unknown;
+  nameservers?: unknown;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const providerErrorDetails = (body: unknown): { message?: string; code?: string } => {
+  if (!isRecord(body)) return {};
+  const nested = isRecord(body.error) ? body.error : null;
+  const message = typeof nested?.message === "string"
+    ? nested.message
+    : typeof body.message === "string"
+      ? body.message
+      : undefined;
+  const code = typeof nested?.code === "string"
+    ? nested.code
+    : typeof body.code === "string"
+      ? body.code
+      : undefined;
+  return { message, code };
+};
+
 class ProviderHttpError extends Error {
   constructor(
     public readonly httpStatus: number,
@@ -148,7 +180,7 @@ const vercelRequest = async <T>(path: string, init: RequestInit = {}, allow404 =
       }),
     );
 
-    let body: any = null;
+    let body: unknown = null;
     try {
       body = await response.json();
     } catch {
@@ -156,8 +188,9 @@ const vercelRequest = async <T>(path: string, init: RequestInit = {}, allow404 =
     }
     if (allow404 && response.status === 404) return null;
     if (!response.ok) {
-      const providerMessage = body?.error?.message ?? body?.message ?? `Vercel domain API returned HTTP ${response.status}`;
-      throw new ProviderHttpError(response.status, providerMessage, body?.error?.code ?? body?.code);
+      const details = providerErrorDetails(body);
+      const providerMessage = details.message ?? `Vercel domain API returned HTTP ${response.status}`;
+      throw new ProviderHttpError(response.status, providerMessage, details.code);
     }
     return body as T;
   } catch (error) {
@@ -176,27 +209,27 @@ const projectBase = () => {
   return `/v9/projects/${encodeURIComponent(VERCEL_PROJECT_ID as string)}/domains`;
 };
 
-const getVercelProjectDomain = async (domain: string): Promise<any | null> =>
-  vercelRequest<any>(`${projectBase()}/${encodeURIComponent(domain)}${vercelQuery()}`, { method: "GET" }, true);
+const getVercelProjectDomain = async (domain: string): Promise<VercelProjectDomain | null> =>
+  vercelRequest<VercelProjectDomain>(`${projectBase()}/${encodeURIComponent(domain)}${vercelQuery()}`, { method: "GET" }, true);
 
-const addVercelProjectDomain = async (domain: string): Promise<any> => {
+const addVercelProjectDomain = async (domain: string): Promise<VercelProjectDomain | null> => {
   assertVercelConfig();
-  return vercelRequest<any>(
+  return vercelRequest<VercelProjectDomain>(
     `/v9/projects/${encodeURIComponent(VERCEL_PROJECT_ID as string)}/domains${vercelQuery()}`,
     { method: "POST", body: JSON.stringify({ name: domain }) },
   );
 };
 
-const getVercelDomainConfig = async (domain: string): Promise<any> => {
+const getVercelDomainConfig = async (domain: string): Promise<VercelDomainConfig | null> => {
   assertVercelConfig();
   const params = new URLSearchParams({ projectId: VERCEL_PROJECT_ID as string });
   if (VERCEL_TEAM_ID) params.set("teamId", VERCEL_TEAM_ID);
-  return vercelRequest<any>(`/v6/domains/${encodeURIComponent(domain)}/config?${params.toString()}`, { method: "GET" });
+  return vercelRequest<VercelDomainConfig>(`/v6/domains/${encodeURIComponent(domain)}/config?${params.toString()}`, { method: "GET" });
 };
 
-const verifyVercelProjectDomain = async (domain: string): Promise<any | null> => {
+const verifyVercelProjectDomain = async (domain: string): Promise<VercelProjectDomain | null> => {
   try {
-    return await vercelRequest<any>(
+    return await vercelRequest<VercelProjectDomain>(
       `${projectBase()}/${encodeURIComponent(domain)}/verify${vercelQuery()}`,
       { method: "POST" },
     );
@@ -209,15 +242,16 @@ const verifyVercelProjectDomain = async (domain: string): Promise<any | null> =>
   }
 };
 
-const rankValue = (entry: any) => {
-  const value = Number(entry?.rank);
+const rankValue = (entry: unknown) => {
+  const value = Number(isRecord(entry) ? entry.rank : undefined);
   return Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER;
 };
 
-const firstRecommendedValue = (entries: any): string | null => {
+const firstRecommendedValue = (entries: unknown): string | null => {
   if (!Array.isArray(entries) || !entries.length) return null;
   const sorted = [...entries].sort((a, b) => rankValue(a) - rankValue(b));
-  const value = sorted[0]?.value;
+  const first = sorted[0];
+  const value = isRecord(first) ? first.value : undefined;
   if (typeof value === "string" && value.trim()) return value.trim();
   if (Array.isArray(value)) {
     const first = value.find((item) => typeof item === "string" && item.trim());
@@ -226,10 +260,11 @@ const firstRecommendedValue = (entries: any): string | null => {
   return null;
 };
 
-const normalizeVercelChallenge = (challenge: any): ProviderDnsRecord | null => {
-  const type = String(challenge?.type ?? "").toUpperCase();
-  const host = typeof challenge?.domain === "string" ? challenge.domain.trim() : "";
-  const value = typeof challenge?.value === "string" ? challenge.value.trim() : "";
+const normalizeVercelChallenge = (challenge: unknown): ProviderDnsRecord | null => {
+  if (!isRecord(challenge)) return null;
+  const type = String(challenge.type ?? "").toUpperCase();
+  const host = typeof challenge.domain === "string" ? challenge.domain.trim() : "";
+  const value = typeof challenge.value === "string" ? challenge.value.trim() : "";
   if (type !== "TXT" || !host || !value) return null;
   return { type: "TXT", host, value, purpose: "provider_verification" };
 };
@@ -420,7 +455,7 @@ const detach = async (domain: string): Promise<void> => {
   if (WEBSITE_DOMAIN_PROVIDER !== "vercel") return;
   const existing = await getVercelProjectDomain(domain);
   if (!existing) return;
-  await vercelRequest<any>(
+  await vercelRequest<Record<string, unknown>>(
     `${projectBase()}/${encodeURIComponent(domain)}${vercelQuery()}`,
     { method: "DELETE" },
   );

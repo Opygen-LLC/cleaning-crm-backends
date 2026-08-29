@@ -293,7 +293,7 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
         subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
       } },
       domains: {
-        where: { ...readyWebsiteDomainWhere, isPrimary: true } as any,
+        where: { ...readyWebsiteDomainWhere, isPrimary: true },
         select: { domain: true },
         orderBy: { createdAt: "asc" },
         take: 1,
@@ -309,7 +309,7 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
       canonicalSubdomain: website.subdomain,
       isAlias: false,
       redirectCode: null,
-      primaryCustomHost: hasCustomDomainRouting(deriveWebsiteEntitlements(website.admin.subscription[0] as any))
+      primaryCustomHost: hasCustomDomainRouting(deriveWebsiteEntitlements(website.admin.subscription[0]))
         ? website.domains[0]?.domain ?? null
         : null,
       availability: websiteAvailability(website.status, website.admin.user.status),
@@ -330,7 +330,7 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
             subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
           } },
           domains: {
-            where: { ...readyWebsiteDomainWhere, isPrimary: true } as any,
+            where: { ...readyWebsiteDomainWhere, isPrimary: true },
             select: { domain: true },
             orderBy: { createdAt: "asc" },
             take: 1,
@@ -349,7 +349,7 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
     canonicalSubdomain: alias.website.subdomain,
     isAlias: true,
     redirectCode: 308,
-    primaryCustomHost: hasCustomDomainRouting(deriveWebsiteEntitlements(alias.website.admin.subscription[0] as any))
+    primaryCustomHost: hasCustomDomainRouting(deriveWebsiteEntitlements(alias.website.admin.subscription[0]))
       ? alias.website.domains[0]?.domain ?? null
       : null,
     availability: websiteAvailability(alias.website.status, alias.website.admin.user.status),
@@ -425,7 +425,7 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
     throw new AppError(status.NOT_FOUND, "Website host not found");
   }
   const domain = await prisma.websiteDomain.findFirst({
-    where: { domain: host, ...readyWebsiteDomainWhere } as any,
+    where: { domain: host, ...readyWebsiteDomainWhere },
     select: {
       id: true,
       websiteId: true,
@@ -443,7 +443,7 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
         subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
       } },
           domains: {
-            where: { ...readyWebsiteDomainWhere } as any,
+            where: { ...readyWebsiteDomainWhere },
             select: { id: true, domain: true, isPrimary: true, createdAt: true },
             orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
           },
@@ -456,7 +456,7 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
     throw new AppError(status.NOT_FOUND, "Website host not found");
   }
 
-  const entitlements = deriveWebsiteEntitlements(domain.website.admin.subscription[0] as any);
+  const entitlements = deriveWebsiteEntitlements(domain.website.admin.subscription[0]);
   if (!hasCustomDomainRouting(entitlements)) {
     // A downgrade must remove premium routing immediately without deleting the
     // verified domain record. Upgrading later restores it without DNS setup.

@@ -22,6 +22,7 @@ import { RELEASE_VERSION } from "../../config/ENV";
 import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
 import { recordClientReliabilitySignals, recordProductReliabilitySignal } from "../../lib/monitoring/productReliabilityMetrics";
 import { AccountStatus, ServiceStatus, SubscriptionStatus } from "../../generated/prisma/enums";
+import type { Prisma } from "../../generated/prisma/client";
 import { businessHoursSchema, normalizeBusinessHours, type BusinessHours } from "./businessHours";
 import type {
   GettingStartedStepKey,
@@ -240,7 +241,7 @@ const createAdmin = async (
     /** License / Trade ID collected in registration wizard Step 1 */
     licenseNumber?: string;
   },
-  db: any = prisma,
+  db: Prisma.TransactionClient | typeof prisma = prisma,
 ) => {
   return db.adminProfile.create({
     data: {
@@ -257,81 +258,71 @@ const createAdmin = async (
 
 // ── Get admin usage counts AND plan caps ─────────────────────────────────────
 
-const getAdminUsage = async (userId: string): Promise<AdminUsageResponse> => {
-  const admin = await prisma.adminProfile.findUnique({
-    where: { userId },
-    select: { id: true },
-  });
-
-  if (!admin) {
-    throw new AppError(404, "Admin profile not found");
-  }
-
-  const adminId = admin.id;
+const getAdminUsage = async (adminId: string): Promise<AdminUsageResponse> => {
   const monthStart = startOfMonth(new Date());
 
-  // ── Parallel: counts + latest subscription ─────────────────────────────────
-  const [staffCount, clientCount, bookingCountThisMonth, sub] =
-    await Promise.all([
-      prisma.staffProfile.count({
-        where: { adminId, status: "ACTIVE" },
-      }),
-      prisma.client.count({
-        where: { adminId, status: "ACTIVE" },
-      }),
-      prisma.booking.count({
-        where: { adminId, createdAt: { gte: monthStart } },
-      }),
-      prisma.subscription.findFirst({
-        where: { adminId },
-        orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          extraStaff: true,
-          extraClient: true,
-          extraBookingsPerMonth: true,
-          plan: {
-            select: {
-              id: true,
-              maxStaff: true,
-              maxClient: true,
-              maxBookingsPerMonth: true,
-            },
-          },
-        },
-      }),
-    ]);
-
-  // ── Compute caps (null = unlimited) ────────────────────────────────────────
-  //
-  // When there is no subscription row (free trial / super-admin created
-  // account) we return null caps so the frontend shows "Unlimited" bars.
-  let caps: AdminUsageResponse["caps"] = {
-    staff: null,
-    clients: null,
-    bookingsPerMonth: null,
+  type UsageRow = {
+    staffCount: number;
+    clientCount: number;
+    bookingCountThisMonth: number;
+    subscriptionId: string | null;
+    planId: string | null;
+    extraStaff: number | null;
+    extraClient: number | null;
+    extraBookingsPerMonth: number | null;
+    maxStaff: number | null;
+    maxClient: number | null;
+    maxBookingsPerMonth: number | null;
   };
 
-  if (sub) {
-    const addExtra = (
-      base: number | null | undefined,
-      extra: number,
-    ): number | null => {
-      if (base === null || base === undefined) return null;
-      return base + extra;
-    };
+  // One tenant-scoped SQL round trip replaces the previous profile lookup plus
+  // four independent Prisma statements. The latest-subscription lookup is
+  // backed by @@index([adminId, createdAt(sort: Desc)]).
+  const rows = await prisma.$queryRaw<UsageRow[]>`
+    SELECT
+      (SELECT COUNT(*)::int FROM "StaffProfile" sp
+        WHERE sp."adminId" = ${adminId} AND sp.status::text = 'ACTIVE') AS "staffCount",
+      (SELECT COUNT(*)::int FROM "client" c
+        WHERE c."adminId" = ${adminId} AND c.status::text = 'ACTIVE') AS "clientCount",
+      (SELECT COUNT(*)::int FROM "booking" b
+        WHERE b."adminId" = ${adminId} AND b."createdAt" >= ${monthStart}) AS "bookingCountThisMonth",
+      s.id AS "subscriptionId",
+      s."planId" AS "planId",
+      s."extraStaff" AS "extraStaff",
+      s."extraClient" AS "extraClient",
+      s."extraBookingsPerMonth" AS "extraBookingsPerMonth",
+      p."maxStaff" AS "maxStaff",
+      p."maxClient" AS "maxClient",
+      p."maxBookingsPerMonth" AS "maxBookingsPerMonth"
+    FROM (SELECT 1) anchor
+    LEFT JOIN LATERAL (
+      SELECT id, "planId", "extraStaff", "extraClient", "extraBookingsPerMonth"
+      FROM "Subscription"
+      WHERE "adminId" = ${adminId}
+      ORDER BY "createdAt" DESC
+      LIMIT 1
+    ) s ON TRUE
+    LEFT JOIN "Plan" p ON p.id = s."planId"
+  `;
 
-    caps = {
-      staff: addExtra(sub.plan.maxStaff, sub.extraStaff),
-      clients: addExtra(sub.plan.maxClient, sub.extraClient),
-      bookingsPerMonth: addExtra(
-        sub.plan.maxBookingsPerMonth,
-        sub.extraBookingsPerMonth,
-      ),
-    };
-  }
+  const row = rows[0];
+  const staffCount = row?.staffCount ?? 0;
+  const clientCount = row?.clientCount ?? 0;
+  const bookingCountThisMonth = row?.bookingCountThisMonth ?? 0;
 
-  // ── Compute percentages ────────────────────────────────────────────────────
+  const addExtra = (base: number | null | undefined, extra: number | null | undefined): number | null => {
+    if (base === null || base === undefined) return null;
+    return base + (extra ?? 0);
+  };
+
+  const caps: AdminUsageResponse["caps"] = row?.subscriptionId
+    ? {
+        staff: addExtra(row.maxStaff, row.extraStaff),
+        clients: addExtra(row.maxClient, row.extraClient),
+        bookingsPerMonth: addExtra(row.maxBookingsPerMonth, row.extraBookingsPerMonth),
+      }
+    : { staff: null, clients: null, bookingsPerMonth: null };
+
   const toPct = (count: number, cap: number | null): number | null => {
     if (cap === null || cap === 0) return null;
     return Math.min(Math.round((count / cap) * 100), 100);
@@ -343,19 +334,15 @@ const getAdminUsage = async (userId: string): Promise<AdminUsageResponse> => {
     bookingsPerMonth: toPct(bookingCountThisMonth, caps.bookingsPerMonth),
   };
 
-  const anyNearLimit = [pct.staff, pct.clients, pct.bookingsPerMonth].some(
-    (p) => p !== null && p >= 90,
-  );
-
   return {
     staffCount,
     clientCount,
     bookingCountThisMonth,
     caps,
     pct,
-    anyNearLimit,
-    subscriptionId: sub?.id ?? null,
-    planId: sub?.plan.id ?? null,
+    anyNearLimit: [pct.staff, pct.clients, pct.bookingsPerMonth].some((value) => value !== null && value >= 90),
+    subscriptionId: row?.subscriptionId ?? null,
+    planId: row?.planId ?? null,
   };
 };
 
@@ -607,9 +594,9 @@ export interface OnboardingBootstrapResult {
  * domains, forms or analytics. It also validates the registration invariants
  * that must exist before a verified ADMIN can enter onboarding.
  */
-const getOnboardingBootstrap = async (userId: string): Promise<OnboardingBootstrapResult> => {
+const getOnboardingBootstrap = async (adminId: string): Promise<OnboardingBootstrapResult> => {
   const admin = await prisma.adminProfile.findUnique({
-    where: { userId },
+    where: { id: adminId },
     select: {
       id: true,
       businessName: true,

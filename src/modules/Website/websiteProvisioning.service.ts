@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import status from "http-status";
 import type { Prisma } from "../../generated/prisma/client";
 import AppError from "../../errorHelper/AppError";
@@ -97,13 +98,16 @@ const loadWebsiteSnapshot = async (db: Prisma.TransactionClient, websiteId: stri
   return website;
 };
 
+type WebsiteProvisioningSnapshot = Awaited<ReturnType<typeof loadWebsiteSnapshot>>;
+
 const createInitialRevisionTx = async (
   db: Prisma.TransactionClient,
   websiteId: string,
   createdByUserId: string | null,
   reason = "Website provisioned",
+  preparedSnapshot?: WebsiteProvisioningSnapshot,
 ) => {
-  const snapshot = await loadWebsiteSnapshot(db, websiteId);
+  const snapshot = preparedSnapshot ?? await loadWebsiteSnapshot(db, websiteId);
   await db.websiteRevision.create({
     data: {
       websiteId,
@@ -169,17 +173,37 @@ const createWebsiteRecordTx = async (
       indexSite: DEFAULT_WEBSITE_SETTINGS.indexSite,
       primaryBookingFormId: payload.primaryBookingFormId ?? null,
       primaryEstimateFormId: payload.primaryEstimateFormId ?? null,
-      pages: {
-        create: DEFAULT_WEBSITE_PAGES.map((page) => ({
-          ...page,
-          content: JSON.parse(JSON.stringify(page.content ?? {})),
-        })),
-      },
     },
-    select: { id: true },
   });
 
-  return createInitialRevisionTx(db, website.id, createdByUserId, initialRevisionReason);
+  // Pre-generate page IDs/timestamps so registration can build revision #1
+  // entirely from returned writes. This removes the previous website + pages +
+  // domains + assets reread from the registration transaction.
+  const pageTimestamp = new Date();
+  const pageRows = DEFAULT_WEBSITE_PAGES.map((page) => ({
+    id: randomUUID(),
+    websiteId: website.id,
+    ...page,
+    content: JSON.parse(JSON.stringify(page.content ?? {})),
+    createdAt: pageTimestamp,
+    updatedAt: pageTimestamp,
+  }));
+  await db.websitePage.createMany({ data: pageRows });
+
+  const initialSnapshot: WebsiteProvisioningSnapshot = {
+    ...website,
+    pages: pageRows,
+    domains: [],
+    assets: [],
+  };
+
+  return createInitialRevisionTx(
+    db,
+    website.id,
+    createdByUserId,
+    initialRevisionReason,
+    initialSnapshot,
+  );
 };
 
 /** Explicit website creation used by the protected Phase-1 API. */
@@ -216,12 +240,16 @@ export const provisionDefaultWebsiteForAdminTx = async (
     businessName: string;
     createdByUserId?: string | null;
     initialRevisionReason?: string;
+    /** Trusted only for a brand-new AdminProfile created in the same transaction. */
+    skipExistingCheck?: boolean;
   },
 ) => {
-  await acquireTextTransactionAdvisoryLock(db, adminProvisioningLock(input.adminId));
-  const existing = await db.businessWebsite.findUnique({ where: { adminId: input.adminId }, select: { id: true } });
-  if (existing) {
-    return { created: false, website: await loadWebsiteSnapshot(db, existing.id) };
+  if (!input.skipExistingCheck) {
+    await acquireTextTransactionAdvisoryLock(db, adminProvisioningLock(input.adminId));
+    const existing = await db.businessWebsite.findUnique({ where: { adminId: input.adminId }, select: { id: true } });
+    if (existing) {
+      return { created: false, website: await loadWebsiteSnapshot(db, existing.id) };
+    }
   }
 
   const subdomain = await reserveWebsiteSubdomainTx(db, input.businessName, input.adminId);

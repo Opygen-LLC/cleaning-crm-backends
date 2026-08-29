@@ -157,7 +157,7 @@ const getForAdminId = async (adminId: string): Promise<WebsiteEntitlements> => {
       select: websiteEntitlementSubscriptionSelect,
       orderBy: { createdAt: "desc" },
     });
-    source = subscription as any;
+    source = subscription;
     if (subscription) {
       void cacheRuntimeSubscriptionForAdmin(adminId, {
         status: subscription.status,

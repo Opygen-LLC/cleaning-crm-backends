@@ -5,7 +5,7 @@ const { prismaMock, txMock, cacheMock } = vi.hoisted(() => {
     adminProfile: { findUnique: vi.fn() },
     serviceCatalog: { findMany: vi.fn(), count: vi.fn(), create: vi.fn() },
     bookingForm: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
-    bookingFormService: { deleteMany: vi.fn(), createMany: vi.fn() },
+    bookingFormService: { findMany: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
     businessWebsite: { update: vi.fn() },
     websitePage: { updateMany: vi.fn() },
   };
@@ -16,6 +16,7 @@ const { prismaMock, txMock, cacheMock } = vi.hoisted(() => {
       bookingForm: { findMany: vi.fn() },
       estimateForm: { findMany: vi.fn() },
       serviceCatalog: { count: vi.fn() },
+      $queryRaw: vi.fn(),
       $transaction: vi.fn(async (callback: (transaction: typeof tx) => unknown) => callback(tx)),
     },
     cacheMock: { invalidateAdminWebsite: vi.fn() },
@@ -63,10 +64,45 @@ beforeEach(() => {
     published: true,
     websiteManaged: true,
   });
+  txMock.bookingFormService.findMany.mockResolvedValue([]);
   txMock.bookingFormService.deleteMany.mockResolvedValue({ count: 0 });
   txMock.bookingFormService.createMany.mockResolvedValue({ count: 1 });
   txMock.businessWebsite.update.mockResolvedValue({});
   txMock.websitePage.updateMany.mockResolvedValue({ count: 1 });
+  prismaMock.$queryRaw.mockResolvedValue([{
+    status: "PROVISIONED",
+    publishedSnapshot: null,
+    primaryBookingFormId: "form-1",
+    bookingEnabled: true,
+    bookingShowNavigation: true,
+    bookingShowHeaderCta: true,
+    bookingShowServiceCtas: true,
+    bookingShowHomeCta: true,
+    bookingShowAvailableSlots: true,
+    bookingShowPrices: true,
+    bookingShowStartingPrices: true,
+    bookingShowServiceDuration: true,
+    bookingCtaLabel: "Book Now",
+    primaryEstimateFormId: null,
+    estimateEnabled: false,
+    primaryEstimateForm: null,
+    primaryBookingForm: {
+      id: "form-1",
+      headline: "Bio Cleaning Online Booking",
+      slug: "bio-cleaning-online-booking-admin1",
+      published: true,
+      websiteManaged: true,
+    },
+    publishedForms: [{
+      id: "form-1",
+      headline: "Bio Cleaning Online Booking",
+      slug: "bio-cleaning-online-booking-admin1",
+      published: true,
+      websiteManaged: true,
+    }],
+    publishedEstimateForms: [],
+    bookableServiceCount: 1n,
+  }]);
   prismaMock.businessWebsite.findUnique.mockResolvedValue({
     status: "PROVISIONED",
     publishedSnapshot: null,
@@ -132,6 +168,7 @@ describe("WebsiteBookingProvisioningService", () => {
       where: { websiteId: "website-1", kind: "BOOK" },
       data: { isEnabled: true, showInNavigation: true },
     });
+    expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1);
     expect(result.enabled).toBe(true);
     expect(result.primaryBookingFormId).toBe("form-1");
   });

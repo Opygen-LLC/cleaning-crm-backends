@@ -78,9 +78,10 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser)
             );
         }
         userId = signUpResult.user.id;
-    } catch (err: any) {
-        if (err?.code === "P2002")
+    } catch (err: unknown) {
+        if (typeof err === "object" && err !== null && "code" in err && (err as { code?: unknown }).code === "P2002") {
             throw new AppError(status.BAD_REQUEST, "Email already exists");
+        }
         throw err;
     }
 
@@ -149,7 +150,11 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser)
 const getMyStaff = async (query: IQueryParams, userReq: IRequestUser) => {
     const adminId = await getAdminId(userReq);
 
-    const { role, status: statusParam, searchTerm, search } = query as any;
+    const { role, status: statusParam, searchTerm, search } = query as IQueryParams & {
+        role?: string;
+        status?: string;
+        search?: string;
+    };
 
     const extraWhere: Prisma.StaffProfileWhereInput = {
         adminId,
@@ -167,7 +172,7 @@ const getMyStaff = async (query: IQueryParams, userReq: IRequestUser) => {
     }
 
     if (role && role !== "All") {
-        extraWhere.staffRole = role as any;
+        extraWhere.staffRole = role;
     }
 
     const q = (searchTerm || search)?.toString().trim();

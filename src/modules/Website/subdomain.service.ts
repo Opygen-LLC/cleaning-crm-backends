@@ -9,6 +9,7 @@ import { normalizeSubdomain } from "./websiteIdentity";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WEBSITE_SUBDOMAIN_RESERVATION_LOCK } from "./websiteProvisioning.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
+import { WebsiteDomainStatus } from "../../generated/prisma/enums";
 
 const platformUrl = (subdomain: string) =>
   WEBSITE_BASE_DOMAIN ? `https://${subdomain}.${WEBSITE_BASE_DOMAIN}` : null;
@@ -186,7 +187,7 @@ const rename = async (input: string, user: IRequestUser) => {
 
   const [customDomains, aliases] = await Promise.all([
     prisma.websiteDomain.findMany({
-      where: { websiteId: owned.id, status: "VERIFIED" as any },
+      where: { websiteId: owned.id, status: WebsiteDomainStatus.VERIFIED },
       select: { domain: true },
     }),
     prisma.websiteSubdomainAlias.findMany({

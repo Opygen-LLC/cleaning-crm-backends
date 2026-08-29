@@ -122,6 +122,69 @@ const inspectActiveAdminProvisioning = async (
   };
 };
 
+
+export interface EmailVerificationCandidate {
+  id: string;
+  role: UserRole;
+  hasCredentialAccount: boolean;
+}
+
+/**
+ * Verification preflight in one SQL round trip. For ADMIN accounts this also
+ * validates the complete tenant graph before the OTP is consumed, avoiding the
+ * previous user/account lookup followed by a second readiness query.
+ */
+const assertEmailVerificationCandidate = async (email: string): Promise<EmailVerificationCandidate> => {
+  type CandidateRow = {
+    id: string;
+    role: UserRole;
+    hasCredentialAccount: boolean;
+    adminId: string | null;
+    hasActiveSubscription: boolean;
+    hasWebsite: boolean;
+  };
+
+  const rows = await prisma.$queryRaw<CandidateRow[]>`
+    SELECT
+      u.id,
+      u.role::text AS role,
+      EXISTS (
+        SELECT 1 FROM "account" a
+        WHERE a."userId" = u.id AND a."providerId" = 'credential'
+      ) AS "hasCredentialAccount",
+      ap.id AS "adminId",
+      CASE WHEN ap.id IS NULL THEN FALSE ELSE EXISTS (
+        SELECT 1 FROM "Subscription" s
+        WHERE s."adminId" = ap.id AND s.status::text = ${SubscriptionStatus.ACTIVE}
+      ) END AS "hasActiveSubscription",
+      CASE WHEN ap.id IS NULL THEN FALSE ELSE EXISTS (
+        SELECT 1 FROM "business_website" bw WHERE bw."adminId" = ap.id
+      ) END AS "hasWebsite"
+    FROM "user" u
+    LEFT JOIN "AdminProfile" ap ON ap."userId" = u.id
+    WHERE LOWER(u.email) = LOWER(${email.trim()})
+    LIMIT 1
+  `;
+
+  const candidate = rows[0];
+  if (!candidate) throw new AppError(status.NOT_FOUND, "User not found.");
+  if (!candidate.hasCredentialAccount) {
+    throw new AppError(status.BAD_REQUEST, "Email verification is not allowed for social login accounts.");
+  }
+
+  if (candidate.role === UserRole.ADMIN) {
+    if (!candidate.adminId) throw provisioningError("ADMIN_PROFILE_MISSING");
+    if (!candidate.hasActiveSubscription) throw provisioningError("SUBSCRIPTION_PROVISIONING_INCOMPLETE");
+    if (!candidate.hasWebsite) throw provisioningError("WEBSITE_PROVISIONING_INCOMPLETE");
+  }
+
+  return {
+    id: candidate.id,
+    role: candidate.role,
+    hasCredentialAccount: candidate.hasCredentialAccount,
+  };
+};
+
 /**
  * Activation gate used before consuming the email OTP. New registrations must
  * have the full transaction-created tenant graph and an ACTIVE trial/subscription.

@@ -575,7 +575,7 @@ const updateJobStatus = async (
 
         if (clientRecord) {
           const staffNames = completedJob.staffAssignments.map(
-            (a: any) => a.staff.user.name,
+            (assignment) => assignment.staff.user.name,
           );
 
           sendEmailSafely({

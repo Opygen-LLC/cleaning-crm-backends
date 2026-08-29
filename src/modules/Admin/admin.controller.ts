@@ -1,4 +1,5 @@
 // ─── PHASE 3 CHANGE ──────────────────────────────────────────────────────────
+import AppError from "../../errorHelper/AppError";
 // Only the `getAdminUsage` controller handler is relevant to this phase.
 // It calls adminService.getAdminUsage which now returns caps + pct alongside
 // counts.  The handler itself is structurally unchanged — just forwarded.
@@ -80,8 +81,9 @@ const deleteWorkLocation = catchAsync(async (req, res) => {
 // ─── Phase 3: richer usage payload (counts + caps + pct + anyNearLimit) ───────
 
 const getAdminUsage = catchAsync(async (req, res) => {
-  const userId = req.user.id;
-  const result = await adminService.getAdminUsage(userId);
+  const adminId = req.user.adminId;
+  if (!adminId) throw new AppError(status.UNAUTHORIZED, "Authenticated admin context is missing");
+  const result = await adminService.getAdminUsage(adminId);
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
@@ -93,8 +95,9 @@ const getAdminUsage = catchAsync(async (req, res) => {
 // ─── Onboarding handlers (unchanged) ─────────────────────────────────────────
 
 const getOnboardingBootstrap = catchAsync(async (req, res) => {
-  const userId = req.user.id;
-  const result = await adminService.getOnboardingBootstrap(userId);
+  const adminId = req.user.adminId;
+  if (!adminId) throw new AppError(status.UNAUTHORIZED, "Authenticated admin context is missing");
+  const result = await adminService.getOnboardingBootstrap(adminId);
   res.setHeader("X-Bootstrap-Schema-Version", "1");
   sendResponse(res, {
     httpStatusCode: status.OK,

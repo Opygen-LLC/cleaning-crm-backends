@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  userFindUnique: vi.fn(),
   userUpdate: vi.fn(),
-  assertReadyForActivation: vi.fn(),
+  assertVerificationCandidate: vi.fn(),
   verifyEmailOTP: vi.fn(),
   getAccessToken: vi.fn(),
   getRefreshToken: vi.fn(),
@@ -15,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../lib/prisma/prisma", () => ({
   prisma: {
-    user: { findUnique: mocks.userFindUnique, update: mocks.userUpdate },
+    user: { update: mocks.userUpdate },
     session: { create: mocks.sessionCreate },
   },
 }));
@@ -24,7 +23,7 @@ vi.mock("../../lib/utils/token", () => ({ tokenUtils: { getAccessToken: mocks.ge
 vi.mock("../../lib/utils/jwt", () => ({ jwtUtils: {} }));
 vi.mock("../../config/ENV", () => ({ REFRESH_TOKEN_SECRET: "test-refresh-secret", REFRESH_TOKEN_REUSE_GRACE_MS: 8_000 }));
 vi.mock("./accountProvisioning.service", () => ({ AccountProvisioningService: { provisionRegisteredAdmin: vi.fn() } }));
-vi.mock("./accountIntegrity.service", () => ({ AccountIntegrityService: { assertAdminReadyForActivation: mocks.assertReadyForActivation } }));
+vi.mock("./accountIntegrity.service", () => ({ AccountIntegrityService: { assertEmailVerificationCandidate: mocks.assertVerificationCandidate } }));
 vi.mock("../../lib/utils/platformConfig", () => ({ getPlatformConfig: vi.fn() }));
 vi.mock("../../lib/outbox/authEmailOutbox", () => ({ AuthEmailOutbox: { enqueueEmailVerification: vi.fn() } }));
 vi.mock("./sessionSecurity.service", () => ({
@@ -54,8 +53,7 @@ const verifiedAdmin = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.userFindUnique.mockResolvedValue({ id: "user-1", role: "ADMIN", accounts: [{ id: "credential-1" }] });
-  mocks.assertReadyForActivation.mockResolvedValue({ adminId: "admin-1", isOnboardingComplete: false });
+  mocks.assertVerificationCandidate.mockResolvedValue({ id: "user-1", role: "ADMIN", hasCredentialAccount: true });
   mocks.verifyEmailOTP.mockResolvedValue({ user: { ...verifiedAdmin }, token: "better-auth-token" });
   mocks.userUpdate.mockResolvedValue({ id: "user-1", name: "Jamie", email: "jamie@example.com", emailVerified: true, role: "ADMIN" });
   mocks.getAccessToken.mockReturnValue("access-token");
@@ -68,14 +66,10 @@ beforeEach(() => {
 describe("verifyEmail optimized ADMIN activation", () => {
   it("resolves identity + credential ownership in one application query before consuming OTP", async () => {
     const result = await authService.verifyEmail("jamie@example.com", "123456");
-    expect(mocks.userFindUnique).toHaveBeenCalledWith({
-      where: { email: "jamie@example.com" },
-      select: { id: true, role: true, accounts: { where: { providerId: "credential" }, select: { id: true }, take: 1 } },
-    });
-    expect(mocks.assertReadyForActivation).toHaveBeenCalledWith("user-1");
-    expect(mocks.assertReadyForActivation.mock.invocationCallOrder[0]).toBeLessThan(mocks.verifyEmailOTP.mock.invocationCallOrder[0]!);
+    expect(mocks.assertVerificationCandidate).toHaveBeenCalledWith("jamie@example.com");
+    expect(mocks.assertVerificationCandidate.mock.invocationCallOrder[0]).toBeLessThan(mocks.verifyEmailOTP.mock.invocationCallOrder[0]!);
     expect(mocks.userUpdate).toHaveBeenCalledWith({
-      where: { email: "jamie@example.com" },
+      where: { id: "user-1" },
       data: { status: "ACTIVE" },
       select: { id: true, name: true, email: true, emailVerified: true, role: true },
     });
@@ -87,13 +81,13 @@ describe("verifyEmail optimized ADMIN activation", () => {
   });
 
   it("rejects social-only accounts before consuming the OTP", async () => {
-    mocks.userFindUnique.mockResolvedValue({ id: "user-1", role: "ADMIN", accounts: [] });
+    mocks.assertVerificationCandidate.mockRejectedValue(Object.assign(new Error("Email verification is not allowed for social login accounts."), { statusCode: 400 }));
     await expect(authService.verifyEmail("jamie@example.com", "123456")).rejects.toMatchObject({ statusCode: 400 });
     expect(mocks.verifyEmailOTP).not.toHaveBeenCalled();
   });
 
   it("does not consume the OTP when tenant provisioning is incomplete", async () => {
-    mocks.assertReadyForActivation.mockRejectedValue(Object.assign(new Error("Website provisioning is not complete yet."), { statusCode: 409, code: "WEBSITE_PROVISIONING_INCOMPLETE" }));
+    mocks.assertVerificationCandidate.mockRejectedValue(Object.assign(new Error("Website provisioning is not complete yet."), { statusCode: 409, code: "WEBSITE_PROVISIONING_INCOMPLETE" }));
     await expect(authService.verifyEmail("jamie@example.com", "123456")).rejects.toMatchObject({ statusCode: 409, code: "WEBSITE_PROVISIONING_INCOMPLETE" });
     expect(mocks.verifyEmailOTP).not.toHaveBeenCalled();
     expect(mocks.userUpdate).not.toHaveBeenCalled();

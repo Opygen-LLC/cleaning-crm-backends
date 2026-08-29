@@ -6,6 +6,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { PublicWebsiteService } from "./publicWebsite.service";
+import type { Prisma } from "../../generated/prisma/client";
 
 export const WEBSITE_ANALYTICS_EVENT = {
   PAGE_VIEW: "PAGE_VIEW",
@@ -147,6 +148,9 @@ const setCachedSummary = async (websiteId: string, days: number, summary: Websit
   }
 };
 
+const analyticsMetadataJson = (value: Record<string, unknown>): Prisma.InputJsonValue =>
+  JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+
 const createEvent = async (
   websiteId: string,
   eventType: WebsiteAnalyticsEventType,
@@ -169,10 +173,10 @@ const createEvent = async (
       utmMedium: payload.utmMedium?.trim().slice(0, 120) || null,
       utmCampaign: payload.utmCampaign?.trim().slice(0, 160) || null,
       deviceType: coarseDevice,
-      metadata: cleanMetadata(
+      metadata: analyticsMetadataJson(cleanMetadata(
         payload.metadata,
         eventType === WEBSITE_ANALYTICS_EVENT.PAGE_VIEW ? PUBLIC_PAGE_METADATA_KEYS : undefined,
-      ) as any,
+      )),
     },
   });
   return { accepted: true, recorded: true };

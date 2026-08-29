@@ -13,6 +13,7 @@ import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { deriveWebsiteEntitlements, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
+import { ServiceStatus } from "../../generated/prisma/enums";
 
 const WEBSITE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -54,7 +55,7 @@ const resolveIdentifier = async (identifier: string): Promise<ResolvedWebsite> =
 };
 
 const loadProjectionSource = async (websiteId: string, options: { includeDraftPages?: boolean } = {}) => {
-  const website: any = await prisma.businessWebsite.findUnique({
+  const website = await prisma.businessWebsite.findUnique({
     where: { id: websiteId },
     include: {
       admin: {
@@ -75,7 +76,7 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
           user: { select: { email: true, status: true } },
           subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
           serviceCatalogs: {
-            where: { status: "ACTIVE" as any },
+            where: { status: ServiceStatus.ACTIVE },
             select: {
               id: true,
               serviceName: true,
@@ -125,7 +126,7 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
       },
       domains: {
-        where: readyWebsiteDomainWhere as any,
+        where: readyWebsiteDomainWhere,
         select: { domain: true, isPrimary: true },
         orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
       },
@@ -163,7 +164,9 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
   };
 };
 
-const currentDraftAsPublishedSnapshot = (website: any) => buildPublishedSnapshot({
+type ProjectionWebsite = Awaited<ReturnType<typeof loadProjectionSource>>["website"];
+
+const currentDraftAsPublishedSnapshot = (website: ProjectionWebsite) => buildPublishedSnapshot({
   templateId: website.templateId,
   templateVersion: website.templateVersion,
   schemaVersion: website.schemaVersion,
@@ -200,7 +203,7 @@ const currentDraftAsPublishedSnapshot = (website: any) => buildPublishedSnapshot
  * revision (or a historical publish/launch revision when the revision pointer
  * itself is missing). The current draft is intentionally never considered.
  */
-const resolveSafePublishedSnapshot = async (website: any): Promise<WebsitePublishedSnapshotV1> => {
+const resolveSafePublishedSnapshot = async (website: ProjectionWebsite): Promise<WebsitePublishedSnapshotV1> => {
   const direct = parsePublishedSnapshot(website.publishedSnapshot);
   if (direct) return direct;
 
@@ -286,7 +289,7 @@ const projectWebsite = (
 
   const config = snapshot.website;
   const pages = snapshot.pages.filter((page) => page.isEnabled);
-  const entitlements = deriveWebsiteEntitlements(website.admin.subscription[0] as any);
+  const entitlements = deriveWebsiteEntitlements(website.admin.subscription[0]);
   const requestedTemplate = resolveCompatibleBackendTemplate(config);
   if (!requestedTemplate) {
     throw new AppError(status.SERVICE_UNAVAILABLE, "Website template schema is unavailable", {

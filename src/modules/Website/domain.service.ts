@@ -15,6 +15,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
+import type { Prisma } from "../../generated/prisma/client";
 import type { WebsiteDomainCreateInput } from "./website.interface";
 import { normalizeDomain } from "./websiteIdentity";
 import {
@@ -27,6 +28,9 @@ import { presentWebsiteDomain, type WebsiteDomainLifecycleInput } from "./websit
 import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { WebsiteEntitlementService, type WebsiteEntitlements } from "./websiteEntitlement.service";
+
+const toInputJson = (value: unknown): Prisma.InputJsonValue =>
+  JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 
 const getOwnedWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
@@ -58,7 +62,7 @@ const routingHostsForWebsite = async (websiteId: string, subdomain: string) => {
       select: { subdomain: true },
     }),
     prisma.websiteDomain.findMany({
-      where: { websiteId, ...readyWebsiteDomainWhere } as any,
+      where: { websiteId, ...readyWebsiteDomainWhere },
       select: { domain: true, isPrimary: true, createdAt: true },
       orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
     }),
@@ -166,11 +170,14 @@ const hasOwnershipTxt = async (domain: string, token: string): Promise<boolean> 
   try {
     const records = await dns.resolveTxt(`_cleancrm-verification.${domain}`);
     return records.some((parts) => parts.join("") === token);
-  } catch (error: any) {
+  } catch (error: unknown) {
     // These resolver results conclusively mean the ownership challenge is not
     // published. Timeouts/SERVFAIL are different: they are transient DNS
     // failures and must never take an already ACTIVE customer domain offline.
-    if (["ENODATA", "ENOTFOUND", "NXDOMAIN"].includes(String(error?.code ?? ""))) return false;
+    const code = typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code?: unknown }).code ?? "")
+      : "";
+    if (["ENODATA", "ENOTFOUND", "NXDOMAIN"].includes(code)) return false;
     throw error;
   }
 };
@@ -242,9 +249,9 @@ const applyProviderState = async (
     providerVerified: provider.verified,
     routingVerified: provider.routingConfigured,
     tlsStatus: provider.tlsStatus,
-    providerData: provider.providerData as any,
+    providerData: toInputJson(provider.providerData),
     lastProviderSyncAt: new Date(),
-    requiredDns: requiredDns(domain, verificationToken, provider) as any,
+    requiredDns: toInputJson(requiredDns(domain, verificationToken, provider)),
     ...(extra.status ? { status: extra.status } : {}),
     ...(extra.ownershipVerified !== undefined ? { ownershipVerified: extra.ownershipVerified } : {}),
     ...(extra.failureReason !== undefined ? { failureReason: extra.failureReason } : {}),
@@ -269,7 +276,7 @@ const ensurePrimaryDomainInvariant = async (websiteId: string, candidateDomainId
     await acquireTextTransactionAdvisoryLock(tx, `website-domain-primary:${websiteId}`);
 
     const currentPrimary = await tx.websiteDomain.findFirst({
-      where: { websiteId, isPrimary: true, ...readyWebsiteDomainWhere } as any,
+      where: { websiteId, isPrimary: true, ...readyWebsiteDomainWhere },
       select: { id: true },
       orderBy: { createdAt: "asc" },
     });
@@ -289,10 +296,10 @@ const ensurePrimaryDomainInvariant = async (websiteId: string, candidateDomainId
 
     const candidate = candidateDomainId
       ? await tx.websiteDomain.findFirst({
-          where: { id: candidateDomainId, websiteId, ...readyWebsiteDomainWhere } as any,
+          where: { id: candidateDomainId, websiteId, ...readyWebsiteDomainWhere },
         })
       : await tx.websiteDomain.findFirst({
-          where: { websiteId, ...readyWebsiteDomainWhere } as any,
+          where: { websiteId, ...readyWebsiteDomainWhere },
           orderBy: { createdAt: "asc" },
         });
 
@@ -369,7 +376,7 @@ const addDomain = async (payload: WebsiteDomainCreateInput, user: IRequestUser) 
         verificationToken,
         provider: providerName(),
         status: "PENDING",
-        requiredDns: requiredDns(domain, verificationToken) as any,
+        requiredDns: toInputJson(requiredDns(domain, verificationToken)),
         failureReason: "Add the ownership TXT record, wait for DNS propagation, then check again",
       },
     });

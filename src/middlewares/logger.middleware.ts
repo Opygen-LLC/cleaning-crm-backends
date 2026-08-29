@@ -8,7 +8,7 @@ import {
   SLOW_REQUEST_THRESHOLD_MS,
 } from "../config/ENV";
 import { recordRequestMetric } from "../lib/monitoring/performanceMetrics";
-import { getRequestTrace } from "../lib/monitoring/requestTrace";
+import { getRequestTrace, recordTraceRequestPhases } from "../lib/monitoring/requestTrace";
 import { resolveRequestGeography } from "../lib/monitoring/requestGeography";
 
 const compactPath = (req: Request): string => {
@@ -44,7 +44,10 @@ const logRequestResponse = (
   let routeLabel: string | null = null;
 
   res.send = ((body: unknown) => {
-    durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
+    const serializationStarted = process.hrtime.bigint();
+    const handlerDurationMs = Number(serializationStarted - start) / 1_000_000;
+    recordTraceRequestPhases({ handlerDurationMs });
+    durationMs = handlerDurationMs;
     const rounded = round(durationMs);
     routeLabel = compactPath(req);
     if (!res.headersSent) {
@@ -52,8 +55,11 @@ const logRequestResponse = (
       const timings = [`app;dur=${rounded}`];
       if (trace) {
         timings.push(`auth;dur=${round(trace.authDurationMs)}`);
-        timings.push(`db;dur=${round(trace.dbDurationMs)}`);
+        timings.push(`db.query;dur=${round(trace.dbDurationMs)}`);
+        if (trace.dbPoolWaitMs > 0) timings.push(`db.pool;dur=${round(trace.dbPoolWaitMs)}`);
         timings.push(`redis;dur=${round(trace.redisDurationMs)}`);
+        timings.push(`handler;dur=${round(trace.handlerDurationMs)}`);
+        if (trace.serializationDurationMs > 0) timings.push(`serialize;dur=${round(trace.serializationDurationMs)}`);
         if (trace.queueDurationMs > 0) timings.push(`queue;dur=${round(trace.queueDurationMs)}`);
         if (trace.externalDurationMs > 0) timings.push(`external;dur=${round(trace.externalDurationMs)}`);
       }
@@ -69,7 +75,11 @@ const logRequestResponse = (
         [existingTimings, ...timings].filter(Boolean).join(", "),
       );
     }
-    return originalSend(body);
+    const result = originalSend(body);
+    const serializationDurationMs = Number(process.hrtime.bigint() - serializationStarted) / 1_000_000;
+    recordTraceRequestPhases({ serializationDurationMs });
+    durationMs = handlerDurationMs + serializationDurationMs;
+    return result;
   }) as Response["send"];
 
   res.once("finish", () => {
@@ -119,6 +129,7 @@ const logRequestResponse = (
       const dbQueries = trace?.dbQueryCount ?? 0;
       const redisMs = round(trace?.redisDurationMs ?? 0);
       const queueMs = round(trace?.queueDurationMs ?? 0);
+      const poolWaitMs = round(trace?.dbPoolWaitMs ?? 0);
       const parts = [`${req.method} ${route} → ${res.statusCode} in ${rounded}ms`];
       if (dbQueries > 0) {
         const slowest = trace?.slowestDbQuery;
@@ -127,6 +138,7 @@ const logRequestResponse = (
             ? `DB ${dbMs}ms/${dbQueries}q · slowest ${round(slowest.durationMs)}ms ${slowest.operation} ${slowest.table}`
             : `DB ${dbMs}ms/${dbQueries}q`,
         );
+        if (poolWaitMs > 0) parts.push(`DB pool ${poolWaitMs}ms`);
       }
       if ((trace?.redisCommandCount ?? 0) > 0) parts.push(`Redis ${redisMs}ms`);
       if (queueMs > 0) parts.push(`Queue ${queueMs}ms`);
@@ -143,6 +155,8 @@ const logRequestResponse = (
       statusCode: res.statusCode,
       totalDurationMs: rounded,
       dbDurationMs: round(trace?.dbDurationMs ?? 0),
+      "db.query_ms": round(trace?.dbDurationMs ?? 0),
+      "db.pool_wait_ms": round(trace?.dbPoolWaitMs ?? 0),
       dbQueryCount: trace?.dbQueryCount ?? 0,
       slowestDbQuery: trace?.slowestDbQuery
         ? {
@@ -152,6 +166,7 @@ const logRequestResponse = (
           }
         : null,
       redisDurationMs: round(trace?.redisDurationMs ?? 0),
+      redis_ms: round(trace?.redisDurationMs ?? 0),
       redisCommandCount: trace?.redisCommandCount ?? 0,
       redisHits: trace?.redisHits ?? 0,
       redisMisses: trace?.redisMisses ?? 0,
@@ -162,6 +177,9 @@ const logRequestResponse = (
       responseCacheHitRate: cacheAttempts > 0 ? round(((trace?.responseCacheHits ?? 0) / cacheAttempts) * 100) : null,
       authDurationMs: round(trace?.authDurationMs ?? 0),
       queueDurationMs: round(trace?.queueDurationMs ?? 0),
+      queue_ms: round(trace?.queueDurationMs ?? 0),
+      handler_ms: round(trace?.handlerDurationMs ?? 0),
+      serialization_ms: round(trace?.serializationDurationMs ?? 0),
       externalDurationMs: round(trace?.externalDurationMs ?? 0),
       requestId,
       traceId,

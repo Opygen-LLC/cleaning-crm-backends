@@ -245,8 +245,9 @@ describe("onboarding bootstrap contract", () => {
   it("returns one compact validated snapshot for a verified fresh account", async () => {
     db.adminProfile.findUnique.mockResolvedValue(bootstrapRow());
 
-    const result = await adminService.getOnboardingBootstrap(USER_ID);
+    const result = await adminService.getOnboardingBootstrap(ADMIN_ID);
 
+    expect(db.adminProfile.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: ADMIN_ID } }));
     expect(result.user).toEqual({ id: USER_ID, role: "ADMIN", status: "ACTIVE" });
     expect(result.onboarding).toMatchObject({
       currentStep: 2,
@@ -277,7 +278,7 @@ describe("onboarding bootstrap contract", () => {
       businessHours: { monday: { isOpen: true, opensAt: "9am", closesAt: "5pm" } },
     }));
 
-    const result = await adminService.getOnboardingBootstrap(USER_ID);
+    const result = await adminService.getOnboardingBootstrap(ADMIN_ID);
 
     expect(result.profile.businessHours).toMatchObject({
       monday: { isOpen: true, opensAt: "09:00", closesAt: "17:00" },
@@ -291,8 +292,8 @@ describe("onboarding bootstrap contract", () => {
       onboardingCompletedSteps: ["business_profile", "branding", "services"],
     }));
 
-    const first = await adminService.getOnboardingBootstrap(USER_ID);
-    const second = await adminService.getOnboardingBootstrap(USER_ID);
+    const first = await adminService.getOnboardingBootstrap(ADMIN_ID);
+    const second = await adminService.getOnboardingBootstrap(ADMIN_ID);
 
     expect(first.onboarding.currentStep).toBe(4);
     expect(second.onboarding.currentStep).toBe(4);
@@ -308,7 +309,7 @@ describe("onboarding bootstrap contract", () => {
       user: { id: USER_ID, role: "ADMIN", status: "PENDING" },
     }));
 
-    await expect(adminService.getOnboardingBootstrap(USER_ID)).rejects.toMatchObject({
+    await expect(adminService.getOnboardingBootstrap(ADMIN_ID)).rejects.toMatchObject({
       statusCode: 409,
       code: "ACCOUNT_ACTIVATION_INCOMPLETE",
     });
@@ -317,7 +318,7 @@ describe("onboarding bootstrap contract", () => {
   it("fails deterministically if trial/subscription provisioning is missing", async () => {
     db.adminProfile.findUnique.mockResolvedValue(bootstrapRow({ subscription: [] }));
 
-    await expect(adminService.getOnboardingBootstrap(USER_ID)).rejects.toMatchObject({
+    await expect(adminService.getOnboardingBootstrap(ADMIN_ID)).rejects.toMatchObject({
       statusCode: 409,
       code: "SUBSCRIPTION_PROVISIONING_INCOMPLETE",
     });
@@ -326,7 +327,7 @@ describe("onboarding bootstrap contract", () => {
   it("fails deterministically if website provisioning is missing", async () => {
     db.adminProfile.findUnique.mockResolvedValue(bootstrapRow({ businessWebsite: null }));
 
-    await expect(adminService.getOnboardingBootstrap(USER_ID)).rejects.toMatchObject({
+    await expect(adminService.getOnboardingBootstrap(ADMIN_ID)).rejects.toMatchObject({
       statusCode: 409,
       code: "WEBSITE_PROVISIONING_INCOMPLETE",
     });
@@ -363,5 +364,36 @@ describe("onboarding finalization", () => {
     });
     expect(result.onboarding.isComplete).toBe(true);
     expect(result.website.subdomain).toBe("bio-cleaning");
+  });
+});
+
+describe("admin usage query budget", () => {
+  it("computes tenant usage with one database round trip and no profile re-resolution", async () => {
+    db.$queryRaw.mockResolvedValueOnce([{
+      staffCount: 2,
+      clientCount: 7,
+      bookingCountThisMonth: 11,
+      subscriptionId: "subscription-1",
+      planId: "plan-1",
+      extraStaff: 1,
+      extraClient: 3,
+      extraBookingsPerMonth: 5,
+      maxStaff: 5,
+      maxClient: 20,
+      maxBookingsPerMonth: 50,
+    }]);
+
+    const result = await adminService.getAdminUsage(ADMIN_ID);
+
+    expect(db.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(db.adminProfile.findUnique).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      staffCount: 2,
+      clientCount: 7,
+      bookingCountThisMonth: 11,
+      caps: { staff: 6, clients: 23, bookingsPerMonth: 55 },
+      subscriptionId: "subscription-1",
+      planId: "plan-1",
+    });
   });
 });

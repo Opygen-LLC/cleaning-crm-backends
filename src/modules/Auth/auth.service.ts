@@ -626,39 +626,9 @@ const getNewToken = async (
 };
 
 const verifyEmail = async (email: string, otp: string, metadata: SessionRequestMetadata = {}) => {
-    // Resolve identity and credential ownership first. ADMIN provisioning is
-    // checked before the OTP is consumed so an incomplete tenant cannot become
-    // stuck in a verified-but-unusable state.
-    const user = await prisma.user.findUnique({
-        where: { email },
-        select: {
-            id: true,
-            role: true,
-            accounts: {
-                where: { providerId: "credential" },
-                select: { id: true },
-                take: 1,
-            },
-        },
-    });
-
-    if (!user) {
-        throw new AppError(status.NOT_FOUND, "User not found.");
-    }
-
-    if (user.accounts.length === 0) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "Email verification is not allowed for social login accounts.",
-        );
-    }
-
-    if (user.role === UserRole.ADMIN) {
-        // Activation readiness remains a server-side integrity gate. Its routing
-        // state is intentionally not returned by verify-email; /auth/session is
-        // the sole browser authority after the cookies are issued.
-        await AccountIntegrityService.assertAdminReadyForActivation(user.id);
-    }
+    // Identity, credential ownership, and ADMIN tenant readiness are resolved
+    // together in one preflight SQL statement before the OTP is consumed.
+    const candidate = await AccountIntegrityService.assertEmailVerificationCandidate(email);
 
     const result = await auth.api.verifyEmailOTP({
         body: { email, otp },
@@ -677,7 +647,7 @@ const verifyEmail = async (email: string, otp: string, metadata: SessionRequestM
     }
 
     const activatedUser = await prisma.user.update({
-        where: { email },
+        where: { id: candidate.id },
         data: { status: AccountStatus.ACTIVE },
         select: {
             id: true,

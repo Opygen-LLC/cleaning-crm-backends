@@ -18,6 +18,9 @@ import { ServiceStatus } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 
 
+const toAddOnsJson = (addOns: IServiceCatalogCreate["addOns"] | IServiceCatalogUpdate["addOns"]): Prisma.InputJsonValue =>
+  (addOns ?? []).map((item) => ({ name: item.name, price: item.price }));
+
 const invalidateServiceCatalogCache = async (adminId: string) => {
   await redis.del(CacheNamespaces.serviceCatalog(adminId)).catch(() => {});
 };
@@ -71,7 +74,7 @@ export const syncServiceCatalogSelectionTx = async (
     legacyServiceType: payload.legacyServiceType === undefined
       ? inferLegacyServiceType(payload.serviceName)
       : payload.legacyServiceType,
-    addOns: payload.addOns ? (payload.addOns as any) : [],
+    addOns: toAddOnsJson(payload.addOns),
   }));
 
   const seen = new Set<string>();
@@ -146,7 +149,7 @@ const createServiceCatalog = async (
       ...payload,
       adminId,
       legacyServiceType,
-      addOns: payload.addOns ? (payload.addOns as any) : [],
+      addOns: toAddOnsJson(payload.addOns),
     },
   });
   await invalidateServiceCatalogReadModels(adminId);
@@ -213,7 +216,7 @@ const updateServiceCatalog = async (
     data: {
       ...payload,
       ...(legacyServiceType !== undefined ? { legacyServiceType } : {}),
-      addOns: payload.addOns ? (payload.addOns as any) : undefined,
+      addOns: payload.addOns ? toAddOnsJson(payload.addOns) : undefined,
     },
   });
   await invalidateServiceCatalogReadModels(adminId);

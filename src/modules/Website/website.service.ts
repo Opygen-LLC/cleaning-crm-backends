@@ -35,6 +35,9 @@ import { presentWebsiteDomain } from "./websiteDomainLifecycle";
 import { WEBSITE_STATUS, statusAfterDraftMutation, type WebsiteLifecycleStatus } from "./websiteLifecycle";
 import { validateWebsitePageContent } from "./websiteContent";
 import { WebsiteEntitlementService, type WebsiteEntitlements } from "./websiteEntitlement.service";
+import type { Prisma } from "../../generated/prisma/client";
+
+type WebsiteDb = Prisma.TransactionClient | typeof prisma;
 
 
 const assertEntitledWebsitePatch = (
@@ -67,7 +70,7 @@ const assertEntitledPagePatch = (payload: WebsitePageUpdateInput, entitlements: 
   }
 };
 
-const getWebsiteOrThrow = async (adminId: string, db: any = prisma) => {
+const getWebsiteOrThrow = async (adminId: string, db: WebsiteDb = prisma) => {
   const website = await db.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
   return website;
@@ -93,7 +96,7 @@ const assertManagedBrandReferences = async (
   websiteId: string,
   payload: WebsiteUpdateInput,
   current: Partial<Record<ManagedImageField, string | null>>,
-  db: any,
+  db: WebsiteDb,
 ) => {
   for (const { kind, field, label } of MANAGED_IMAGE_FIELDS) {
     const next = payload[field];
@@ -126,7 +129,7 @@ const rehydrateManagedBrandAssetsFromRevision = async (
   websiteId: string,
   rawSnapshot: unknown,
   target: Pick<WebsiteUpdateInput, "logo" | "favicon" | "socialImageUrl">,
-  db: any,
+  db: WebsiteDb,
 ) => {
   if (!isRecord(rawSnapshot) || !Array.isArray(rawSnapshot.assets)) return;
 
@@ -188,7 +191,7 @@ const assertOwnedForm = async (
   adminId: string,
   id: string | null | undefined,
   kind: "booking" | "estimate",
-  db: any = prisma,
+  db: Prisma.TransactionClient | typeof prisma = prisma,
 ) => {
   if (!id) return;
   const record = kind === "booking"
@@ -204,7 +207,7 @@ const assertBookingReadyForPublish = async (
     primaryBookingFormId: string | null;
     pages: Array<{ kind: string; isEnabled: boolean }>;
   },
-  db: any,
+  db: WebsiteDb,
 ) => {
   if (!draft.bookingEnabled) return;
   if (!draft.pages.some((page) => page.kind === "BOOK" && page.isEnabled)) {
@@ -238,7 +241,7 @@ const assertEstimateReadyForPublish = async (
     primaryEstimateFormId: string | null;
     pages: Array<{ kind: string; isEnabled: boolean }>;
   },
-  db: any,
+  db: WebsiteDb,
 ) => {
   if (!draft.estimateEnabled) return;
   if (!draft.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled)) {
@@ -270,7 +273,7 @@ const assertEstimateReadyForPublish = async (
  * it would recursively embed the previous publication in every new revision
  * and make each revision grow exponentially over time.
  */
-const loadDraftSnapshot = async (websiteId: string, db: any) => {
+const loadDraftSnapshot = async (websiteId: string, db: Prisma.TransactionClient | typeof prisma) => {
   const website = await db.businessWebsite.findUnique({
     where: { id: websiteId },
     select: {
@@ -308,18 +311,59 @@ const loadDraftSnapshot = async (websiteId: string, db: any) => {
       updatedAt: true,
       publishedAt: true,
       publishedRevisionNumber: true,
+      draftRevisionNumber: true,
       pages: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
       domains: { orderBy: { createdAt: "asc" } },
       assets: { orderBy: { createdAt: "asc" } },
+      subdomainAliases: { orderBy: { createdAt: "desc" } },
+      primaryBookingForm: { select: { id: true, slug: true, published: true, headline: true } },
+      primaryEstimateForm: { select: { id: true, slug: true, published: true, headline: true } },
     },
   });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website not found");
   return website;
 };
 
+type DraftSnapshot = Awaited<ReturnType<typeof loadDraftSnapshot>>;
+
+const presentDraftSnapshot = (
+  draft: DraftSnapshot,
+  overrides: {
+    status?: WebsiteLifecycleStatus;
+    publishedAt?: Date | null;
+    publishedRevisionNumber?: number | null;
+    draftRevisionNumber?: number;
+  } = {},
+) => {
+  const domains = draft.domains.map((domain) => presentWebsiteDomain(domain));
+  const platformUrl = WEBSITE_BASE_DOMAIN ? `https://${draft.subdomain}.${WEBSITE_BASE_DOMAIN}` : null;
+  const primaryDomain = WEBSITE_CUSTOM_DOMAINS_ENABLED
+    ? draft.domains.find((domain) => domain.isPrimary && isWebsiteDomainRoutingReady(domain))?.domain ?? null
+    : null;
+  const draftRevisionNumber = overrides.draftRevisionNumber ?? Number(draft.draftRevisionNumber ?? 0);
+  const publishedRevisionNumber =
+    overrides.publishedRevisionNumber !== undefined
+      ? overrides.publishedRevisionNumber
+      : draft.publishedRevisionNumber;
+
+  return {
+    ...draft,
+    status: overrides.status ?? draft.status,
+    publishedAt: overrides.publishedAt !== undefined ? overrides.publishedAt : draft.publishedAt,
+    publishedRevisionNumber,
+    draftRevisionNumber,
+    domains,
+    editorSurface: null,
+    platformUrl,
+    publicUrl: primaryDomain ? `https://${primaryDomain}` : platformUrl,
+    hasUnpublishedChanges:
+      publishedRevisionNumber === null || draftRevisionNumber > publishedRevisionNumber,
+  };
+};
+
 const loadWebsiteDetailsWhere = async (
   where: { id: string } | { adminId: string },
-  db: any = prisma,
+  db: Prisma.TransactionClient | typeof prisma = prisma,
   options: { surface?: WebsiteEditorSurface | "full" } = {},
 ) => {
   const surface = options.surface ?? "full";
@@ -376,19 +420,19 @@ const loadWebsiteDetailsWhere = async (
   };
 };
 
-const loadWebsiteDetails = (websiteId: string, db: any = prisma) =>
+const loadWebsiteDetails = (websiteId: string, db: Prisma.TransactionClient | typeof prisma = prisma) =>
   loadWebsiteDetailsWhere({ id: websiteId }, db, { surface: "full" });
 
-const loadWebsiteDetailsForAdmin = (adminId: string, db: any = prisma) =>
+const loadWebsiteDetailsForAdmin = (adminId: string, db: Prisma.TransactionClient | typeof prisma = prisma) =>
   loadWebsiteDetailsWhere({ adminId }, db, { surface: "full" });
 
 const loadWebsiteEditorDetailsForAdmin = (
   adminId: string,
   surface: WebsiteEditorSurface,
-  db: any = prisma,
+  db: Prisma.TransactionClient | typeof prisma = prisma,
 ) => loadWebsiteDetailsWhere({ adminId }, db, { surface });
 
-const getLatestRevisionNumber = async (db: any, websiteId: string): Promise<number> => {
+const getLatestRevisionNumber = async (db: WebsiteDb, websiteId: string): Promise<number> => {
   const website = await db.businessWebsite.findUnique({
     where: { id: websiteId },
     select: { draftRevisionNumber: true },
@@ -398,7 +442,7 @@ const getLatestRevisionNumber = async (db: any, websiteId: string): Promise<numb
 };
 
 const assertExpectedRevision = async (
-  db: any,
+  db: WebsiteDb,
   websiteId: string,
   expectedRevisionNumber: number | undefined,
 ): Promise<number> => {
@@ -447,16 +491,17 @@ const normalizeDraftPageContent = <T extends { pages?: Array<{ kind: string; con
 }) as T;
 
 export const createRevisionSnapshotTx = async (
-  db: any,
+  db: WebsiteDb,
   websiteId: string,
   createdByUserId: string | null,
   reason: string,
   baseRevisionNumber?: number,
+  preparedSnapshot?: DraftSnapshot,
 ) => {
   await acquireTextTransactionAdvisoryLock(db, websiteId);
   const currentRevisionNumber = baseRevisionNumber ?? await getLatestRevisionNumber(db, websiteId);
   const nextRevisionNumber = currentRevisionNumber + 1;
-  const snapshot = normalizeDraftPageContent(await loadDraftSnapshot(websiteId, db));
+  const snapshot = preparedSnapshot ?? normalizeDraftPageContent(await loadDraftSnapshot(websiteId, db));
   const revision = await db.websiteRevision.create({
     data: {
       websiteId,
@@ -478,7 +523,7 @@ export const createRevisionSnapshotTx = async (
  * PUBLISHED before Phase 4 added publishedSnapshot. Capture their current
  * state before the first draft mutation so Save draft cannot leak changes.
  */
-export const ensurePublishedSnapshotBeforeDraftMutationTx = async (db: any, websiteId: string) => {
+export const ensurePublishedSnapshotBeforeDraftMutationTx = async (db: WebsiteDb, websiteId: string) => {
   const current = await db.businessWebsite.findUnique({
     where: { id: websiteId },
     select: { status: true, publishedSnapshot: true, publishedRevisionNumber: true, draftRevisionNumber: true },
@@ -642,7 +687,7 @@ const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user:
 };
 
 const applyPagePatchesBatch = async (
-  tx: any,
+  tx: Prisma.TransactionClient,
   websiteId: string,
   patches: Array<Record<string, any>>,
 ) => {
@@ -753,8 +798,19 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
     });
     await applyPagePatchesBatch(tx, lockedCurrent.id, normalizedPagePatches);
 
-    await createRevisionSnapshotTx(tx, lockedCurrent.id, user.id, "Draft saved", baseRevisionNumber);
-    return loadWebsiteDetails(lockedCurrent.id, tx);
+    // Load the committed draft graph once. The same immutable object is used
+    // for the revision and the API response, avoiding the old post-revision
+    // full website reload inside the transaction.
+    const snapshot = normalizeDraftPageContent(await loadDraftSnapshot(lockedCurrent.id, tx));
+    const revision = await createRevisionSnapshotTx(
+      tx,
+      lockedCurrent.id,
+      user.id,
+      "Draft saved",
+      baseRevisionNumber,
+      snapshot,
+    );
+    return presentDraftSnapshot(snapshot, { draftRevisionNumber: revision.revisionNumber });
   });
   await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
   return result;
@@ -790,18 +846,31 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
       assertEstimateReadyForPublish(adminId, draft, tx),
     ]);
 
-    const revision = await createRevisionSnapshotTx(tx, current.id, user.id, "Website published", baseRevisionNumber);
+    const revision = await createRevisionSnapshotTx(
+      tx,
+      current.id,
+      user.id,
+      "Website published",
+      baseRevisionNumber,
+      draft,
+    );
     const publishedSnapshot = buildPublishedSnapshot(draft);
+    const publishedAt = new Date();
     await tx.businessWebsite.update({
       where: { id: current.id },
       data: {
         status: WEBSITE_STATUS.PUBLISHED,
-        publishedAt: new Date(),
-        publishedSnapshot: publishedSnapshot as any,
+        publishedAt,
+        publishedSnapshot: publishedSnapshot as Prisma.InputJsonValue,
         publishedRevisionNumber: revision.revisionNumber,
       },
     });
-    return loadWebsiteDetails(current.id, tx);
+    return presentDraftSnapshot(draft, {
+      status: WEBSITE_STATUS.PUBLISHED,
+      publishedAt,
+      publishedRevisionNumber: revision.revisionNumber,
+      draftRevisionNumber: revision.revisionNumber,
+    });
   });
 
   // Routing cache is only a performance layer, but publishing is one of the
@@ -953,10 +1022,27 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
     // tenant-owned form attached.
     const preflightDraft = await loadDraftSnapshot(current.id, tx);
     const bookingFormId = preflightDraft.bookingEnabled
-      ? await WebsiteBookingProvisioningService.ensureAttachedForLaunchTx(tx, adminId, current.id)
+      ? await WebsiteBookingProvisioningService.ensureAttachedForLaunchTx(tx, adminId, current.id, {
+          id: adminId,
+          businessName: owner.businessName,
+          businessWebsite: {
+            id: current.id,
+            status: preflightDraft.status,
+            accentColor: preflightDraft.accentColor,
+            primaryBookingFormId: preflightDraft.primaryBookingFormId,
+            bookingEnabled: preflightDraft.bookingEnabled,
+          },
+        })
       : null;
 
-    const draft = normalizeDraftPageContent(bookingFormId ? await loadDraftSnapshot(current.id, tx) : preflightDraft);
+    // Booking provisioning can only change primaryBookingFormId on the website
+    // row. Patch that field into the already-loaded snapshot instead of loading
+    // the entire website/pages/domains/assets graph a second time.
+    const draft = normalizeDraftPageContent(
+      bookingFormId && bookingFormId !== preflightDraft.primaryBookingFormId
+        ? { ...preflightDraft, primaryBookingFormId: bookingFormId }
+        : preflightDraft,
+    );
     const launchTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     WebsiteEntitlementService.assertTemplateAllowed(launchTemplate, entitlements);
     if (draft.socialImageUrl && !entitlements.advancedSeo) {
@@ -978,18 +1064,15 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
       });
     }
 
-    if (draft.bookingEnabled) {
-      const attachedBookingForm = await tx.bookingForm.findFirst({
-        where: { id: bookingFormId!, adminId, published: true },
-        select: { id: true },
+    if (draft.bookingEnabled && (!bookingFormId || draft.primaryBookingFormId !== bookingFormId)) {
+      // ensureAttachedForLaunchTx only returns a published tenant-owned form;
+      // this assertion protects the in-memory snapshot/database handoff without
+      // issuing another redundant BookingForm read.
+      throw new AppError(status.CONFLICT, "Website booking is not ready to publish", {
+        code: "WEBSITE_BOOKING_NOT_READY",
+        retryable: true,
+        fieldErrors: { services: "Reconnect Online Booking and try again." },
       });
-      if (!attachedBookingForm || draft.primaryBookingFormId !== bookingFormId) {
-        throw new AppError(status.CONFLICT, "Website booking is not ready to publish", {
-          code: "WEBSITE_BOOKING_NOT_READY",
-          retryable: true,
-          fieldErrors: { services: "Reconnect Online Booking and try again." },
-        });
-      }
     }
 
     await assertEstimateReadyForPublish(adminId, draft, tx);
@@ -1003,6 +1086,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
       user.id,
       "Website launched",
       latestRevisionNumber,
+      draft,
     );
     const launchedAt = new Date();
 
@@ -1011,7 +1095,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
       data: {
         status: WEBSITE_STATUS.PUBLISHED,
         publishedAt: launchedAt,
-        publishedSnapshot: publishedSnapshot as any,
+        publishedSnapshot: publishedSnapshot as Prisma.InputJsonValue,
         publishedRevisionNumber: revision.revisionNumber,
       },
     });
@@ -1025,7 +1109,12 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
     return {
       businessName: owner.businessName,
       alreadyLive: false,
-      website: await loadWebsiteDetails(current.id, tx),
+      website: presentDraftSnapshot(draft, {
+        status: WEBSITE_STATUS.PUBLISHED,
+        publishedAt: launchedAt,
+        publishedRevisionNumber: revision.revisionNumber,
+        draftRevisionNumber: revision.revisionNumber,
+      }),
     };
   }, PROVISIONING_TRANSACTION_OPTIONS);
 

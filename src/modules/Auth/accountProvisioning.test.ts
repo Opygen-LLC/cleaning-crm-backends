@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => {
     order,
     tx,
     transaction: vi.fn(),
+    planFindFirst: vi.fn(),
     hashPassword: vi.fn(),
     createAdmin: vi.fn(),
     provisionWebsite: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("../../config/ENV", () => ({
 vi.mock("../../lib/prisma/prisma", () => ({
   prisma: {
     $transaction: mocks.transaction,
+    plan: { findFirst: mocks.planFindFirst },
   },
 }));
 
@@ -70,6 +72,7 @@ beforeEach(() => {
   mocks.order.length = 0;
 
   mocks.hashPassword.mockResolvedValue("hashed-password");
+  mocks.planFindFirst.mockResolvedValue({ id: "plan-monthly-growth", subscriptionPlanId: "subscription-plan-growth" });
   mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => callback(mocks.tx));
   mocks.tx.user.create.mockImplementation(async ({ data }: any) => {
     mocks.order.push("user+account");
@@ -123,6 +126,7 @@ describe("AccountProvisioningService", () => {
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.transaction.mock.calls[0]?.[1]).toEqual(PROVISIONING_TRANSACTION_OPTIONS);
     expect(mocks.hashPassword).toHaveBeenCalledWith("Secret123!");
+    expect(mocks.planFindFirst).toHaveBeenCalledTimes(1);
 
     const userCreate = mocks.tx.user.create.mock.calls[0]?.[0];
     expect(userCreate.data.email).toBe("jamie@example.com");
@@ -145,11 +149,13 @@ describe("AccountProvisioningService", () => {
       adminId: "admin-1",
       businessName: "Sparkle Cleaning",
       createdByUserId: userId,
+      skipExistingCheck: true,
     });
     expect(mocks.createTrial).toHaveBeenCalledWith("admin-1", {
       db: mocks.tx,
       trialDays: 14,
       skipExistingCheck: true,
+      preloadedPlan: { id: "plan-monthly-growth", subscriptionPlanId: "subscription-plan-growth" },
     });
     expect(mocks.enqueueVerification).toHaveBeenCalledWith(
       mocks.tx,

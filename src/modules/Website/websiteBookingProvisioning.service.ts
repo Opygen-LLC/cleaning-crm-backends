@@ -1,6 +1,7 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import { FormFieldType, ServiceCategory, ServiceStatus, ServiceType } from "../../generated/prisma/enums";
+import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
@@ -146,50 +147,106 @@ const estimateFormOptionSelect = {
   published: true,
 } as const;
 
-const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupResult> => {
-  const [website, publishedForms, publishedEstimateForms, bookableServiceCount] = await Promise.all([
-    prisma.businessWebsite.findUnique({
-      where: { adminId },
-      select: {
-        status: true,
-        publishedSnapshot: true,
-        primaryBookingFormId: true,
-        bookingEnabled: true,
-        bookingShowNavigation: true,
-        bookingShowHeaderCta: true,
-        bookingShowServiceCtas: true,
-        bookingShowHomeCta: true,
-        bookingShowAvailableSlots: true,
-        bookingShowPrices: true,
-        bookingShowStartingPrices: true,
-        bookingShowServiceDuration: true,
-        bookingCtaLabel: true,
-        primaryEstimateFormId: true,
-        estimateEnabled: true,
-        primaryBookingForm: { select: formOptionSelect },
-        primaryEstimateForm: { select: estimateFormOptionSelect },
-      },
-    }),
-    prisma.bookingForm.findMany({
-      where: { adminId, published: true },
-      select: formOptionSelect,
-      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-    }),
-    prisma.estimateForm.findMany({
-      where: { adminId, published: true },
-      select: estimateFormOptionSelect,
-      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-      take: 100,
-    }),
-    prisma.serviceCatalog.count({
-      where: {
-        adminId,
-        status: ServiceStatus.ACTIVE,
-        onlineBookingEnabled: true,
-      },
-    }),
-  ]);
+type BookingSetupQueryRow = {
+  status: WebsiteLifecycleStatus;
+  publishedSnapshot: Prisma.JsonValue | null;
+  primaryBookingFormId: string | null;
+  bookingEnabled: boolean;
+  bookingShowNavigation: boolean;
+  bookingShowHeaderCta: boolean;
+  bookingShowServiceCtas: boolean;
+  bookingShowHomeCta: boolean;
+  bookingShowAvailableSlots: boolean;
+  bookingShowPrices: boolean;
+  bookingShowStartingPrices: boolean;
+  bookingShowServiceDuration: boolean;
+  bookingCtaLabel: string;
+  primaryEstimateFormId: string | null;
+  estimateEnabled: boolean;
+  primaryBookingForm: WebsiteBookingSetupFormOption | null;
+  primaryEstimateForm: { id: string; headline: string; slug: string; published: true } | null;
+  publishedForms: WebsiteBookingSetupFormOption[];
+  publishedEstimateForms: Array<{ id: string; headline: string; slug: string; published: true }>;
+  bookableServiceCount: bigint | number;
+};
 
+/**
+ * Booking Studio bootstrap is intentionally one SQL round-trip. The previous
+ * implementation issued four independent Prisma reads after every mutation,
+ * which made the endpoint especially sensitive to cross-region DB latency.
+ */
+const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupResult> => {
+  const rows = await prisma.$queryRaw<BookingSetupQueryRow[]>`
+    SELECT
+      bw."status"::text AS "status",
+      bw."publishedSnapshot" AS "publishedSnapshot",
+      bw."primaryBookingFormId" AS "primaryBookingFormId",
+      bw."bookingEnabled" AS "bookingEnabled",
+      bw."bookingShowNavigation" AS "bookingShowNavigation",
+      bw."bookingShowHeaderCta" AS "bookingShowHeaderCta",
+      bw."bookingShowServiceCtas" AS "bookingShowServiceCtas",
+      bw."bookingShowHomeCta" AS "bookingShowHomeCta",
+      bw."bookingShowAvailableSlots" AS "bookingShowAvailableSlots",
+      bw."bookingShowPrices" AS "bookingShowPrices",
+      bw."bookingShowStartingPrices" AS "bookingShowStartingPrices",
+      bw."bookingShowServiceDuration" AS "bookingShowServiceDuration",
+      bw."bookingCtaLabel" AS "bookingCtaLabel",
+      bw."primaryEstimateFormId" AS "primaryEstimateFormId",
+      bw."estimateEnabled" AS "estimateEnabled",
+      CASE WHEN primary_booking.id IS NULL THEN NULL ELSE jsonb_build_object(
+        'id', primary_booking.id,
+        'headline', primary_booking.headline,
+        'slug', primary_booking.slug,
+        'published', primary_booking.published,
+        'websiteManaged', primary_booking."websiteManaged"
+      ) END AS "primaryBookingForm",
+      CASE WHEN primary_estimate.id IS NULL THEN NULL ELSE jsonb_build_object(
+        'id', primary_estimate.id,
+        'headline', primary_estimate.headline,
+        'slug', primary_estimate.slug,
+        'published', primary_estimate.published
+      ) END AS "primaryEstimateForm",
+      COALESCE((
+        SELECT jsonb_agg(jsonb_build_object(
+          'id', bf.id,
+          'headline', bf.headline,
+          'slug', bf.slug,
+          'published', true,
+          'websiteManaged', bf."websiteManaged"
+        ) ORDER BY bf."updatedAt" DESC, bf."createdAt" DESC)
+        FROM "booking_form" bf
+        WHERE bf."adminId" = bw."adminId" AND bf.published = true
+      ), '[]'::jsonb) AS "publishedForms",
+      COALESCE((
+        SELECT jsonb_agg(jsonb_build_object(
+          'id', ef.id,
+          'headline', ef.headline,
+          'slug', ef.slug,
+          'published', true
+        ) ORDER BY ef."updatedAt" DESC, ef."createdAt" DESC)
+        FROM (
+          SELECT id, headline, slug, published, "updatedAt", "createdAt"
+          FROM "estimate_form"
+          WHERE "adminId" = bw."adminId" AND published = true
+          ORDER BY "updatedAt" DESC, "createdAt" DESC
+          LIMIT 100
+        ) ef
+      ), '[]'::jsonb) AS "publishedEstimateForms",
+      (
+        SELECT COUNT(*)
+        FROM "service_catalog" sc
+        WHERE sc."adminId" = bw."adminId"
+          AND sc.status = 'ACTIVE'::"ServiceStatus"
+          AND sc."onlineBookingEnabled" = true
+      ) AS "bookableServiceCount"
+    FROM "business_website" bw
+    LEFT JOIN "booking_form" primary_booking ON primary_booking.id = bw."primaryBookingFormId"
+    LEFT JOIN "estimate_form" primary_estimate ON primary_estimate.id = bw."primaryEstimateFormId"
+    WHERE bw."adminId" = ${adminId}
+    LIMIT 1
+  `;
+
+  const website = rows[0];
   if (!website) {
     throw new AppError(status.NOT_FOUND, "Business website not found", {
       code: "WEBSITE_NOT_FOUND",
@@ -197,29 +254,20 @@ const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupRe
     });
   }
 
-  const primary = website.primaryBookingForm?.published
-    ? ({ ...website.primaryBookingForm, published: true } as WebsiteBookingSetupFormOption)
-    : null;
-  const options = publishedForms.map((form) => ({
-    ...form,
-    published: true as const,
-  }));
-  const estimateOptions = publishedEstimateForms.map((form) => ({ ...form, published: true as const }));
-  const primaryEstimate = website.primaryEstimateForm?.published
-    ? ({ ...website.primaryEstimateForm, published: true } as const)
-    : null;
+  const primary = website.primaryBookingForm?.published ? website.primaryBookingForm : null;
+  const primaryEstimate = website.primaryEstimateForm?.published ? website.primaryEstimateForm : null;
   const published = parsePublishedSnapshot(website.publishedSnapshot);
   const bookingLive = Boolean(
     website.status === WEBSITE_STATUS.PUBLISHED &&
-    published?.website.bookingEnabled &&
-    published.website.primaryBookingFormId &&
-    published.pages.some((page) => page.kind === "BOOK" && page.isEnabled),
+      published?.website.bookingEnabled &&
+      published.website.primaryBookingFormId &&
+      published.pages.some((page) => page.kind === "BOOK" && page.isEnabled),
   );
   const estimateLive = Boolean(
     website.status === WEBSITE_STATUS.PUBLISHED &&
-    published?.website.estimateEnabled &&
-    published.website.primaryEstimateFormId &&
-    published.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled),
+      published?.website.estimateEnabled &&
+      published.website.primaryEstimateFormId &&
+      published.pages.some((page) => page.kind === "ESTIMATE" && page.isEnabled),
   );
 
   return {
@@ -227,18 +275,18 @@ const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupRe
     live: bookingLive,
     primaryBookingFormId: website.primaryBookingFormId,
     primaryBookingForm: primary,
-    publishedForms: options,
-    publishedFormCount: options.length,
-    bookableServiceCount,
-    requiresSelection: website.bookingEnabled && !primary && options.length > 1,
-    canCreateDefault: options.length === 0,
+    publishedForms: website.publishedForms,
+    publishedFormCount: website.publishedForms.length,
+    bookableServiceCount: Number(website.bookableServiceCount),
+    requiresSelection: website.bookingEnabled && !primary && website.publishedForms.length > 1,
+    canCreateDefault: website.publishedForms.length === 0,
     websitePath: "/book",
     estimate: {
       enabled: website.estimateEnabled,
       live: estimateLive,
       primaryEstimateFormId: website.primaryEstimateFormId,
       primaryEstimateForm: primaryEstimate,
-      publishedForms: estimateOptions,
+      publishedForms: website.publishedEstimateForms,
       websitePath: "/estimate",
     },
     settings: {
@@ -260,7 +308,7 @@ const getSetup = async (user: IRequestUser): Promise<WebsiteBookingSetupResult> 
   return getSetupByAdminId(adminId);
 };
 
-const ensureAtLeastOneBookableService = async (tx: any, adminId: string) => {
+const ensureAtLeastOneBookableService = async (tx: Prisma.TransactionClient, adminId: string) => {
   let services = await tx.serviceCatalog.findMany({
     where: {
       adminId,
@@ -321,24 +369,54 @@ const ensureAtLeastOneBookableService = async (tx: any, adminId: string) => {
   return services;
 };
 
-const syncManagedFormServices = async (tx: any, formId: string, services: Array<{ id: string; duration: string; legacyServiceType: unknown }>) => {
-  await tx.bookingFormService.deleteMany({ where: { formId } });
-  await tx.bookingFormService.createMany({
-    data: services.map((service) => ({
-      formId,
-      serviceCatalogId: service.id,
-      serviceType: service.legacyServiceType ?? null,
-      enabled: true,
-      duration: service.duration,
-    })),
+const syncManagedFormServices = async (
+  tx: Prisma.TransactionClient,
+  formId: string,
+  services: Array<{ id: string; duration: string; legacyServiceType: ServiceType | null }>,
+) => {
+  const existing = await tx.bookingFormService.findMany({
+    where: { formId },
+    select: { serviceCatalogId: true, serviceType: true, duration: true, enabled: true },
   });
+  const expected = new Map(
+    services.map((service) => [
+      service.id,
+      { serviceType: service.legacyServiceType ?? null, duration: service.duration, enabled: true },
+    ]),
+  );
+  const alreadySynchronized =
+    existing.length === expected.size &&
+    existing.every((row) => {
+      if (!row.serviceCatalogId) return false;
+      const target = expected.get(row.serviceCatalogId);
+      return Boolean(
+        target &&
+          row.enabled === target.enabled &&
+          row.duration === target.duration &&
+          row.serviceType === target.serviceType,
+      );
+    });
+  if (alreadySynchronized) return;
+
+  await tx.bookingFormService.deleteMany({ where: { formId } });
+  if (services.length > 0) {
+    await tx.bookingFormService.createMany({
+      data: services.map((service) => ({
+        formId,
+        serviceCatalogId: service.id,
+        serviceType: service.legacyServiceType ?? null,
+        enabled: true,
+        duration: service.duration,
+      })),
+    });
+  }
 };
 
 const createManagedBookingForm = async (
-  tx: any,
+  tx: Prisma.TransactionClient,
   admin: { id: string; businessName: string },
   website: { accentColor: string },
-  services: Array<{ id: string; duration: string; legacyServiceType: unknown }>,
+  services: Array<{ id: string; duration: string; legacyServiceType: ServiceType | null }>,
 ) => {
   const form = await tx.bookingForm.create({
     data: {
@@ -363,12 +441,22 @@ const createManagedBookingForm = async (
     select: formOptionSelect,
   });
 
-  await syncManagedFormServices(tx, form.id, services);
-  return form;
+  if (services.length > 0) {
+    await tx.bookingFormService.createMany({
+      data: services.map((service) => ({
+        formId: form.id,
+        serviceCatalogId: service.id,
+        serviceType: service.legacyServiceType ?? null,
+        enabled: true,
+        duration: service.duration,
+      })),
+    });
+  }
+  return { ...form, servicesSynchronized: true as const };
 };
 
 const selectOrCreateBookingFormTx = async (
-  tx: any,
+  tx: Prisma.TransactionClient,
   admin: {
     id: string;
     businessName: string;
@@ -384,6 +472,7 @@ const selectOrCreateBookingFormTx = async (
   const adminId = admin.id;
   const services = await ensureAtLeastOneBookableService(tx, adminId);
   let targetForm: { id: string; websiteManaged: boolean } | null = null;
+  let servicesSynchronized = false;
 
   if (requestedBookingFormId) {
     targetForm = await tx.bookingForm.findFirst({
@@ -451,7 +540,9 @@ const selectOrCreateBookingFormTx = async (
       });
       targetForm = reusableManaged;
     } else {
-      targetForm = await createManagedBookingForm(tx, admin, admin.businessWebsite, services);
+      const created = await createManagedBookingForm(tx, admin, admin.businessWebsite, services);
+      targetForm = created;
+      servicesSynchronized = created.servicesSynchronized;
     }
   }
 
@@ -465,7 +556,7 @@ const selectOrCreateBookingFormTx = async (
     });
   }
 
-  if (targetForm.websiteManaged) {
+  if (targetForm.websiteManaged && !servicesSynchronized) {
     // Auto-created forms mirror ServiceCatalog online-booking eligibility.
     // Manually authored forms remain owner-controlled and are never rewritten.
     await syncManagedFormServices(tx, targetForm.id, services);
@@ -480,14 +571,30 @@ const selectOrCreateBookingFormTx = async (
  * opens a nested transaction and therefore participates in the website launch
  * commit atomically.
  */
+type LaunchBookingAdminContext = {
+  id: string;
+  businessName: string;
+  businessWebsite: {
+    id: string;
+    status: string;
+    accentColor: string;
+    primaryBookingFormId: string | null;
+    bookingEnabled: boolean;
+  };
+};
+
 const ensureAttachedForLaunchTx = async (
-  tx: any,
+  tx: Prisma.TransactionClient,
   adminId: string,
   websiteId: string,
+  launchContext?: LaunchBookingAdminContext,
 ): Promise<string> => {
   await acquireExtendedTextTransactionAdvisoryLock(tx, `website-booking-provision:${adminId}`);
 
-  const admin = await tx.adminProfile.findUnique({
+  // Website launch already loaded and locked this tenant's draft. Reuse that
+  // authoritative context instead of re-reading AdminProfile + Website. Other
+  // callers can omit it and retain the defensive lookup.
+  const admin = launchContext ?? await tx.adminProfile.findUnique({
     where: { id: adminId },
     select: {
       id: true,
@@ -504,7 +611,7 @@ const ensureAttachedForLaunchTx = async (
     },
   });
 
-  if (!admin?.businessWebsite || admin.businessWebsite.id !== websiteId) {
+  if (!admin?.businessWebsite || admin.businessWebsite.id !== websiteId || admin.id !== adminId) {
     throw new AppError(status.NOT_FOUND, "Business website not found", {
       code: "WEBSITE_NOT_FOUND",
       retryable: false,
@@ -528,7 +635,7 @@ const ensureAttachedForLaunchTx = async (
 };
 
 export const configureForAdminTx = async (
-  tx: any,
+  tx: Prisma.TransactionClient,
   adminId: string,
   payload: WebsiteBookingSetupPayload,
 ): Promise<{ websiteId: string; primaryBookingFormId: string | null }> => {
