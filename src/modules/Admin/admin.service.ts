@@ -20,6 +20,7 @@ import { invalidateServiceCatalogReadModels, syncServiceCatalogSelectionTx } fro
 import { acquireExtendedTextTransactionAdvisoryLock, acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { RELEASE_VERSION } from "../../config/ENV";
 import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
+import { recordClientReliabilitySignals, recordProductReliabilitySignal } from "../../lib/monitoring/productReliabilityMetrics";
 import { AccountStatus, ServiceStatus, SubscriptionStatus } from "../../generated/prisma/enums";
 import { businessHoursSchema, normalizeBusinessHours, type BusinessHours } from "./businessHours";
 import type {
@@ -759,6 +760,16 @@ const reportOnboardingClientError = async (
     where: { userId },
     select: { id: true },
   }))?.id ?? null;
+  recordClientReliabilitySignals({
+    section: payload.section,
+    errorKind: payload.errorKind,
+    message: payload.message,
+    releaseVersion: payload.releaseVersion || RELEASE_VERSION,
+    route: payload.route,
+    onboardingStep: payload.onboardingStep ?? null,
+    requestId,
+    traceId: payload.relatedTraceId ?? null,
+  });
   await ErrorMonitor.captureDashboardClientError({
     message: payload.message,
     stack: payload.stack ?? null,
@@ -873,12 +884,14 @@ const onboardingServicesSignature = (payload: SaveOnboardingServicesPayload): st
 const saveOnboardingServices = async (
   userId: string,
   payload: SaveOnboardingServicesPayload,
+  context: { requestId?: string | null; traceId?: string | null } = {},
 ): Promise<SaveOnboardingServicesResult> => {
   const signature = onboardingServicesSignature(payload);
   const revisionReason = `Onboarding services:${signature}`;
   let adminId = "";
 
-  await prisma.$transaction(async (tx) => {
+  try {
+    await prisma.$transaction(async (tx) => {
     const admin = await tx.adminProfile.findUnique({
       where: { userId },
       select: {
@@ -974,7 +987,32 @@ const saveOnboardingServices = async (
       userId,
       revisionReason,
     );
-  });
+    });
+  } catch (error) {
+    const expectedClientError = error instanceof AppError && error.statusCode < 500 && error.retryable !== true;
+    if (!expectedClientError) {
+      recordProductReliabilitySignal({
+        code: "ONBOARDING_TRANSACTION_FAILURE",
+        releaseVersion: RELEASE_VERSION,
+        route: "/api/v1/admin/onboarding/services",
+        onboardingStep: "services",
+        requestId: context.requestId ?? null,
+        traceId: context.traceId ?? null,
+      });
+      logger.error("onboarding_transaction_failure", {
+        event: "product_reliability_signal",
+        signal: "ONBOARDING_TRANSACTION_FAILURE",
+        releaseSha: RELEASE_VERSION,
+        onboardingStep: "services",
+        requestId: context.requestId ?? null,
+        traceId: context.traceId ?? null,
+        tenantHash: hashTelemetryId(adminId),
+        errorCode: error instanceof AppError ? error.code ?? null : null,
+        errorMessage: error instanceof Error ? error.message.slice(0, 400) : "Unknown transaction failure",
+      });
+    }
+    throw error;
+  }
 
   await Promise.all([
     invalidateServiceCatalogReadModels(adminId),

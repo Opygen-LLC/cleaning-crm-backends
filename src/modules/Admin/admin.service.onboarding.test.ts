@@ -113,6 +113,20 @@ describe("website-first onboarding status", () => {
     expect(afterRefresh).toMatchObject({ currentStep: 3, resumeStep: "services", completedCount: 2 });
   });
 
+  it.each([
+    [[], 1, "business_profile"],
+    [["business_profile"], 2, "branding"],
+    [["business_profile", "branding"], 3, "services"],
+    [["business_profile", "branding", "services"], 4, "website_address"],
+    [["business_profile", "branding", "services", "website_address"], 5, "template"],
+  ] as const)("resumes every persisted onboarding prefix %# without skipping a step", async (completed, currentStep, resumeStep) => {
+    db.adminProfile.findUnique.mockResolvedValue(statusRow([...completed]));
+    const result = await adminService.getOnboardingStatus(USER_ID);
+    expect(result.currentStep).toBe(currentStep);
+    expect(result.resumeStep).toBe(resumeStep);
+    expect(result.completedCount).toBe(completed.length);
+  });
+
   it("restores persisted onboarding progress after logout/login", async () => {
     db.adminProfile.findUnique.mockResolvedValue(statusRow(["business_profile", "branding", "services"]));
 

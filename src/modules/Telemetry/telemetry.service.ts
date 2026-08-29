@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
+import { recordClientReliabilitySignals } from "../../lib/monitoring/productReliabilityMetrics";
 import type { ClientErrorPayload } from "./telemetry.validation";
 
 const identityHash = (value: string | null | undefined): string | null =>
@@ -14,6 +15,14 @@ const reportClientError = async (input: {
   traceId?: string | null;
   payload: ClientErrorPayload;
 }) => {
+  recordClientReliabilitySignals({
+    section: input.payload.section,
+    message: input.payload.message,
+    releaseVersion: input.payload.releaseVersion,
+    route: input.payload.route,
+    requestId: input.requestId ?? null,
+    traceId: input.traceId ?? input.payload.relatedTraceId ?? null,
+  });
   await ErrorMonitor.captureDashboardClientError({
     message: input.payload.message,
     stack: input.payload.stack ?? null,

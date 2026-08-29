@@ -128,7 +128,10 @@ const getOnboardingStatus = catchAsync(async (req, res) => {
 
 
 const saveOnboardingServices = catchAsync(async (req, res) => {
-  const result = await adminService.saveOnboardingServices(req.user.id, req.body);
+  const result = await adminService.saveOnboardingServices(req.user.id, req.body, {
+    requestId: typeof res.locals.requestId === "string" ? res.locals.requestId : null,
+    traceId: typeof res.locals.traceId === "string" ? res.locals.traceId : null,
+  });
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,

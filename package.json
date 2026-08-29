@@ -51,14 +51,15 @@
     "perf:phase4:explain": "tsx src/scripts/phase4/explainHotPaths.ts",
     "check:secrets": "node scripts/phase7/checkSecretSafety.mjs",
     "monitoring:alerts": "node scripts/phase7/checkMonitoringAlerts.mjs",
-    "test:integration": "vitest run src/modules/Auth/accountProvisioning.test.ts src/modules/Admin/admin.service.onboarding.test.ts src/modules/ServiceCatalog/serviceCatalog.contract.test.ts src/modules/Website/websiteAcquisitionIntegration.test.ts",
+    "test:integration": "vitest run src/modules/Auth/accountProvisioning.test.ts src/modules/Admin/admin.service.onboarding.test.ts src/modules/Admin/admin.service.onboarding.transaction.test.ts src/modules/ServiceCatalog/serviceCatalog.contract.test.ts src/modules/Website/websiteAcquisitionIntegration.test.ts",
     "release:check": "pnpm run check:reliability && pnpm run check:repo-hygiene && pnpm run check:secrets && node scripts/verifyPhase5Security.mjs && node scripts/verifyPhase6Observability.mjs && node scripts/verifyAuthPhase6.mjs && pnpm run typecheck && pnpm run test && pnpm run build",
     "check:release-infra": "node scripts/phase7/verifyPhase7Release.mjs",
     "load:staging:warm": "k6 run -e CACHE_MODE=warm scripts/load/phase7-load.js",
     "load:staging:cold": "k6 run -e CACHE_MODE=cold scripts/load/phase7-load.js",
     "db:reconcile": "tsx src/scripts/phase4/reconcileData.ts",
     "db:reconcile:fix": "tsx src/scripts/phase4/reconcileData.ts --fix",
-    "check:reliability": "node scripts/verifyReliability.mjs"
+    "check:reliability": "node scripts/verifyReliability.mjs",
+    "release:production": "bash scripts/release/productionRollout.sh"
   },
   "keywords": [],
   "author": "opygen",

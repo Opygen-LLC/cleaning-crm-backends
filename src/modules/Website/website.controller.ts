@@ -18,6 +18,9 @@ import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
 import AppError from "../../errorHelper/AppError";
 import { WebsiteEntitlementService } from "./websiteEntitlement.service";
 import { adminService } from "../Admin/admin.service";
+import logger from "../../lib/logger";
+import { RELEASE_VERSION } from "../../config/ENV";
+import { recordProductReliabilitySignal } from "../../lib/monitoring/productReliabilityMetrics";
 
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
@@ -62,7 +65,33 @@ const configureWebsiteBooking = catchAsync(async (req, res) =>
 );
 const previewWebsite = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
-  return ok(res, "Website preview retrieved successfully", await PublicWebsiteService.getPreviewWebsite(req.user));
+  try {
+    return ok(res, "Website preview retrieved successfully", await PublicWebsiteService.getPreviewWebsite(req.user));
+  } catch (error) {
+    const expectedClientError = error instanceof AppError && error.statusCode < 500;
+    if (!expectedClientError) {
+      const requestId = typeof res.locals.requestId === "string" ? res.locals.requestId : null;
+      const traceId = typeof res.locals.traceId === "string" ? res.locals.traceId : null;
+      recordProductReliabilitySignal({
+        code: "WEBSITE_PREVIEW_FAILURE",
+        releaseVersion: RELEASE_VERSION,
+        route: "/api/v1/website/preview",
+        onboardingStep: null,
+        requestId,
+        traceId,
+      });
+      logger.error("website_preview_failure", {
+        event: "product_reliability_signal",
+        signal: "WEBSITE_PREVIEW_FAILURE",
+        releaseSha: RELEASE_VERSION,
+        requestId,
+        traceId,
+        route: "/api/v1/website/preview",
+        errorMessage: error instanceof Error ? error.message.slice(0, 400) : "Unknown preview failure",
+      });
+    }
+    throw error;
+  }
 });
 const listPages = catchAsync(async (req, res) => ok(res, "Website pages retrieved successfully", await WebsiteService.listPages(req.user)));
 const updatePage = catchAsync(async (req, res) => ok(res, "Website page updated successfully", await WebsiteService.updatePage(paramStr(req.params.pageId), req.body, req.user)));
@@ -70,7 +99,33 @@ const listRevisions = catchAsync(async (req, res) => ok(res, "Website revisions 
 const getRevision = catchAsync(async (req, res) => ok(res, "Website revision retrieved successfully", await WebsiteService.getRevision(paramStr(req.params.revisionId), req.user)));
 const previewRevision = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
-  return ok(res, "Website revision preview retrieved successfully", await PublicWebsiteService.getRevisionPreviewWebsite(paramStr(req.params.revisionId), req.user));
+  try {
+    return ok(res, "Website revision preview retrieved successfully", await PublicWebsiteService.getRevisionPreviewWebsite(paramStr(req.params.revisionId), req.user));
+  } catch (error) {
+    const expectedClientError = error instanceof AppError && error.statusCode < 500;
+    if (!expectedClientError) {
+      const requestId = typeof res.locals.requestId === "string" ? res.locals.requestId : null;
+      const traceId = typeof res.locals.traceId === "string" ? res.locals.traceId : null;
+      recordProductReliabilitySignal({
+        code: "WEBSITE_PREVIEW_FAILURE",
+        releaseVersion: RELEASE_VERSION,
+        route: "/api/v1/website/revisions/:revisionId/preview",
+        onboardingStep: null,
+        requestId,
+        traceId,
+      });
+      logger.error("website_revision_preview_failure", {
+        event: "product_reliability_signal",
+        signal: "WEBSITE_PREVIEW_FAILURE",
+        releaseSha: RELEASE_VERSION,
+        requestId,
+        traceId,
+        route: "/api/v1/website/revisions/:revisionId/preview",
+        errorMessage: error instanceof Error ? error.message.slice(0, 400) : "Unknown preview failure",
+      });
+    }
+    throw error;
+  }
 });
 const restoreRevision = catchAsync(async (req, res) =>
   ok(res, "Website revision restored to draft successfully", await WebsiteService.restoreRevision(paramStr(req.params.revisionId), req.body ?? {}, req.user)),

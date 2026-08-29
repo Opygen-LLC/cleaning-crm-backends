@@ -38,6 +38,7 @@ import { inspectWebsiteWildcardInfrastructure } from "./modules/Website/websiteP
 import logRequestResponse from "./middlewares/logger.middleware";
 import { requestContext } from "./middlewares/requestContext";
 import { getPerformanceSnapshot } from "./lib/monitoring/performanceMetrics";
+import { getProductReliabilitySnapshot } from "./lib/monitoring/productReliabilityMetrics";
 import { getMonitoringAlerts } from "./lib/monitoring/alerting";
 import { getInfrastructureAlignment } from "./lib/monitoring/infrastructure";
 import { getAuthenticatedOrigins } from "./config/authSecurity";
@@ -264,6 +265,7 @@ app.get("/health/performance", (req: Request, res: Response) => {
     success: true,
     data: {
       ...getPerformanceSnapshot(),
+      productReliability: getProductReliabilitySnapshot(),
       infrastructure: getInfrastructureAlignment(),
       databasePool: {
         min: DB_POOL_MIN,

@@ -53,6 +53,12 @@ export const ALERT_DB_P95_MS: number = Math.max(25, Number(process.env.ALERT_DB_
 export const ALERT_REFRESH_FAILURE_RATE_PERCENT: number = Math.max(0.1, Number(process.env.ALERT_REFRESH_FAILURE_RATE_PERCENT) || 5);
 export const ALERT_OTP_FAILURE_RATE_PERCENT: number = Math.max(0.1, Number(process.env.ALERT_OTP_FAILURE_RATE_PERCENT) || 15);
 export const ALERT_ACCESS_TOKEN_MISSING_COUNT: number = Math.max(1, Math.trunc(Number(process.env.ALERT_ACCESS_TOKEN_MISSING_COUNT) || 5));
+export const ALERT_ONBOARDING_RENDER_ERROR_COUNT: number = Math.max(1, Math.trunc(Number(process.env.ALERT_ONBOARDING_RENDER_ERROR_COUNT) || 1));
+export const ALERT_CHUNK_LOAD_ERROR_COUNT: number = Math.max(1, Math.trunc(Number(process.env.ALERT_CHUNK_LOAD_ERROR_COUNT) || 1));
+export const ALERT_CONTRACT_MISMATCH_COUNT: number = Math.max(1, Math.trunc(Number(process.env.ALERT_CONTRACT_MISMATCH_COUNT) || 1));
+export const ALERT_ONBOARDING_TRANSACTION_FAILURE_COUNT: number = Math.max(1, Math.trunc(Number(process.env.ALERT_ONBOARDING_TRANSACTION_FAILURE_COUNT) || 1));
+export const ALERT_WEBSITE_PREVIEW_FAILURE_COUNT: number = Math.max(1, Math.trunc(Number(process.env.ALERT_WEBSITE_PREVIEW_FAILURE_COUNT) || 1));
+export const ALERT_AUTH_REFRESH_LOOP_COUNT: number = Math.max(1, Math.trunc(Number(process.env.ALERT_AUTH_REFRESH_LOOP_COUNT) || 1));
 
 // Phase 3 global-ready / primary-region placement contract.
 //
