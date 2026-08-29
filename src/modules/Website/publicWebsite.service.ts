@@ -211,9 +211,10 @@ const resolveSafePublishedSnapshot = async (website: ProjectionWebsite): Promise
     throw new AppError(status.NOT_FOUND, "Website not found");
   }
 
-  if (Number.isInteger(website.publishedRevisionNumber) && website.publishedRevisionNumber > 0) {
+  const publishedRevisionNumber = website.publishedRevisionNumber;
+  if (typeof publishedRevisionNumber === "number" && Number.isInteger(publishedRevisionNumber) && publishedRevisionNumber > 0) {
     const exactRevision = await prisma.websiteRevision.findFirst({
-      where: { websiteId: website.id, revisionNumber: website.publishedRevisionNumber },
+      where: { websiteId: website.id, revisionNumber: publishedRevisionNumber },
       select: { revisionNumber: true, snapshot: true, reason: true },
     });
     const recovered = exactRevision ? parseRevisionSnapshotAsPublished(exactRevision.snapshot) : null;
@@ -392,9 +393,9 @@ const projectWebsite = (
       createdAt: review.createdAt,
     })),
     reviewSummary,
-    serviceAreas: website.admin.workLocations.map((location: { city: string; postcode: string }) => ({
+    serviceAreas: website.admin.workLocations.map((location) => ({
       city: location.city,
-      postcode: location.postcode,
+      postcode: location.postcode ?? "",
     })),
     bookingPreferences: {
       enabled: config.bookingEnabled,

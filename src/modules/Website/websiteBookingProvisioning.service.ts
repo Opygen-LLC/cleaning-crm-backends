@@ -624,7 +624,17 @@ const ensureAttachedForLaunchTx = async (
     });
   }
 
-  const targetForm = await selectOrCreateBookingFormTx(tx, admin, null);
+  const bookingAdmin = {
+    id: admin.id,
+    businessName: admin.businessName,
+    businessWebsite: {
+      id: admin.businessWebsite.id,
+      status: admin.businessWebsite.status,
+      accentColor: admin.businessWebsite.accentColor,
+      primaryBookingFormId: admin.businessWebsite.primaryBookingFormId,
+    },
+  };
+  const targetForm = await selectOrCreateBookingFormTx(tx, bookingAdmin, null);
   if (targetForm.id !== admin.businessWebsite.primaryBookingFormId) {
     await tx.businessWebsite.update({
       where: { id: websiteId },

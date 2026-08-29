@@ -356,5 +356,6 @@ const repairActiveAdminProvisioning = async (
 export const AccountIntegrityService = {
   inspectActiveAdminProvisioning,
   assertAdminReadyForActivation,
+  assertEmailVerificationCandidate,
   repairActiveAdminProvisioning,
 };

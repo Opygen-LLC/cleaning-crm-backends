@@ -185,6 +185,9 @@ const createWebsiteRecordTx = async (
     websiteId: website.id,
     ...page,
     content: JSON.parse(JSON.stringify(page.content ?? {})),
+    seoTitle: null,
+    seoDescription: null,
+    isEnabled: true,
     createdAt: pageTimestamp,
     updatedAt: pageTimestamp,
   }));

@@ -39,6 +39,9 @@ import type { Prisma } from "../../generated/prisma/client";
 
 type WebsiteDb = Prisma.TransactionClient | typeof prisma;
 
+const toInputJsonValue = (value: unknown): Prisma.InputJsonValue =>
+  JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+
 
 const assertEntitledWebsitePatch = (
   payload: WebsiteUpdateInput,
@@ -861,7 +864,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
       data: {
         status: WEBSITE_STATUS.PUBLISHED,
         publishedAt,
-        publishedSnapshot: publishedSnapshot as Prisma.InputJsonValue,
+        publishedSnapshot: toInputJsonValue(publishedSnapshot),
         publishedRevisionNumber: revision.revisionNumber,
       },
     });
@@ -1095,7 +1098,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
       data: {
         status: WEBSITE_STATUS.PUBLISHED,
         publishedAt: launchedAt,
-        publishedSnapshot: publishedSnapshot as Prisma.InputJsonValue,
+        publishedSnapshot: toInputJsonValue(publishedSnapshot),
         publishedRevisionNumber: revision.revisionNumber,
       },
     });
