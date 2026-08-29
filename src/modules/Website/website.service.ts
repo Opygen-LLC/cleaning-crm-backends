@@ -518,7 +518,7 @@ const createWebsiteForAdmin = async (
   payload: WebsiteCreateInput,
   createdByUserId: string | null = null,
 ) => {
-  const website = await prisma.$transaction(async (tx: any) => {
+  const website = await prisma.$transaction(async (tx) => {
     // Validate form ownership in the same transaction as provisioning. The
     // tenant check is therefore part of the authoritative write path, while the
     // database foreign keys still arbitrate any concurrent form deletion.
@@ -564,7 +564,7 @@ const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) =>
   const adminId = await getAdminId(user);
   const [current, entitlements] = await Promise.all([getWebsiteOrThrow(adminId), WebsiteEntitlementService.getForAdminId(adminId)]);
 
-  const result = await prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
 
     // Re-read after acquiring the website lock. Two concurrent editors may both
@@ -616,7 +616,7 @@ const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user:
   });
   if (!page) throw new AppError(status.NOT_FOUND, "Website page not found");
 
-  const result = await prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, website.id);
     const lockedWebsite = await tx.businessWebsite.findUnique({
       where: { id: website.id },
@@ -697,7 +697,7 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
     throw new AppError(status.BAD_REQUEST, "A website page can only be updated once per draft save");
   }
 
-  const result = await prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
 
     const lockedCurrent = await tx.businessWebsite.findFirst({
@@ -764,7 +764,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
   const adminId = await getAdminId(user);
   const [current, entitlements] = await Promise.all([getWebsiteOrThrow(adminId), WebsiteEntitlementService.getForAdminId(adminId)]);
 
-  const website = await prisma.$transaction(async (tx: any) => {
+  const website = await prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
     const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
     const draft = normalizeDraftPageContent(await loadDraftSnapshot(current.id, tx));
@@ -830,7 +830,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
   const adminId = await getAdminId(user);
   const [current, entitlements] = await Promise.all([getWebsiteOrThrow(adminId), WebsiteEntitlementService.getForAdminId(adminId)]);
 
-  const result = await prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
 
     const owner = await tx.adminProfile.findUnique({
@@ -1095,7 +1095,7 @@ const restoreRevision = async (revisionId: string, payload: WebsiteRevisionResto
   const adminId = await getAdminId(user);
   const website = await getWebsiteOrThrow(adminId);
 
-  const result = await prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, website.id);
 
     const current = await tx.businessWebsite.findFirst({
@@ -1250,7 +1250,7 @@ const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, u
   const adminId = await getAdminId(user);
   const website = await getWebsiteOrThrow(adminId);
 
-  const result = await prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, website.id);
     const locked = await tx.businessWebsite.findFirst({
       where: { id: website.id, adminId },

@@ -265,7 +265,7 @@ const applyProviderState = async (
  * broken hostname.
  */
 const ensurePrimaryDomainInvariant = async (websiteId: string, candidateDomainId?: string) =>
-  prisma.$transaction(async (tx: any) => {
+  prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, `website-domain-primary:${websiteId}`);
 
     const currentPrimary = await tx.websiteDomain.findFirst({
@@ -320,7 +320,7 @@ const addDomain = async (payload: WebsiteDomainCreateInput, user: IRequestUser) 
 
   const verificationToken = randomBytes(32).toString("hex");
   const staleBefore = new Date(Date.now() - PENDING_DOMAIN_CLAIM_TTL_MS);
-  const created = await prisma.$transaction(async (tx: any) => {
+  const created = await prisma.$transaction(async (tx) => {
     // One website-level lock makes the per-tenant domain cap race-safe when two
     // different hostnames are connected concurrently. The hostname lock then
     // serializes cross-tenant claims for the same domain.
@@ -572,7 +572,7 @@ const setPrimaryDomain = async (domainId: string, user: IRequestUser) => {
   WebsiteEntitlementService.assertCustomDomainsAllowed(entitlements);
   const { website } = owned;
 
-  const updated = await prisma.$transaction(async (tx: any) => {
+  const updated = await prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, `website-domain-primary:${website.id}`);
 
     // Re-read inside the website lock. A verification worker/request may have

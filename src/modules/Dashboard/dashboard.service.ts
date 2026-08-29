@@ -15,6 +15,7 @@ import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { currencyPrefix } from "../../lib/utils/money";
 import { serviceDisplayName } from "../../lib/utils/serviceIdentity";
+import type { Prisma } from "../../generated/prisma/client";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -110,7 +111,7 @@ const getDashboardOverview = async (
   const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
   const bucketUnit: "day" | "month" = period === "90d" || period === "12m" ? "month" : "day";
 
-  const recentBookingsWhere: any = {
+  const recentBookingsWhere: Prisma.BookingWhereInput = {
     adminId,
     ...(statusEnum ? { status: statusEnum } : {}),
     ...(search ? { OR: [

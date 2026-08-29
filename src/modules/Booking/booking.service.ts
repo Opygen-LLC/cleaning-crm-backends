@@ -29,6 +29,7 @@ import { resolveServiceIdentity, serviceDisplayName } from "../../lib/utils/serv
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import type { Prisma } from "../../generated/prisma/client";
 import { nextReference } from "../../lib/utils/referenceNumber";
+import { observeBackgroundTask } from "../../lib/monitoring/observeBackgroundTask";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -136,8 +137,10 @@ const bookingDetailInclude = {
 
 // ── Booking confirmation email helper ─────────────────────────────────────────
 
+type BookingEmailPayload = Prisma.BookingGetPayload<{ include: typeof bookingInclude }>;
+
 const sendBookingEmail = async (
-  booking: any,
+  booking: BookingEmailPayload,
   eventType: "created" | "completed" | "cancelled" = "created",
 ) => {
   const clientEmail = booking.client?.email;
@@ -166,8 +169,8 @@ const sendBookingEmail = async (
       year: "numeric",
     });
 
-  const staffNames: string[] = (booking.staffAssignments ?? []).map(
-    (a: any) => a.staff?.user?.name ?? "Staff",
+  const staffNames: string[] = booking.staffAssignments.map(
+    (assignment) => assignment.staff.user?.name ?? "Staff",
   );
 
   const subjectMap = {
@@ -275,7 +278,7 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
   });
 
   // Fire confirmation email (non-blocking)
-  sendBookingEmail(booking, "created").catch(() => {});
+  observeBackgroundTask(sendBookingEmail(booking, "created"), { operation: "booking_confirmation_email", adminId, entityType: "Booking", entityId: booking.id });
 
   // Persist notification + push to bell
   createNotification({
@@ -479,7 +482,7 @@ const convertBookingFormSubmissionForAdmin = async (
   });
 
   if (!result.alreadyConverted) {
-    sendBookingEmail(result.booking, "created").catch(() => {});
+    observeBackgroundTask(sendBookingEmail(result.booking, "created"), { operation: "booking_confirmation_email", adminId, entityType: "Booking", entityId: result.booking.id });
     createNotification({
       adminId,
       type: NotificationType.BOOKING,
@@ -541,7 +544,7 @@ const convertWebsiteBookingFormSubmission = async (submissionId: string, adminId
   );
 };
 
-const getAllBookings = async (queryParams: IQueryParams, user: any) => {
+const getAllBookings = async (queryParams: IQueryParams, user: IRequestUser) => {
   const adminId = await getAdminId(user);
 
   return new QueryBuilder(prisma.booking, queryParams, {
@@ -557,7 +560,7 @@ const getAllBookings = async (queryParams: IQueryParams, user: any) => {
     .execute();
 };
 
-const getBookingById = async (id: string, user: any) => {
+const getBookingById = async (id: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
 
   const booking = await prisma.booking.findFirst({
@@ -573,7 +576,7 @@ const getBookingById = async (id: string, user: any) => {
 const updateBooking = async (
   id: string,
   payload: IBookingUpdate,
-  user: any,
+  user: IRequestUser,
 ) => {
   const adminId = await getAdminId(user);
 
@@ -616,7 +619,7 @@ const updateBooking = async (
 const updateBookingStatus = async (
   id: string,
   newStatus: BookingStatus,
-  user: any,
+  user: IRequestUser,
 ) => {
   const adminId = await getAdminId(user);
 
@@ -652,16 +655,16 @@ const updateBookingStatus = async (
 
   // Fire notification email when booking status changes to COMPLETED or CANCELLED
   if (newStatus === BookingStatus.COMPLETED) {
-    sendBookingEmail(updated, "completed").catch(() => {});
+    observeBackgroundTask(sendBookingEmail(updated, "completed"), { operation: "booking_completed_email", adminId, entityType: "Booking", entityId: updated.id });
   } else if (newStatus === BookingStatus.CANCELLED) {
-    sendBookingEmail(updated, "cancelled").catch(() => {});
+    observeBackgroundTask(sendBookingEmail(updated, "cancelled"), { operation: "booking_cancelled_email", adminId, entityType: "Booking", entityId: updated.id });
   }
   invalidateAnalyticsCache(adminId);
 
   return updated;
 };
 
-const deleteBooking = async (id: string, user: any) => {
+const deleteBooking = async (id: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
 
   const existing = await prisma.booking.findFirst({ where: { id, adminId } });
@@ -696,7 +699,7 @@ const deleteBooking = async (id: string, user: any) => {
 const assignStaff = async (
   bookingId: string,
   payload: IAssignStaff,
-  user: any,
+  user: IRequestUser,
 ) => {
   const adminId = await getAdminId(user);
 
@@ -752,7 +755,7 @@ const assignStaff = async (
  * Returns all bookings for the given month, keyed by ISO date (YYYY-MM-DD)
  * for efficient calendar rendering on the frontend.
  */
-const getCalendarView = async (query: ICalendarQuery, user: any) => {
+const getCalendarView = async (query: ICalendarQuery, user: IRequestUser) => {
   const adminId = await getAdminId(user);
 
   const { year, month } = query;

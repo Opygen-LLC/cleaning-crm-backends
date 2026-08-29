@@ -609,7 +609,7 @@ const createAdminAccount = async (payload: {
     }
 
     try {
-        const { user, admin, website } = await prisma.$transaction(async (tx: any) => {
+        const { user, admin, website } = await prisma.$transaction(async (tx) => {
             const user = await tx.user.update({
                 where: {
                     id: data.user.id,

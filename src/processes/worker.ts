@@ -1,4 +1,5 @@
 import { assertAuthSecurityConfiguration, assertProcessRole } from "../config/authSecurity";
+import { assertRuntimeEnvironment } from "../config/runtimeEnv";
 import { assertInfrastructureAlignment } from "../lib/monitoring/infrastructure";
 import { SMTP_VERIFY_ON_STARTUP } from "../config/ENV";
 import { verifyEmailTransport } from "../lib/email";
@@ -9,6 +10,7 @@ import redis from "../config/redis";
 
 async function main() {
     assertProcessRole("worker");
+    assertRuntimeEnvironment();
     assertAuthSecurityConfiguration();
     assertInfrastructureAlignment();
     if (SMTP_VERIFY_ON_STARTUP) {

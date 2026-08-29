@@ -99,7 +99,7 @@ const rename = async (input: string, user: IRequestUser) => {
     };
   }
 
-  const result = await prisma.$transaction(async (tx: any) => {
+  const result = await prisma.$transaction(async (tx) => {
     // Lock this website first, then the shared reservation namespace. All
     // subdomain mutations in this service use the same ordering so concurrent
     // retries cannot interleave the canonical row and alias history.

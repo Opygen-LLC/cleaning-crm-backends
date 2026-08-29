@@ -1,9 +1,11 @@
 import { assertAuthSecurityConfiguration, assertProcessRole } from "../config/authSecurity";
+import { assertRuntimeEnvironment } from "../config/runtimeEnv";
 import { assertInfrastructureAlignment } from "../lib/monitoring/infrastructure";
 import logger from "../lib/logger";
 
 async function main() {
     assertProcessRole("scheduler");
+    assertRuntimeEnvironment();
     assertAuthSecurityConfiguration();
     assertInfrastructureAlignment();
 

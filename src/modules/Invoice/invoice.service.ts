@@ -23,6 +23,7 @@ import { IRequestUser } from "../../types/requestUser.interface";
 import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
 import { nextReference } from "../../lib/utils/referenceNumber";
 import { formatMoney } from "../../lib/utils/money";
+import type { Payment, Prisma } from "../../generated/prisma/client";
 
 const createInvoice = async (payload: IInvoiceCreate, user: IRequestUser) => {
     const adminId = await getAdminId(user);
@@ -55,7 +56,7 @@ const createInvoice = async (payload: IInvoiceCreate, user: IRequestUser) => {
             taxRate: summary.taxRate,
             taxAmount: summary.taxAmount,
             total: summary.total,
-            lineItems: payload.lineItems as any,
+            lineItems: payload.lineItems as unknown as Prisma.InputJsonValue,
         },
         });
     });
@@ -74,7 +75,7 @@ const createInvoice = async (payload: IInvoiceCreate, user: IRequestUser) => {
 
 const getAllInvoices = async (filters: IInvoiceFilters, user: IRequestUser) => {
     const { searchTerm, status: invoiceStatus, adminId } = filters;
-    const andConditions: any[] = [];
+    const andConditions: Prisma.InvoiceWhereInput[] = [];
 
     if (searchTerm) {
         andConditions.push({
@@ -164,7 +165,7 @@ const updateInvoice = async (id: string, payload: IInvoiceUpdate, user: IRequest
         throw new AppError(status.NOT_FOUND, "Invoice not found");
     }
 
-    const { clientDetails, dates, summary, ...updateData } = payload;
+    const { clientDetails, dates, summary, lineItems, ...updateData } = payload;
 
     if (payload.serviceCatalogId) {
         const ownedService = await prisma.serviceCatalog.findFirst({
@@ -176,7 +177,7 @@ const updateInvoice = async (id: string, payload: IInvoiceUpdate, user: IRequest
         }
     }
 
-    const data: any = { ...updateData };
+    const data: Prisma.InvoiceUncheckedUpdateInput = { ...updateData };
 
     if (clientDetails) {
         if (clientDetails.clientName)
@@ -200,8 +201,8 @@ const updateInvoice = async (id: string, payload: IInvoiceUpdate, user: IRequest
         if (summary.total !== undefined) data.total = summary.total;
     }
 
-    if (payload.lineItems) {
-        data.lineItems = payload.lineItems as any;
+    if (lineItems) {
+        data.lineItems = lineItems as unknown as Prisma.InputJsonValue;
     }
 
     const updated = await prisma.invoice.update({
@@ -225,7 +226,7 @@ const updateInvoiceStatus = async (
         throw new AppError(status.NOT_FOUND, "Invoice not found");
     }
 
-    const data: any = { status: invoiceStatus };
+    const data: Prisma.InvoiceUncheckedUpdateInput = { status: invoiceStatus };
     if (invoiceStatus === InvoiceStatus.PAID) {
         data.paidDate = new Date();
     } else if (invoiceStatus === InvoiceStatus.SENT) {
@@ -324,7 +325,7 @@ const LABEL_TO_METHOD: Record<string, PaymentMethod> = Object.entries(
  */
 const getPaymentHistory = async (
     filters: IPaymentHistoryFilters,
-    user: any,
+    user: IRequestUser,
 ) => {
     const { page = 1, limit = 10, searchTerm, method, adminId } = filters;
 
@@ -339,7 +340,7 @@ const getPaymentHistory = async (
     }
 
     // ── Build filter for the list (PAID + PENDING_APPROVAL payments) ───────────
-    const andConditions: any[] = [
+    const andConditions: Prisma.PaymentWhereInput[] = [
         {
             status: {
                 in: [PaymentStatus.PAID, PaymentStatus.PENDING_APPROVAL],
@@ -414,7 +415,7 @@ const getPaymentHistory = async (
     const now = new Date();
     const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const settledWhere: any = { status: PaymentStatus.PAID };
+    const settledWhere: Prisma.PaymentWhereInput = { status: PaymentStatus.PAID };
     if (resolvedAdminId) settledWhere.adminId = resolvedAdminId;
 
     const [allSettled, thisMonthSettled] = await Promise.all([
@@ -498,7 +499,7 @@ const getPaymentHistory = async (
 
 // ── Send Invoice ──────────────────────────────────────────────────────────────
 
-const sendInvoice = async (id: string, user: any) => {
+const sendInvoice = async (id: string, user: IRequestUser) => {
     const admin = await prisma.adminProfile.findUnique({
         where: { userId: user.id },
     });
@@ -590,7 +591,7 @@ interface IRecordPayment {
 const recordPayment = async (
     invoiceId: string,
     payload: IRecordPayment,
-    user: any,
+    user: IRequestUser,
 ) => {
     // Resolve admin
     const admin = await prisma.adminProfile.findUnique({
@@ -759,7 +760,7 @@ const submitPaymentProof = async (
         file.originalname || "payment-proof.jpg",
     );
 
-    let payment: any;
+    let payment: Payment;
 
     if (paymentId === "new") {
         payment = await prisma.$transaction(async (tx) => {
@@ -807,7 +808,7 @@ const approvePayment = async (
     invoiceId: string,
     paymentId: string,
     payload: { action: "approve" | "reject"; rejectionReason?: string },
-    user: any,
+    user: IRequestUser,
 ) => {
     const admin = await prisma.adminProfile.findUnique({
         where: { userId: user.id },

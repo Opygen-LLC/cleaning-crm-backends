@@ -1,6 +1,7 @@
 import http from "http";
 import { BACKEND_IP, PORT } from "./config/ENV";
 import { assertAuthSecurityConfiguration, assertProcessRole } from "./config/authSecurity";
+import { assertRuntimeEnvironment } from "./config/runtimeEnv";
 import setUpSocketIO from "./config/socketio";
 import app from "./server";
 import logger from "./lib/logger";
@@ -26,6 +27,7 @@ const installFatalHandlers = () => {
 const main = () => {
   installFatalHandlers();
   assertProcessRole("api");
+  assertRuntimeEnvironment();
   assertAuthSecurityConfiguration();
   assertWebsitePlatformConfiguration();
   assertInfrastructureAlignment();

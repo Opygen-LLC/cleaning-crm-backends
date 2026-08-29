@@ -65,7 +65,7 @@ export const runRecurringBookingEngine = async (
 
     for (const schedule of dueSchedules) {
         try {
-            await prismaClient.$transaction(async (tx: any) => {
+            await prismaClient.$transaction(async (tx) => {
                 const bookingRef = await generateBookingRef(tx);
 
                 // Build the scheduledDate from the schedule's nextRunAt

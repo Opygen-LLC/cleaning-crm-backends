@@ -1,3 +1,4 @@
+import type { Prisma } from "../../generated/prisma/client";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../prisma/advisoryLock";
 
 export type ReferenceKind =
@@ -35,7 +36,7 @@ type MaxRow = { maxNumber: bigint | number | string | null };
  * without a breaking schema/index migration.
  */
 export const nextReference = async (
-  tx: any,
+  tx: Prisma.TransactionClient,
   kind: ReferenceKind,
 ): Promise<string> => {
   await acquireExtendedTextTransactionAdvisoryLock(tx, `reference:${kind}`);

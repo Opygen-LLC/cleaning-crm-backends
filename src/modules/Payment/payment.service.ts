@@ -15,10 +15,13 @@ import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
 import { nextReference } from "../../lib/utils/referenceNumber";
 import { formatMoney } from "../../lib/utils/money";
+import { IRequestUser } from "../../types/requestUser.interface";
+import logger from "../../lib/logger";
+import type { Prisma } from "../../generated/prisma/client";
 
 // ─── Create Payment — POST /payment ──────────────────────────────────────────
 
-const createPayment = async (payload: IPaymentCreate, user: any) => {
+const createPayment = async (payload: IPaymentCreate, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const admin = await prisma.adminProfile.findUnique({
     where: { id: adminId },
@@ -101,7 +104,13 @@ const createPayment = async (payload: IPaymentCreate, user: any) => {
         paymentRef: result.payment.paymentRef,
         amount: Number(payload.amount),
       });
-    } catch { /* socket not yet initialised — non-fatal */ }
+    } catch (error) {
+      logger.warn("payment_socket_emit_failed", {
+        adminId,
+        invoiceId: payload.invoiceId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     createNotification({
       adminId,
@@ -135,12 +144,12 @@ const createPayment = async (payload: IPaymentCreate, user: any) => {
 
 // ─── Get All Payments — GET /payment ─────────────────────────────────────────
 
-const getAllPayments = async (filters: IPaymentFilters, user: any) => {
+const getAllPayments = async (filters: IPaymentFilters, user: IRequestUser) => {
   const adminId = user.role === UserRole.SUPER_ADMIN
     ? undefined
     : await getAdminId(user);
 
-  const where: any = {};
+  const where: Prisma.PaymentWhereInput = {};
   if (adminId) where.adminId = adminId;
 
   if (filters.method)   where.method = filters.method;
@@ -245,12 +254,12 @@ const getAllPayments = async (filters: IPaymentFilters, user: any) => {
 
 // ─── Get Payment By ID — GET /payment/:id ────────────────────────────────────
 
-const getPaymentById = async (id: string, user: any) => {
+const getPaymentById = async (id: string, user: IRequestUser) => {
   const adminId = user.role === UserRole.SUPER_ADMIN
     ? undefined
     : await getAdminId(user);
 
-  const where: any = { id };
+  const where: Prisma.PaymentWhereInput = { id };
   if (adminId) where.adminId = adminId;
 
   const payment = await prisma.payment.findFirst({
@@ -268,7 +277,7 @@ const getPaymentById = async (id: string, user: any) => {
 
 // ─── Update Payment — PATCH /payment/:id ─────────────────────────────────────
 
-const updatePayment = async (id: string, payload: IPaymentUpdate, user: any) => {
+const updatePayment = async (id: string, payload: IPaymentUpdate, user: IRequestUser) => {
   const adminId = await getAdminId(user);
 
   const existing = await prisma.payment.findFirst({ where: { id, adminId } });
@@ -300,7 +309,7 @@ const updatePayment = async (id: string, payload: IPaymentUpdate, user: any) => 
 
 // ─── Delete Payment — DELETE /payment/:id ────────────────────────────────────
 
-const deletePayment = async (id: string, user: any) => {
+const deletePayment = async (id: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
 
   const existing = await prisma.payment.findFirst({ where: { id, adminId } });
@@ -325,7 +334,7 @@ const deletePayment = async (id: string, user: any) => {
 const uploadReceipt = async (
   id: string,
   file: Express.Multer.File,
-  user: any,
+  user: IRequestUser,
 ) => {
   const adminId = await getAdminId(user);
 
