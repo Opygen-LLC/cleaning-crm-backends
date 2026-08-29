@@ -2,6 +2,7 @@ import httpStatus from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { reportsService } from "./reports.service";
+import type { IRequestUser } from "../../types/requestUser.interface";
 
 type Period = "7d" | "30d" | "90d" | "12m";
 const VALID_PERIODS: Period[] = ["7d", "30d", "90d", "12m"];
@@ -17,7 +18,7 @@ function parsePeriod(raw: unknown): Period {
 
 const getRevenueReport = catchAsync(async (req, res) => {
     const period = parsePeriod(req.query.period);
-    const result = await reportsService.getRevenueReport(req.user.id, period);
+    const result = await reportsService.getRevenueReport(req.user, period);
     sendResponse(res, {
         httpStatusCode: httpStatus.OK,
         success: true,
@@ -29,7 +30,7 @@ const getRevenueReport = catchAsync(async (req, res) => {
 const getStaffPerformanceReport = catchAsync(async (req, res) => {
     const period = parsePeriod(req.query.period);
     const result = await reportsService.getStaffPerformanceReport(
-        req.user.id,
+        req.user,
         period,
     );
     sendResponse(res, {
@@ -43,7 +44,7 @@ const getStaffPerformanceReport = catchAsync(async (req, res) => {
 const getClientRetentionReport = catchAsync(async (req, res) => {
     const period = parsePeriod(req.query.period);
     const result = await reportsService.getClientRetentionReport(
-        req.user.id,
+        req.user,
         period,
     );
     sendResponse(res, {
@@ -57,7 +58,7 @@ const getClientRetentionReport = catchAsync(async (req, res) => {
 const getJobCompletionReport = catchAsync(async (req, res) => {
     const period = parsePeriod(req.query.period);
     const result = await reportsService.getJobCompletionReport(
-        req.user.id,
+        req.user,
         period,
     );
     sendResponse(res, {
@@ -78,7 +79,7 @@ type ExportType =
 
 const EXPORT_MAP: Record<
     ExportType,
-    (userId: string, period: Period) => Promise<string>
+    (user: IRequestUser, period: Period) => Promise<string>
 > = {
     revenue: reportsService.exportRevenueReportCsv,
     "staff-performance": reportsService.exportStaffPerformanceCsv,
@@ -104,7 +105,7 @@ const exportReport = catchAsync(async (req, res) => {
     const format = (req.query.format as string)?.toLowerCase() === "pdf" ? "pdf" : "csv";
 
     if (format === "pdf" && type === "revenue") {
-        const pdfBuffer = await reportsService.exportRevenueReportPdf(req.user.id, period);
+        const pdfBuffer = await reportsService.exportRevenueReportPdf(req.user, period);
         const filename = `${type}-report-${period}-${new Date().toISOString().slice(0, 10)}.pdf`;
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
@@ -112,7 +113,7 @@ const exportReport = catchAsync(async (req, res) => {
         return;
     }
 
-    const csv = await EXPORT_MAP[type](req.user.id, period);
+    const csv = await EXPORT_MAP[type](req.user, period);
     const filename = `${type}-report-${period}-${new Date().toISOString().slice(0, 10)}.csv`;
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");

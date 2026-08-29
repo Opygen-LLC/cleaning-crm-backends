@@ -250,9 +250,7 @@ const createAdmin = async (
       // to the onboarding flow without an extra PATCH round-trip.
       ...(payload.mobileNumber && { mobileNumber: payload.mobileNumber }),
       ...(payload.businessType && { businessType: payload.businessType }),
-      // licenseNumber is stored in the generic `website` text field as a
-      // lightweight placeholder until a dedicated column is added via migration.
-      ...(payload.licenseNumber && { website: payload.licenseNumber }),
+      ...(payload.licenseNumber && { licenseNumber: payload.licenseNumber.trim() }),
     },
   });
 };

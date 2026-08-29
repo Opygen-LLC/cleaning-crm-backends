@@ -20,6 +20,7 @@ const updateAdminSchema = z
     businessName: z.string().trim().min(1).max(160).optional(),
     brandColor: z.string().optional(),
     businessType: nullableMultipartInput(z.string().trim().min(1).max(120)),
+    licenseNumber: nullableMultipartInput(z.string().trim().min(1).max(80)),
     businessEmail: nullableMultipartInput(z.string().trim().email().max(320)),
     businessDescription: nullableMultipartInput(z.string().trim().max(1000)),
     businessHours: businessHoursInputSchema,

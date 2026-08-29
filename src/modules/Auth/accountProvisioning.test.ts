@@ -115,6 +115,7 @@ describe("AccountProvisioningService", () => {
       email: "JAMIE@example.com",
       password: "Secret123!",
       businessName: "Sparkle Cleaning",
+      licenseNumber: "LIC-2026-001",
       trialDays: 14,
     });
 
@@ -137,7 +138,7 @@ describe("AccountProvisioningService", () => {
       }),
     });
     expect(mocks.createAdmin).toHaveBeenCalledWith(
-      { userId, businessName: "Sparkle Cleaning" },
+      { userId, businessName: "Sparkle Cleaning", mobileNumber: undefined, businessType: undefined, licenseNumber: "LIC-2026-001" },
       mocks.tx,
     );
     expect(mocks.provisionWebsite).toHaveBeenCalledWith(mocks.tx, {

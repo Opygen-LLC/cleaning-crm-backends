@@ -59,7 +59,8 @@
     "db:reconcile": "tsx src/scripts/phase4/reconcileData.ts",
     "db:reconcile:fix": "tsx src/scripts/phase4/reconcileData.ts --fix",
     "check:reliability": "node scripts/verifyReliability.mjs",
-    "release:production": "bash scripts/release/productionRollout.sh"
+    "release:production": "bash scripts/release/productionRollout.sh",
+    "data:audit": "tsx src/scripts/phase1/dataAudit.ts"
   },
   "keywords": [],
   "author": "opygen",

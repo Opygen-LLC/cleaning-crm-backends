@@ -15,6 +15,7 @@ model AdminProfile {
   legacyState           String?                 @map("state") @ignore
   businessEmail         String?
   businessType          String?
+  licenseNumber         String?
   businessDescription   String?
   /// Canonical opening hours used by CRM and every public website template.
   /// Website page content must not duplicate these values.

@@ -5,6 +5,7 @@ export interface UpdateAdminPayload {
   businessName?: string;
   businessLogo?: string;
   businessType?: string | null;
+  licenseNumber?: string | null;
   businessEmail?: string | null;
   businessDescription?: string | null;
   businessHours?: BusinessHours | null;

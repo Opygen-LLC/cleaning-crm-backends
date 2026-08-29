@@ -4,7 +4,7 @@ import { sendResponse } from "../../shared/sendResponse";
 import { notificationService } from "./notification.service";
 
 const getPrefs = catchAsync(async (req, res) => {
-    const result = await notificationService.getNotificationPrefs(req.user.id as string);
+    const result = await notificationService.getNotificationPrefs(req.user);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -16,7 +16,7 @@ const getPrefs = catchAsync(async (req, res) => {
 
 const updatePrefs = catchAsync(async (req, res) => {
     const result = await notificationService.updateNotificationPrefs(
-        req.user.id as string,
+        req.user,
         req.body,
     );
 
@@ -31,7 +31,7 @@ const updatePrefs = catchAsync(async (req, res) => {
 // ─── Item 18: In-app notification REST endpoints ──────────────────────────────
 
 const getInbox = catchAsync(async (req, res) => {
-    const result = await notificationService.getInbox(req.user.id as string);
+    const result = await notificationService.getInbox(req.user);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -42,7 +42,7 @@ const getInbox = catchAsync(async (req, res) => {
 });
 
 const markRead = catchAsync(async (req, res) => {
-    await notificationService.markRead(req.user.id, req.params.id as string);
+    await notificationService.markRead(req.user, req.params.id as string);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -53,7 +53,7 @@ const markRead = catchAsync(async (req, res) => {
 });
 
 const markAllRead = catchAsync(async (req, res) => {
-    await notificationService.markAllRead(req.user.id as string);
+    await notificationService.markAllRead(req.user);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -64,7 +64,7 @@ const markAllRead = catchAsync(async (req, res) => {
 });
 
 const getTemplates = catchAsync(async (req, res) => {
-    const result = await notificationService.getTemplates(req.user.id as string);
+    const result = await notificationService.getTemplates(req.user);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -75,7 +75,7 @@ const getTemplates = catchAsync(async (req, res) => {
 
 const upsertTemplate = catchAsync(async (req, res) => {
     const result = await notificationService.upsertTemplate(
-        req.user.id as string,
+        req.user,
         req.params.key as string,
         req.body,
     );
@@ -89,7 +89,7 @@ const upsertTemplate = catchAsync(async (req, res) => {
 
 const deleteTemplate = catchAsync(async (req, res) => {
     const result = await notificationService.deleteTemplate(
-        req.user.id as string,
+        req.user,
         req.params.key as string,
     );
     sendResponse(res, {

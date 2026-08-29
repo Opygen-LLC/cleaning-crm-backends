@@ -6,21 +6,18 @@ import redis from "../../config/redis";
 // a raw prisma.adminProfile.findUnique on every report request. The old
 // requireAdminProfile() below was bypassing the cache added in Phase 2,
 // paying an extra DB round-trip on each call. getAdminId() uses a 5-minute
-// Redis TTL for the userId → adminId mapping.
+// Redis TTL for the authenticated user → adminId mapping.
 import { getAdminId } from "../../lib/utils/resolveAdminId";
+import type { IRequestUser } from "../../types/requestUser.interface";
 import AppError from "../../errorHelper/AppError";
 import httpStatus from "http-status";
 import { serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import { formatMoney } from "../../lib/utils/money";
 
-// ── Shared helper: resolve adminId from userId (now uses Redis cache) ─────────
+// ── Shared helper: resolve adminId from authoritative request context ─────────
 
-async function requireAdminProfile(userId: string) {
-  // Build a minimal IRequestUser-compatible object so we can reuse getAdminId.
-  // getAdminId accepts { userId: string } as a subset of IRequestUser.
-  const adminId = await getAdminId({ userId } as any).catch(() => null);
-  if (!adminId)
-    throw new AppError(httpStatus.NOT_FOUND, "Admin profile not found.");
+async function requireAdminProfile(user: IRequestUser) {
+  const adminId = await getAdminId(user);
   const profile = await prisma.adminProfile.findUnique({
     where: { id: adminId },
     select: { currency: true },
@@ -226,10 +223,10 @@ type JobCompletionResult = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getRevenueReport = async (
-  userId: string,
+  user: IRequestUser,
   period: Period,
 ): Promise<RevenueReportResult> => {
-  const admin = await requireAdminProfile(userId);
+  const admin = await requireAdminProfile(user);
   const adminId = admin.id;
 
   const key = cacheKey("revenue", adminId, period);
@@ -426,10 +423,10 @@ export const getRevenueReport = async (
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getStaffPerformanceReport = async (
-  userId: string,
+  user: IRequestUser,
   period: Period,
 ): Promise<StaffPerformanceResult> => {
-  const admin = await requireAdminProfile(userId);
+  const admin = await requireAdminProfile(user);
   const adminId = admin.id;
 
   const key = cacheKey("staff-performance", adminId, period);
@@ -575,10 +572,10 @@ export const getStaffPerformanceReport = async (
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getClientRetentionReport = async (
-  userId: string,
+  user: IRequestUser,
   period: Period,
 ): Promise<ClientRetentionResult> => {
-  const admin = await requireAdminProfile(userId);
+  const admin = await requireAdminProfile(user);
   const adminId = admin.id;
 
   const key = cacheKey("client-retention", adminId, period);
@@ -681,10 +678,10 @@ export const getClientRetentionReport = async (
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getJobCompletionReport = async (
-  userId: string,
+  user: IRequestUser,
   period: Period,
 ): Promise<JobCompletionResult> => {
-  const admin = await requireAdminProfile(userId);
+  const admin = await requireAdminProfile(user);
   const adminId = admin.id;
 
   const key = cacheKey("job-completion", adminId, period);
@@ -809,10 +806,10 @@ export const getJobCompletionReport = async (
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const exportRevenueReportCsv = async (
-  userId: string,
+  user: IRequestUser,
   period: Period,
 ): Promise<string> => {
-  const data = await getRevenueReport(userId, period);
+  const data = await getRevenueReport(user, period);
 
   const sections: string[] = [];
 
@@ -861,10 +858,10 @@ export const exportRevenueReportCsv = async (
 };
 
 export const exportStaffPerformanceCsv = async (
-  userId: string,
+  user: IRequestUser,
   period: Period,
 ): Promise<string> => {
-  const data = await getStaffPerformanceReport(userId, period);
+  const data = await getStaffPerformanceReport(user, period);
 
   const rows = data.staff.map((s) => ({
     staff_name: s.name,
@@ -881,10 +878,10 @@ export const exportStaffPerformanceCsv = async (
 };
 
 export const exportClientRetentionCsv = async (
-  userId: string,
+  user: IRequestUser,
   period: Period,
 ): Promise<string> => {
-  const data = await getClientRetentionReport(userId, period);
+  const data = await getClientRetentionReport(user, period);
 
   const sections: string[] = [];
 
@@ -915,10 +912,10 @@ export const exportClientRetentionCsv = async (
 };
 
 export const exportJobCompletionCsv = async (
-  userId: string,
+  user: IRequestUser,
   period: Period,
 ): Promise<string> => {
-  const data = await getJobCompletionReport(userId, period);
+  const data = await getJobCompletionReport(user, period);
 
   const sections: string[] = [];
 
@@ -938,10 +935,10 @@ export const exportJobCompletionCsv = async (
 };
 
 export const exportRevenueReportPdf = async (
-  userId: string,
+  user: IRequestUser,
   period: Period,
 ): Promise<Buffer> => {
-  const data = await getRevenueReport(userId, period);
+  const data = await getRevenueReport(user, period);
 
   return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({ size: "A4", margin: 40 });
