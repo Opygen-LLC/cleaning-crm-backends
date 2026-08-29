@@ -123,7 +123,6 @@ router.post(
 
 router.post(
     "/logout",
-    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
     authController.logout,
 );
 

@@ -199,7 +199,11 @@ const changePassword = catchAsync(async (req, res) => {
 });
 
 const logout = catchAsync(async (req, res) => {
-    const sessionToken = req.cookies["better-auth.session_token"];
+    const sessionToken =
+        req.cookies["better-auth.session_token"] ||
+        (req.headers.authorization?.startsWith("Bearer ")
+            ? req.headers.authorization.slice(7).trim()
+            : undefined);
     const result = await authService.logout(sessionToken);
     tokenUtils.clearAuthCookies(res);
     sendResponse(res, {

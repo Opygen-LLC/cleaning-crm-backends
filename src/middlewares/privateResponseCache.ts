@@ -15,22 +15,27 @@ interface CachedResponse {
 const MAX_CACHEABLE_BODY_BYTES = 2 * 1024 * 1024;
 const MIN_INDEX_TTL_SECONDS = 60 * 60;
 
-const tenantScope = (req: Request) => req.user.adminId ?? req.user.id;
-const userScope = (req: Request) => req.user.id;
+const tenantScope = (req: Request) => req.user?.adminId ?? req.user?.id ?? "global";
+const userScope = (req: Request) => req.user?.id ?? "anonymous";
 const scopePrefix = (tenantId: string) => `http-response:${tenantId}:`;
 const cacheIndexKey = (tenantId: string) => `http-response-index:${tenantId}`;
+const userIndexKey = (userId: string) => `http-response-user-index:${userId}`;
 
 const cacheKey = (req: Request): string => {
   const routeHash = createHash("sha256")
     .update(req.originalUrl)
     .digest("hex")
     .slice(0, 32);
-  return `${scopePrefix(tenantScope(req))}${userScope(req)}:${routeHash}`;
+  const tenant = tenantScope(req);
+  const user = userScope(req);
+  return `${scopePrefix(tenant)}${user}:${routeHash}`;
 };
 
 const isCacheableRequest = (req: Request): boolean =>
   req.method === "GET" &&
   !req.headers.range &&
+  !req.originalUrl.includes("/auth/") &&
+  !req.originalUrl.includes("/session") &&
   !req.originalUrl.includes("/pdf") &&
   !req.originalUrl.includes("/export");
 
@@ -71,14 +76,12 @@ const sendHit = (
 };
 
 /**
- * Cache keys are indexed per tenant at write time. Invalidating a tenant now
- * scans only that tenant's tiny Redis set instead of issuing SCAN against the
- * entire Redis keyspace after every successful mutation. Cached response keys
- * still expire normally; stale set members are harmless and disappear on the
- * next invalidation or when the index itself expires.
+ * Cache keys are indexed per tenant/user at write time. Invalidating a tenant
+ * scans only that tenant's indexed Redis set instead of scanning the entire
+ * keyspace. When data changes, all old cached responses are unlinked and
+ * subsequent requests fetch fresh data from the DB and cache the new data again.
  */
-async function deleteIndexedTenantResponses(tenantId: string): Promise<void> {
-  const indexKey = cacheIndexKey(tenantId);
+async function deleteIndexedResponses(indexKey: string): Promise<void> {
   let cursor = "0";
 
   do {
@@ -96,7 +99,7 @@ async function deleteIndexedTenantResponses(tenantId: string): Promise<void> {
 }
 
 export function invalidatePrivateResponseCache(tenantId: string): void {
-  void deleteIndexedTenantResponses(tenantId).catch((error) => {
+  void deleteIndexedResponses(cacheIndexKey(tenantId)).catch((error) => {
     logger.warn(
       `[CACHE] Shared response cache invalidation skipped: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -112,13 +115,15 @@ function persistCacheEntry(
   const indexKey = cacheIndexKey(tenantId);
   const indexTtl = Math.max(MIN_INDEX_TTL_SECONDS, ttlSeconds * 2);
 
-  // Best-effort cache write. These commands are independent of request
-  // correctness, so Redis trouble must never fail an otherwise valid API call.
-  void Promise.all([
+  const writes: Promise<unknown>[] = [
     redis.setex(key, ttlSeconds, JSON.stringify(entry)),
     redis.sadd(indexKey, key),
     redis.expire(indexKey, indexTtl),
-  ]).catch((error) => {
+  ];
+
+  // Best-effort cache write. These commands are independent of request
+  // correctness, so Redis trouble must never fail an otherwise valid API call.
+  void Promise.all(writes).catch((error) => {
     logger.warn(
       `[CACHE] Shared response cache write skipped: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -127,8 +132,8 @@ function persistCacheEntry(
 
 /**
  * Per-user Redis response cache. It runs after authorization, so cached data
- * can never cross users or tenants. Mutations invalidate the shared tenant
- * namespace across every API replica.
+ * is strictly isolated to the authenticated user_id. Mutations immediately
+ * invalidate the cache so subsequent reads reflect fresh database state.
  */
 export async function privateResponseCache(
   req: Request,
@@ -136,6 +141,7 @@ export async function privateResponseCache(
   next: NextFunction,
 ): Promise<void> {
   const tenantId = tenantScope(req);
+  const userId = userScope(req);
 
   if (!isCacheableRequest(req)) {
     if (req.method !== "GET" && req.method !== "HEAD") {
