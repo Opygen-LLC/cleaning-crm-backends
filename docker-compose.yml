@@ -19,7 +19,10 @@ x-app-common: &app-common
     REDIS_PORT: 6379
     REDIS_DB: 0
     REDIS_REGION: local
-    REQUIRE_COLOCATED_INFRA: "true"
+    PRIMARY_REGION: us-east-1
+    APP_REGION: us-east-1
+    DATABASE_REGION: us-east-1
+    REQUIRE_COLOCATED_INFRA: "false"
     TRUST_PROXY_HOPS: 1
     FRONTEND_URL: https://cleaningcrm.opygen.com
     APP_URL: https://cleaningcrm.opygen.com
@@ -28,6 +31,9 @@ x-app-common: &app-common
     AUTH_ALLOWED_ORIGINS: https://cleaningcrm.opygen.com
     ACCESS_TOKEN_EXPIRES_IN: 15m
     REFRESH_TOKEN_EXPIRES_IN: 30d
+    PERFORMANCE_METRICS_TOKEN: 72b6597c9a90a5c88652494f37d6da57894888763d49cdlwfjoer234234
+    NEXT_REVALIDATE_SECRET: 72b6597c9a90a5c88652494f37d6da57894888763d49cdlwfjoer234234
+    NEXT_REVALIDATE_URL: https://cleaningcrm.opygen.com/api/public-site/revalidate
     CHOKIDAR_USEPOLLING: "1"
     WATCHPACK_POLLING: "true"
   depends_on:
