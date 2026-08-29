@@ -20,6 +20,8 @@ type InvalidStepsRow = {
 };
 
 const fix = process.argv.includes("--fix");
+const ci = process.argv.includes("--ci");
+const reportOnly = process.argv.includes("--report-only");
 const SAMPLE_LIMIT = 20;
 const allowedOnboardingSteps = new Set<string>(ONBOARDING_STEPS.map((step) => step.key));
 
@@ -144,6 +146,47 @@ async function collectIssues(): Promise<Issue[]> {
       })),
     ),
   );
+
+  const [
+    duplicateWebsiteOwnership,
+    danglingPrimaryBookingForm,
+    danglingPrimaryEstimateForm,
+    subscriptionsWithoutPlan,
+    subscriptionsWithoutSubscriptionPlan,
+  ] = await Promise.all([
+    prisma.$queryRaw<Array<{ adminId: string; count: bigint }>>`
+      SELECT "adminId", COUNT(*)::bigint AS "count"
+      FROM "business_website"
+      GROUP BY "adminId"
+      HAVING COUNT(*) > 1
+    `,
+    prisma.$queryRaw<IdRow[]>`
+      SELECT w."id" FROM "business_website" w
+      LEFT JOIN "booking_form" f ON f."id" = w."primaryBookingFormId"
+      WHERE w."primaryBookingFormId" IS NOT NULL AND f."id" IS NULL
+    `,
+    prisma.$queryRaw<IdRow[]>`
+      SELECT w."id" FROM "business_website" w
+      LEFT JOIN "estimate_form" f ON f."id" = w."primaryEstimateFormId"
+      WHERE w."primaryEstimateFormId" IS NOT NULL AND f."id" IS NULL
+    `,
+    prisma.$queryRaw<IdRow[]>`
+      SELECT s."id" FROM "Subscription" s
+      LEFT JOIN "Plan" p ON p."id" = s."planId"
+      WHERE p."id" IS NULL
+    `,
+    prisma.$queryRaw<IdRow[]>`
+      SELECT s."id" FROM "Subscription" s
+      LEFT JOIN "SubscriptionPlan" p ON p."id" = s."subscriptionPlanId"
+      WHERE p."id" IS NULL
+    `,
+  ]);
+
+  issues.push(report("DUPLICATE_WEBSITE_OWNERSHIP", duplicateWebsiteOwnership.map((row) => ({ adminId: row.adminId, count: Number(row.count) }))));
+  issues.push(report("DANGLING_PRIMARY_BOOKING_FORM", danglingPrimaryBookingForm));
+  issues.push(report("DANGLING_PRIMARY_ESTIMATE_FORM", danglingPrimaryEstimateForm));
+  issues.push(report("SUBSCRIPTION_WITHOUT_PLAN", subscriptionsWithoutPlan));
+  issues.push(report("SUBSCRIPTION_WITHOUT_SUBSCRIPTION_PLAN", subscriptionsWithoutSubscriptionPlan));
 
   const profiles = await prisma.adminProfile.findMany({
     select: {
@@ -288,17 +331,25 @@ async function applySafeFixes(): Promise<void> {
 }
 
 async function main() {
-  console.log(`[data:audit] mode=${fix ? "fix" : "dry-run"}`);
+  const mode = fix ? "fix" : ci ? "ci" : reportOnly ? "report-only" : "dry-run";
+  console.log(`[data:audit] mode=${mode}`);
   const before = await collectIssues();
+  let finalIssues = before;
 
   if (fix) {
     await applySafeFixes();
     console.log("[data:audit] re-running audit after safe fixes");
-    await collectIssues();
+    finalIssues = await collectIssues();
   }
 
-  const total = before.reduce((sum, issue) => sum + issue.count, 0);
-  console.log(`[data:audit] completed; issues-before-fix=${total}`);
+  const beforeTotal = before.reduce((sum, issue) => sum + issue.count, 0);
+  const finalTotal = finalIssues.reduce((sum, issue) => sum + issue.count, 0);
+  console.log(`[data:audit] completed; issues-before-fix=${beforeTotal}; issues-final=${finalTotal}`);
+
+  if (ci && !reportOnly && finalTotal > 0) {
+    console.error(`[data:audit] CI gate failed with ${finalTotal} integrity issue(s)`);
+    process.exitCode = 2;
+  }
 }
 
 main()

@@ -11,6 +11,7 @@ export const clientErrorSchema = z.object({
   apiRequestId: z.string().trim().max(160).nullable().optional(),
   relatedTraceId: z.string().trim().regex(/^[0-9a-f]{32}$/i).nullable().optional(),
   componentStack: z.string().max(6000).nullable().optional(),
+  code: z.string().trim().max(120).nullable().optional(),
 }).strict();
 
 export type ClientErrorPayload = z.infer<typeof clientErrorSchema>;

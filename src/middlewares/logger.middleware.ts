@@ -10,6 +10,8 @@ import {
 import { recordRequestMetric } from "../lib/monitoring/performanceMetrics";
 import { getRequestTrace, recordTraceRequestPhases } from "../lib/monitoring/requestTrace";
 import { resolveRequestGeography } from "../lib/monitoring/requestGeography";
+import { observeRequestStorm } from "../lib/monitoring/requestStormDetector";
+import { evaluateEndpointQueryBudget, getEndpointQueryBudget } from "../lib/monitoring/queryBudgets";
 
 const compactPath = (req: Request): string => {
   const base = req.baseUrl || "";
@@ -52,6 +54,12 @@ const logRequestResponse = (
     routeLabel = compactPath(req);
     if (!res.headersSent) {
       const trace = getRequestTrace() ?? requestTrace;
+      const route = routeLabel ?? compactPath(req);
+      const queryBudget = getEndpointQueryBudget(req.method, route);
+      if (NODE_ENV !== "production" || process.env.E2E_TEST_HOOKS_ENABLED === "true") {
+        res.setHeader("X-DB-Query-Count", String(trace?.dbQueryCount ?? 0));
+        if (queryBudget !== null) res.setHeader("X-DB-Query-Budget", String(queryBudget));
+      }
       const timings = [`app;dur=${rounded}`];
       if (trace) {
         timings.push(`auth;dur=${round(trace.authDurationMs)}`);
@@ -121,6 +129,43 @@ const logRequestResponse = (
     const traceId = trace?.traceId ?? (typeof res.locals.traceId === "string" ? res.locals.traceId : "unknown");
     const tenantId = req.user?.adminId ?? req.user?.id ?? null;
     const userId = req.user?.id ?? null;
+    const storm = observeRequestStorm({
+      identity: userId ?? tenantId,
+      method: req.method,
+      route,
+      statusCode: res.statusCode,
+    });
+    if (storm) {
+      logger.warn("request_storm_detected", {
+        event: "request_storm_detected",
+        code: storm.code,
+        method: storm.method,
+        route: storm.route,
+        statusCode: storm.statusCode,
+        count: storm.count,
+        windowMs: storm.windowMs,
+        requestId,
+        traceId,
+        userHash: hashIdentity(userId),
+        tenantHash: hashIdentity(tenantId),
+        releaseSha: RELEASE_VERSION,
+      });
+    }
+    const queryBudgetViolation = evaluateEndpointQueryBudget(req.method, route, trace?.dbQueryCount ?? 0);
+    if (queryBudgetViolation) {
+      logger.warn("endpoint_query_budget_exceeded", {
+        event: "endpoint_query_budget_exceeded",
+        code: "QUERY_BUDGET_EXCEEDED",
+        method: req.method,
+        route,
+        queryCount: trace?.dbQueryCount ?? 0,
+        budget: queryBudgetViolation.budget,
+        exceededBy: queryBudgetViolation.exceededBy,
+        requestId,
+        traceId,
+        releaseSha: RELEASE_VERSION,
+      });
+    }
     const cacheAttempts = (trace?.responseCacheHits ?? 0) + (trace?.responseCacheMisses ?? 0);
     const redisAttempts = (trace?.redisHits ?? 0) + (trace?.redisMisses ?? 0);
 

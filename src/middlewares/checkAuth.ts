@@ -108,6 +108,18 @@ export const checkAuth =
                 adminId = await getRuntimeTenantId(tokenData.userId as string, role);
             }
 
+            if ((role === UserRole.ADMIN || role === UserRole.STAFF) && !adminId) {
+                throw new AppError(
+                    status.INTERNAL_SERVER_ERROR,
+                    "Authenticated tenant context could not be resolved.",
+                    {
+                        code: "TENANT_CONTEXT_RESOLUTION_FAILED",
+                        retryable: false,
+                        kind: "TENANT_INVARIANT",
+                    },
+                );
+            }
+
             if (!userStatus) {
                 throw new AppError(
                     status.UNAUTHORIZED,

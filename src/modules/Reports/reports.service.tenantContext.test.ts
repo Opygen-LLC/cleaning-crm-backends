@@ -49,7 +49,7 @@ const cachedRevenue = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getAdminId.mockResolvedValue("admin-1");
+  mocks.getAdminId.mockImplementation(async (requestUser: IRequestUser) => requestUser.adminId ?? "");
   mocks.profileFindUnique.mockResolvedValue({ currency: "USD" });
   mocks.redisGet.mockResolvedValue(JSON.stringify(cachedRevenue));
 });
@@ -66,4 +66,18 @@ describe("reportsService authoritative tenant context", () => {
       select: { currency: true },
     });
   });
+  it("uses a tenant-specific cache namespace for a second admin", async () => {
+    const userB: IRequestUser = { ...user, id: "user-2", email: "admin-b@example.com", adminId: "admin-2" };
+    mocks.profileFindUnique.mockResolvedValueOnce({ currency: "USD" });
+    mocks.redisGet.mockResolvedValueOnce(JSON.stringify(cachedRevenue));
+
+    await reportsService.getRevenueReport(userB, "30d");
+
+    expect(mocks.profileFindUnique).toHaveBeenCalledWith({
+      where: { id: "admin-2" },
+      select: { currency: true },
+    });
+    expect(mocks.redisGet).toHaveBeenCalledWith("reports:revenue:admin-2:30d");
+  });
+
 });

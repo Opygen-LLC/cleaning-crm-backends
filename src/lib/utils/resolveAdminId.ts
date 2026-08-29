@@ -29,7 +29,11 @@ export const getAdminId = async (user: IRequestUser): Promise<string> => {
 
     const adminId = await getRuntimeTenantId(user.id, user.role);
     if (!adminId) {
-        throw new AppError(status.NOT_FOUND, "Admin profile not found");
+        throw new AppError(status.INTERNAL_SERVER_ERROR, "Authenticated tenant context could not be resolved.", {
+            code: "TENANT_CONTEXT_RESOLUTION_FAILED",
+            retryable: false,
+            kind: "TENANT_INVARIANT",
+        });
     }
     return adminId;
 };

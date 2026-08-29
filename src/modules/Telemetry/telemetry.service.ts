@@ -34,9 +34,10 @@ const reportClientError = async (input: {
     releaseVersion: input.payload.releaseVersion,
     browser: input.payload.browser,
     requestId: input.requestId ?? null,
-    code: "DASHBOARD_CLIENT_ERROR",
+    code: input.payload.code ?? "DASHBOARD_CLIENT_ERROR",
     metadata: {
       section: input.payload.section,
+      errorKind: input.payload.code ?? "DASHBOARD_CLIENT_ERROR",
       componentStack: input.payload.componentStack ?? null,
       traceId: input.traceId ?? null,
       relatedTraceId: input.payload.relatedTraceId ?? null,

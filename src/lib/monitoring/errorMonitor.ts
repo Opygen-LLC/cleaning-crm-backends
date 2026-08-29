@@ -20,6 +20,7 @@ interface MonitorEvent {
   method?: string | null;
   statusCode?: number | null;
   code?: string | null;
+  kind?: string | null;
   stack?: string | null;
   websiteId?: string | null;
   digest?: string | null;

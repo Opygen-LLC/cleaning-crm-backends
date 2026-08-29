@@ -16,6 +16,7 @@ export interface TErrorResponse {
     statusCode?: number;
     success: boolean;
     code?: string;
+    kind?: string;
     message: string;
     errorSources: TErrorSources[];
     fieldErrors?: TFieldErrors;

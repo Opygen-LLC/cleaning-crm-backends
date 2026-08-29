@@ -2,9 +2,9 @@ import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Request, Response } from "express";
 const mocks=vi.hoisted(()=>({log:vi.fn(),metric:vi.fn(),trace:{requestId:"req-phase3-123",traceId:"0123456789abcdef0123456789abcdef",authDurationMs:4,dbDurationMs:7,dbQueryCount:2,redisDurationMs:0,redisCommandCount:0,redisHits:0,redisMisses:0,redisErrors:0,responseCacheHits:0,responseCacheMisses:0,queueDurationMs:0,externalDurationMs:0}}));
-vi.mock("../lib/logger",()=>({default:{log:mocks.log}}));
+vi.mock("../lib/logger",()=>({default:{log:mocks.log,warn:vi.fn()}}));
 vi.mock("../lib/monitoring/performanceMetrics",()=>({recordRequestMetric:mocks.metric}));
-vi.mock("../lib/monitoring/requestTrace",()=>({getRequestTrace:()=>mocks.trace}));
+vi.mock("../lib/monitoring/requestTrace",()=>({getRequestTrace:()=>mocks.trace,recordTraceRequestPhases:vi.fn()}));
 vi.mock("../config/ENV",()=>({DEPLOYMENT_PROFILE:"primary-region",NODE_ENV:"production",RELEASE_VERSION:"release-phase3-test",SLOW_REQUEST_THRESHOLD_MS:1000}));
 import logRequestResponse from "./logger.middleware";
 class FakeResponse extends EventEmitter { statusCode=401; locals:Record<string,unknown>={requestId:"req-phase3-123",traceId:"0123456789abcdef0123456789abcdef",authErrorCode:"INVALID_CREDENTIALS"}; headersSent=false; headers=new Map<string,unknown>(); send=vi.fn((b:unknown)=>b); setHeader(n:string,v:unknown){this.headers.set(n.toLowerCase(),v);return this;} getHeader(n:string){return this.headers.get(n.toLowerCase());}}

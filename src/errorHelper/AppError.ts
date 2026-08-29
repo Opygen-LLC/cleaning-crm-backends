@@ -1,10 +1,12 @@
 import { TFieldErrors } from "../interface/error.interface";
+import type { ErrorKind } from "./errorClassification";
 
 export interface AppErrorOptions {
     code?: string;
     retryable?: boolean;
     fieldErrors?: TFieldErrors;
     stack?: string;
+    kind?: ErrorKind;
 }
 
 class AppError extends Error {
@@ -12,6 +14,7 @@ class AppError extends Error {
     public code?: string;
     public retryable?: boolean;
     public fieldErrors?: TFieldErrors;
+    public kind?: ErrorKind;
 
     constructor(
         statusCode: number,
@@ -30,6 +33,7 @@ class AppError extends Error {
             this.code = optionsOrStack.code;
             this.retryable = optionsOrStack.retryable;
             this.fieldErrors = optionsOrStack.fieldErrors;
+            this.kind = optionsOrStack.kind;
             if (optionsOrStack.stack) this.stack = optionsOrStack.stack;
         }
 

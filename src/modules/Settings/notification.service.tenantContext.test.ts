@@ -59,7 +59,7 @@ const user: IRequestUser = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getAdminId.mockResolvedValue("admin-1");
+  mocks.getAdminId.mockImplementation(async (requestUser: IRequestUser) => requestUser.adminId ?? "");
   mocks.redisGet.mockResolvedValue(null);
   mocks.redisSetex.mockResolvedValue("OK");
   mocks.redisDel.mockResolvedValue(1);
@@ -98,4 +98,21 @@ describe("notificationService authoritative tenant context", () => {
       data: { isRead: true },
     });
   });
+  it("keeps Admin B reads, writes and cache invalidation isolated from Admin A", async () => {
+    const userB: IRequestUser = { ...user, id: "user-2", email: "admin-b@example.com", adminId: "admin-2" };
+
+    await notificationService.getInbox(userB);
+    await notificationService.markRead(userB, "notification-owned-by-admin-a");
+
+    expect(mocks.notificationFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { adminId: "admin-2" } }),
+    );
+    expect(mocks.notificationUpdateMany).toHaveBeenCalledWith({
+      where: { id: "notification-owned-by-admin-a", adminId: "admin-2" },
+      data: { isRead: true },
+    });
+    expect(mocks.redisDel).toHaveBeenCalledWith("notifications:admin-2");
+    expect(mocks.redisDel).not.toHaveBeenCalledWith("notifications:admin-1");
+  });
+
 });

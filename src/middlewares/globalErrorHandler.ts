@@ -23,6 +23,7 @@ import logger from "../lib/logger";
 import { ErrorMonitor } from "../lib/monitoring/errorMonitor";
 import { isAPIError } from "better-auth/api";
 import { AUTH_ERROR_CODES } from "../modules/Auth/auth.codes";
+import { classifyError, type ErrorKind } from "../errorHelper/errorClassification";
 
 const BETTER_AUTH_STATUS_CODES: Record<string, number> = {
     BAD_REQUEST: status.BAD_REQUEST,
@@ -151,6 +152,7 @@ export const globalErrorHandler = async (
     let code = "INTERNAL_ERROR";
     let message = "Something went wrong on our side. Please try again.";
     let retryable = true;
+    let kind: ErrorKind | undefined;
     let stack: string | undefined;
 
     if (isAPIError(err)) {
@@ -220,6 +222,7 @@ export const globalErrorHandler = async (
         code = err.code ?? getErrorCodeFromStatus(statusCode);
         message = err.message;
         retryable = err.retryable ?? isRetryableStatus(statusCode);
+        kind = err.kind;
         fieldErrors = err.fieldErrors ?? {};
         errorSources = Object.entries(fieldErrors).map(([path, fieldMessage]) => ({
             path,
@@ -240,6 +243,7 @@ export const globalErrorHandler = async (
         stack = err.stack;
     }
 
+    const errorKind = kind ?? classifyError(statusCode, code);
     const requestId = getRequestId(req, res);
     res.setHeader("X-Request-Id", requestId);
     if ((req.originalUrl || req.path).startsWith("/api/v1/auth")) {
@@ -260,6 +264,7 @@ export const globalErrorHandler = async (
                 method: req.method,
                 statusCode,
                 code,
+                kind: errorKind,
                 releaseSha: RELEASE_VERSION,
                 errorMessage: monitoredMessage,
             });
@@ -279,11 +284,12 @@ export const globalErrorHandler = async (
             method: req.method,
             statusCode,
             code,
+            kind: errorKind,
             stack: errorStack,
             releaseVersion: RELEASE_VERSION,
         });
-    } else if (NODE_ENV === "development") {
-        logger.warn(
+    } else if (NODE_ENV === "development" && errorKind === "TENANT_INVARIANT") {
+        logger.error(
             `${req.method} ${req.path} → ${statusCode} ${code}: ${message} · request ${requestId.slice(0, 8)}`,
         );
     }
@@ -292,6 +298,7 @@ export const globalErrorHandler = async (
         statusCode,
         success: false,
         code,
+        kind: errorKind,
         message,
         errorSources,
         fieldErrors,
