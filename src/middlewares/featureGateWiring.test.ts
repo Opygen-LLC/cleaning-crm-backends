@@ -252,23 +252,17 @@ describe("EstimateForm routes — split between 'pricing forms' and 'estimate su
     });
 });
 
-describe("Staff leave-review routes — gated behind 'leave approvals'", () => {
-    it("gates GET /leave/all and PATCH /leave/:id/review on the live Staff router", async () => {
-        // This is the router that actually wins at runtime for these two paths
-        // (see the mount-order note in routes/index.ts / staff.routes.ts) — the
-        // one Phase 1 needed to fix for the gate to take effect at all.
+describe("Staff leave routes — one authoritative owner", () => {
+    it("keeps leave routes out of Staff/staff.routes.ts", async () => {
         const { staffRoutes } = await import("../modules/Staff/staff.routes");
-        const gate = markerFor(featureMarkers, "leave approvals");
+        const paths = (staffRoutes.stack as unknown as RouteLayer[])
+            .map((layer) => layer.route?.path)
+            .filter(Boolean);
 
-        expect(
-            routeHasMiddleware(staffRoutes, "get", "/leave/all", gate),
-        ).toBe(true);
-        expect(
-            routeHasMiddleware(staffRoutes, "patch", "/leave/:id/review", gate),
-        ).toBe(true);
+        expect(paths.some((path) => String(path).startsWith("/leave"))).toBe(false);
     });
 
-    it("also gates the (currently shadowed) StaffLeave router, for defense-in-depth", async () => {
+    it("gates admin review endpoints on the authoritative StaffLeave router", async () => {
         const { staffLeaveRoutes } = await import(
             "../modules/StaffLeave/staffLeave.routes"
         );

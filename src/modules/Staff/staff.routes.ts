@@ -1,11 +1,11 @@
 /**
  * src/modules/Staff/staff.routes.ts
  * ─────────────────────────────────────────────────────────────────────────────
- * Single router that owns the entire /staff/* namespace.
+ * Router for staff profile, availability, and admin CRUD endpoints.
  *
- * Route order matters — Express matches in registration order:
- *   1. Static "me" paths first  → /me, /me/avatar, /leave/all, /leave, /leave/:id
- *   2. Admin CRUD paths last    → /, /:id, /:id/availability
+ * Leave-domain endpoints are intentionally owned only by
+ * StaffLeave/staffLeave.routes.ts and mounted at the same /staff prefix.
+ * Keeping ownership separate prevents route shadowing and duplicate policy gates.
  *
  * Endpoints:
  *
@@ -14,13 +14,6 @@
  *   PATCH  /staff/me              update name, phone, address, emergency contact
  *   POST   /staff/me/avatar       upload profile photo → Cloudinary (multipart)
  *   PATCH  /staff/me/availability toggle/edit own weekly working-hours schedule
- *
- *  LEAVE (staff submits / admin reviews)
- *   POST   /staff/leave           request leave  → emitToAdmin("leave:requested")
- *   GET    /staff/leave           own leave list
- *   GET    /staff/leave/all       admin: all leaves (must be before /:id)
- *   DELETE /staff/leave/:id       cancel pending → emitToAdmin("leave:cancelled")
- *   PATCH  /staff/leave/:id/review admin approve/decline → emitToStaff("leave:reviewed")
  *
  *  ADMIN CRUD
  *   POST   /staff/                create staff member
@@ -34,9 +27,7 @@
 
 import { Router } from "express";
 import { staffController } from "./staff.controller";
-import { staffLeaveController } from "../StaffLeave/staffLeave.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
-import { checkFeature } from "../../middlewares/checkSubscription";
 import { UserRole } from "../../generated/prisma/enums";
 import {
     ValidationProperty,
@@ -47,13 +38,6 @@ import { multerMemory } from "../../config/multerMemory";
 import { convertHeicToPng } from "../../middlewares/convertHeicToPngMiddleware";
 
 const router = Router();
-
-// GATES.teamLeaveApprovals ("leave approvals") gates the admin-facing leave
-// endpoints only. NOTE: this router is registered before StaffLeave/
-// staffLeave.routes.ts at the same "/staff" mount in routes/index.ts, so
-// these handlers — not the ones in staffLeave.routes.ts — are the ones that
-// actually serve /staff/leave/all and /staff/leave/:id/review.
-const hasLeaveApprovals = checkFeature("leave approvals");
 
 // ─── STAFF SELF-SERVICE ───────────────────────────────────────────────────────
 // These must be registered before /:id so "me" is never treated as a MongoDB/UUID id.
@@ -90,50 +74,6 @@ router.patch(
     checkAuth(UserRole.STAFF),
     zodValidate(staffValidation.updateAvailability, ValidationProperty.BODY),
     staffController.updateMyAvailability,
-);
-
-// ─── LEAVE ROUTES ─────────────────────────────────────────────────────────────
-// /leave/all must be registered BEFORE /leave/:id to avoid "all" being parsed as an ID.
-
-/** GET /staff/leave/all — admin sees all pending/approved/declined leaves */
-router.get(
-    "/leave/all",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
-    hasLeaveApprovals,
-    staffLeaveController.getStaffLeaves,
-);
-
-/** POST /staff/leave — staff submits a new leave request */
-router.post(
-    "/leave",
-    checkAuth(UserRole.STAFF),
-    staffLeaveController.requestLeave,
-);
-
-/** GET /staff/leave — staff views their own leave requests */
-router.get(
-    "/leave",
-    checkAuth(UserRole.STAFF),
-    staffLeaveController.getMyLeaves,
-);
-
-/** DELETE /staff/leave/:id — staff cancels a PENDING leave */
-router.delete(
-    "/leave/:id",
-    checkAuth(UserRole.STAFF),
-    staffLeaveController.cancelLeave,
-);
-
-/**
- * PATCH /staff/leave/:id/review
- * Admin approves or declines. Body: { decision: "APPROVED"|"DECLINED", adminNote?: string }
- * Fires Socket.IO "leave:reviewed" to staff member's room on success.
- */
-router.patch(
-    "/leave/:id/review",
-    checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
-    hasLeaveApprovals,
-    staffLeaveController.reviewLeave,
 );
 
 // ─── ADMIN CRUD ───────────────────────────────────────────────────────────────

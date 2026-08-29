@@ -56,24 +56,11 @@ const openRoutes: { path: string; route: Router }[] = [
 ];
 
 // ─── Gated routes (subscription required) ────────────────────────────────────
-// IMPORTANT: staffLeaveRoutes is mounted at "/staff" (not "/staff-leave").
-// staffLeaveRoutes defines paths like /leave, /leave/:id, /leave/all,
-// /leave/:id/review — none of which collide with staffRoutes handlers.
-// Express matches them in registration order; both routers live under
-// the same "/staff" prefix and work correctly side-by-side.
-//
-// Frontend staffDashboardApi calls:
-//   POST   /staff/leave            → staffLeaveRoutes /leave
-//   GET    /staff/leave            → staffLeaveRoutes /leave
-//   DELETE /staff/leave/:id        → staffLeaveRoutes /leave/:id
-//   GET    /staff/leave/all        → staffLeaveRoutes /leave/all
-//   PATCH  /staff/leave/:id/review → staffLeaveRoutes /leave/:id/review
+// `/staff` is intentionally composed from two non-overlapping routers:
+// Staff owns profile/availability/admin CRUD and StaffLeave owns `/leave/*`.
 const gatedRoutes: { path: string; route: Router }[] = [
     { path: "/admin",             route: adminRoutes },
-    // staffRoutes contains /me, /me/avatar, /:id, /:id/availability etc.
     { path: "/staff",             route: staffRoutes },
-    // staffLeaveRoutes contains /leave, /leave/all, /leave/:id, /leave/:id/review
-    // Mounted at "/staff" so final paths are /staff/leave/* as the frontend expects.
     { path: "/staff",             route: staffLeaveRoutes },
     { path: "/client",            route: clientRoutes },
     { path: "/service-catalog",   route: serviceCatalogRoutes },

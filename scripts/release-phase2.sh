@@ -8,8 +8,7 @@ set -euo pipefail
 
 mkdir -p release-artifacts
 
-pnpm run release:phase2:verify
-pnpm run build
+pnpm run release:check
 node scripts/captureProductionSchemaBaseline.mjs
 node scripts/phase2MigrationPreflight.mjs
 
