@@ -640,7 +640,7 @@ const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) =>
     });
     await createRevisionSnapshotTx(tx, lockedCurrent.id, user.id, "Website settings updated");
     return loadWebsiteDetails(lockedCurrent.id, tx);
-  });
+  }, { maxWait: 10_000, timeout: 25_000 });
   await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
   return result;
 };

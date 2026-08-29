@@ -147,11 +147,24 @@ const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
 const getLeads = async (query: IQueryParams, user: IRequestUser) => {
     const adminProfile = await resolveAdminProfile(user);
 
+    const normalizedQuery: Record<string, unknown> = { ...query };
+    if (normalizedQuery.stage) {
+        const rawStage = String(normalizedQuery.stage).trim();
+        if (rawStage.toLowerCase() === "all") {
+            delete normalizedQuery.stage;
+        } else {
+            const mapped = STAGE_MAP_TO_DB[rawStage];
+            if (mapped) {
+                normalizedQuery.stage = mapped;
+            }
+        }
+    }
+
     const queryBuilder = new QueryBuilder<
         Lead,
         Prisma.LeadWhereInput,
         Prisma.LeadInclude
-    >(prisma.lead, query, {
+    >(prisma.lead, normalizedQuery, {
         searchableFields: leadSearchableFields,
         filterableFields: leadFilterableFields,
     });

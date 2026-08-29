@@ -184,7 +184,7 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
         });
       }
     }
-  });
+  }, { maxWait: 10_000, timeout: 25_000 });
 
   await Promise.all([
     redis.del(`admin:profile:${userId}`).catch(() => {}),
@@ -876,16 +876,17 @@ const saveOnboardingServices = async (
   let adminId = "";
 
   try {
-    await prisma.$transaction(async (tx) => {
-    const admin = await tx.adminProfile.findUnique({
-      where: { userId },
-      select: {
-        id: true,
-        onboardingCompletedAt: true,
-        onboardingCompletedSteps: true,
-        businessWebsite: { select: { id: true } },
-      },
-    });
+    await prisma.$transaction(
+      async (tx) => {
+        const admin = await tx.adminProfile.findUnique({
+          where: { userId },
+          select: {
+            id: true,
+            onboardingCompletedAt: true,
+            onboardingCompletedSteps: true,
+            businessWebsite: { select: { id: true } },
+          },
+        });
     if (!admin) {
       throw new AppError(status.NOT_FOUND, "Admin profile not found", {
         code: "ADMIN_PROFILE_NOT_FOUND",
@@ -972,7 +973,7 @@ const saveOnboardingServices = async (
       userId,
       revisionReason,
     );
-    });
+    }, { maxWait: 15_000, timeout: 35_000 });
   } catch (error) {
     const expectedClientError = error instanceof AppError && error.statusCode < 500 && error.retryable !== true;
     if (!expectedClientError) {
@@ -1128,7 +1129,7 @@ const completeOnboardingStep = async (
       where: { adminId: admin.id, status: WEBSITE_STATUS.PROVISIONED },
       data: { status: WEBSITE_STATUS.DRAFT },
     });
-  });
+  }, { maxWait: 10_000, timeout: 25_000 });
 
   return buildOnboardingMutationResult(userId, admin.id);
 };
