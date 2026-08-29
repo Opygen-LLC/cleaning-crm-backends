@@ -446,7 +446,7 @@ const normalizeDraftPageContent = <T extends { pages?: Array<{ kind: string; con
   })),
 }) as T;
 
-const createRevisionSnapshot = async (
+export const createRevisionSnapshotTx = async (
   db: any,
   websiteId: string,
   createdByUserId: string | null,
@@ -478,7 +478,7 @@ const createRevisionSnapshot = async (
  * PUBLISHED before Phase 4 added publishedSnapshot. Capture their current
  * state before the first draft mutation so Save draft cannot leak changes.
  */
-const ensurePublishedSnapshotBeforeDraftMutationTx = async (db: any, websiteId: string) => {
+export const ensurePublishedSnapshotBeforeDraftMutationTx = async (db: any, websiteId: string) => {
   const current = await db.businessWebsite.findUnique({
     where: { id: websiteId },
     select: { status: true, publishedSnapshot: true, publishedRevisionNumber: true, draftRevisionNumber: true },
@@ -590,7 +590,7 @@ const updateWebsite = async (payload: WebsiteUpdateInput, user: IRequestUser) =>
       where: { id: lockedCurrent.id },
       data: { ...data, ...draftLifecyclePatch(lockedCurrent.status as WebsiteLifecycleStatus) },
     });
-    await createRevisionSnapshot(tx, lockedCurrent.id, user.id, "Website settings updated");
+    await createRevisionSnapshotTx(tx, lockedCurrent.id, user.id, "Website settings updated");
     return loadWebsiteDetails(lockedCurrent.id, tx);
   });
   await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
@@ -634,7 +634,7 @@ const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user:
       ? payload
       : { ...payload, content: validateWebsitePageContent(page.kind, payload.content) };
     const updated = await tx.websitePage.update({ where: { id: pageId }, data: normalizedPayload as any });
-    await createRevisionSnapshot(tx, website.id, user.id, `Page updated: ${pageId}`);
+    await createRevisionSnapshotTx(tx, website.id, user.id, `Page updated: ${pageId}`);
     return updated;
   });
   await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
@@ -753,7 +753,7 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
     });
     await applyPagePatchesBatch(tx, lockedCurrent.id, normalizedPagePatches);
 
-    await createRevisionSnapshot(tx, lockedCurrent.id, user.id, "Draft saved", baseRevisionNumber);
+    await createRevisionSnapshotTx(tx, lockedCurrent.id, user.id, "Draft saved", baseRevisionNumber);
     return loadWebsiteDetails(lockedCurrent.id, tx);
   });
   await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
@@ -790,7 +790,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
       assertEstimateReadyForPublish(adminId, draft, tx),
     ]);
 
-    const revision = await createRevisionSnapshot(tx, current.id, user.id, "Website published", baseRevisionNumber);
+    const revision = await createRevisionSnapshotTx(tx, current.id, user.id, "Website published", baseRevisionNumber);
     const publishedSnapshot = buildPublishedSnapshot(draft);
     await tx.businessWebsite.update({
       where: { id: current.id },
@@ -997,7 +997,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
     // Building the immutable publication document before the write validates
     // the exact config/pages the public projection will consume after commit.
     const publishedSnapshot = buildPublishedSnapshot(draft);
-    const revision = await createRevisionSnapshot(
+    const revision = await createRevisionSnapshotTx(
       tx,
       current.id,
       user.id,
@@ -1228,7 +1228,7 @@ const restoreRevision = async (revisionId: string, payload: WebsiteRevisionResto
       });
     }
 
-    const createdRevision = await createRevisionSnapshot(
+    const createdRevision = await createRevisionSnapshotTx(
       tx,
       current.id,
       user.id,
@@ -1295,7 +1295,7 @@ const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, u
         },
       });
       const reason = payload.kind === "logo" ? "Logo uploaded" : payload.kind === "favicon" ? "Favicon uploaded" : "Social share image uploaded";
-      await createRevisionSnapshot(tx, website.id, user.id, reason);
+      await createRevisionSnapshotTx(tx, website.id, user.id, reason);
     }
 
     return { asset, website: await loadWebsiteDetails(website.id, tx) };
@@ -1484,6 +1484,8 @@ const deleteAsset = async (assetId: string, user: IRequestUser) => {
 };
 
 export const WebsiteService = {
+  createRevisionSnapshotTx,
+  ensurePublishedSnapshotBeforeDraftMutationTx,
   createWebsite,
   createWebsiteForAdmin,
   getWebsite,

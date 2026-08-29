@@ -265,7 +265,11 @@ describe("onboarding bootstrap contract", () => {
 
     const result = await adminService.getOnboardingBootstrap(USER_ID);
 
-    expect(result.profile.businessHours).toBeNull();
+    expect(result.profile.businessHours).toMatchObject({
+      monday: { isOpen: true, opensAt: "09:00", closesAt: "17:00" },
+      saturday: { isOpen: false, opensAt: "09:00", closesAt: "17:00" },
+      sunday: { isOpen: false, opensAt: "09:00", closesAt: "17:00" },
+    });
   });
 
   it("resumes the same bootstrap step after refresh/login", async () => {

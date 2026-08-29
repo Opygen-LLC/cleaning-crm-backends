@@ -14,6 +14,7 @@ import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache
 import redis from "../../config/redis";
 import { CacheNamespaces, CacheTtl, ttlForKey } from "../../lib/cache/cachePolicy";
 import { invalidateBookingFormsForAdmin } from "../BookingForm/bookingForm.cache";
+import { ServiceStatus } from "../../generated/prisma/enums";
 
 
 const invalidateServiceCatalogCache = async (adminId: string) => {
@@ -41,7 +42,7 @@ const loadCanonicalServiceCatalog = async (adminId: string) => {
   return services;
 };
 
-const invalidateServiceCatalogReadModels = async (adminId: string) => {
+export const invalidateServiceCatalogReadModels = async (adminId: string) => {
   await Promise.all([
     invalidateServiceCatalogCache(adminId),
     invalidateBookingFormsForAdmin(adminId),
@@ -53,6 +54,82 @@ const normalizeServiceForApi = <T extends { category: string }>(service: T) => (
   ...service,
   category: normalizeServiceCategory(service.category),
 });
+
+export const syncServiceCatalogSelectionTx = async (
+  tx: any,
+  adminId: string,
+  payloads: IServiceCatalogCreate[],
+  options: { authoritativeSelection?: boolean } = {},
+) => {
+  const normalized = payloads.map((payload) => ({
+    ...payload,
+    serviceName: payload.serviceName.trim(),
+    description: payload.description.trim(),
+    duration: payload.duration.trim(),
+    category: normalizeServiceCategory(payload.category),
+    legacyServiceType: payload.legacyServiceType === undefined
+      ? inferLegacyServiceType(payload.serviceName)
+      : payload.legacyServiceType,
+    addOns: payload.addOns ? (payload.addOns as any) : [],
+  }));
+
+  const seen = new Set<string>();
+  for (const item of normalized) {
+    const key = item.serviceName.toLocaleLowerCase("en-GB");
+    if (seen.has(key)) {
+      throw new AppError(status.BAD_REQUEST, `Duplicate service in setup: ${item.serviceName}`);
+    }
+    seen.add(key);
+  }
+
+  const existing = await tx.serviceCatalog.findMany({
+    where: { adminId },
+    select: { id: true, serviceName: true },
+  });
+  const existingByName = new Map(
+    existing.map((item: { id: string; serviceName: string }) => [
+      item.serviceName.toLocaleLowerCase("en-GB"),
+      item,
+    ]),
+  );
+
+  const result = [];
+  for (const payload of normalized) {
+    const current = existingByName.get(payload.serviceName.toLocaleLowerCase("en-GB"));
+    const data = {
+      serviceName: payload.serviceName,
+      description: payload.description,
+      basePrice: payload.basePrice,
+      duration: payload.duration,
+      category: payload.category,
+      ...(payload.status !== undefined ? { status: payload.status } : {}),
+      onlineBookingEnabled: payload.onlineBookingEnabled ?? true,
+      legacyServiceType: payload.legacyServiceType,
+      addOns: payload.addOns,
+    };
+    result.push(current
+      ? await tx.serviceCatalog.update({ where: { id: current.id }, data })
+      : await tx.serviceCatalog.create({ data: { ...data, adminId } }));
+  }
+
+  // The onboarding command sends the complete selected set, so omitted active
+  // catalog entries must become inactive. This makes deselection durable while
+  // preserving historical records referenced by bookings/invoices. Other bulk
+  // callers keep the legacy non-destructive upsert behavior by default.
+  if (options.authoritativeSelection) {
+    const selectedIds = result.map((service: { id: string }) => service.id);
+    await tx.serviceCatalog.updateMany({
+      where: {
+        adminId,
+        status: ServiceStatus.ACTIVE,
+        ...(selectedIds.length > 0 ? { id: { notIn: selectedIds } } : {}),
+      },
+      data: { status: ServiceStatus.INACTIVE },
+    });
+  }
+
+  return result;
+};
 
 const createServiceCatalog = async (
   payload: IServiceCatalogCreate,
@@ -81,56 +158,9 @@ const bulkUpsertServiceCatalogs = async (
   user: IRequestUser,
 ) => {
   const adminId = await getAdminId(user);
-  const normalized = payloads.map((payload) => ({
-    ...payload,
-    serviceName: payload.serviceName.trim(),
-    legacyServiceType: payload.legacyServiceType === undefined
-      ? inferLegacyServiceType(payload.serviceName)
-      : payload.legacyServiceType,
-    addOns: payload.addOns ? (payload.addOns as any) : [],
-  }));
-
-  const seen = new Set<string>();
-  for (const item of normalized) {
-    const key = item.serviceName.toLocaleLowerCase("en-GB");
-    if (seen.has(key)) {
-      throw new AppError(status.BAD_REQUEST, `Duplicate service in setup: ${item.serviceName}`);
-    }
-    seen.add(key);
-  }
-
-  // PostgreSQL's default unique comparison is case-sensitive. Resolve existing
-  // services case-insensitively first so a resumed setup cannot accidentally
-  // create both "Standard Cleaning" and "standard cleaning" for one tenant.
-  const existing = await prisma.serviceCatalog.findMany({
-    where: { adminId },
-    select: { id: true, serviceName: true },
-  });
-  const existingByName = new Map(
-    existing.map((item) => [item.serviceName.toLocaleLowerCase("en-GB"), item]),
+  const result = await prisma.$transaction((tx) =>
+    syncServiceCatalogSelectionTx(tx, adminId, payloads),
   );
-
-  const result = await prisma.$transaction(async (tx) =>
-    Promise.all(normalized.map((payload) => {
-      const current = existingByName.get(payload.serviceName.toLocaleLowerCase("en-GB"));
-      const data = {
-        serviceName: payload.serviceName,
-        description: payload.description,
-        basePrice: payload.basePrice,
-        duration: payload.duration,
-        category: payload.category,
-        ...(payload.status !== undefined ? { status: payload.status } : {}),
-        onlineBookingEnabled: payload.onlineBookingEnabled ?? true,
-        legacyServiceType: payload.legacyServiceType,
-        addOns: payload.addOns,
-      };
-
-      return current
-        ? tx.serviceCatalog.update({ where: { id: current.id }, data })
-        : tx.serviceCatalog.create({ data: { ...data, adminId } });
-    })),
-  );
-
   await invalidateServiceCatalogReadModels(adminId);
   return result.map(normalizeServiceForApi);
 };

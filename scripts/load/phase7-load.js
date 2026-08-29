@@ -33,7 +33,8 @@ export function reads(){
 export function publicMutations(){
   if (!IDENTIFIER) return;
   const key=`phase7-load-${Date.now()}`;
-  const origin=__ENV.PUBLIC_WEBSITE_ORIGIN || `https://${IDENTIFIER}.cleaning.opygen.com`;
+  const websiteBaseDomain=(__ENV.WEBSITE_BASE_DOMAIN || "cleaningcrm.opygen.com").trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const origin=__ENV.PUBLIC_WEBSITE_ORIGIN || `https://${IDENTIFIER}.${websiteBaseDomain}`;
   const baseHeaders={"Content-Type":"application/json","Origin":origin,"X-Form-Started-At":String(Date.now()-1500)};
   if(__ENV.TURNSTILE_TEST_TOKEN) baseHeaders["X-Turnstile-Token"]=__ENV.TURNSTILE_TEST_TOKEN;
   const booking=http.post(`${API}/website/public/${IDENTIFIER}/booking`,JSON.stringify({serviceCatalogId:__ENV.PUBLIC_SERVICE_CATALOG_ID,date:new Date(Date.now()+86400000).toISOString().slice(0,10),timeSlot:"10:00",name:"Load Test",email:"load@example.invalid",phone:"+15555550123",address:"1 Load St"}),{headers:{...baseHeaders,"Idempotency-Key":key},tags:{name:"public booking submit",environment:ENVIRONMENT}});

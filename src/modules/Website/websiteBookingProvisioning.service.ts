@@ -1,6 +1,6 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
-import { FormFieldType, ServiceStatus, ServiceType } from "../../generated/prisma/enums";
+import { FormFieldType, ServiceCategory, ServiceStatus, ServiceType } from "../../generated/prisma/enums";
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
@@ -293,7 +293,7 @@ const ensureAtLeastOneBookableService = async (tx: any, adminId: string) => {
         description: "Routine home cleaning for kitchens, bathrooms, bedrooms and living areas.",
         basePrice: 60,
         duration: "2h",
-        category: "Residential",
+        category: ServiceCategory.RESIDENTIAL,
         status: ServiceStatus.ACTIVE,
         onlineBookingEnabled: true,
         legacyServiceType: ServiceType.RESIDENTIAL_CLEAN,
@@ -527,102 +527,109 @@ const ensureAttachedForLaunchTx = async (
   return targetForm.id;
 };
 
+export const configureForAdminTx = async (
+  tx: any,
+  adminId: string,
+  payload: WebsiteBookingSetupPayload,
+): Promise<{ websiteId: string; primaryBookingFormId: string | null }> => {
+  const admin = await tx.adminProfile.findUnique({
+    where: { id: adminId },
+    select: {
+      id: true,
+      businessName: true,
+      businessWebsite: {
+        select: {
+          id: true,
+          status: true,
+          accentColor: true,
+          primaryBookingFormId: true,
+        },
+      },
+    },
+  });
+
+  const businessWebsite = admin?.businessWebsite;
+  if (!admin || !businessWebsite) {
+    throw new AppError(status.NOT_FOUND, "Business website not found", {
+      code: "WEBSITE_NOT_FOUND",
+      retryable: false,
+    });
+  }
+
+  if (businessWebsite.status === WEBSITE_STATUS.SUSPENDED) {
+    throw new AppError(status.CONFLICT, "Suspended websites cannot change booking configuration", {
+      code: "WEBSITE_SUSPENDED",
+      retryable: false,
+    });
+  }
+
+  const nextWebsiteStatus = statusAfterDraftMutation(businessWebsite.status as WebsiteLifecycleStatus);
+  const presentationPatch = {
+    ...(payload.showNavigation !== undefined ? { bookingShowNavigation: payload.showNavigation } : {}),
+    ...(payload.showHeaderCta !== undefined ? { bookingShowHeaderCta: payload.showHeaderCta } : {}),
+    ...(payload.showServiceCtas !== undefined ? { bookingShowServiceCtas: payload.showServiceCtas } : {}),
+    ...(payload.showHomeCta !== undefined ? { bookingShowHomeCta: payload.showHomeCta } : {}),
+    ...(payload.showAvailableSlots !== undefined ? { bookingShowAvailableSlots: payload.showAvailableSlots } : {}),
+    ...(payload.showPrices !== undefined ? { bookingShowPrices: payload.showPrices } : {}),
+    ...(payload.showStartingPrices !== undefined ? { bookingShowStartingPrices: payload.showStartingPrices } : {}),
+    ...(payload.showServiceDuration !== undefined ? { bookingShowServiceDuration: payload.showServiceDuration } : {}),
+    ...(payload.ctaLabel !== undefined ? { bookingCtaLabel: payload.ctaLabel.trim() || "Book Now" } : {}),
+  };
+
+  if (!payload.enabled) {
+    await Promise.all([
+      tx.businessWebsite.update({
+        where: { id: businessWebsite.id },
+        data: { bookingEnabled: false, status: nextWebsiteStatus, ...presentationPatch },
+      }),
+      tx.websitePage.updateMany({
+        where: { websiteId: businessWebsite.id, kind: "BOOK" },
+        data: { isEnabled: false, showInNavigation: false },
+      }),
+    ]);
+    return { websiteId: businessWebsite.id, primaryBookingFormId: businessWebsite.primaryBookingFormId };
+  }
+
+  const targetForm = await selectOrCreateBookingFormTx(
+    tx,
+    { id: admin.id, businessName: admin.businessName, businessWebsite },
+    payload.bookingFormId,
+  );
+  await Promise.all([
+    tx.businessWebsite.update({
+      where: { id: businessWebsite.id },
+      data: {
+        primaryBookingFormId: targetForm.id,
+        bookingEnabled: true,
+        status: nextWebsiteStatus,
+        ...presentationPatch,
+      },
+    }),
+    tx.websitePage.updateMany({
+      where: { websiteId: businessWebsite.id, kind: "BOOK" },
+      data: { isEnabled: true, showInNavigation: true },
+    }),
+  ]);
+  return { websiteId: businessWebsite.id, primaryBookingFormId: targetForm.id };
+};
+
 const configure = async (
   payload: WebsiteBookingSetupPayload,
   user: IRequestUser,
 ): Promise<WebsiteBookingSetupResult> => {
   const adminId = await getAdminId(user);
-
   await prisma.$transaction(async (tx) => {
     await acquireExtendedTextTransactionAdvisoryLock(tx, `website-booking-provision:${adminId}`);
-
-    const admin = await tx.adminProfile.findUnique({
-      where: { id: adminId },
-      select: {
-        id: true,
-        businessName: true,
-        businessWebsite: {
-          select: {
-            id: true,
-            status: true,
-            accentColor: true,
-            primaryBookingFormId: true,
-          },
-        },
-      },
-    });
-
-    const businessWebsite = admin?.businessWebsite;
-    if (!admin || !businessWebsite) {
-      throw new AppError(status.NOT_FOUND, "Business website not found", {
-        code: "WEBSITE_NOT_FOUND",
-        retryable: false,
-      });
-    }
-
-    if (businessWebsite.status === WEBSITE_STATUS.SUSPENDED) {
-      throw new AppError(status.CONFLICT, "Suspended websites cannot change booking configuration", {
-        code: "WEBSITE_SUSPENDED",
-        retryable: false,
-      });
-    }
-
-    const nextWebsiteStatus = statusAfterDraftMutation(businessWebsite.status as WebsiteLifecycleStatus);
-
-    const presentationPatch = {
-      ...(payload.showNavigation !== undefined ? { bookingShowNavigation: payload.showNavigation } : {}),
-      ...(payload.showHeaderCta !== undefined ? { bookingShowHeaderCta: payload.showHeaderCta } : {}),
-      ...(payload.showServiceCtas !== undefined ? { bookingShowServiceCtas: payload.showServiceCtas } : {}),
-      ...(payload.showHomeCta !== undefined ? { bookingShowHomeCta: payload.showHomeCta } : {}),
-      ...(payload.showAvailableSlots !== undefined ? { bookingShowAvailableSlots: payload.showAvailableSlots } : {}),
-      ...(payload.showPrices !== undefined ? { bookingShowPrices: payload.showPrices } : {}),
-      ...(payload.showStartingPrices !== undefined ? { bookingShowStartingPrices: payload.showStartingPrices } : {}),
-      ...(payload.showServiceDuration !== undefined ? { bookingShowServiceDuration: payload.showServiceDuration } : {}),
-      ...(payload.ctaLabel !== undefined ? { bookingCtaLabel: payload.ctaLabel.trim() || "Book Now" } : {}),
-    };
-
-    if (!payload.enabled) {
-      await Promise.all([
-        tx.businessWebsite.update({
-          where: { id: businessWebsite.id },
-          data: { bookingEnabled: false, status: nextWebsiteStatus, ...presentationPatch },
-        }),
-        tx.websitePage.updateMany({
-          where: { websiteId: businessWebsite.id, kind: "BOOK" },
-          data: { isEnabled: false, showInNavigation: false },
-        }),
-      ]);
-      return;
-    }
-
-    const targetForm = await selectOrCreateBookingFormTx(
-      tx,
-      { id: admin.id, businessName: admin.businessName, businessWebsite },
-      payload.bookingFormId,
-    );
-    await Promise.all([
-      tx.businessWebsite.update({
-        where: { id: businessWebsite.id },
-        data: {
-          primaryBookingFormId: targetForm.id,
-          bookingEnabled: true,
-          status: nextWebsiteStatus,
-          ...presentationPatch,
-        },
-      }),
-      tx.websitePage.updateMany({
-        where: { websiteId: businessWebsite.id, kind: "BOOK" },
-        data: { isEnabled: true, showInNavigation: true },
-      }),
-    ]);
+    await configureForAdminTx(tx, adminId, payload);
   });
-
   await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
   return getSetupByAdminId(adminId);
 };
 
 export const WebsiteBookingProvisioningService = {
   getSetup,
+  getSetupByAdminId,
   configure,
+  configureForAdminTx,
   ensureAttachedForLaunchTx,
 };

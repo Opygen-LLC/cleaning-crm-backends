@@ -40,7 +40,7 @@ describe("Phase 3 public website runtime contract", () => {
       description: "Deep cleaning",
       basePrice: 125,
       duration: "3h",
-      category: "Residential",
+      category: "RESIDENTIAL",
       addOns: [],
       legacyServiceType: "DEEP_CLEANING",
     });
@@ -48,7 +48,7 @@ describe("Phase 3 public website runtime contract", () => {
     expect(business.currency).toBe("CAD");
     expect(service.serviceCatalogId).toBe("service-1");
     expect(service.basePrice).toBe(125);
-    expect(service.basePrice).toBe(125);
+    expect(service.category).toBe("Residential");
   });
 
   it("keeps the Phase 1 automatic website defaults explicit and deterministic", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { businessHoursInputSchema, businessHoursSchema } from "./businessHours";
+import { businessHoursInputSchema, businessHoursSchema, normalizeBusinessHours } from "./businessHours";
 
 const weekdays = {
   monday: { isOpen: true, opensAt: "08:00", closesAt: "18:00" },
@@ -19,6 +19,14 @@ describe("canonical CRM business hours", () => {
   it("hydrates JSON fields sent alongside multipart logo uploads", () => {
     const parsed = businessHoursInputSchema.parse(JSON.stringify({ timezone: "Europe/London", ...weekdays }));
     expect(parsed?.timezone).toBe("Europe/London");
+  });
+
+  it("normalizes partial historical schedules into all seven days", () => {
+    const parsed = normalizeBusinessHours({ monday: { isOpen: true, opensAt: "9am", closesAt: "5pm" } });
+    expect(parsed).toMatchObject({
+      monday: { isOpen: true, opensAt: "09:00", closesAt: "17:00" },
+      sunday: { isOpen: false, opensAt: "09:00", closesAt: "17:00" },
+    });
   });
 
   it("rejects open days whose closing time is not later than opening time", () => {

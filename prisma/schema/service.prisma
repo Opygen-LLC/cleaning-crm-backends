@@ -6,7 +6,7 @@ model ServiceCatalog {
   // The database column keeps its legacy name for a zero-downtime rollout.
   basePrice    Float         @default(0.0) @map("basePriceGbp")
   duration     String
-  category     String
+  category     ServiceCategory @default(RESIDENTIAL)
   status       ServiceStatus @default(ACTIVE)
   onlineBookingEnabled Boolean @default(true)
   // Phase 0 compatibility: optional mapping to the legacy hard-coded enum.

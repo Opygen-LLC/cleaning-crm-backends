@@ -18,6 +18,7 @@ model StaffProfile {
     startDate  DateTime
     specialty  String[]    @default([])
     status     StaffStatus @default(ACTIVE)
+    manuallyInactive Boolean @default(false)
 
     emergencyName         String?
     emergencyMobileNumber String?

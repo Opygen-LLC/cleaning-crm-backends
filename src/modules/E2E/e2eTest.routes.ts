@@ -1,7 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import status from "http-status";
 import { prisma } from "../../lib/prisma/prisma";
-import { ServiceStatus, SubscriptionStatus, UserRole } from "../../generated/prisma/enums";
+import { ServiceCategory, ServiceStatus, SubscriptionStatus, UserRole } from "../../generated/prisma/enums";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { PublicWebsiteService } from "../Website/publicWebsite.service";
 import { WebsiteAcquisitionService } from "../Website/websiteAcquisition.service";
@@ -69,7 +69,7 @@ router.post("/complete-onboarding", async (req, res, next) => {
     if (!service) {
       service = await prisma.serviceCatalog.create({ data: {
         adminId: admin.id, serviceName: "E2E Standard Cleaning", description: "Synthetic staging qualification service",
-        basePrice: 100, duration: "2h", category: "STANDARD", status: ServiceStatus.ACTIVE, onlineBookingEnabled: true,
+        basePrice: 100, duration: "2h", category: ServiceCategory.RESIDENTIAL, status: ServiceStatus.ACTIVE, onlineBookingEnabled: true,
       } });
     }
     let bookingForm = website.primaryBookingFormId ? await prisma.bookingForm.findUnique({ where: { id: website.primaryBookingFormId } }) : null;

@@ -66,3 +66,56 @@ export const nullableMultipartInput = <T extends z.ZodTypeAny>(schema: T) =>
     (value) => value === "" || value === "null" ? null : value,
     schema.nullable(),
   ).optional();
+
+const DEFAULT_DAY: z.infer<typeof daySchema> = {
+  isOpen: true,
+  opensAt: "09:00",
+  closesAt: "17:00",
+};
+
+const DEFAULT_WEEKEND_DAY: z.infer<typeof daySchema> = {
+  isOpen: false,
+  opensAt: "09:00",
+  closesAt: "17:00",
+};
+
+/**
+ * Converts historical/partial JSON into the canonical seven-day shape used by
+ * onboarding. This is intentionally defensive even after the Phase 2 data
+ * migration so a restored backup or manually edited legacy row cannot crash
+ * the onboarding client.
+ */
+export const normalizeBusinessHours = (value: unknown): BusinessHours | null => {
+  if (value == null) return null;
+
+  const parsed = businessHoursSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+
+  if (typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const normalizeDay = (key: string, fallback: z.infer<typeof daySchema>) => {
+    const raw = source[key];
+    if (typeof raw !== "object" || raw == null || Array.isArray(raw)) return fallback;
+    const row = raw as Record<string, unknown>;
+    const candidate = {
+      isOpen: typeof row.isOpen === "boolean" ? row.isOpen : fallback.isOpen,
+      opensAt: typeof row.opensAt === "string" ? row.opensAt : fallback.opensAt,
+      closesAt: typeof row.closesAt === "string" ? row.closesAt : fallback.closesAt,
+    };
+    const safe = daySchema.safeParse(candidate);
+    return safe.success ? safe.data : fallback;
+  };
+
+  return {
+    ...(typeof source.timezone === "string" && source.timezone.trim()
+      ? { timezone: source.timezone.trim().slice(0, 100) }
+      : {}),
+    monday: normalizeDay("monday", DEFAULT_DAY),
+    tuesday: normalizeDay("tuesday", DEFAULT_DAY),
+    wednesday: normalizeDay("wednesday", DEFAULT_DAY),
+    thursday: normalizeDay("thursday", DEFAULT_DAY),
+    friday: normalizeDay("friday", DEFAULT_DAY),
+    saturday: normalizeDay("saturday", DEFAULT_WEEKEND_DAY),
+    sunday: normalizeDay("sunday", DEFAULT_WEEKEND_DAY),
+  };
+};

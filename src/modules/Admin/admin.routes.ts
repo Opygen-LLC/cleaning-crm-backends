@@ -81,6 +81,14 @@ router.get(
   adminController.getOnboardingStatus,
 );
 
+
+router.put(
+  "/onboarding/services",
+  checkAuth(UserRole.ADMIN),
+  zodValidate(adminValidation.saveOnboardingServices, ValidationProperty.BODY),
+  adminController.saveOnboardingServices,
+);
+
 router.post(
   "/onboarding-status/step",
   checkAuth(UserRole.ADMIN),

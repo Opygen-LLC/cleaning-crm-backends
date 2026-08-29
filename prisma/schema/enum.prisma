@@ -273,6 +273,12 @@ enum ClientStatus {
   BLOCKED
 }
 
+enum ServiceCategory {
+  RESIDENTIAL
+  COMMERCIAL
+  SPECIALIST
+}
+
 enum ServiceType {
   RESIDENTIAL_CLEAN
   DEEP_CLEAN
@@ -390,7 +396,6 @@ enum NotificationChannel {
 //? ─── Staff ────────────────────────────────────────────────────────────────
 enum StaffStatus {
   ACTIVE
-  DEACTIVE
   INACTIVE
   ON_LEAVE
 }

@@ -1,29 +1,35 @@
+import { ServiceCategory } from "../../generated/prisma/enums";
+
 export const SERVICE_CATEGORIES = [
-  "Residential",
-  "Commercial",
-  "Specialist",
+  ServiceCategory.RESIDENTIAL,
+  ServiceCategory.COMMERCIAL,
+  ServiceCategory.SPECIALIST,
 ] as const;
 
-export type ServiceCategory = (typeof SERVICE_CATEGORIES)[number];
+export const SERVICE_CATEGORY_LABELS: Record<ServiceCategory, string> = {
+  [ServiceCategory.RESIDENTIAL]: "Residential",
+  [ServiceCategory.COMMERCIAL]: "Commercial",
+  [ServiceCategory.SPECIALIST]: "Specialist",
+};
 
 /**
- * Historical releases allowed arbitrary category strings. Normalize those
- * rows at the API boundary so old tenants cannot break current clients while
- * all new writes use the canonical three-category contract.
+ * Historical releases accepted free-form category strings. Keep one defensive
+ * normalizer for migrations/rolling deploys, while every new database/API
+ * value uses the generated Prisma ServiceCategory enum.
  */
-export const normalizeServiceCategory = (value: string): ServiceCategory => {
-  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+export const normalizeServiceCategory = (value: string | ServiceCategory): ServiceCategory => {
+  const normalized = String(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
 
   if (
-    normalized.includes("commercial") ||
+    normalized === "commercial" ||
     normalized.includes("office") ||
     normalized.includes("business")
   ) {
-    return "Commercial";
+    return ServiceCategory.COMMERCIAL;
   }
 
   if (
-    normalized.includes("residential") ||
+    normalized === "residential" ||
     normalized.includes("standard") ||
     normalized.includes("home") ||
     normalized.includes("domestic") ||
@@ -31,8 +37,17 @@ export const normalizeServiceCategory = (value: string): ServiceCategory => {
     normalized.includes("move_in") ||
     normalized.includes("move_out")
   ) {
-    return "Residential";
+    return ServiceCategory.RESIDENTIAL;
   }
 
-  return "Specialist";
+  if (normalized === "specialist" || normalized === "specialty") {
+    return ServiceCategory.SPECIALIST;
+  }
+
+  // Unknown legacy categories are deliberately contained rather than exposed
+  // as arbitrary strings. Specialist is the least misleading catch-all.
+  return ServiceCategory.SPECIALIST;
 };
+
+export const serviceCategoryLabel = (value: string | ServiceCategory): string =>
+  SERVICE_CATEGORY_LABELS[normalizeServiceCategory(value)];

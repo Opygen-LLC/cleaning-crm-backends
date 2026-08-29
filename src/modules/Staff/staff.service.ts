@@ -158,10 +158,7 @@ const getMyStaff = async (query: IQueryParams, userReq: IRequestUser) => {
     if (statusParam && statusParam !== "All") {
         const formattedStatus = statusParam.toUpperCase().replace(/\s+/g, "_");
         if (formattedStatus === StaffStatus.INACTIVE) {
-            // Historical rows may still use DEACTIVE. Treat both as the one
-            // current public contract, INACTIVE, until the legacy enum value
-            // can be removed in a dedicated database migration.
-            extraWhere.status = { in: [StaffStatus.INACTIVE, StaffStatus.DEACTIVE] };
+            extraWhere.status = StaffStatus.INACTIVE;
         } else if (formattedStatus === StaffStatus.ACTIVE) {
             extraWhere.status = StaffStatus.ACTIVE;
         } else if (formattedStatus === StaffStatus.ON_LEAVE) {

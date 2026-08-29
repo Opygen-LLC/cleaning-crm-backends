@@ -49,7 +49,7 @@ const assertAccountCanUseAuthenticatedApp = (user: {
     status: AccountStatus;
     role: UserRole;
     emailVerified: boolean;
-    staff?: { status: StaffStatus } | null;
+    staff?: { status: StaffStatus; manuallyInactive: boolean } | null;
 }): void => {
     if (!user.emailVerified) {
         throw new AppError(
@@ -85,7 +85,7 @@ const assertAccountCanUseAuthenticatedApp = (user: {
 
     if (
         user.role === UserRole.STAFF &&
-        user.staff?.status === StaffStatus.DEACTIVE
+        user.staff?.manuallyInactive
     ) {
         throw new AppError(
             status.FORBIDDEN,
@@ -216,7 +216,7 @@ const login = async (
         const staff = signedInUser.role === UserRole.STAFF
             ? await prisma.staffProfile.findUnique({
                 where: { userId: signedInUser.id },
-                select: { status: true },
+                select: { status: true, manuallyInactive: true },
             })
             : null;
 
@@ -330,6 +330,7 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
         status: AccountStatus;
         needPasswordChange: boolean;
         staffStatus: StaffStatus | null;
+        staffManuallyInactive: boolean | null;
         onboardingCompletedAt: Date | null;
         onboardingCompletedSteps: string[] | null;
     };
@@ -349,6 +350,7 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
             u.status::text AS status,
             u."needPasswordChange",
             sp.status::text AS "staffStatus",
+            sp."manuallyInactive" AS "staffManuallyInactive",
             ap."onboardingCompletedAt",
             ap."onboardingCompletedSteps"
         FROM "session" s
@@ -374,7 +376,7 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
         status: account.status,
         role: account.role,
         emailVerified: account.emailVerified,
-        staff: account.staffStatus ? { status: account.staffStatus } : null,
+        staff: account.staffStatus ? { status: account.staffStatus, manuallyInactive: Boolean(account.staffManuallyInactive) } : null,
     });
 
     if (account.role === UserRole.ADMIN && account.onboardingCompletedSteps == null) {
@@ -473,6 +475,7 @@ const getNewToken = async (
         role: UserRole;
         status: AccountStatus;
         staffStatus: StaffStatus | null;
+        staffManuallyInactive: boolean | null;
     };
 
     type RotationResult =
@@ -487,7 +490,7 @@ const getNewToken = async (
                 s."refreshFamilyId", s."refreshRotatedAt",
                 u.id AS "userId", u.name, u.email, u."emailVerified",
                 u.role::text AS role, u.status::text AS status,
-                sp.status::text AS "staffStatus"
+                sp.status::text AS "staffStatus", sp."manuallyInactive" AS "staffManuallyInactive"
             FROM "session" s
             JOIN "user" u ON u.id = s."userId"
             LEFT JOIN "StaffProfile" sp ON sp."userId" = u.id
@@ -511,7 +514,7 @@ const getNewToken = async (
             status: current.status,
             role: current.role,
             emailVerified: current.emailVerified,
-            staff: current.staffStatus ? { status: current.staffStatus } : null,
+            staff: current.staffStatus ? { status: current.staffStatus, manuallyInactive: Boolean(current.staffManuallyInactive) } : null,
         });
 
         const familyMismatch = Boolean(

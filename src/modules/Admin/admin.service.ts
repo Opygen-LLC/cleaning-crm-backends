@@ -14,10 +14,14 @@ import redis from "../../config/redis";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { WEBSITE_STATUS } from "../Website/websiteLifecycle";
 import { WebsiteService } from "../Website/website.service";
-import { WEBSITE_BASE_DOMAIN, RELEASE_VERSION } from "../../config/ENV";
+import { getCanonicalWebsiteOrigin } from "../Website/websiteCanonicalHost";
+import { WebsiteBookingProvisioningService } from "../Website/websiteBookingProvisioning.service";
+import { invalidateServiceCatalogReadModels, syncServiceCatalogSelectionTx } from "../ServiceCatalog/serviceCatalog.service";
+import { acquireExtendedTextTransactionAdvisoryLock, acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
+import { RELEASE_VERSION } from "../../config/ENV";
 import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
-import { AccountStatus, SubscriptionStatus } from "../../generated/prisma/enums";
-import { businessHoursSchema, type BusinessHours } from "./businessHours";
+import { AccountStatus, ServiceStatus, SubscriptionStatus } from "../../generated/prisma/enums";
+import { businessHoursSchema, normalizeBusinessHours, type BusinessHours } from "./businessHours";
 import type {
   GettingStartedStepKey,
   LegacySkippableOnboardingStepKey,
@@ -26,6 +30,7 @@ import type {
   OnboardingClientErrorPayload,
   UpdateAdminPayload,
   UpdateWorkLocationPayload,
+  SaveOnboardingServicesPayload,
 } from "./admin.interface";
 
 export interface AdminUsageResponse {
@@ -116,6 +121,7 @@ const getAdmin = async (userId: string) => {
     role: user.role,
     avatar: user.image ?? undefined,
     ...profileFields,
+    businessHours: normalizeBusinessHours(profileFields.businessHours),
     postcode: profileFields.zipcode ?? null,
     countryIso: countryEnumToIso(profileFields.country),
     workLocations,
@@ -690,7 +696,7 @@ const getOnboardingBootstrap = async (userId: string): Promise<OnboardingBootstr
   const parsedBusinessHours = admin.businessHours == null
     ? { success: true as const, data: null }
     : businessHoursSchema.safeParse(admin.businessHours);
-  const businessHours = parsedBusinessHours.success ? parsedBusinessHours.data : null;
+  const businessHours = normalizeBusinessHours(admin.businessHours);
 
   if (!parsedBusinessHours.success) {
     logger.warn("onboarding_legacy_business_hours_normalized", {
@@ -727,9 +733,7 @@ const getOnboardingBootstrap = async (userId: string): Promise<OnboardingBootstr
     website: {
       id: website.id,
       subdomain: website.subdomain,
-      publicUrl: WEBSITE_BASE_DOMAIN
-        ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}`
-        : null,
+      publicUrl: getCanonicalWebsiteOrigin(website.subdomain),
       status: website.status,
       logo: website.logo,
       primaryColor: website.primaryColor,
@@ -798,6 +802,226 @@ const buildOnboardingMutationResult = async (
     onboarding,
     website,
     publicUrl: website.publicUrl,
+  };
+};
+
+
+export interface SaveOnboardingServicesResult extends OnboardingMutationResult {
+  schemaVersion: 1;
+  services: Array<{
+    id: string;
+    serviceName: string;
+    description: string;
+    basePrice: number;
+    duration: string;
+    category: string;
+    status: string;
+    onlineBookingEnabled: boolean;
+    addOns: unknown;
+  }>;
+  bookingSetup: Awaited<ReturnType<typeof WebsiteBookingProvisioningService.getSetupByAdminId>>;
+  websiteDraft: {
+    id: string;
+    status: string;
+    subdomain: string;
+    publicUrl: string | null;
+    draftRevisionNumber: number;
+    publishedRevisionNumber: number | null;
+    bookingEnabled: boolean;
+    primaryBookingFormId: string | null;
+    bookingShowPrices: boolean;
+    bookingShowServiceDuration: boolean;
+    bookingShowAvailableSlots: boolean;
+    bookingCtaLabel: string;
+  };
+  nextStep: OnboardingStepKey | null;
+}
+
+const onboardingServicesSignature = (payload: SaveOnboardingServicesPayload): string => {
+  const canonical = {
+    services: payload.services
+      .map((service) => ({
+        serviceName: service.serviceName.trim(),
+        description: service.description.trim(),
+        basePrice: service.basePrice,
+        duration: service.duration.trim(),
+        category: service.category,
+        onlineBookingEnabled: service.onlineBookingEnabled,
+        addOns: [...(service.addOns ?? [])]
+          .map((addOn) => ({ name: addOn.name.trim(), price: addOn.price }))
+          .sort((a, b) => a.name.localeCompare(b.name, "en-GB")),
+      }))
+      .sort((a, b) => a.serviceName.localeCompare(b.serviceName, "en-GB", { sensitivity: "base" })),
+    booking: {
+      ...payload.booking,
+      bookingFormId: payload.booking.bookingFormId ?? null,
+      ctaLabel: payload.booking.ctaLabel.trim() || "Book Now",
+    },
+  };
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex").slice(0, 32);
+};
+
+/**
+ * Atomic Services + Online Booking onboarding command. All CRM services,
+ * BookingForm wiring, website draft state, revision history and milestone
+ * progress commit or roll back as one PostgreSQL transaction.
+ *
+ * The semantic request signature is stored in the revision reason. Concurrent
+ * duplicate submissions serialize on an advisory lock; the later submission
+ * sees the matching committed revision and becomes a read-only retry.
+ */
+const saveOnboardingServices = async (
+  userId: string,
+  payload: SaveOnboardingServicesPayload,
+): Promise<SaveOnboardingServicesResult> => {
+  const signature = onboardingServicesSignature(payload);
+  const revisionReason = `Onboarding services:${signature}`;
+  let adminId = "";
+
+  await prisma.$transaction(async (tx) => {
+    const admin = await tx.adminProfile.findUnique({
+      where: { userId },
+      select: {
+        id: true,
+        onboardingCompletedAt: true,
+        onboardingCompletedSteps: true,
+        businessWebsite: { select: { id: true } },
+      },
+    });
+    if (!admin) {
+      throw new AppError(status.NOT_FOUND, "Admin profile not found", {
+        code: "ADMIN_PROFILE_NOT_FOUND",
+        retryable: false,
+      });
+    }
+    if (!admin.businessWebsite) {
+      throw new AppError(status.CONFLICT, "Website provisioning is not complete yet.", {
+        code: "WEBSITE_PROVISIONING_INCOMPLETE",
+        retryable: true,
+      });
+    }
+    adminId = admin.id;
+
+    await acquireExtendedTextTransactionAdvisoryLock(tx, `onboarding-services:${admin.id}`);
+    await acquireExtendedTextTransactionAdvisoryLock(tx, `website-booking-provision:${admin.id}`);
+    // Serialize this atomic onboarding write with Website Studio draft mutations too.
+    // pg_advisory_xact_lock is re-entrant for the same transaction, so the
+    // revision helper can safely acquire this lock again later.
+    await acquireTextTransactionAdvisoryLock(tx, admin.businessWebsite.id);
+
+    const refreshed = await tx.adminProfile.findUnique({
+      where: { id: admin.id },
+      select: { onboardingCompletedAt: true, onboardingCompletedSteps: true },
+    });
+    const completed = normalizeCompletedSetupSteps(
+      refreshed?.onboardingCompletedSteps ?? admin.onboardingCompletedSteps,
+      refreshed?.onboardingCompletedAt ?? admin.onboardingCompletedAt,
+    );
+    const servicesIndex = REQUIRED_SETUP_KEYS.indexOf("services");
+    const missingPrevious = REQUIRED_SETUP_KEYS
+      .slice(0, servicesIndex)
+      .find((key) => !completed.has(key));
+    if (missingPrevious) {
+      throw new AppError(status.CONFLICT, "Complete the previous setup step first.", {
+        code: "ONBOARDING_STEP_OUT_OF_ORDER",
+        retryable: false,
+        fieldErrors: { [missingPrevious]: "Complete this step first" },
+      });
+    }
+
+    if (payload.booking.enabled && !payload.services.some((service) => service.onlineBookingEnabled)) {
+      throw new AppError(status.UNPROCESSABLE_ENTITY, "Enable online booking for at least one selected service.", {
+        code: "NO_BOOKABLE_SERVICES",
+        retryable: false,
+        fieldErrors: { services: "Turn on Online booking for at least one selected service." },
+      });
+    }
+
+    const latestRevision = await tx.websiteRevision.findFirst({
+      where: { websiteId: admin.businessWebsite.id },
+      orderBy: { revisionNumber: "desc" },
+      select: { reason: true },
+    });
+    const milestoneAlreadyCommitted = completed.has("services");
+    if (latestRevision?.reason === revisionReason && milestoneAlreadyCommitted) return;
+
+    await WebsiteService.ensurePublishedSnapshotBeforeDraftMutationTx(tx, admin.businessWebsite.id);
+    await syncServiceCatalogSelectionTx(
+      tx,
+      admin.id,
+      payload.services.map((service) => ({
+        ...service,
+        status: ServiceStatus.ACTIVE,
+      })),
+      { authoritativeSelection: true },
+    );
+
+    await WebsiteBookingProvisioningService.configureForAdminTx(tx, admin.id, payload.booking);
+
+    if (!milestoneAlreadyCommitted) {
+      const nextCompleted = REQUIRED_SETUP_KEYS.filter(
+        (key) => completed.has(key) || key === "services",
+      );
+      await tx.adminProfile.update({
+        where: { id: admin.id },
+        data: { onboardingCompletedSteps: nextCompleted },
+      });
+    }
+
+    await WebsiteService.createRevisionSnapshotTx(
+      tx,
+      admin.businessWebsite.id,
+      userId,
+      revisionReason,
+    );
+  });
+
+  await Promise.all([
+    invalidateServiceCatalogReadModels(adminId),
+    WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
+    redis.del(`admin:profile:${userId}`).catch(() => {}),
+  ]);
+
+  const [base, services, bookingSetup] = await Promise.all([
+    buildOnboardingMutationResult(userId, adminId),
+    prisma.serviceCatalog.findMany({
+      where: { adminId, status: ServiceStatus.ACTIVE },
+      select: {
+        id: true,
+        serviceName: true,
+        description: true,
+        basePrice: true,
+        duration: true,
+        category: true,
+        status: true,
+        onlineBookingEnabled: true,
+        addOns: true,
+      },
+      orderBy: [{ createdAt: "asc" }, { serviceName: "asc" }],
+    }),
+    WebsiteBookingProvisioningService.getSetupByAdminId(adminId),
+  ]);
+
+  return {
+    ...base,
+    schemaVersion: 1,
+    services,
+    bookingSetup,
+    websiteDraft: {
+      id: base.website.id,
+      status: base.website.status,
+      subdomain: base.website.subdomain,
+      publicUrl: base.publicUrl,
+      draftRevisionNumber: base.website.draftRevisionNumber,
+      publishedRevisionNumber: base.website.publishedRevisionNumber,
+      bookingEnabled: base.website.bookingEnabled,
+      primaryBookingFormId: base.website.primaryBookingFormId,
+      bookingShowPrices: base.website.bookingShowPrices,
+      bookingShowServiceDuration: base.website.bookingShowServiceDuration,
+      bookingShowAvailableSlots: base.website.bookingShowAvailableSlots,
+      bookingCtaLabel: base.website.bookingCtaLabel,
+    },
+    nextStep: base.onboarding.resumeStep,
   };
 };
 
@@ -1045,6 +1269,7 @@ export const adminService = {
   getAdminUsage,
   getOnboardingStatus,
   getOnboardingBootstrap,
+  saveOnboardingServices,
   reportOnboardingClientError,
   completeOnboardingStep,
   skipWebsiteOnboardingSetup,

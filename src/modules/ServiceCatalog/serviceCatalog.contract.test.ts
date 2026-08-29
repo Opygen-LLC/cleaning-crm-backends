@@ -7,7 +7,7 @@ import { serviceCatalogValidation } from "./serviceCatalog.validation";
 
 describe("service catalog contract", () => {
   it("uses one canonical category set for new writes", () => {
-    expect(SERVICE_CATEGORIES).toEqual(["Residential", "Commercial", "Specialist"]);
+    expect(SERVICE_CATEGORIES).toEqual(["RESIDENTIAL", "COMMERCIAL", "SPECIALIST"]);
     expect(() => serviceCatalogValidation.createServiceCatalog.parse({
       serviceName: "Test",
       description: "Test service",
@@ -18,8 +18,8 @@ describe("service catalog contract", () => {
   });
 
   it("normalizes legacy category values on reads", () => {
-    expect(normalizeServiceCategory("STANDARD")).toBe("Residential");
-    expect(normalizeServiceCategory("OFFICE_CLEANING")).toBe("Commercial");
-    expect(normalizeServiceCategory("Carpet Cleaning")).toBe("Specialist");
+    expect(normalizeServiceCategory("STANDARD")).toBe("RESIDENTIAL");
+    expect(normalizeServiceCategory("OFFICE_CLEANING")).toBe("COMMERCIAL");
+    expect(normalizeServiceCategory("Carpet Cleaning")).toBe("SPECIALIST");
   });
 });

@@ -1,5 +1,4 @@
-import { ServiceStatus, ServiceType } from "../../generated/prisma/enums";
-import type { ServiceCategory } from "./serviceCatalog.contract";
+import { ServiceCategory, ServiceStatus, ServiceType } from "../../generated/prisma/enums";
 
 export interface IServiceAddOn {
     name: string;

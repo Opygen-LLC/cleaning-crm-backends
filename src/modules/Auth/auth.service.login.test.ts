@@ -121,9 +121,12 @@ describe("login Better Auth + rotating refresh contract", () => {
 
   it("loads only the staff activation state for STAFF logins", async () => {
     mocks.signInEmail.mockResolvedValue({ user: { ...signedInAdmin, role: "STAFF" }, token: "session-token", redirect: false });
-    mocks.staffFindUnique.mockResolvedValue({ status: "ACTIVE" });
+    mocks.staffFindUnique.mockResolvedValue({ status: "ACTIVE", manuallyInactive: false });
     const result = await authService.login({ email: "jamie@example.com", password: "correct-password" });
-    expect(mocks.staffFindUnique).toHaveBeenCalledWith({ where: { userId: "user-1" }, select: { status: true } });
+    expect(mocks.staffFindUnique).toHaveBeenCalledWith({
+      where: { userId: "user-1" },
+      select: { status: true, manuallyInactive: true },
+    });
     expect(result.user.role).toBe("STAFF");
   });
 });

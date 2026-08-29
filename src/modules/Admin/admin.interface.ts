@@ -1,4 +1,4 @@
-import { Currency } from "../../generated/prisma/enums";
+import { Currency, ServiceCategory } from "../../generated/prisma/enums";
 import type { BusinessHours } from "./businessHours";
 
 export interface UpdateAdminPayload {
@@ -77,4 +77,30 @@ export interface OnboardingClientErrorPayload {
   section: "route" | "active-step" | "preview" | "bootstrap";
   onboardingStep?: OnboardingStepKey | null;
   componentStack?: string | null;
+}
+
+
+export interface SaveOnboardingServicesPayload {
+  services: Array<{
+    serviceName: string;
+    description: string;
+    basePrice: number;
+    duration: string;
+    category: ServiceCategory;
+    onlineBookingEnabled: boolean;
+    addOns?: Array<{ name: string; price: number }>;
+  }>;
+  booking: {
+    enabled: boolean;
+    bookingFormId?: string | null;
+    showNavigation: boolean;
+    showHeaderCta: boolean;
+    showServiceCtas: boolean;
+    showHomeCta: boolean;
+    showAvailableSlots: boolean;
+    showPrices: boolean;
+    showStartingPrices: boolean;
+    showServiceDuration: boolean;
+    ctaLabel: string;
+  };
 }

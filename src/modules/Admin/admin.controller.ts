@@ -126,6 +126,17 @@ const getOnboardingStatus = catchAsync(async (req, res) => {
 });
 
 
+
+const saveOnboardingServices = catchAsync(async (req, res) => {
+  const result = await adminService.saveOnboardingServices(req.user.id, req.body);
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Services and website booking saved successfully",
+    data: result,
+  });
+});
+
 const completeOnboardingStep = catchAsync(async (req, res) => {
   const userId = req.user.id;
   const result = await adminService.completeOnboardingStep(userId, req.body.step);
@@ -191,6 +202,7 @@ export const adminController = {
   getOnboardingStatus,
   getOnboardingBootstrap,
   reportOnboardingClientError,
+  saveOnboardingServices,
   completeOnboardingStep,
   skipWebsiteOnboardingSetup,
   finalizeOnboardingSetup,

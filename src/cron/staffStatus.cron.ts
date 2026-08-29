@@ -23,9 +23,9 @@ cron.schedule("0 */6 * * *", async () => {
 
         const todayWeekDay = DAY_MAP[today.getUTCDay()];
 
-        // Fetch all staff not manually DEACTIVE
+        // Keep manual access disable separate from the operational availability status.
         const staffList = await prisma.staffProfile.findMany({
-            where: { status: { not: StaffStatus.DEACTIVE } },
+            where: { manuallyInactive: false },
             select: {
                 id: true,
                 status: true,

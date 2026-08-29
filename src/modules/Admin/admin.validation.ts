@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Currency } from "../../generated/prisma/enums";
+import { Currency, ServiceCategory } from "../../generated/prisma/enums";
 import { ONBOARDING_STEPS, SKIPPABLE_ONBOARDING_STEPS } from "./admin.constant";
 import { businessHoursInputSchema, jsonArrayInput, nullableMultipartInput } from "./businessHours";
 
@@ -73,6 +73,49 @@ const skipOnboardingStepSchema = z
   })
   .strict();
 
+
+const onboardingServiceSchema = z.object({
+  serviceName: z.string().trim().min(1).max(160),
+  description: z.string().trim().min(1).max(2000),
+  basePrice: z.number().finite().nonnegative().max(1_000_000),
+  duration: z.string().trim().min(1).max(80),
+  category: z.nativeEnum(ServiceCategory),
+  onlineBookingEnabled: z.boolean(),
+  addOns: z.array(z.object({
+    name: z.string().trim().min(1).max(120),
+    price: z.number().finite().nonnegative().max(1_000_000),
+  }).strict()).max(50).optional(),
+}).strict();
+
+const saveOnboardingServicesSchema = z.object({
+  services: z.array(onboardingServiceSchema).min(1).max(100),
+  booking: z.object({
+    enabled: z.boolean(),
+    bookingFormId: z.string().uuid().nullable().optional(),
+    showNavigation: z.boolean(),
+    showHeaderCta: z.boolean(),
+    showServiceCtas: z.boolean(),
+    showHomeCta: z.boolean(),
+    showAvailableSlots: z.boolean(),
+    showPrices: z.boolean(),
+    showStartingPrices: z.boolean(),
+    showServiceDuration: z.boolean(),
+    ctaLabel: z.string().trim().min(1).max(80),
+  }).strict(),
+}).strict().superRefine((value, ctx) => {
+  const names = new Set<string>();
+  value.services.forEach((service, index) => {
+    const key = service.serviceName.toLocaleLowerCase("en-GB");
+    if (names.has(key)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["services", index, "serviceName"], message: "Duplicate service name" });
+    }
+    names.add(key);
+  });
+  if (value.booking.enabled && !value.services.some((service) => service.onlineBookingEnabled)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["services"], message: "Enable online booking for at least one selected service" });
+  }
+});
+
 const onboardingClientErrorSchema = z
   .object({
     message: z.string().trim().min(1).max(1000),
@@ -99,4 +142,5 @@ export const adminValidation = {
   completeOnboardingStep: completeOnboardingStepSchema,
   skipOnboardingStep: skipOnboardingStepSchema,
   onboardingClientError: onboardingClientErrorSchema,
+  saveOnboardingServices: saveOnboardingServicesSchema,
 };

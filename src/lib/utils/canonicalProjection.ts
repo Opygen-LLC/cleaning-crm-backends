@@ -1,3 +1,5 @@
+import { serviceCategoryLabel } from "../../modules/ServiceCatalog/serviceCatalog.contract";
+
 /**
  * Phase 0 canonical public projection helpers.
  * Public booking/estimate/website surfaces should consume these stable shapes
@@ -51,7 +53,7 @@ export const projectCanonicalService = (service: {
     // compatibility window so existing clients do not break.
     basePrice: service.basePrice,
     duration: service.duration,
-    category: service.category,
+    category: serviceCategoryLabel(service.category),
     addOns: service.addOns ?? [],
     legacyServiceType: service.legacyServiceType ?? null,
     onlineBookingEnabled: service.onlineBookingEnabled ?? true,

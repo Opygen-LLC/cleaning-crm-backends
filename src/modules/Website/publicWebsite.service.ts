@@ -382,7 +382,9 @@ const projectWebsite = (
     reviews: website.admin.reviews.map((review: { clientName: string; rating: number; comment: string | null; adminReply: string | null; createdAt: Date }) => ({
       clientName: review.clientName,
       rating: review.rating,
-      comment: review.comment,
+      // Public preview/runtime contract exposes comment as a string. Legacy
+      // reviews with a nullable comment are normalized at the projection edge.
+      comment: review.comment ?? "",
       adminReply: review.adminReply,
       createdAt: review.createdAt,
     })),
