@@ -9,7 +9,7 @@
 # ─────────────────────────────────────────────────────────────
 # Stage 1 — base: enable pnpm via corepack on Alpine
 # ─────────────────────────────────────────────────────────────
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 
 # Install system deps needed by native modules (heic-convert, bcryptjs, etc.)
 RUN apk add --no-cache python3 make g++ vips-dev
@@ -24,8 +24,8 @@ WORKDIR /app
 # ─────────────────────────────────────────────────────────────
 FROM base AS dependencies
 
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY package.json pnpm-lock.yaml .npmrc* ./
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # ─────────────────────────────────────────────────────────────
 # Stage 3 — build: compile TypeScript → dist/ via tsup
@@ -56,13 +56,13 @@ CMD ["pnpm", "exec", "prisma", "migrate", "deploy"]
 # ─────────────────────────────────────────────────────────────
 FROM base AS prod-dependencies
 
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --prod --frozen-lockfile
+COPY package.json pnpm-lock.yaml .npmrc* ./
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
 # ─────────────────────────────────────────────────────────────
 # Stage 6 — production: lean runtime image
 # ─────────────────────────────────────────────────────────────
-FROM node:20-alpine AS production
+FROM node:22-alpine AS production
 
 # Runtime native-module system deps
 RUN apk add --no-cache vips wget
