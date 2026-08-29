@@ -121,7 +121,8 @@ prisma.$on("query", (e: { query: string; params: string; duration: number }) => 
         // customer data or payment metadata. Local operators get a concise
         // operation/table summary; production keeps a structured event for
         // Google Cloud Logging. Full SQL is opt-in only for local debugging.
-        const requestId = getRequestTrace()?.requestId ?? "background";
+        const trace = getRequestTrace();
+        const requestId = trace?.requestId ?? "background";
         const durationMs = Math.round(e.duration * 10) / 10;
         if (NODE_ENV === "production") {
             logger.warn("slow_database_query", {
@@ -132,10 +133,15 @@ prisma.$on("query", (e: { query: string; params: string; duration: number }) => 
                 requestId,
             });
         } else {
-            logger.warn(
-                `Slow database query — ${durationMs}ms · ${summary.operation} ${summary.table} · request ${requestId.slice(0, 8)}`,
-            );
-            if (LOG_SQL_DETAILS) logger.debug(summary.normalized.slice(0, 1_500));
+            const isBackground = requestId === "background";
+            const threshold = isBackground ? Math.max(SLOW_QUERY_THRESHOLD_MS, 1500) : Math.max(SLOW_QUERY_THRESHOLD_MS, 800);
+            if (e.duration > threshold || LOG_SQL_DETAILS) {
+                const reqLabel = isBackground ? "background" : requestId.slice(0, 8);
+                logger.warn(
+                    `Slow database query — ${durationMs}ms · ${summary.operation} ${summary.table} · request ${reqLabel}`,
+                );
+                if (LOG_SQL_DETAILS) logger.debug(summary.normalized.slice(0, 1_500));
+            }
         }
     }
 });

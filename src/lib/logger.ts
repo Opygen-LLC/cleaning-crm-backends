@@ -2,10 +2,21 @@ import winston from "winston";
 import "winston-daily-rotate-file";
 import { NODE_ENV } from "../config/ENV";
 
+const devFormat = winston.format.printf(({ level, message, stack, ...meta }) => {
+  const cleanMeta = { ...meta };
+  delete cleanMeta.timestamp;
+  delete cleanMeta.service;
+  delete cleanMeta.splat;
+  const hasMeta = Object.keys(cleanMeta).length > 0;
+  const metaStr = hasMeta ? ` ${JSON.stringify(cleanMeta)}` : "";
+  const errStack = stack ? `\n${stack}` : "";
+  return `${level}: ${message}${metaStr}${errStack}`;
+});
+
 const consoleTransport = new winston.transports.Console({
   format: NODE_ENV === "production"
     ? winston.format.combine(winston.format.timestamp(), winston.format.json())
-    : winston.format.combine(winston.format.colorize(), winston.format.simple()),
+    : winston.format.combine(winston.format.colorize(), devFormat),
 });
 
 const transports: winston.transport[] = [consoleTransport];
@@ -21,16 +32,16 @@ if (NODE_ENV !== "production") {
     maxSize: "20m",
     maxFiles: "7d",
     level: "info",
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.json(),
+    ),
   }));
 }
 
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || "info",
-  format: winston.format.combine(
-    winston.format.errors({ stack: true }),
-    winston.format.timestamp(),
-    winston.format.json(),
-  ),
+  format: winston.format.errors({ stack: true }),
   transports,
 });
 

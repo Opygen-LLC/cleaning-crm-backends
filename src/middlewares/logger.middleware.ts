@@ -170,6 +170,7 @@ const logRequestResponse = (
     const redisAttempts = (trace?.redisHits ?? 0) + (trace?.redisMisses ?? 0);
 
     if (NODE_ENV !== "production") {
+      const devLevel = res.statusCode >= 500 ? "error" : res.statusCode >= 400 ? "warn" : "info";
       const dbMs = round(trace?.dbDurationMs ?? 0);
       const dbQueries = trace?.dbQueryCount ?? 0;
       const redisMs = round(trace?.redisDurationMs ?? 0);
@@ -178,18 +179,20 @@ const logRequestResponse = (
       const parts = [`${req.method} ${route} → ${res.statusCode} in ${rounded}ms`];
       if (dbQueries > 0) {
         const slowest = trace?.slowestDbQuery;
-        parts.push(
-          slowest
-            ? `DB ${dbMs}ms/${dbQueries}q · slowest ${round(slowest.durationMs)}ms ${slowest.operation} ${slowest.table}`
-            : `DB ${dbMs}ms/${dbQueries}q`,
-        );
+        if (dbQueries === 1 && slowest) {
+          parts.push(`DB ${dbMs}ms (${slowest.operation} ${slowest.table})`);
+        } else if (slowest) {
+          parts.push(`DB ${dbMs}ms/${dbQueries}q (slowest ${round(slowest.durationMs)}ms ${slowest.table})`);
+        } else {
+          parts.push(`DB ${dbMs}ms/${dbQueries}q`);
+        }
         if (poolWaitMs > 0) parts.push(`DB pool ${poolWaitMs}ms`);
       }
       if ((trace?.redisCommandCount ?? 0) > 0) parts.push(`Redis ${redisMs}ms`);
       if (queueMs > 0) parts.push(`Queue ${queueMs}ms`);
       if ((trace?.externalDurationMs ?? 0) > 0) parts.push(`External ${round(trace?.externalDurationMs ?? 0)}ms`);
-      if (level === "warn") parts.push(`request ${requestId.slice(0, 8)}`);
-      logger.log(level, parts.join(" · "));
+      if (devLevel !== "info") parts.push(`request ${requestId.slice(0, 8)}`);
+      logger.log(devLevel, parts.join(" · "));
       return;
     }
 

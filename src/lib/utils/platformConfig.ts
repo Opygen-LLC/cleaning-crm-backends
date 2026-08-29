@@ -1,4 +1,5 @@
 import { prisma } from "../prisma/prisma";
+import { singleFlight } from "./singleFlight";
 
 // ─── Platform-wide configuration ──────────────────────────────────────────────
 //
@@ -50,7 +51,7 @@ export const PLATFORM_CONFIG_KEY = "platformConfig";
 // worst case, a change takes up to CONFIG_CACHE_TTL_MS to become visible on
 // instances that don't call updatePlatformConfig() directly, and even that
 // window is eliminated below by busting the cache on every write.
-const CONFIG_CACHE_TTL_MS = 30_000;
+const CONFIG_CACHE_TTL_MS = 60_000;
 
 let cachedConfig: PlatformConfig | null = null;
 let cacheExpiresAt = 0;
@@ -84,10 +85,15 @@ export const getPlatformConfig = async (): Promise<PlatformConfig> => {
         return cachedConfig;
     }
 
-    const value = await readConfigFromDb();
-    cachedConfig = value;
-    cacheExpiresAt = Date.now() + CONFIG_CACHE_TTL_MS;
-    return value;
+    return singleFlight("platform-config", async () => {
+        if (cachedConfig && cacheExpiresAt > Date.now()) {
+            return cachedConfig;
+        }
+        const value = await readConfigFromDb();
+        cachedConfig = value;
+        cacheExpiresAt = Date.now() + CONFIG_CACHE_TTL_MS;
+        return value;
+    });
 };
 
 export const updatePlatformConfig = async (
