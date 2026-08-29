@@ -18,6 +18,7 @@ const { prismaMock, txMock, hostResolverMock, projectionCacheMock } = vi.hoisted
     txMock: tx,
     prismaMock: {
       businessWebsite: { findUnique: vi.fn() },
+      subscription: { findFirst: vi.fn(async () => ({ status: "ACTIVE", isTrial: false, subscriptionPlan: { features: [] } })) },
       $transaction: vi.fn(async (callback: (transaction: WebsiteTransactionMock) => unknown) => callback(tx)),
     },
     hostResolverMock: { invalidateSubdomains: vi.fn(), invalidateHosts: vi.fn() },
@@ -25,10 +26,14 @@ const { prismaMock, txMock, hostResolverMock, projectionCacheMock } = vi.hoisted
   };
 });
 
-vi.mock("../../config/ENV", () => ({
-  WEBSITE_BASE_DOMAIN: "sites.example.com",
-  WEBSITE_CUSTOM_DOMAINS_ENABLED: true,
-}));
+vi.mock("../../config/ENV", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../config/ENV")>();
+  return {
+    ...actual,
+    WEBSITE_BASE_DOMAIN: "sites.example.com",
+    WEBSITE_CUSTOM_DOMAINS_ENABLED: true,
+  };
+});
 vi.mock("../../lib/prisma/prisma", () => ({ prisma: prismaMock }));
 vi.mock("../../lib/prisma/advisoryLock", () => ({ acquireTextTransactionAdvisoryLock: vi.fn() }));
 vi.mock("../../lib/utils/resolveAdminId", () => ({ getAdminId: vi.fn().mockResolvedValue("admin-1") }));

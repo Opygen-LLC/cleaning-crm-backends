@@ -32,38 +32,9 @@ router.patch(
     bookingChangeRequestController.decideRequest,
 );
 
-// Create client
-router.post(
-    "/",
-    checkAuth(UserRole.ADMIN),
-    zodValidate(clientValidation.createClient, ValidationProperty.BODY),
-    clientController.createClient,
-);
-
-// Get all clients for an admin
-router.get("/:adminId", checkAuth(UserRole.ADMIN), clientController.getClients);
-
-// Get client by id
-router.get(
-    "/detail/:id",
-    checkAuth(UserRole.ADMIN),
-    clientController.getClientById,
-);
-
-// Update client
-router.patch(
-    "/:id",
-    checkAuth(UserRole.ADMIN),
-    zodValidate(clientValidation.updateClient, ValidationProperty.BODY),
-    clientController.updateClient,
-);
-
-// Delete client
-router.delete("/:id", checkAuth(UserRole.ADMIN), clientController.deleteClient);
-
-// Public client portal — no auth session required.
+// ── Public client portal — no auth session required. ────────────────────────
 // Access is gated by the opaque portalAccessToken (a random UUID), NOT the
-// plain client id.  The token is what makes the URL unguessable.
+// plain client id. The token is what makes the URL unguessable.
 router.get("/portal/:portalToken", clientController.getClientPortal);
 
 // Client (portal): request a reschedule or cancellation on an upcoming
@@ -79,6 +50,15 @@ router.post(
     bookingChangeRequestController.createRequest,
 );
 
+// ── Admin routes ─────────────────────────────────────────────────────────────
+
+// Get client by id
+router.get(
+    "/detail/:id",
+    checkAuth(UserRole.ADMIN),
+    clientController.getClientById,
+);
+
 // Admin: rotate the portal access token — invalidates previously shared links.
 // Must be authenticated as ADMIN and must own the client record.
 router.post(
@@ -86,5 +66,30 @@ router.post(
     checkAuth(UserRole.ADMIN),
     clientController.regeneratePortalToken,
 );
+
+// Create client
+router.post(
+    "/",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(clientValidation.createClient, ValidationProperty.BODY),
+    clientController.createClient,
+);
+
+// Get all clients for authenticated admin
+router.get("/", checkAuth(UserRole.ADMIN), clientController.getClients);
+
+// Update client
+router.patch(
+    "/:id",
+    checkAuth(UserRole.ADMIN),
+    zodValidate(clientValidation.updateClient, ValidationProperty.BODY),
+    clientController.updateClient,
+);
+
+// Delete client
+router.delete("/:id", checkAuth(UserRole.ADMIN), clientController.deleteClient);
+
+// Get all clients for an admin (legacy path with explicit adminId param)
+router.get("/:adminId", checkAuth(UserRole.ADMIN), clientController.getClients);
 
 export const clientRoutes = router;

@@ -4,7 +4,7 @@ const MAX_REQUESTS_PER_WINDOW = 8;
 const ALERT_COOLDOWN_MS = 60_000;
 const MAX_KEYS = 2_000;
 
-type Bucket = { timestamps: number[]; lastAlertAt: number };
+type Bucket = { timestamps: number[]; lastAlertAt: number | null };
 const buckets = new Map<string, Bucket>();
 
 export type RequestStormAlert = {
@@ -29,13 +29,16 @@ export const observeRequestStorm = (
       const oldest = buckets.keys().next().value as string | undefined;
       if (oldest) buckets.delete(oldest);
     }
-    bucket = { timestamps: [], lastAlertAt: 0 };
+    bucket = { timestamps: [], lastAlertAt: null };
     buckets.set(key, bucket);
   }
   const cutoff = now - WINDOW_MS;
   bucket.timestamps = bucket.timestamps.filter((timestamp) => timestamp >= cutoff);
   bucket.timestamps.push(now);
-  if (bucket.timestamps.length > MAX_REQUESTS_PER_WINDOW && now - bucket.lastAlertAt >= ALERT_COOLDOWN_MS) {
+  if (
+    bucket.timestamps.length > MAX_REQUESTS_PER_WINDOW &&
+    (bucket.lastAlertAt === null || now - bucket.lastAlertAt >= ALERT_COOLDOWN_MS)
+  ) {
     bucket.lastAlertAt = now;
     return {
       code: REQUEST_STORM_CODE,

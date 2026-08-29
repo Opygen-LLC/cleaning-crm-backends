@@ -319,9 +319,12 @@ const getAdminIdForWebsite = async (websiteId: string): Promise<string | null> =
   }
 };
 
-const invalidateWebsite = async (websiteId: string | null | undefined): Promise<void> => {
+const invalidateWebsite = async (
+  websiteId: string | null | undefined,
+  knownAdminId?: string | null,
+): Promise<void> => {
   if (!websiteId) return;
-  const adminId = await getAdminIdForWebsite(websiteId);
+  const adminId = knownAdminId !== undefined ? knownAdminId : await getAdminIdForWebsite(websiteId);
   try {
     // Generation bump + fresh/stale/lock deletion are atomic. This closes the
     // stale-repopulation race and guarantees CRM writes are visible on the next
@@ -362,7 +365,7 @@ const invalidateAdminWebsite = async (adminId: string | null | undefined): Promi
     // CRM mutation therefore invalidates Redis without an extra SQL lookup.
     const cachedWebsiteId = await redis.get(adminWebsiteKeyFor(adminId));
     if (cachedWebsiteId) {
-      await invalidateWebsite(cachedWebsiteId);
+      await invalidateWebsite(cachedWebsiteId, adminId);
       return;
     }
   } catch {
@@ -376,7 +379,7 @@ const invalidateAdminWebsite = async (adminId: string | null | undefined): Promi
     });
     if (!website) return;
     await rememberAdminWebsite(adminId, website.id);
-    await invalidateWebsite(website.id);
+    await invalidateWebsite(website.id, adminId);
   } catch {
     // Never turn a successful CRM mutation into a failure due to cache cleanup.
   }

@@ -40,7 +40,7 @@ describe("WebsiteOverviewService Phase 10 summary", () => {
       leads: 72,
     });
     expect(mocks.redisSet).toHaveBeenCalledWith(
-      expect.stringContaining("website-studio-overview:v2:admin-1"),
+      expect.stringContaining("website-studio-overview:admin-1"),
       JSON.stringify(result),
       "EX",
       expect.any(Number),

@@ -184,6 +184,7 @@ describe("Phase 10 website structural repair", () => {
       publishedAt: null,
       publishedRevisionNumber: null,
       publishedSnapshot: liveSnapshot,
+      pages: pages(),
       revisions: [{ id: "rev-1", revisionNumber: 1, snapshot: { heroTitle: "LIVE COPY" } }],
     });
     const after = website({
@@ -191,8 +192,13 @@ describe("Phase 10 website structural repair", () => {
       publishedAt: new Date("2026-08-18T00:00:00Z"),
       publishedRevisionNumber: 1,
       publishedSnapshot: liveSnapshot,
+      pages: pages(),
+      revisions: [{ id: "rev-1", revisionNumber: 1, snapshot: { heroTitle: "LIVE COPY" } }],
     });
-    db.businessWebsite.findUnique.mockResolvedValueOnce(before).mockResolvedValueOnce(after);
+    db.businessWebsite.findUnique
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(after);
     mocks.parsePublished.mockImplementation((value) => value === liveSnapshot ? liveSnapshot : value);
     mocks.parseRevision.mockReturnValue(liveSnapshot);
 

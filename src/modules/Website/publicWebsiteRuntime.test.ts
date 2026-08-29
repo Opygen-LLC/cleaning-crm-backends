@@ -61,6 +61,7 @@ describe("Phase 3 public website runtime contract", () => {
       logo: null,
       favicon: null,
       bookingEnabled: false,
+      bookingShowNavigation: true,
       bookingShowHeaderCta: true,
       bookingShowServiceCtas: true,
       bookingShowHomeCta: true,

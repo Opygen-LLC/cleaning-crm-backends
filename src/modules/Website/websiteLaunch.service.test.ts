@@ -114,6 +114,7 @@ const {
     txMock: tx,
     prismaMock: {
       businessWebsite: { findUnique: vi.fn(async () => ({ id: "website-1" })) },
+      subscription: { findFirst: vi.fn(async () => ({ status: "ACTIVE", isTrial: false, subscriptionPlan: { features: [] } })) },
       $transaction: vi.fn(async (callback: (transaction: typeof tx) => unknown) => callback(tx)),
     },
     hostResolverMock: {
@@ -132,7 +133,14 @@ const {
   };
 });
 
-vi.mock("../../config/ENV", () => ({ WEBSITE_BASE_DOMAIN: "sites.example.com", WEBSITE_CUSTOM_DOMAINS_ENABLED: false }));
+vi.mock("../../config/ENV", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../config/ENV")>();
+  return {
+    ...actual,
+    WEBSITE_BASE_DOMAIN: "sites.example.com",
+    WEBSITE_CUSTOM_DOMAINS_ENABLED: false,
+  };
+});
 vi.mock("../../lib/logger", () => ({ default: loggerMock }));
 vi.mock("../../lib/prisma/prisma", () => ({ prisma: prismaMock }));
 vi.mock("../../lib/prisma/advisoryLock", () => ({ acquireTextTransactionAdvisoryLock: vi.fn() }));

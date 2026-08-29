@@ -30,6 +30,7 @@ vi.mock("../../generated/prisma/enums", () => ({
   },
   FormSubmissionStatus: { DECLINED: "DECLINED" },
   ServiceStatus: { ACTIVE: "ACTIVE", INACTIVE: "INACTIVE" },
+  ServiceCategory: { RESIDENTIAL: "RESIDENTIAL", COMMERCIAL: "COMMERCIAL", SPECIALIST: "SPECIALIST" },
 }));
 vi.mock("../../lib/utils/resolveAdminId", () => ({ getAdminId: vi.fn() }));
 vi.mock("../Website/websiteProjectionCache.service", () => ({

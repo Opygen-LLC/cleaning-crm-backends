@@ -1,7 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { prismaMock, getAdminIdMock, websiteServiceMock, cloudinaryMock } = vi.hoisted(() => ({
-  prismaMock: { businessWebsite: { findUnique: vi.fn() } },
+  prismaMock: {
+    businessWebsite: { findUnique: vi.fn() },
+    subscription: {
+      findFirst: vi.fn(async () => ({
+        status: "ACTIVE",
+        isTrial: false,
+        currentPeriodEnd: null as Date | null,
+        subscriptionPlan: {
+          name: "GROWTH",
+          features: [JSON.stringify({ label: "Advanced Website SEO", included: true })],
+        },
+      })),
+    },
+  },
   getAdminIdMock: vi.fn(),
   websiteServiceMock: { attachManagedBrandAsset: vi.fn() },
   cloudinaryMock: {
@@ -12,10 +25,22 @@ const { prismaMock, getAdminIdMock, websiteServiceMock, cloudinaryMock } = vi.ho
   },
 }));
 
-vi.mock("../../config/ENV", () => ({
-  CLOUDINARY_CLOUD_NAME: "demo-cloud",
-  CLOUDINARY_API_KEY: "public-key",
-  CLOUDINARY_API_SECRET: "private-secret",
+vi.mock("../../config/ENV", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../config/ENV")>();
+  return {
+    ...actual,
+    CLOUDINARY_CLOUD_NAME: "demo-cloud",
+    CLOUDINARY_API_KEY: "public-key",
+    CLOUDINARY_API_SECRET: "private-secret",
+  };
+});
+vi.mock("../../config/redis", () => ({
+  default: {
+    get: vi.fn(async () => null),
+    set: vi.fn(async () => "OK"),
+    setex: vi.fn(async () => "OK"),
+    del: vi.fn(async () => 1),
+  },
 }));
 vi.mock("../../config/cloudinary", () => ({ cloudinaryUpload: cloudinaryMock }));
 vi.mock("../../lib/prisma/prisma", () => ({ prisma: prismaMock }));
@@ -27,8 +52,18 @@ import { WebsiteAssetService } from "./websiteAsset.service";
 beforeEach(() => {
   vi.clearAllMocks();
   getAdminIdMock.mockResolvedValue("admin-1");
-  prismaMock.businessWebsite.findUnique.mockResolvedValue({ id: "website-1", status: "PUBLISHED" });
+  prismaMock.businessWebsite.findUnique.mockResolvedValue({ id: "website-1", adminId: "admin-1", status: "DRAFT" });
+  prismaMock.subscription.findFirst.mockResolvedValue({
+    status: "ACTIVE",
+    isTrial: false,
+    currentPeriodEnd: new Date(Date.now() + 86400000),
+    subscriptionPlan: {
+      name: "GROWTH",
+      features: [JSON.stringify({ label: "Advanced Website SEO", included: true })],
+    },
+  });
   cloudinaryMock.utils.api_sign_request.mockReturnValue("signed-value");
+  cloudinaryMock.uploader.destroy.mockResolvedValue({ result: "ok" });
   cloudinaryMock.url.mockImplementation((publicId: string, options: any) =>
     `https://cdn.example/${publicId}/${options.format}/${options.transformation?.[0]?.width}`,
   );
@@ -68,6 +103,7 @@ describe("WebsiteAssetService signed brand uploads", () => {
         custom: {
           website_id: "website-1",
           asset_kind: "logo",
+          upload_token: "upload-token",
           expires_at: String(Math.floor(Date.now() / 1000) + 300),
         },
       },
@@ -112,6 +148,7 @@ describe("WebsiteAssetService signed brand uploads", () => {
         custom: {
           website_id: "website-1",
           asset_kind: "favicon",
+          upload_token: "upload-token",
           expires_at: String(Math.floor(Date.now() / 1000) + 300),
         },
       },
@@ -137,6 +174,7 @@ describe("WebsiteAssetService SEO social-image uploads", () => {
         custom: {
           website_id: "website-1",
           asset_kind: "social",
+          upload_token: "upload-token",
           expires_at: String(Math.floor(Date.now() / 1000) + 300),
         },
       },
@@ -166,6 +204,7 @@ describe("WebsiteAssetService SEO social-image uploads", () => {
         custom: {
           website_id: "website-1",
           asset_kind: "social",
+          upload_token: "portrait",
           expires_at: String(Math.floor(Date.now() / 1000) + 300),
         },
       },
