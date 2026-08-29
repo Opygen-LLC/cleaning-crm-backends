@@ -132,6 +132,7 @@ services:
     environment:
       API_DOMAIN: api.opygen.com
     ports:
+      - "5000:5000"
       - "80:80"
       - "443:443"
       - "443:443/udp"

@@ -213,9 +213,15 @@ const monitoringTokenAllowed = (req: Request): boolean => {
   return Boolean(PERFORMANCE_METRICS_TOKEN && supplied === PERFORMANCE_METRICS_TOKEN);
 };
 
-// Public load-balancer probes deliberately expose no dependency names,
-// regions, pool sizes or provider details. Detailed diagnostics live behind
-// the monitoring token below.
+app.get("/", (_req: Request, res: Response) => {
+  return res.status(200).json({
+    success: true,
+    service: "Cleaning CRM Backend API",
+    status: "healthy",
+    version: APP_VERSION,
+  });
+});
+
 app.get("/livez", (_req: Request, res: Response) => {
   return res.status(200).json({ success: true, status: "alive" });
 });
