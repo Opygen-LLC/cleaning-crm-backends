@@ -33,7 +33,7 @@ x-app-common: &app-common
     APP_URL: https://cleaningcrm.opygen.com
     BETTER_AUTH_URL: https://api.opygen.com
     COOKIE_DOMAIN: .opygen.com
-    AUTH_ALLOWED_ORIGINS: https://cleaningcrm.opygen.com
+    AUTH_ALLOWED_ORIGINS: https://cleaningcrm.opygen.com,http://34.131.56.92,http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001
     ACCESS_TOKEN_EXPIRES_IN: 15m
     REFRESH_TOKEN_EXPIRES_IN: 30d
     PERFORMANCE_METRICS_TOKEN: 72b6597c9a90a5c88652494f37d6da57894888763d49cdlwfjoer234234
