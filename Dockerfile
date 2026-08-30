@@ -36,7 +36,7 @@ COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
 
 # Generate Prisma client before building (required for type-safe queries)
-RUN pnpm exec prisma generate
+RUN npx prisma generate
 
 # Compile TypeScript
 RUN pnpm run build
@@ -49,15 +49,14 @@ RUN pnpm run build
 FROM build AS migration
 
 ENV NODE_ENV=production
-CMD ["pnpm", "exec", "prisma", "migrate", "deploy"]
+CMD ["npx", "prisma", "migrate", "deploy"]
 
 # ─────────────────────────────────────────────────────────────
-# Stage 5 — prod-dependencies: only production deps (no devDeps)
+# Stage 5 — prod-dependencies: prune devDeps efficiently
 # ─────────────────────────────────────────────────────────────
-FROM base AS prod-dependencies
+FROM dependencies AS prod-dependencies
 
-COPY package.json pnpm-lock.yaml .npmrc* ./
-RUN pnpm install --prod --no-frozen-lockfile --ignore-scripts
+RUN pnpm prune --prod
 
 # ─────────────────────────────────────────────────────────────
 # Stage 6 — development: hot-reload via tsx --watch
