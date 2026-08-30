@@ -39,7 +39,7 @@ COPY . .
 RUN npx prisma generate
 
 # Compile TypeScript
-RUN pnpm run build:docker
+RUN npx tsc --noEmit && npx tsup
 
 # ─────────────────────────────────────────────────────────────
 # Stage 4 — migration: one-shot release image with Prisma CLI + compiled repair job
