@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node scripts/devProcesses.mjs",
     "build": "prisma generate && tsc --noEmit && tsup",
+    "build:docker": "tsc --noEmit && tsup",
     "typecheck": "prisma generate && tsc --noEmit",
     "start": "pnpm run start:api",
     "vercel-build": "pnpm run build",
