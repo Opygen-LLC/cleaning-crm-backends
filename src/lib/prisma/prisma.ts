@@ -24,10 +24,12 @@ if (!DATABASE_URL) {
 // verify-full, but warns that their meaning will change in its next major
 // version. Make the current secure behaviour explicit so upgrades cannot
 // silently weaken certificate/hostname verification and local logs stay clean.
-const connectionString = DATABASE_URL.replace(
-    /([?&])sslmode=(?:prefer|require|verify-ca)(?=(&|$))/i,
-    "$1sslmode=verify-full",
-);
+const connectionString = DATABASE_URL.includes("neon.tech")
+    ? DATABASE_URL
+    : DATABASE_URL.replace(
+        /([?&])sslmode=(?:prefer|require|verify-ca)(?=(&|$))/i,
+        "$1sslmode=verify-full",
+    );
 
 // Neon (and most serverless Postgres providers) can take several seconds to
 // wake a suspended compute on the first query after idling, and the `pg`
