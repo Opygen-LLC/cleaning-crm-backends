@@ -1,20 +1,8 @@
 generator client {
   provider        = "prisma-client"
   output          = "../../src/generated/prisma"
-  // PERF FIX (Phase 2 of the performance audit): enables relationLoadStrategy.
-  // Once this is on, "join" (a single DB-level LATERAL JOIN query) becomes the
-  // DEFAULT for every existing `include`/`select` relation query in the
-  // codebase — no per-call code changes required elsewhere. Previously every
-  // nested include (e.g. subscription -> subscriptionPlan, subscription ->
-  // admin -> user in SuperAdmin/superAdmin.service.ts) silently fired as
-  // multiple separate round trips ("query" strategy), each paying the full
-  // network cost to the database. This is what produced the
-  // `AdminProfile ... WHERE id IN (NULL)` wasted round trip visible in
-  // production logs — a batched relation fetch that ran even though it had
-  // nothing to fetch. The join strategy fetches everything in one query and
-  // this specific pattern disappears entirely.
-  // Remember to run `pnpm prisma generate` after pulling this change.
   previewFeatures = ["relationJoins"]
+  binaryTargets   = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
