@@ -10,9 +10,6 @@
  * live Next.js domain, e.g. FRONTEND_URL=https://app.yourdomain.com
  */
 
-import dns from "dns";
-dns.setDefaultResultOrder("ipv4first");
-
 import express, { Request, Response } from "express";
 import routes from "./routes/index";
 import compression from "compression";
@@ -219,7 +216,7 @@ const monitoringTokenAllowed = (req: Request): boolean => {
 app.get("/", (_req: Request, res: Response) => {
   return res.status(200).json({
     success: true,
-    service: "Cleaning CRM Backend API 31 AUG 2:22 AM",
+    service: "Cleaning CRM Backend API 31 AUG 2:02 AM",
     status: "healthy",
     version: APP_VERSION,
   });
