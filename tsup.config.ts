@@ -17,6 +17,7 @@ export default defineConfig({
     bundle: true,
     splitting: false,
     sourcemap: true,
+    external: ["pg"],
     // Add this banner to shim require() for CJS dependencies
     banner: {
         js: `
