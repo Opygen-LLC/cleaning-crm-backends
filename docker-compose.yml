@@ -53,7 +53,7 @@ services:
       PROCESS_ROLE: api
       PORT: 3000
       BACKEND_IP: 0.0.0.0
-      OUTBOX_WORKER_ENABLED: "false"
+      OUTBOX_WORKER_ENABLED: "true"
     expose:
       - "3000"
     healthcheck:
@@ -62,24 +62,6 @@ services:
       timeout: 5s
       start_period: 20s
       retries: 5
-
-  worker:
-    <<: *app-common
-    container_name: cleaning_crm_worker
-    command: ["node", "dist/processes/worker.js"]
-    environment:
-      <<: *common-environment
-      PROCESS_ROLE: worker
-      OUTBOX_WORKER_ENABLED: "true"
-
-  scheduler:
-    <<: *app-common
-    container_name: cleaning_crm_scheduler
-    command: ["node", "dist/processes/scheduler.js"]
-    environment:
-      <<: *common-environment
-      PROCESS_ROLE: scheduler
-      DB_KEEPALIVE_ENABLED: "false"
 
   # Explicit one-shot seed/bootstrap task. Never runs with normal compose up.
   bootstrap:

@@ -60,7 +60,22 @@ COPY package.json pnpm-lock.yaml .npmrc* ./
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
 # ─────────────────────────────────────────────────────────────
-# Stage 6 — production: lean runtime image
+# Stage 6 — development: hot-reload via tsx --watch
+# ─────────────────────────────────────────────────────────────
+FROM base AS development
+
+COPY --from=dependencies /app/node_modules ./node_modules
+COPY . .
+
+ENV PORT=3000
+ENV BACKEND_IP=0.0.0.0
+ENV NODE_ENV=development
+
+EXPOSE 3000
+CMD ["pnpm", "run", "dev"]
+
+# ─────────────────────────────────────────────────────────────
+# Stage 7 — production: lean runtime image (DEFAULT FINAL STAGE)
 # ─────────────────────────────────────────────────────────────
 FROM node:22-alpine AS production
 
@@ -97,18 +112,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD wget -qO- http://localhost:3000/livez || exit 1
 
 CMD ["node", "dist/index.js"]
-
-# ─────────────────────────────────────────────────────────────
-# Stage 7 — development: hot-reload via tsx --watch
-# ─────────────────────────────────────────────────────────────
-FROM base AS development
-
-COPY --from=dependencies /app/node_modules ./node_modules
-COPY . .
-
-ENV PORT=3000
-ENV BACKEND_IP=0.0.0.0
-ENV NODE_ENV=development
-
-EXPOSE 3000
-CMD ["pnpm", "run", "dev"]

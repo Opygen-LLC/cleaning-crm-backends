@@ -5,7 +5,7 @@
     }
 }
 
-http://34.131.56.92, http://34.131.56.92:5000, http://:5000, http://localhost:5000, http://:80, :80, :443, {$API_DOMAIN:34.131.56.92.sslip.io}, localhost {
+http://34.131.56.92, http://:80, :80, localhost {
     encode zstd gzip
 
     header {
