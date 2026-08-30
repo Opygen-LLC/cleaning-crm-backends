@@ -19,7 +19,10 @@ const requireService = <T extends { serviceCatalogId?: string; serviceType?: str
 };
 
 const createQuoteSchema = z.object({
-    clientId: z.string().uuid("Invalid client ID"),
+    clientId: z.string().uuid("Invalid client ID").optional(),
+    clientName: z.string().trim().min(1, "Client name is required").optional(),
+    clientEmail: z.string().trim().email("Invalid email address").optional(),
+    clientPhone: z.string().trim().optional(),
     ...serviceIdentityFields,
     address: z.string().min(1, "Address is required"),
     lineItems: z.array(lineItemSchema).min(1, "At least one line item is required"),
@@ -28,7 +31,20 @@ const createQuoteSchema = z.object({
     notes: z.string().optional(),
     internalNotes: z.string().optional(),
     templateId: z.string().uuid().optional(),
-}).strict().superRefine(requireService);
+}).strict().superRefine((data, ctx) => {
+    requireService(data, ctx);
+    if (data.clientId) return;
+    const missing: string[] = [];
+    if (!data.clientName) missing.push("clientName");
+    if (!data.clientEmail) missing.push("clientEmail");
+    if (missing.length) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Provide either clientId, or clientName and clientEmail to create a new client",
+            path: [missing[0]],
+        });
+    }
+});
 
 const updateQuoteSchema = z.object({
     serviceCatalogId: z.string().uuid("Invalid service catalog ID").nullable().optional(),

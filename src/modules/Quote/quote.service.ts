@@ -23,6 +23,7 @@ import { FRONTEND_URL } from "../../config/ENV";
 import { createNotification } from "../../lib/utils/createNotification";
 import { nextReference } from "../../lib/utils/referenceNumber";
 import { inferLegacyServiceType, resolveFlexibleServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
+import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 import { formatMoney } from "../../lib/utils/money";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -140,19 +141,63 @@ const ALLOWED_TRANSITIONS: Record<QuoteStatus, QuoteStatus[]> = {
     [QuoteStatus.EXPIRED]: [], // terminal
 };
 
+const resolveOrCreateClient = async (
+    adminId: string,
+    payload: IQuoteCreate,
+): Promise<string> => {
+    if (payload.clientId) {
+        const client = await prisma.client.findFirst({
+            where: { id: payload.clientId, adminId },
+        });
+        if (!client) throw new AppError(status.NOT_FOUND, "Client not found");
+        return client.id;
+    }
+
+    if (!payload.clientEmail || !payload.clientName) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            "Provide either clientId, or clientName and clientEmail to create a new client",
+        );
+    }
+
+    const email = payload.clientEmail.trim().toLowerCase();
+
+    const existing = await prisma.client.findUnique({
+        where: { email_adminId: { email, adminId } },
+    });
+    if (existing) return existing.id;
+
+    // Brand-new client — enforce plan limits before inserting.
+    await assertWithinLimit(adminId, "client");
+
+    const created = await prisma.client.create({
+        data: {
+            adminId,
+            name: payload.clientName.trim(),
+            email,
+            phone: payload.clientPhone?.trim() ?? "",
+            addressLine1: payload.address,
+            city: "",
+            zipcode: "",
+            country: "",
+        },
+    });
+
+    return created.id;
+};
+
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
     const adminId = await getAdminId(user);
 
-    const [client, serviceIdentity] = await Promise.all([
-        prisma.client.findFirst({ where: { id: payload.clientId, adminId } }),
+    const [resolvedClientId, serviceIdentity] = await Promise.all([
+        resolveOrCreateClient(adminId, payload),
         resolveFlexibleServiceIdentity(adminId, {
             serviceCatalogId: payload.serviceCatalogId,
             serviceType: payload.serviceType,
         }),
     ]);
-    if (!client) throw new AppError(status.NOT_FOUND, "Client not found");
 
     const { subtotal, tax, total } = computeTotals(payload.lineItems, payload.taxRate);
 
@@ -163,7 +208,7 @@ const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
                 quoteRef,
                 publicToken: generatePublicQuoteToken(),
                 adminId,
-                clientId: payload.clientId,
+                clientId: resolvedClientId,
                 serviceCatalogId: serviceIdentity.serviceCatalogId,
                 serviceType: serviceIdentity.serviceType,
                 serviceNameSnapshot: serviceIdentity.serviceNameSnapshot,

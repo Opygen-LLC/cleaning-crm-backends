@@ -7,7 +7,10 @@ export interface IQuoteLineItemInput {
 }
 
 export interface IQuoteCreate {
-    clientId: string;
+    clientId?: string;
+    clientName?: string;
+    clientEmail?: string;
+    clientPhone?: string;
     serviceCatalogId?: string;
     serviceType?: string; // legacy rolling-client compatibility
     address: string;
