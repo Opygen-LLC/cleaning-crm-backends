@@ -80,13 +80,11 @@ const connectionString = DATABASE_URL.includes("neon.tech")
 const adapter = new PrismaPg({
     connectionString,
     max: DB_POOL_MAX,
-    min: DB_POOL_MIN,
-    idleTimeoutMillis: DB_POOL_IDLE_TIMEOUT_MS, // 10 min — was 30s (shorter than the keep-alive interval, which defeated its own purpose)
-    // Configurable so the deployment can balance cold-start tolerance against
-    // fail-fast behaviour without changing code.
-    connectionTimeoutMillis: DB_POOL_CONNECTION_TIMEOUT_MS,
+    min: 0,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: Math.max(DB_POOL_CONNECTION_TIMEOUT_MS, 30_000),
     keepAlive: true,
-    keepAliveInitialDelayMillis: 10_000,
+    keepAliveInitialDelayMillis: 5_000,
 });
 
 const prisma = new PrismaClient({
