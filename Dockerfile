@@ -11,9 +11,6 @@
 # ─────────────────────────────────────────────────────────────
 FROM node:22-alpine AS base
 
-# Install system deps needed by native modules (heic-convert, bcryptjs, etc.)
-RUN apk add --no-cache python3 make g++ vips-dev
-
 # Enable pnpm via corepack (matches packageManager in package.json)
 RUN corepack enable && corepack prepare pnpm@11.5.1 --activate
 
@@ -78,8 +75,8 @@ CMD ["pnpm", "run", "dev"]
 # ─────────────────────────────────────────────────────────────
 FROM node:22-alpine AS production
 
-# Runtime native-module system deps
-RUN apk add --no-cache vips wget
+# Runtime system deps
+RUN apk add --no-cache wget ca-certificates
 
 # Non-root user for security
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
