@@ -11,6 +11,11 @@ x-app-common: &app-common
     context: .
     target: production
   restart: always
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
   env_file:
     - .env
   environment: &common-environment
