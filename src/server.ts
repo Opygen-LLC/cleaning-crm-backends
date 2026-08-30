@@ -216,7 +216,7 @@ const monitoringTokenAllowed = (req: Request): boolean => {
 app.get("/", (_req: Request, res: Response) => {
   return res.status(200).json({
     success: true,
-    service: "Cleaning CRM Backend API 31 AUG 1:30 AM",
+    service: "Cleaning CRM Backend API 31 AUG 1:49 AM",
     status: "healthy",
     version: APP_VERSION,
   });
