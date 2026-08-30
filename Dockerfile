@@ -72,20 +72,18 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 WORKDIR /app
 
-# Copy only what is needed at runtime
-COPY --from=prod-dependencies /app/node_modules ./node_modules
-COPY --from=build             /app/dist          ./dist
-COPY --from=build             /app/package.json  ./
+# Copy only what is needed at runtime with correct non-root ownership
+COPY --chown=appuser:appgroup --from=prod-dependencies /app/node_modules ./node_modules
+COPY --chown=appuser:appgroup --from=build             /app/dist          ./dist
+COPY --chown=appuser:appgroup --from=build             /app/package.json  ./
 
 # Copy Prisma schema + generated client (needed by @prisma/client at runtime)
-COPY --from=build /app/prisma ./prisma
-COPY --from=build /app/src/generated ./src/generated
+COPY --chown=appuser:appgroup --from=build /app/prisma ./prisma
+COPY --chown=appuser:appgroup --from=build /app/src/generated ./src/generated
 
 # Copy EJS email templates used by nodemailer
-COPY --from=build /app/src/lib/templates ./src/lib/templates
+COPY --chown=appuser:appgroup --from=build /app/src/lib/templates ./src/lib/templates
 
-# Hand ownership to non-root user
-RUN chown -R appuser:appgroup /app
 USER appuser
 
 ENV NODE_ENV=production
