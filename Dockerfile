@@ -25,7 +25,7 @@ WORKDIR /app
 FROM base AS dependencies
 
 COPY package.json pnpm-lock.yaml .npmrc* ./
-RUN pnpm install --frozen-lockfile --ignore-scripts
+RUN pnpm install --no-frozen-lockfile --ignore-scripts
 
 # ─────────────────────────────────────────────────────────────
 # Stage 3 — build: compile TypeScript → dist/ via tsup
@@ -57,7 +57,7 @@ CMD ["pnpm", "exec", "prisma", "migrate", "deploy"]
 FROM base AS prod-dependencies
 
 COPY package.json pnpm-lock.yaml .npmrc* ./
-RUN pnpm install --prod --frozen-lockfile --ignore-scripts
+RUN pnpm install --prod --no-frozen-lockfile --ignore-scripts
 
 # ─────────────────────────────────────────────────────────────
 # Stage 6 — development: hot-reload via tsx --watch
