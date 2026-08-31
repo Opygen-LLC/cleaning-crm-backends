@@ -36,6 +36,14 @@ router.put("/draft", zodValidate(websiteValidation.saveDraft, ValidationProperty
 router.post("/publish", zodValidate(websiteValidation.publishWebsite, ValidationProperty.BODY), websiteController.publishWebsite);
 router.post("/launch", zodValidate(websiteValidation.publishWebsite, ValidationProperty.BODY), websiteController.launchWebsite);
 router.get("/preview", websiteController.previewWebsite);
+router.post("/preview", zodValidate(websiteValidation.previewLocalDraft, ValidationProperty.BODY), websiteController.previewLocalWebsite);
+router.get("/google-analytics/status", websiteController.getGoogleAnalyticsStatus);
+router.post("/google-analytics/connect", websiteController.connectGoogleAnalytics);
+router.post("/google-analytics/oauth/callback", zodValidate(websiteValidation.googleAnalyticsOAuthCallback, ValidationProperty.BODY), websiteController.completeGoogleAnalyticsOAuth);
+router.get("/google-analytics/properties", websiteController.listGoogleAnalyticsProperties);
+router.put("/google-analytics/property", zodValidate(websiteValidation.googleAnalyticsProperty, ValidationProperty.BODY), websiteController.selectGoogleAnalyticsProperty);
+router.delete("/google-analytics/connection", websiteController.disconnectGoogleAnalytics);
+router.get("/google-analytics/report", zodValidate(websiteValidation.googleAnalyticsReportQuery, ValidationProperty.QUERY), websiteController.getGoogleAnalyticsReport);
 router.get("/pages", websiteController.listPages);
 router.patch("/pages/:pageId", zodValidate(websiteValidation.updatePage, ValidationProperty.BODY), websiteController.updatePage);
 router.get("/revisions", websiteController.listRevisions);

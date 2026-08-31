@@ -6,6 +6,8 @@ export interface WebsitePublishedPageSnapshot {
   content: unknown;
   seoTitle: string | null;
   seoDescription: string | null;
+  seoKeywords: string[];
+  socialImageUrl: string | null;
   showInNavigation: boolean;
   isEnabled: boolean;
   sortOrder: number;
@@ -38,8 +40,11 @@ export interface WebsitePublishedSnapshotV1 {
     estimateEnabled: boolean;
     metaTitle: string | null;
     metaDescription: string | null;
+    metaKeywords: string[];
     socialImageUrl: string | null;
     indexSite: boolean;
+    googleAnalyticsEnabled: boolean;
+    googleAnalyticsMeasurementId: string | null;
   };
   pages: WebsitePublishedPageSnapshot[];
 }
@@ -69,8 +74,11 @@ interface DraftWebsiteLike {
   estimateEnabled?: boolean;
   metaTitle?: string | null;
   metaDescription?: string | null;
+  metaKeywords?: string[];
   socialImageUrl?: string | null;
   indexSite: boolean;
+  googleAnalyticsEnabled?: boolean;
+  googleAnalyticsMeasurementId?: string | null;
   pages?: Array<{
     id: string;
     kind: string;
@@ -79,6 +87,8 @@ interface DraftWebsiteLike {
     content: unknown;
     seoTitle?: string | null;
     seoDescription?: string | null;
+    seoKeywords?: string[];
+    socialImageUrl?: string | null;
     showInNavigation: boolean;
     isEnabled: boolean;
     sortOrder: number;
@@ -117,8 +127,11 @@ export const buildPublishedSnapshot = (draft: DraftWebsiteLike): WebsitePublishe
     estimateEnabled: draft.estimateEnabled ?? Boolean(draft.primaryEstimateFormId),
     metaTitle: draft.metaTitle ?? null,
     metaDescription: draft.metaDescription ?? null,
+    metaKeywords: [...(draft.metaKeywords ?? [])],
     socialImageUrl: draft.socialImageUrl ?? null,
     indexSite: draft.indexSite,
+    googleAnalyticsEnabled: draft.googleAnalyticsEnabled ?? false,
+    googleAnalyticsMeasurementId: draft.googleAnalyticsMeasurementId ?? null,
   },
   pages: [...(draft.pages ?? [])]
     .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -130,6 +143,8 @@ export const buildPublishedSnapshot = (draft: DraftWebsiteLike): WebsitePublishe
       content: cloneJson(page.content ?? {}),
       seoTitle: page.seoTitle ?? null,
       seoDescription: page.seoDescription ?? null,
+      seoKeywords: [...(page.seoKeywords ?? [])],
+      socialImageUrl: page.socialImageUrl ?? null,
       showInNavigation: page.showInNavigation,
       isEnabled: page.isEnabled,
       sortOrder: page.sortOrder,
@@ -173,8 +188,11 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
     (site.estimateEnabled !== undefined && typeof site.estimateEnabled !== "boolean") ||
     !stringOrNull(site.metaTitle) ||
     !stringOrNull(site.metaDescription) ||
+    (site.metaKeywords !== undefined && (!Array.isArray(site.metaKeywords) || site.metaKeywords.some((value) => typeof value !== "string"))) ||
     !stringOrNull(site.socialImageUrl) ||
-    typeof site.indexSite !== "boolean"
+    typeof site.indexSite !== "boolean" ||
+    (site.googleAnalyticsEnabled !== undefined && typeof site.googleAnalyticsEnabled !== "boolean") ||
+    !stringOrNull(site.googleAnalyticsMeasurementId ?? null)
   ) return null;
 
   const pages: WebsitePublishedPageSnapshot[] = [];
@@ -187,6 +205,8 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
       typeof raw.title !== "string" ||
       !stringOrNull(raw.seoTitle) ||
       !stringOrNull(raw.seoDescription) ||
+      (raw.seoKeywords !== undefined && (!Array.isArray(raw.seoKeywords) || raw.seoKeywords.some((value) => typeof value !== "string"))) ||
+      !stringOrNull(raw.socialImageUrl ?? null) ||
       typeof raw.showInNavigation !== "boolean" ||
       typeof raw.isEnabled !== "boolean" ||
       typeof raw.sortOrder !== "number"
@@ -199,6 +219,8 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
       content: cloneJson(raw.content ?? {}),
       seoTitle: raw.seoTitle,
       seoDescription: raw.seoDescription,
+      seoKeywords: Array.isArray(raw.seoKeywords) ? raw.seoKeywords as string[] : [],
+      socialImageUrl: typeof raw.socialImageUrl === "string" ? raw.socialImageUrl : null,
       showInNavigation: raw.showInNavigation,
       isEnabled: raw.isEnabled,
       sortOrder: raw.sortOrder,
@@ -235,8 +257,11 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
       estimateEnabled: site.estimateEnabled ?? Boolean(site.primaryEstimateFormId),
       metaTitle: site.metaTitle,
       metaDescription: site.metaDescription,
+      metaKeywords: Array.isArray(site.metaKeywords) ? site.metaKeywords as string[] : [],
       socialImageUrl: site.socialImageUrl,
       indexSite: site.indexSite,
+      googleAnalyticsEnabled: site.googleAnalyticsEnabled ?? false,
+      googleAnalyticsMeasurementId: typeof site.googleAnalyticsMeasurementId === "string" ? site.googleAnalyticsMeasurementId : null,
     },
     pages: pages.sort((a, b) => a.sortOrder - b.sortOrder),
   };

@@ -242,6 +242,15 @@ export const VERCEL_ACCESS_TOKEN: string | undefined = process.env.VERCEL_ACCESS
 export const VERCEL_PROJECT_ID: string | undefined = process.env.VERCEL_PROJECT_ID?.trim();
 export const VERCEL_TEAM_ID: string | undefined = process.env.VERCEL_TEAM_ID?.trim();
 
+// Google Analytics 4 connection for Website Studio. These are optional at
+// process startup so environments that do not expose the integration can still
+// boot; GA endpoints fail closed with a clear configuration error instead.
+export const GOOGLE_ANALYTICS_OAUTH_CLIENT_ID: string | undefined = process.env.GOOGLE_ANALYTICS_OAUTH_CLIENT_ID?.trim();
+export const GOOGLE_ANALYTICS_OAUTH_CLIENT_SECRET: string | undefined = process.env.GOOGLE_ANALYTICS_OAUTH_CLIENT_SECRET?.trim();
+export const GOOGLE_ANALYTICS_OAUTH_REDIRECT_URI: string | undefined = process.env.GOOGLE_ANALYTICS_OAUTH_REDIRECT_URI?.trim();
+export const GOOGLE_ANALYTICS_TOKEN_ENCRYPTION_KEY: string | undefined = process.env.GOOGLE_ANALYTICS_TOKEN_ENCRYPTION_KEY?.trim();
+export const GOOGLE_ANALYTICS_OAUTH_STATE_SECRET: string | undefined = process.env.GOOGLE_ANALYTICS_OAUTH_STATE_SECRET?.trim();
+
 // ─── Phase 9 website reliability / observability ────────────────────────────
 export const ANALYTICS_HASH_SECRET: string | undefined = process.env.ANALYTICS_HASH_SECRET?.trim();
 export const TURNSTILE_SECRET_KEY: string | undefined = process.env.TURNSTILE_SECRET_KEY?.trim();

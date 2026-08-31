@@ -55,7 +55,7 @@ const assertEntitledWebsitePatch = (
       WebsiteEntitlementService.assertTemplateAllowed(template, entitlements);
     }
   }
-  if (typeof payload.socialImageUrl === "string" && payload.socialImageUrl.trim() && !entitlements.advancedSeo) {
+  if (((typeof payload.socialImageUrl === "string" && payload.socialImageUrl.trim()) || Boolean(payload.metaKeywords?.length)) && !entitlements.advancedSeo) {
     throw new AppError(status.FORBIDDEN, "Social share image customization requires Advanced Website SEO.", {
       code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false,
     });
@@ -65,7 +65,9 @@ const assertEntitledWebsitePatch = (
 const assertEntitledPagePatch = (payload: WebsitePageUpdateInput, entitlements: WebsiteEntitlements) => {
   const addsAdvancedSeo =
     (typeof payload.seoTitle === "string" && payload.seoTitle.trim().length > 0) ||
-    (typeof payload.seoDescription === "string" && payload.seoDescription.trim().length > 0);
+    (typeof payload.seoDescription === "string" && payload.seoDescription.trim().length > 0) ||
+    Boolean(payload.seoKeywords?.length) ||
+    (typeof payload.socialImageUrl === "string" && payload.socialImageUrl.trim().length > 0);
   if (addsAdvancedSeo && !entitlements.advancedSeo) {
     throw new AppError(status.FORBIDDEN, "Page-specific SEO overrides require Advanced Website SEO.", {
       code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false,
@@ -112,6 +114,25 @@ const assertManagedBrandReferences = async (
     });
     if (!isManagedBrandAsset(asset, kind)) {
       throw new AppError(status.BAD_REQUEST, `Upload the ${label} through Website Studio instead of pasting an external URL`, {
+        code: "WEBSITE_MANAGED_ASSET_REQUIRED",
+        retryable: false,
+      });
+    }
+  }
+};
+
+const assertManagedPageSocialReferences = async (
+  websiteId: string,
+  pages: WebsiteDraftSaveInput["pages"],
+  db: WebsiteDb,
+) => {
+  for (const page of pages ?? []) {
+    if (page.socialImageUrl === undefined || page.socialImageUrl === null) continue;
+    const safeUrl = assertSafeHttpsUrl(page.socialImageUrl, "Page social image URL");
+    if (!safeUrl) continue;
+    const asset = await db.websiteAsset.findFirst({ where: { websiteId, url: safeUrl }, select: { metadata: true } });
+    if (!isManagedBrandAsset(asset, "social")) {
+      throw new AppError(status.BAD_REQUEST, "Upload page OpenGraph images through Website Studio instead of pasting an external URL", {
         code: "WEBSITE_MANAGED_ASSET_REQUIRED",
         retryable: false,
       });
@@ -308,8 +329,11 @@ const loadDraftSnapshot = async (websiteId: string, db: Prisma.TransactionClient
       estimateEnabled: true,
       metaTitle: true,
       metaDescription: true,
+      metaKeywords: true,
       socialImageUrl: true,
       indexSite: true,
+      googleAnalyticsEnabled: true,
+      googleAnalyticsMeasurementId: true,
       createdAt: true,
       updatedAt: true,
       publishedAt: true,
@@ -709,6 +733,8 @@ const applyPagePatchesBatch = async (
     hasContent: Object.prototype.hasOwnProperty.call(patch, "content"), content: patch.content ?? null,
     hasSeoTitle: Object.prototype.hasOwnProperty.call(patch, "seoTitle"), seoTitle: patch.seoTitle ?? null,
     hasSeoDescription: Object.prototype.hasOwnProperty.call(patch, "seoDescription"), seoDescription: patch.seoDescription ?? null,
+    hasSeoKeywords: Object.prototype.hasOwnProperty.call(patch, "seoKeywords"), seoKeywords: patch.seoKeywords ?? [],
+    hasSocialImageUrl: Object.prototype.hasOwnProperty.call(patch, "socialImageUrl"), socialImageUrl: patch.socialImageUrl ?? null,
     hasShowInNavigation: Object.prototype.hasOwnProperty.call(patch, "showInNavigation"), showInNavigation: patch.showInNavigation ?? null,
     hasIsEnabled: Object.prototype.hasOwnProperty.call(patch, "isEnabled"), isEnabled: patch.isEnabled ?? null,
     hasSortOrder: Object.prototype.hasOwnProperty.call(patch, "sortOrder"), sortOrder: patch.sortOrder ?? null,
@@ -722,6 +748,8 @@ const applyPagePatchesBatch = async (
         "hasContent" boolean, content jsonb,
         "hasSeoTitle" boolean, "seoTitle" text,
         "hasSeoDescription" boolean, "seoDescription" text,
+        "hasSeoKeywords" boolean, "seoKeywords" text[],
+        "hasSocialImageUrl" boolean, "socialImageUrl" text,
         "hasShowInNavigation" boolean, "showInNavigation" boolean,
         "hasIsEnabled" boolean, "isEnabled" boolean,
         "hasSortOrder" boolean, "sortOrder" integer
@@ -733,6 +761,8 @@ const applyPagePatchesBatch = async (
       content = CASE WHEN patch."hasContent" THEN patch.content ELSE wp.content END,
       "seoTitle" = CASE WHEN patch."hasSeoTitle" THEN patch."seoTitle" ELSE wp."seoTitle" END,
       "seoDescription" = CASE WHEN patch."hasSeoDescription" THEN patch."seoDescription" ELSE wp."seoDescription" END,
+      "seoKeywords" = CASE WHEN patch."hasSeoKeywords" THEN patch."seoKeywords" ELSE wp."seoKeywords" END,
+      "socialImageUrl" = CASE WHEN patch."hasSocialImageUrl" THEN patch."socialImageUrl" ELSE wp."socialImageUrl" END,
       "showInNavigation" = CASE WHEN patch."hasShowInNavigation" THEN patch."showInNavigation" ELSE wp."showInNavigation" END,
       "isEnabled" = CASE WHEN patch."hasIsEnabled" THEN patch."isEnabled" ELSE wp."isEnabled" END,
       "sortOrder" = CASE WHEN patch."hasSortOrder" THEN patch."sortOrder" ELSE wp."sortOrder" END,
@@ -742,80 +772,108 @@ const applyPagePatchesBatch = async (
   `;
 };
 
-const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => {
-  const adminId = await getAdminId(user);
-  const [current, entitlements] = await Promise.all([getWebsiteOrThrow(adminId), WebsiteEntitlementService.getForAdminId(adminId)]);
+const applyDraftPayloadTx = async (
+  tx: Prisma.TransactionClient,
+  args: {
+    websiteId: string;
+    adminId: string;
+    payload: WebsiteDraftSaveInput;
+    entitlements: WebsiteEntitlements;
+    applyDraftLifecycle?: boolean;
+  },
+) => {
+  const { websiteId, adminId, payload, entitlements, applyDraftLifecycle = false } = args;
   const websitePatch = payload.website ?? {};
-  const expectedRevisionNumber = payload.expectedRevisionNumber;
-
   const uniquePageIds = [...new Set((payload.pages ?? []).map((page) => page.id))];
   if (uniquePageIds.length !== (payload.pages ?? []).length) {
-    throw new AppError(status.BAD_REQUEST, "A website page can only be updated once per draft save");
+    throw new AppError(status.BAD_REQUEST, "A website page can only be updated once per request");
   }
+
+  const lockedCurrent = await tx.businessWebsite.findFirst({
+    where: { id: websiteId, adminId },
+    select: {
+      id: true,
+      status: true,
+      templateId: true,
+      templateVersion: true,
+      logo: true,
+      favicon: true,
+      socialImageUrl: true,
+    },
+  });
+  if (!lockedCurrent) throw new AppError(status.NOT_FOUND, "Business website not found");
+  assertLifecycleAllowsDraftMutation(lockedCurrent.status as WebsiteLifecycleStatus);
+
+  await Promise.all([
+    assertOwnedForm(adminId, websitePatch.primaryBookingFormId, "booking", tx),
+    assertOwnedForm(adminId, websitePatch.primaryEstimateFormId, "estimate", tx),
+  ]);
+  await assertManagedBrandReferences(lockedCurrent.id, websitePatch, lockedCurrent, tx);
+  await assertManagedPageSocialReferences(lockedCurrent.id, payload.pages, tx);
+  assertEntitledWebsitePatch(websitePatch, lockedCurrent, entitlements);
+  for (const page of payload.pages ?? []) assertEntitledPagePatch(page, entitlements);
+
+  const ownedPageKinds = new Map<string, string>();
+  if (uniquePageIds.length) {
+    const ownedPages = await tx.websitePage.findMany({
+      where: { websiteId: lockedCurrent.id, id: { in: uniquePageIds } },
+      select: { id: true, kind: true },
+    });
+    if (ownedPages.length !== uniquePageIds.length) {
+      throw new AppError(status.NOT_FOUND, "One or more website pages do not belong to this business");
+    }
+    for (const page of ownedPages) ownedPageKinds.set(page.id, page.kind);
+  }
+
+  const lifecyclePatch = applyDraftLifecycle
+    ? draftLifecyclePatch(lockedCurrent.status as WebsiteLifecycleStatus)
+    : {};
+  if (Object.keys(websitePatch).length || Object.keys(lifecyclePatch).length) {
+    const data = Object.keys(websitePatch).length ? prepareWebsitePatch(websitePatch, lockedCurrent) : {};
+    await tx.businessWebsite.update({
+      where: { id: lockedCurrent.id },
+      data: { ...data, ...lifecyclePatch },
+    });
+  }
+
+  const normalizedPagePatches = (payload.pages ?? []).map((page) => {
+    const { id, ...data } = page;
+    const pageKind = ownedPageKinds.get(id);
+    if (!pageKind) throw new AppError(status.NOT_FOUND, "Website page not found");
+    return {
+      id,
+      ...(data.content === undefined
+        ? data
+        : { ...data, content: validateWebsitePageContent(pageKind, data.content) }),
+    };
+  });
+  await applyPagePatchesBatch(tx, lockedCurrent.id, normalizedPagePatches);
+  return lockedCurrent;
+};
+
+const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  const [current, entitlements] = await Promise.all([
+    getWebsiteOrThrow(adminId),
+    WebsiteEntitlementService.getForAdminId(adminId),
+  ]);
 
   const result = await prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
-
-    const lockedCurrent = await tx.businessWebsite.findFirst({
-      where: { id: current.id, adminId },
-      select: { id: true, status: true, templateId: true, templateVersion: true, logo: true, favicon: true, socialImageUrl: true },
+    const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
+    await ensurePublishedSnapshotBeforeDraftMutationTx(tx, current.id);
+    await applyDraftPayloadTx(tx, {
+      websiteId: current.id,
+      adminId,
+      payload,
+      entitlements,
+      applyDraftLifecycle: true,
     });
-    if (!lockedCurrent) throw new AppError(status.NOT_FOUND, "Business website not found");
-    assertLifecycleAllowsDraftMutation(lockedCurrent.status as WebsiteLifecycleStatus);
 
-    const baseRevisionNumber = await assertExpectedRevision(tx, lockedCurrent.id, expectedRevisionNumber);
-
-    await Promise.all([
-      assertOwnedForm(adminId, websitePatch.primaryBookingFormId, "booking", tx),
-      assertOwnedForm(adminId, websitePatch.primaryEstimateFormId, "estimate", tx),
-    ]);
-    await assertManagedBrandReferences(lockedCurrent.id, websitePatch, lockedCurrent, tx);
-    assertEntitledWebsitePatch(websitePatch, lockedCurrent, entitlements);
-    for (const page of payload.pages ?? []) assertEntitledPagePatch(page, entitlements);
-
-    await ensurePublishedSnapshotBeforeDraftMutationTx(tx, lockedCurrent.id);
-
-    const ownedPageKinds = new Map<string, string>();
-    if (uniquePageIds.length) {
-      const ownedPages = await tx.websitePage.findMany({
-        where: { websiteId: lockedCurrent.id, id: { in: uniquePageIds } },
-        select: { id: true, kind: true },
-      });
-      if (ownedPages.length !== uniquePageIds.length) {
-        throw new AppError(status.NOT_FOUND, "One or more website pages do not belong to this business");
-      }
-      for (const page of ownedPages) ownedPageKinds.set(page.id, page.kind);
-    }
-
-    const lifecyclePatch = draftLifecyclePatch(lockedCurrent.status as WebsiteLifecycleStatus);
-    if (Object.keys(websitePatch).length || Object.keys(lifecyclePatch).length) {
-      const data = Object.keys(websitePatch).length ? prepareWebsitePatch(websitePatch, lockedCurrent) : {};
-      await tx.businessWebsite.update({
-        where: { id: lockedCurrent.id },
-        data: { ...data, ...lifecyclePatch },
-      });
-    }
-
-    const normalizedPagePatches = (payload.pages ?? []).map((page) => {
-      const { id, ...data } = page;
-      const pageKind = ownedPageKinds.get(id);
-      if (!pageKind) throw new AppError(status.NOT_FOUND, "Website page not found");
-      return {
-        id,
-        ...(data.content === undefined
-          ? data
-          : { ...data, content: validateWebsitePageContent(pageKind, data.content) }),
-      };
-    });
-    await applyPagePatchesBatch(tx, lockedCurrent.id, normalizedPagePatches);
-
-    // Load the committed draft graph once. The same immutable object is used
-    // for the revision and the API response, avoiding the old post-revision
-    // full website reload inside the transaction.
-    const snapshot = normalizeDraftPageContent(await loadDraftSnapshot(lockedCurrent.id, tx));
+    const snapshot = normalizeDraftPageContent(await loadDraftSnapshot(current.id, tx));
     const revision = await createRevisionSnapshotTx(
       tx,
-      lockedCurrent.id,
+      current.id,
       user.id,
       "Draft saved",
       baseRevisionNumber,
@@ -829,25 +887,42 @@ const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => 
 
 const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const [current, entitlements] = await Promise.all([getWebsiteOrThrow(adminId), WebsiteEntitlementService.getForAdminId(adminId)]);
+  const [current, entitlements] = await Promise.all([
+    getWebsiteOrThrow(adminId),
+    WebsiteEntitlementService.getForAdminId(adminId),
+  ]);
 
   const website = await prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
     const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
+
+    // Website Studio sends its complete browser-local draft here. Applying the
+    // draft and publishing it under the same advisory lock/transaction prevents
+    // unpublished browser edits from ever becoming a partially persisted DB draft.
+    if (payload.website || payload.pages?.length) {
+      await applyDraftPayloadTx(tx, {
+        websiteId: current.id,
+        adminId,
+        payload,
+        entitlements,
+        applyDraftLifecycle: false,
+      });
+    }
+
     const draft = normalizeDraftPageContent(await loadDraftSnapshot(current.id, tx));
     assertLifecycleAllowsPublish(draft.status as WebsiteLifecycleStatus);
     const publishTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     WebsiteEntitlementService.assertTemplateAllowed(publishTemplate, entitlements);
-    if (draft.socialImageUrl && !entitlements.advancedSeo) {
-      throw new AppError(status.FORBIDDEN, "Remove the custom social share image or upgrade to Advanced Website SEO before publishing.", { code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false });
+    if ((draft.socialImageUrl || draft.metaKeywords.length || draft.pages.some((page: any) => page.seoKeywords?.length || page.socialImageUrl)) && !entitlements.advancedSeo) {
+      throw new AppError(status.FORBIDDEN, "Remove advanced SEO overrides or upgrade to Advanced Website SEO before publishing.", {
+        code: "WEBSITE_ADVANCED_SEO_REQUIRED",
+        retryable: false,
+      });
     }
     if (!draft.pages.some((page: any) => page.kind === "HOME" && page.isEnabled)) {
       throw new AppError(status.CONFLICT, "Enable the Home page before publishing the website");
     }
 
-    // Only tenant-owned form IDs can reach the draft through normal APIs, but
-    // re-check before publishing to fail closed if the database was modified
-    // manually or by an old deployment.
     await Promise.all([
       assertOwnedForm(adminId, draft.primaryBookingFormId, "booking", tx),
       assertOwnedForm(adminId, draft.primaryEstimateFormId, "estimate", tx),
@@ -884,13 +959,11 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
     });
   });
 
-  // Routing cache is only a performance layer, but publishing is one of the
-  // lifecycle events where we proactively drop the canonical host mapping so
-  // every edge immediately re-resolves against the current website row.
   await Promise.all([
     WebsiteHostResolverService.invalidateSubdomains([website.subdomain]),
     WebsiteHostResolverService.invalidateHosts(website.domains.map((domain: any) => domain.domain)),
     WebsiteProjectionCacheService.invalidateWebsite(website.id),
+    WebsiteProjectionCacheService.invalidateStudioAdmin(adminId),
   ]);
   return website;
 };
@@ -1019,13 +1092,28 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
       owner.businessWebsite.publishedAt &&
       owner.businessWebsite.publishedSnapshot &&
       owner.businessWebsite.publishedRevisionNumber !== null &&
-      latestRevisionNumber <= owner.businessWebsite.publishedRevisionNumber
+      latestRevisionNumber <= owner.businessWebsite.publishedRevisionNumber &&
+      !payload.website &&
+      !payload.pages?.length
     ) {
       return {
         businessName: owner.businessName,
         alreadyLive: true,
         website: await loadWebsiteDetails(current.id, tx),
       };
+    }
+
+    // First launch can also receive the complete browser-local Website Studio
+    // draft. Apply it under this same transaction before booking provisioning
+    // and before the immutable publication snapshot is built.
+    if (payload.website || payload.pages?.length) {
+      await applyDraftPayloadTx(tx, {
+        websiteId: current.id,
+        adminId,
+        payload,
+        entitlements,
+        applyDraftLifecycle: false,
+      });
     }
 
     // Booking attachment participates in this same transaction. This closes
@@ -1056,8 +1144,8 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
     );
     const launchTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     WebsiteEntitlementService.assertTemplateAllowed(launchTemplate, entitlements);
-    if (draft.socialImageUrl && !entitlements.advancedSeo) {
-      throw new AppError(status.FORBIDDEN, "Remove the custom social share image or upgrade to Advanced Website SEO before launching.", { code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false });
+    if ((draft.socialImageUrl || draft.metaKeywords.length || draft.pages.some((page: any) => page.seoKeywords?.length || page.socialImageUrl)) && !entitlements.advancedSeo) {
+      throw new AppError(status.FORBIDDEN, "Remove advanced SEO overrides or upgrade to Advanced Website SEO before launching.", { code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false });
     }
 
     if (!draft.pages.some((page: any) => page.kind === "HOME" && page.isEnabled)) {
@@ -1135,6 +1223,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
     WebsiteHostResolverService.invalidateSubdomains([result.website.subdomain]),
     WebsiteHostResolverService.invalidateHosts(result.website.domains.map((domain: any) => domain.domain)),
     WebsiteProjectionCacheService.invalidateWebsite(result.website.id),
+    WebsiteProjectionCacheService.invalidateStudioAdmin(adminId),
   ]);
 
   // Warm the canonical public projection. A cache outage must not roll back a
@@ -1300,8 +1389,11 @@ const restoreRevision = async (revisionId: string, payload: WebsiteRevisionResto
         estimateEnabled: restored.website.estimateEnabled,
         metaTitle: restored.website.metaTitle,
         metaDescription: restored.website.metaDescription,
+        metaKeywords: restored.website.metaKeywords,
         socialImageUrl: restored.website.socialImageUrl,
         indexSite: restored.website.indexSite,
+        googleAnalyticsEnabled: restored.website.googleAnalyticsEnabled,
+        googleAnalyticsMeasurementId: restored.website.googleAnalyticsMeasurementId,
         ...draftLifecyclePatch(current.status as WebsiteLifecycleStatus),
       },
     });
@@ -1321,6 +1413,8 @@ const restoreRevision = async (revisionId: string, payload: WebsiteRevisionResto
           content: JSON.parse(JSON.stringify(page.content ?? {})),
           seoTitle: page.seoTitle,
           seoDescription: page.seoDescription,
+          seoKeywords: page.seoKeywords,
+          socialImageUrl: page.socialImageUrl,
           showInNavigation: page.showInNavigation,
           isEnabled: page.isEnabled,
           sortOrder: page.sortOrder,
@@ -1383,22 +1477,12 @@ const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, u
       },
     });
 
-    const targetField = payload.kind === "social" ? "socialImageUrl" : payload.kind;
-    const currentUrl = targetField === "logo" ? locked.logo : targetField === "favicon" ? locked.favicon : locked.socialImageUrl;
-    if (currentUrl !== payload.url) {
-      await ensurePublishedSnapshotBeforeDraftMutationTx(tx, website.id);
-      await tx.businessWebsite.update({
-        where: { id: website.id },
-        data: {
-          [targetField]: payload.url,
-          ...draftLifecyclePatch(locked.status as WebsiteLifecycleStatus),
-        },
-      });
-      const reason = payload.kind === "logo" ? "Logo uploaded" : payload.kind === "favicon" ? "Favicon uploaded" : "Social share image uploaded";
-      await createRevisionSnapshotTx(tx, website.id, user.id, reason);
-    }
 
-    return { asset, website: await loadWebsiteDetails(website.id, tx) };
+    // Phase 6: Website Studio drafts are browser-local. Finalizing a managed
+    // upload registers only the immutable tenant asset; the browser decides
+    // whether that URL belongs to the local logo/favicon/global/page OG field.
+    // Publishing later validates the managed reference in the same transaction.
+    return { asset };
   });
   await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
   return result;

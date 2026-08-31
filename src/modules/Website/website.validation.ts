@@ -4,6 +4,8 @@ import { optionalE164PhoneSchema } from "../../lib/validation/phone";
 
 const color = z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Use a 6-digit hex color");
 const nullableText = (max: number) => z.string().trim().max(max).nullable();
+const keywords = z.array(z.string().trim().min(1).max(80)).max(30).transform((values) => [...new Set(values.map((value) => value.trim()).filter(Boolean))]);
+const gaMeasurementId = z.string().trim().regex(/^G-[A-Z0-9]{5,20}$/, "Use a valid GA4 Measurement ID such as G-XXXXXXXXXX");
 const pageContent = z.record(z.string(), z.unknown()).refine((value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= 32 * 1024, "Website page content is too large");
 
 const editorSurfaceQuery = z.object({
@@ -42,8 +44,11 @@ const websitePatch = z.object({
   estimateEnabled: z.boolean().optional(),
   metaTitle: nullableText(120).optional(),
   metaDescription: nullableText(320).optional(),
+  metaKeywords: keywords.optional(),
   socialImageUrl: z.string().url().max(2048).nullable().optional(),
   indexSite: z.boolean().optional(),
+  googleAnalyticsEnabled: z.boolean().optional(),
+  googleAnalyticsMeasurementId: gaMeasurementId.nullable().optional(),
 }).strict();
 
 const updateWebsite = websitePatch;
@@ -53,6 +58,8 @@ const pagePatch = z.object({
   content: pageContent.optional(),
   seoTitle: nullableText(120).optional(),
   seoDescription: nullableText(320).optional(),
+  seoKeywords: keywords.optional(),
+  socialImageUrl: z.string().url().max(2048).nullable().optional(),
   showInNavigation: z.boolean().optional(),
   isEnabled: z.boolean().optional(),
   sortOrder: z.number().int().min(0).max(10000).optional(),
@@ -71,7 +78,27 @@ const saveDraft = z.object({
 
 const publishWebsite = z.object({
   expectedRevisionNumber: z.number().int().min(0).optional(),
+  website: websitePatch.optional(),
+  pages: z.array(pagePatch.extend({ id: z.string().uuid() })).max(50).optional(),
 }).strict().default({});
+
+const previewLocalDraft = z.object({
+  website: websitePatch,
+  pages: z.array(pagePatch.extend({ id: z.string().uuid() })).max(50),
+}).strict();
+
+const googleAnalyticsOAuthCallback = z.object({
+  code: z.string().trim().min(8).max(4096),
+  state: z.string().trim().min(16).max(4096),
+}).strict();
+
+const googleAnalyticsProperty = z.object({
+  propertyId: z.string().trim().regex(/^\d{4,30}$/, "Invalid Google Analytics property id"),
+}).strict();
+
+const googleAnalyticsReportQuery = z.object({
+  days: z.coerce.number().int().refine((value) => [7, 30, 90, 365].includes(value), "Use a supported analytics range").default(30),
+}).strict();
 
 const restoreRevision = z.object({
   expectedRevisionNumber: z.number().int().min(0).optional(),
@@ -155,6 +182,10 @@ export const websiteValidation = {
   updatePage,
   saveDraft,
   publishWebsite,
+  previewLocalDraft,
+  googleAnalyticsOAuthCallback,
+  googleAnalyticsProperty,
+  googleAnalyticsReportQuery,
   restoreRevision,
   createAsset,
   brandUploadSignature,

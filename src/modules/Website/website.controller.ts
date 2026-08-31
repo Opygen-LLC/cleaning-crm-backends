@@ -21,6 +21,7 @@ import { adminService } from "../Admin/admin.service";
 import logger from "../../lib/logger";
 import { RELEASE_VERSION } from "../../config/ENV";
 import { recordProductReliabilitySignal } from "../../lib/monitoring/productReliabilityMetrics";
+import { WebsiteGoogleAnalyticsService } from "./websiteGoogleAnalytics.service";
 
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
@@ -93,6 +94,33 @@ const previewWebsite = catchAsync(async (req, res) => {
     throw error;
   }
 });
+const previewLocalWebsite = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return ok(res, "Local website draft preview retrieved successfully", await PublicWebsiteService.getLocalDraftPreviewWebsite(req.body, req.user));
+});
+
+const getGoogleAnalyticsStatus = catchAsync(async (req, res) =>
+  ok(res, "Google Analytics connection status retrieved successfully", await WebsiteGoogleAnalyticsService.getStatus(req.user)),
+);
+const connectGoogleAnalytics = catchAsync(async (req, res) =>
+  ok(res, "Google Analytics authorization started", await WebsiteGoogleAnalyticsService.connect(req.user)),
+);
+const completeGoogleAnalyticsOAuth = catchAsync(async (req, res) =>
+  ok(res, "Google Analytics account connected successfully", await WebsiteGoogleAnalyticsService.callback(req.body, req.user)),
+);
+const listGoogleAnalyticsProperties = catchAsync(async (req, res) =>
+  ok(res, "Google Analytics properties retrieved successfully", await WebsiteGoogleAnalyticsService.listProperties(req.user)),
+);
+const selectGoogleAnalyticsProperty = catchAsync(async (req, res) =>
+  ok(res, "Google Analytics property selected successfully", await WebsiteGoogleAnalyticsService.selectProperty(req.body.propertyId, req.user)),
+);
+const disconnectGoogleAnalytics = catchAsync(async (req, res) =>
+  ok(res, "Google Analytics account disconnected successfully", await WebsiteGoogleAnalyticsService.disconnect(req.user)),
+);
+const getGoogleAnalyticsReport = catchAsync(async (req, res) =>
+  ok(res, "Google Analytics report retrieved successfully", await WebsiteGoogleAnalyticsService.getReport(Number(req.query.days ?? 30), req.user)),
+);
+
 const listPages = catchAsync(async (req, res) => ok(res, "Website pages retrieved successfully", await WebsiteService.listPages(req.user)));
 const updatePage = catchAsync(async (req, res) => ok(res, "Website page updated successfully", await WebsiteService.updatePage(paramStr(req.params.pageId), req.body, req.user)));
 const listRevisions = catchAsync(async (req, res) => ok(res, "Website revisions retrieved successfully", await WebsiteService.listRevisions(req.user)));
@@ -374,6 +402,14 @@ export const websiteController = {
   publishWebsite,
   launchWebsite,
   previewWebsite,
+  previewLocalWebsite,
+  getGoogleAnalyticsStatus,
+  connectGoogleAnalytics,
+  completeGoogleAnalyticsOAuth,
+  listGoogleAnalyticsProperties,
+  selectGoogleAnalyticsProperty,
+  disconnectGoogleAnalytics,
+  getGoogleAnalyticsReport,
   listPages,
   updatePage,
   listRevisions,

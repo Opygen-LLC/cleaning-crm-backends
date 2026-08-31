@@ -38,8 +38,15 @@ model BusinessWebsite {
 
   metaTitle               String?
   metaDescription         String?
+  metaKeywords            String[]      @default([])
   socialImageUrl          String?
   indexSite               Boolean       @default(true)
+
+  // GA4 script configuration is safe to expose through the published snapshot.
+  // OAuth credentials live in WebsiteGoogleAnalyticsConnection and are never
+  // selected by the public website projection.
+  googleAnalyticsEnabled       Boolean @default(false)
+  googleAnalyticsMeasurementId String?
 
   createdAt               DateTime      @default(now())
   updatedAt               DateTime      @updatedAt
@@ -62,6 +69,7 @@ model BusinessWebsite {
   subdomainAliases        WebsiteSubdomainAlias[]
   assets                   WebsiteAsset[]
   analyticsEvents          WebsiteAnalyticsEvent[]
+  googleAnalyticsConnection WebsiteGoogleAnalyticsConnection?
   acquisitionLeads          Lead[]                      @relation("WebsiteAcquisitionLead")
   bookingSubmissions        BookingFormSubmission[]     @relation("WebsiteAcquisitionBookingSubmission")
   estimateSubmissions       EstimateFormSubmission[]    @relation("WebsiteAcquisitionEstimateSubmission")
@@ -80,6 +88,8 @@ model WebsitePage {
   content           Json            @default("{}")
   seoTitle          String?
   seoDescription    String?
+  seoKeywords       String[]        @default([])
+  socialImageUrl    String?
   showInNavigation  Boolean         @default(true)
   isEnabled         Boolean         @default(true)
   sortOrder         Int             @default(0)
@@ -201,4 +211,23 @@ model WebsiteAnalyticsEvent {
   @@index([websiteId, visitorHash, createdAt])
   @@index([createdAt])
   @@map("website_analytics_event")
+}
+
+
+model WebsiteGoogleAnalyticsConnection {
+  id                    String          @id @default(uuid())
+  websiteId             String          @unique
+  refreshTokenEncrypted String
+  googleEmail           String?
+  propertyId            String?
+  propertyName          String?
+  accountName           String?
+  measurementId         String?
+  connectedAt           DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  website               BusinessWebsite @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId])
+  @@map("website_google_analytics_connection")
 }

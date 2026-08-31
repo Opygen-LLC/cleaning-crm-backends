@@ -14,6 +14,7 @@ import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { deriveWebsiteEntitlements, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
 import { ServiceStatus } from "../../generated/prisma/enums";
+import type { WebsiteDraftSaveInput } from "./website.interface";
 
 const WEBSITE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -122,7 +123,7 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
         },
       },
       pages: options.includeDraftPages === false ? false : {
-        select: { kind: true, slug: true, title: true, content: true, seoTitle: true, seoDescription: true, showInNavigation: true, isEnabled: true, sortOrder: true },
+        select: { id: true, kind: true, slug: true, title: true, content: true, seoTitle: true, seoDescription: true, seoKeywords: true, socialImageUrl: true, showInNavigation: true, isEnabled: true, sortOrder: true },
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
       },
       domains: {
@@ -191,8 +192,11 @@ const currentDraftAsPublishedSnapshot = (website: ProjectionWebsite) => buildPub
   estimateEnabled: website.estimateEnabled,
   metaTitle: website.metaTitle,
   metaDescription: website.metaDescription,
+  metaKeywords: website.metaKeywords,
   socialImageUrl: website.socialImageUrl,
   indexSite: website.indexSite,
+  googleAnalyticsEnabled: website.googleAnalyticsEnabled,
+  googleAnalyticsMeasurementId: website.googleAnalyticsMeasurementId,
   pages: website.pages,
 });
 
@@ -381,6 +385,8 @@ const projectWebsite = (
       content: page.content,
       seoTitle: entitlements.advancedSeo ? page.seoTitle : null,
       seoDescription: entitlements.advancedSeo ? page.seoDescription : null,
+      seoKeywords: entitlements.advancedSeo ? page.seoKeywords : [],
+      socialImageUrl: entitlements.advancedSeo ? page.socialImageUrl : null,
     })),
     services: website.admin.serviceCatalogs.map(projectCanonicalService),
     reviews: website.admin.reviews.map((review: { clientName: string; rating: number; comment: string | null; adminReply: string | null; createdAt: Date }) => ({
@@ -430,9 +436,14 @@ const projectWebsite = (
     seo: {
       title: config.metaTitle?.trim() || defaultSeo.title,
       description: config.metaDescription?.trim() || defaultSeo.description,
+      keywords: entitlements.advancedSeo ? config.metaKeywords : [],
       socialImageUrl: entitlements.advancedSeo ? config.socialImageUrl : null,
       indexSite: options.mode === "preview" ? false : config.indexSite,
       canonicalUrl,
+    },
+    googleAnalytics: {
+      enabled: options.mode === "public" && config.googleAnalyticsEnabled && Boolean(config.googleAnalyticsMeasurementId),
+      measurementId: config.googleAnalyticsMeasurementId,
     },
   };
 };
@@ -541,6 +552,26 @@ const getPreviewWebsite = async (user: IRequestUser) => {
   return projectWebsite(source, { mode: "preview" });
 };
 
+const getLocalDraftPreviewWebsite = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
+  if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
+  const source = await loadProjectionSource(website.id);
+  if (source.website.admin.user.status !== "ACTIVE") {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Website preview is unavailable for this account");
+  }
+
+  const websitePatch = payload.website ?? {};
+  const pagePatches = new Map((payload.pages ?? []).map((page) => [page.id, page]));
+  const localWebsite = {
+    ...source.website,
+    ...websitePatch,
+    pages: source.website.pages.map((page) => ({ ...page, ...(pagePatches.get(page.id) ?? {}) })),
+  };
+  const snapshot = buildPublishedSnapshot(localWebsite);
+  return projectWebsite(source, { mode: "preview", snapshotOverride: snapshot });
+};
+
 const getRevisionPreviewWebsite = async (revisionId: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
@@ -575,5 +606,6 @@ export const PublicWebsiteService = {
   resolvePublicEstimateIntegration,
   resolvePublicContactIntegration,
   getPreviewWebsite,
+  getLocalDraftPreviewWebsite,
   getRevisionPreviewWebsite,
 };

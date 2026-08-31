@@ -44,8 +44,11 @@ export interface WebsiteUpdateInput {
   estimateEnabled?: boolean;
   metaTitle?: string | null;
   metaDescription?: string | null;
+  metaKeywords?: string[];
   socialImageUrl?: string | null;
   indexSite?: boolean;
+  googleAnalyticsEnabled?: boolean;
+  googleAnalyticsMeasurementId?: string | null;
 }
 
 export interface WebsitePageUpdateInput {
@@ -53,6 +56,8 @@ export interface WebsitePageUpdateInput {
   content?: unknown;
   seoTitle?: string | null;
   seoDescription?: string | null;
+  seoKeywords?: string[];
+  socialImageUrl?: string | null;
   showInNavigation?: boolean;
   isEnabled?: boolean;
   sortOrder?: number;
@@ -72,10 +77,12 @@ export interface WebsiteDraftSaveInput {
   pages?: WebsiteDraftPageInput[];
 }
 
-export interface WebsitePublishInput {
+export interface WebsitePublishInput extends WebsiteDraftSaveInput {
   /**
-   * Prevent publishing a draft that changed in another browser/tab after the
-   * editor last saved. Optional for backward compatibility with old clients.
+   * Optimistic guard against a publish based on an older confirmed server
+   * revision. Website Studio now sends its complete local draft here and the
+   * server applies + publishes it in one transaction. Legacy callers may still
+   * send only expectedRevisionNumber.
    */
   expectedRevisionNumber?: number;
 }

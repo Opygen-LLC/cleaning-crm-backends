@@ -19,8 +19,11 @@ export const DEFAULT_WEBSITE_SETTINGS = Object.freeze({
   estimateEnabled: false,
   metaTitle: null as string | null,
   metaDescription: null as string | null,
+  metaKeywords: [] as string[],
   socialImageUrl: null as string | null,
   indexSite: true,
+  googleAnalyticsEnabled: false,
+  googleAnalyticsMeasurementId: null as string | null,
 });
 
 export const RESERVED_WEBSITE_SUBDOMAINS = new Set([
