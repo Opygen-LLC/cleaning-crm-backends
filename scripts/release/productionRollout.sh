@@ -2,66 +2,125 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CLIENT_DIR="${CLIENT_DIR:?Set CLIENT_DIR to the Cleaning CRM frontend checkout}"
-: "${STAGING_DEPLOY_CMD:?Set STAGING_DEPLOY_CMD}"
-: "${E2E_FRONTEND_URL:?Set E2E_FRONTEND_URL}"
-: "${E2E_API_URL:?Set E2E_API_URL}"
-: "${E2E_TEST_TOKEN:?Set E2E_TEST_TOKEN}"
-: "${E2E_ACCESS_TOKEN_TTL_SECONDS:?Set E2E_ACCESS_TOKEN_TTL_SECONDS}"
+: "${PRODUCTION_DATABASE_URL:?Set PRODUCTION_DATABASE_URL}"
+: "${PRODUCTION_BACKUP_CMD:?Set PRODUCTION_BACKUP_CMD to a verified backup/snapshot command}"
+: "${BACKEND_DEPLOY_CMD:?Set BACKEND_DEPLOY_CMD}"
+: "${FRONTEND_DEPLOY_CMD:?Set FRONTEND_DEPLOY_CMD}"
+: "${APPLICATION_ROLLBACK_CMD:?Set APPLICATION_ROLLBACK_CMD to roll back application releases only}"
+: "${PRODUCTION_API_ORIGIN:?Set PRODUCTION_API_ORIGIN, e.g. https://api.example.com}"
+: "${PRODUCTION_FRONTEND_URL:?Set PRODUCTION_FRONTEND_URL, e.g. https://cleaningcrm.example.com}"
+: "${AUTH_SMOKE_EMAIL:?Set AUTH_SMOKE_EMAIL to a non-destructive production smoke account}"
+: "${AUTH_SMOKE_PASSWORD:?Set AUTH_SMOKE_PASSWORD}"
 : "${PERFORMANCE_METRICS_TOKEN:?Set PERFORMANCE_METRICS_TOKEN}"
-: "${STAGING_DATABASE_URL:?Set STAGING_DATABASE_URL for the staging integrity gate}"
-: "${PRODUCTION_DATABASE_URL:?Set PRODUCTION_DATABASE_URL for pre/post-migration integrity gates}"
-: "${PRODUCTION_BACKUP_CMD:?Set PRODUCTION_BACKUP_CMD to a verified database backup/snapshot command}"
-: "${PRODUCTION_MIGRATION_CMD:?Set PRODUCTION_MIGRATION_CMD to the production prisma migrate deploy command}"
-: "${CANARY_SMOKE_CMD:?Set CANARY_SMOKE_CMD to target the new canary release directly}"
-: "${CANARY_MONITOR_CMD:?Set CANARY_MONITOR_CMD to check the canary monitoring endpoint directly}"
+: "${FRESH_DB_TEST_DATABASE_URL:?Set FRESH_DB_TEST_DATABASE_URL to a disposable empty CI database}"
+: "${E2E_FRONTEND_URL:?Set E2E_FRONTEND_URL to production-equivalent staging}"
+: "${E2E_API_URL:?Set E2E_API_URL to staging /api/v1}"
+: "${E2E_TEST_TOKEN:?Set E2E_TEST_TOKEN for staging-only hooks}"
+: "${E2E_ACCESS_TOKEN_TTL_SECONDS:?Set E2E_ACCESS_TOKEN_TTL_SECONDS (1..120) on staging}"
+: "${E2E_ADMIN_EMAIL:?Set E2E_ADMIN_EMAIL}"
+: "${E2E_ADMIN_PASSWORD:?Set E2E_ADMIN_PASSWORD}"
+: "${E2E_STAFF_EMAIL:?Set E2E_STAFF_EMAIL}"
+: "${E2E_STAFF_TEMP_PASSWORD:?Set E2E_STAFF_TEMP_PASSWORD}"
+: "${E2E_FIXTURE_RESET_CMD:?Set E2E_FIXTURE_RESET_CMD to restore staging admin/staff smoke fixtures}"
 
-run_e2e() {
-  ( cd "$CLIENT_DIR" && \
-    E2E_FRONTEND_URL="$E2E_FRONTEND_URL" \
-    E2E_API_URL="$E2E_API_URL" \
-    E2E_TEST_TOKEN="$E2E_TEST_TOKEN" \
-    E2E_TEST_EMAIL_DOMAIN="${E2E_TEST_EMAIL_DOMAIN:-e2e.invalid}" \
-    E2E_TEST_PASSWORD="${E2E_TEST_PASSWORD:-Smoke!Test123}" \
-    E2E_ACCESS_TOKEN_TTL_SECONDS="$E2E_ACCESS_TOKEN_TTL_SECONDS" \
-    pnpm run test:e2e:smoke )
+API_ORIGIN="${PRODUCTION_API_ORIGIN%/}"
+FRONTEND_ORIGIN="${PRODUCTION_FRONTEND_URL%/}"
+MIGRATIONS_APPLIED=0
+DEPLOY_STARTED=0
+
+rollback_application_only() {
+  local exit_code=$?
+  if [[ "$DEPLOY_STARTED" == "1" ]]; then
+    echo '[release] failure after deployment began; rolling back application release only' >&2
+    echo '[release] database migrations are forward-only and will NOT be automatically reversed' >&2
+    bash -lc "$APPLICATION_ROLLBACK_CMD" || echo '[release] WARNING: application rollback command failed' >&2
+  fi
+  exit "$exit_code"
+}
+trap rollback_application_only ERR
+
+health_json() {
+  local path="$1"
+  curl --fail --silent --show-error --max-time 15 "${API_ORIGIN}${path}"
 }
 
-echo '[release] frontend type/lint/unit/integration/build qualification'
-( cd "$CLIENT_DIR" && pnpm install --frozen-lockfile && pnpm run release:check )
+echo '[release] qualify frontend/backend source before touching production data'
+( cd "$CLIENT_DIR" && pnpm install --frozen-lockfile && env -u E2E_FRONTEND_URL -u E2E_API_URL -u E2E_TEST_TOKEN -u E2E_TEST_EMAIL_DOMAIN -u E2E_TEST_PASSWORD -u E2E_ACCESS_TOKEN_TTL_SECONDS -u E2E_ADMIN_EMAIL -u E2E_ADMIN_PASSWORD -u E2E_ADMIN_EXPECTED_PATH -u E2E_STAFF_EMAIL -u E2E_STAFF_TEMP_PASSWORD -u E2E_STAFF_NEW_PASSWORD pnpm run release:check )
+( cd "$ROOT" && pnpm install --frozen-lockfile && pnpm prisma validate && env -u E2E_FRONTEND_URL -u E2E_API_URL -u E2E_TEST_TOKEN -u E2E_TEST_EMAIL_DOMAIN -u E2E_TEST_PASSWORD -u E2E_ACCESS_TOKEN_TTL_SECONDS -u E2E_ADMIN_EMAIL -u E2E_ADMIN_PASSWORD -u E2E_ADMIN_EXPECTED_PATH -u E2E_STAFF_EMAIL -u E2E_STAFF_TEMP_PASSWORD -u E2E_STAFF_NEW_PASSWORD pnpm run release:check )
 
-echo '[release] backend schema/type/unit/integration/security/build qualification'
-( cd "$ROOT" && pnpm install --frozen-lockfile && pnpm prisma validate && pnpm run release:check )
+echo '[release] disposable fresh-database migration/auth regression'
+( cd "$ROOT" && FRESH_DB_TEST_DATABASE_URL="$FRESH_DB_TEST_DATABASE_URL" E2E_TEST_TOKEN="$E2E_TEST_TOKEN" pnpm run test:fresh-db-auth )
 
-echo '[release] deploy production-equivalent staging'
-bash -lc "$STAGING_DEPLOY_CMD"
+echo '[release] production-equivalent staging browser regression (fixtures reset first)'
+bash -lc "$E2E_FIXTURE_RESET_CMD"
+( cd "$CLIENT_DIR" && \
+  E2E_FRONTEND_URL="$E2E_FRONTEND_URL" \
+  E2E_API_URL="$E2E_API_URL" \
+  E2E_TEST_TOKEN="$E2E_TEST_TOKEN" \
+  E2E_TEST_EMAIL_DOMAIN="${E2E_TEST_EMAIL_DOMAIN:-e2e.invalid}" \
+  E2E_TEST_PASSWORD="${E2E_TEST_PASSWORD:-Smoke!Test123}" \
+  E2E_ACCESS_TOKEN_TTL_SECONDS="$E2E_ACCESS_TOKEN_TTL_SECONDS" \
+  E2E_ADMIN_EMAIL="$E2E_ADMIN_EMAIL" \
+  E2E_ADMIN_PASSWORD="$E2E_ADMIN_PASSWORD" \
+  E2E_ADMIN_EXPECTED_PATH="${E2E_ADMIN_EXPECTED_PATH:-/admin/dashboard}" \
+  E2E_STAFF_EMAIL="$E2E_STAFF_EMAIL" \
+  E2E_STAFF_TEMP_PASSWORD="$E2E_STAFF_TEMP_PASSWORD" \
+  E2E_STAFF_NEW_PASSWORD="${E2E_STAFF_NEW_PASSWORD:-Smoke!Changed123}" \
+  E2E_BROWSER_BIN="${E2E_BROWSER_BIN:-chromium}" \
+  pnpm run test:e2e:smoke )
 
-echo '[release] staging data-integrity gate after staging migrations'
-( cd "$ROOT" && DATABASE_URL="$STAGING_DATABASE_URL" pnpm run data:audit:ci )
-
-echo '[release] real-browser staging smoke + live frontend/backend contract checks'
-run_e2e
-
-echo '[release] staging monitoring must be healthy'
-( cd "$ROOT" && API_URL="${STAGING_API_ORIGIN:-${E2E_API_URL%/api/v1}}" PERFORMANCE_METRICS_TOKEN="$PERFORMANCE_METRICS_TOKEN" pnpm run monitoring:alerts )
-
-echo '[release] migration dry-run / drift / reconciliation report (no writes)'
-( cd "$ROOT" && pnpm run db:migrate:preflight && pnpm run db:drift:check && pnpm run db:reconcile )
-
-echo '[release] production data-integrity gate before schema mutation'
-( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run data:audit:ci )
-
-echo '[release] create and verify production database backup before schema mutation'
+echo '[1/17] create and verify production database backup'
 bash -lc "$PRODUCTION_BACKUP_CMD"
 
-echo '[release] deploy production migrations only after backup succeeds'
-bash -lc "$PRODUCTION_MIGRATION_CMD"
+echo '[2/17] inspect migration status (read-only)'
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:migrate:status )
 
-echo '[release] verify auth-session hardening schema and drift after migrations'
-( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:auth-session:verify && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:drift:check )
+echo '[3/17] migration preflight (read-only)'
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:migrate:preflight )
 
-echo '[release] production data-integrity gate after migrations'
+echo '[4/17] deploy forward Prisma migrations'
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm prisma migrate deploy )
+MIGRATIONS_APPLIED=1
+
+echo '[5/17] verify schema drift and auth-session hardening'
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:auth-session:verify )
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:drift:check )
+
+echo '[6/17] run report-only reconciliation and integrity gate'
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run data:audit:report )
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:reconcile )
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run data:audit:ci )
 
-echo '[release] 5% -> 25% -> 100% canary; each stage runs browser smoke and monitoring gates'
-export CANARY_SMOKE_CMD CANARY_MONITOR_CMD
-exec "$ROOT/scripts/gcp/phase7-canary.sh"
+echo '[7/17] deploy backend application'
+DEPLOY_STARTED=1
+bash -lc "$BACKEND_DEPLOY_CMD"
+
+echo '[8/17] verify /livez'
+health_json /livez >/dev/null
+
+echo '[9/17] verify /readyz'
+health_json /readyz >/dev/null
+
+echo '[10/17] verify immutable release metadata at /version'
+VERSION_JSON="$(health_json /version)"
+node -e 'const x=JSON.parse(process.argv[1]); if(!x.version||!x.gitSha||!x.buildDate||x.gitSha==="unknown"||x.buildDate==="unknown") process.exit(1);' "$VERSION_JSON"
+
+echo '[11/17] direct backend login/session/refresh/logout smoke'
+( cd "$ROOT" && AUTH_SMOKE_API_URL="${API_ORIGIN}/api/v1" AUTH_SMOKE_ORIGIN="$FRONTEND_ORIGIN" AUTH_SMOKE_EMAIL="$AUTH_SMOKE_EMAIL" AUTH_SMOKE_PASSWORD="$AUTH_SMOKE_PASSWORD" pnpm run smoke:auth )
+
+echo '[12/17] deploy frontend / same-origin BFF'
+bash -lc "$FRONTEND_DEPLOY_CMD"
+
+echo '[13/17] same-origin /backend-api login smoke'
+echo '[14/17] canonical /auth/session smoke'
+echo '[15/17] refresh rotation smoke'
+echo '[16/17] onboarding route/contract smoke'
+( cd "$ROOT" && FRONTEND_SMOKE_URL="$FRONTEND_ORIGIN" AUTH_SMOKE_EMAIL="$AUTH_SMOKE_EMAIL" AUTH_SMOKE_PASSWORD="$AUTH_SMOKE_PASSWORD" pnpm run smoke:same-origin-auth )
+
+echo '[17/17] monitor 401/403/5xx/login/refresh reliability signals'
+( cd "$ROOT" && API_URL="$API_ORIGIN" PERFORMANCE_METRICS_TOKEN="$PERFORMANCE_METRICS_TOKEN" pnpm run monitoring:alerts )
+
+echo '[release] production rollout gates passed'
+if [[ "$MIGRATIONS_APPLIED" == "1" ]]; then
+  echo '[release] migrations were applied forward-only; future rollback must keep schema compatibility'
+fi

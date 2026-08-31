@@ -35,7 +35,6 @@ import { publicWebsiteRoutes } from "../modules/Website/publicWebsite.routes";
 import { checkSubscription } from "../middlewares/checkSubscription";
 import express from "express";
 import { telemetryRoutes } from "../modules/Telemetry/telemetry.routes";
-import { e2eTestRoutes } from "../modules/E2E/e2eTest.routes";
 import { NODE_ENV } from "../config/ENV";
 
 const router = Router();
@@ -86,9 +85,14 @@ const gatedRoutes: { path: string; route: Router }[] = [
 ];
 
 
-if (NODE_ENV !== "production" && process.env.E2E_TEST_HOOKS_ENABLED === "true") {
+export const routesReady: Promise<void> = (async () => {
+    if (NODE_ENV === "production" || process.env.E2E_TEST_HOOKS_ENABLED !== "true") return;
+
+    // Test hooks are loaded only when a non-production runtime explicitly
+    // enables them. Production startup never imports the E2E router module.
+    const { e2eTestRoutes } = await import("../modules/E2E/e2eTest.routes");
     router.use("/__e2e", e2eTestRoutes);
-}
+})();
 
 openRoutes.forEach(({ path, route }) => {
     router.use(path, route);

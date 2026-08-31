@@ -61,6 +61,20 @@ describe("browserOriginGuard Phase 5 CSRF boundary", () => {
     expect(next).toHaveBeenCalledOnce();
   });
 
+  it("blocks a cookie-authenticated write from an untrusted Origin", () => {
+    const { response, next } = run(makeRequest({
+      cookies: { accessToken: "cookie" },
+      headers: {
+        Origin: "https://attacker.example",
+        "Sec-Fetch-Site": "same-site",
+        "X-CSRF-Protection": "1",
+      },
+    }));
+    expect(next).not.toHaveBeenCalled();
+    expect(response.statusCode).toBe(403);
+    expect(response.body).toMatchObject({ code: "AUTH_ORIGIN_NOT_ALLOWED" });
+  });
+
   it("blocks a cookie-authenticated write that omits the first-party CSRF header", () => {
     const { response, next } = run(makeRequest({
       cookies: { accessToken: "cookie" },

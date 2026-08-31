@@ -6,7 +6,6 @@ import { jwtUtils } from "./jwt";
 import {
     ACCESS_TOKEN_EXPIRES_IN,
     ACCESS_TOKEN_SECRET,
-    COOKIE_DOMAIN,
     NODE_ENV,
     REFRESH_TOKEN_EXPIRES_IN,
     REFRESH_TOKEN_SECRET,
@@ -93,32 +92,20 @@ const setRoleHintCookie = (res: Response, role: string) => {
 };
 
 const clearAuthCookies = (res: Response) => {
-    const host = { httpOnly: true, secure: SECURE_COOKIE, sameSite: "lax" as const, path: "/" };
+    const options = {
+        httpOnly: true,
+        secure: SECURE_COOKIE,
+        sameSite: "lax" as const,
+        path: "/",
+    };
 
-    CookieUtils.clearCookie(res, "accessToken", host);
-    CookieUtils.clearCookie(res, "refreshToken", host);
-    CookieUtils.clearCookie(res, "user_role", host);
-
-    // Rollout cleanup: old direct-API/BFF experiments may have left a refresh
-    // cookie on one of these paths. Clear them explicitly so there is never a
-    // stale same-name cookie with a more specific path.
-    CookieUtils.clearCookie(res, "refreshToken", { ...host, path: "/api/v1/auth" });
-    CookieUtils.clearCookie(res, "refreshToken", { ...host, path: "/backend-api/auth" });
-    CookieUtils.clearCookie(res, "better-auth.session_token", host);
-
-    // Rollout cleanup for the previous JS-readable/cross-site cookie contract.
-    for (const name of ["opygen_access_token", "opygen_token"]) {
-        CookieUtils.clearCookie(res, name, { path: "/", domain: COOKIE_DOMAIN });
-        CookieUtils.clearCookie(res, name, { path: "/" });
-    }
-
-    // Remove older domain-scoped variants of credentials created before Phase 5.
-    if (COOKIE_DOMAIN) {
-        for (const name of ["accessToken", "refreshToken", "better-auth.session_token"]) {
-            CookieUtils.clearCookie(res, name, { path: "/", domain: COOKIE_DOMAIN });
-        }
-        CookieUtils.clearCookie(res, "refreshToken", { path: "/api/v1/auth", domain: COOKIE_DOMAIN });
-        CookieUtils.clearCookie(res, "user_role", { path: "/", domain: COOKIE_DOMAIN });
+    for (const name of [
+        "accessToken",
+        "refreshToken",
+        "better-auth.session_token",
+        "user_role",
+    ]) {
+        CookieUtils.clearCookie(res, name, options);
     }
 };
 

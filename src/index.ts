@@ -4,6 +4,7 @@ import { assertAuthSecurityConfiguration, assertProcessRole } from "./config/aut
 import { assertRuntimeEnvironment } from "./config/runtimeEnv";
 import setUpSocketIO from "./config/socketio";
 import app from "./server";
+import { routesReady } from "./routes";
 import logger from "./lib/logger";
 import { ErrorMonitor } from "./lib/monitoring/errorMonitor";
 import { assertInfrastructureAlignment, getInfrastructureAlignment } from "./lib/monitoring/infrastructure";
@@ -24,13 +25,14 @@ const installFatalHandlers = () => {
   });
 };
 
-const main = () => {
+const main = async () => {
   installFatalHandlers();
   assertProcessRole("api");
   assertRuntimeEnvironment();
   assertAuthSecurityConfiguration();
   assertWebsitePlatformConfiguration();
   assertInfrastructureAlignment();
+  await routesReady;
 
   const infra = getInfrastructureAlignment();
   if (infra.known) {
@@ -58,7 +60,7 @@ const main = () => {
   process.once("SIGINT", () => shutdown("SIGINT"));
 };
 
-try { main(); } catch (error) {
+void main().catch((error) => {
   logger.error("API startup failed", error);
   process.exit(1);
-}
+});

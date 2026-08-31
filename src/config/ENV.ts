@@ -122,11 +122,6 @@ export const BETTER_AUTH_URL: string = process.env.BETTER_AUTH_URL as string;
 export const APP_URL: string = process.env.APP_URL as string;
 export const FRONTEND_URL: string = process.env.FRONTEND_URL as string;
 
-// Shared parent-domain topology guard (production example: .opygen.com) and
-// legacy-cookie cleanup scope. Canonical API credentials and the frontend
-// `user_role` route hint are host-only on their respective origins.
-export const COOKIE_DOMAIN: string | undefined = process.env.COOKIE_DOMAIN?.trim() || undefined;
-
 export const AUTH_ALLOWED_ORIGINS: string[] = (process.env.AUTH_ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((value) => value.trim().replace(/\/+$/, ""))

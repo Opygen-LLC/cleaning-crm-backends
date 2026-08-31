@@ -3,7 +3,6 @@ import {
     APP_URL,
     AUTH_ALLOWED_ORIGINS,
     BETTER_AUTH_URL,
-    COOKIE_DOMAIN,
     FRONTEND_URL,
     NODE_ENV,
     PROCESS_ROLE,
@@ -58,13 +57,6 @@ export const assertAuthSecurityConfiguration = (): void => {
     const apiUrl = new URL(api);
     if (frontendUrl.protocol !== "https:" || apiUrl.protocol !== "https:") {
         throw new Error("Production frontend/API authentication origins must use HTTPS");
-    }
-
-    // Canonical auth cookies are host-only and no longer depend on a shared
-    // parent domain. COOKIE_DOMAIN is optional and used only to delete legacy
-    // domain-scoped cookies during rollout.
-    if (COOKIE_DOMAIN && (!COOKIE_DOMAIN.startsWith(".") || !COOKIE_DOMAIN.includes("."))) {
-        throw new Error("COOKIE_DOMAIN, when set for legacy cleanup, must be a parent domain such as .opygen.com");
     }
 
     const accessMs = parseDurationMs(ACCESS_TOKEN_EXPIRES_IN);

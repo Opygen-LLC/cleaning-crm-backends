@@ -29,6 +29,9 @@ const productionEnvSchema = z.object({
   CLOUDINARY_CLOUD_NAME: nonEmpty,
   CLOUDINARY_API_KEY: nonEmpty,
   CLOUDINARY_API_SECRET: nonEmpty,
+  APP_VERSION: nonEmpty,
+  GIT_SHA: nonEmpty,
+  BUILD_DATE: nonEmpty,
   WEBSITE_CUSTOM_DOMAINS_ENABLED: z.enum(["true", "false"]).default("false"),
   WEBSITE_DOMAIN_PROVIDER: z.enum(["vercel", "manual"]).default("manual"),
   VERCEL_ACCESS_TOKEN: z.string().trim().optional(),
@@ -54,6 +57,12 @@ const productionEnvSchema = z.object({
     ctx.addIssue({ code: "custom", path: ["REFRESH_TOKEN_EXPIRES_IN"], message: "must be a duration such as 30d" });
   }
 
+  for (const key of ["APP_VERSION", "GIT_SHA", "BUILD_DATE"] as const) {
+    if (["unknown", "local", "dev", "development"].includes(env[key].toLowerCase())) {
+      ctx.addIssue({ code: "custom", path: [key], message: "must identify the immutable production release" });
+    }
+  }
+
   const authSecrets = [env.ACCESS_TOKEN_SECRET, env.REFRESH_TOKEN_SECRET, env.BETTER_AUTH_SECRET];
   if (new Set(authSecrets).size !== authSecrets.length) {
     ctx.addIssue({ code: "custom", path: ["ACCESS_TOKEN_SECRET"], message: "access, refresh and Better Auth secrets must be distinct" });
@@ -72,6 +81,16 @@ const productionEnvSchema = z.object({
   }
 });
 
+
+const forbiddenProductionKeys = [
+  "E2E_FRONTEND_URL",
+  "E2E_API_URL",
+  "E2E_TEST_EMAIL_DOMAIN",
+  "E2E_TEST_PASSWORD",
+  "E2E_ACCESS_TOKEN_TTL_SECONDS",
+  "E2E_TEST_TOKEN",
+] as const;
+
 let validated = false;
 
 /**
@@ -81,6 +100,14 @@ let validated = false;
  */
 export const assertRuntimeEnvironment = (): void => {
   if (validated || NODE_ENV !== "production") return;
+
+  const configuredTestKeys = forbiddenProductionKeys.filter((key) => Boolean(process.env[key]?.trim()));
+  if (process.env.E2E_TEST_HOOKS_ENABLED === "true" || configuredTestKeys.length > 0) {
+    throw new Error(`E2E test hooks/credentials are forbidden in production: ${[
+      ...(process.env.E2E_TEST_HOOKS_ENABLED === "true" ? ["E2E_TEST_HOOKS_ENABLED"] : []),
+      ...configuredTestKeys,
+    ].join(", ")}`);
+  }
 
   const parsed = productionEnvSchema.safeParse(process.env);
   if (!parsed.success) {
