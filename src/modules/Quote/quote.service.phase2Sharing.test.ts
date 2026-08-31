@@ -21,6 +21,10 @@ const {
         findUnique: vi.fn(),
         updateMany: vi.fn(),
       },
+      estimate: {
+        findUnique: vi.fn(),
+        findFirst: vi.fn(),
+      },
       businessWebsite: {
         findUnique: vi.fn(),
       },
@@ -47,6 +51,13 @@ vi.mock("../../lib/utils/resolveAdminId", () => ({ getAdminId: getAdminIdMock })
 vi.mock("../../lib/validation/phone", () => ({ requireE164Phone: vi.fn() }));
 vi.mock("../../generated/prisma/enums", () => ({
   NotificationType: { QUOTE: "QUOTE" },
+  EstimateStatus: {
+    DRAFT: "DRAFT",
+    SENT: "SENT",
+    APPROVED: "APPROVED",
+    REJECTED: "REJECTED",
+    CONVERTED: "CONVERTED",
+  },
   QuoteStatus: {
     DRAFT: "DRAFT",
     SENT: "SENT",

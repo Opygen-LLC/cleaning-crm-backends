@@ -130,6 +130,7 @@ const TEMPLATE_KEY_ALIASES: Record<string, BusinessNotificationTemplateKey> = {
     "booking-reminder-day-of": "booking-reminder-day-of",
     "staff-assigned": "staff-assigned",
     "quote-sent": "quote-sent",
+    "estimate-sent": "estimate-sent",
     "invoice-sent": "invoice-sent",
     "invoice-due": "invoice-due",
     "review-request": "review-request",

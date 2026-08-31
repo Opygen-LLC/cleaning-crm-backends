@@ -99,6 +99,7 @@ MIGRATIONS_APPLIED=1
 echo '[5/21] verify migration status, Phase 1 schema contract, drift and auth-session hardening'
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:migrate:status )
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:phase1:verify )
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:critical-schema:verify )
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:auth-session:verify )
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:drift:check )
 
@@ -150,6 +151,7 @@ echo '[19/21] monitor 401/403/5xx/login/refresh reliability signals'
 echo '[20/21] final production migration/schema gate'
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:migrate:status )
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:phase1:verify )
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:critical-schema:verify )
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:drift:check )
 
 echo '[21/21] verify outbox/cache/notification/publish/GA operational health'

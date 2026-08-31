@@ -13,6 +13,7 @@ const updateNotificationPrefsSchema = z
         emailNewClient:        z.boolean().optional(),
         emailStaffAssigned:    z.boolean().optional(),
         emailQuoteSent:        z.boolean().optional(),
+        emailEstimateSent:     z.boolean().optional(),
         emailInvoiceSent:      z.boolean().optional(),
         emailReviewRequest:    z.boolean().optional(),
         emailWeeklySummary:    z.boolean().optional(),

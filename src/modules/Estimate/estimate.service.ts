@@ -2,7 +2,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
-import { EstimateStatus } from "../../generated/prisma/enums";
+import { EstimateStatus, NotificationType } from "../../generated/prisma/enums";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
 import { IQueryParams } from "../../interface/query.interface";
 import {
@@ -25,12 +25,66 @@ import {
     inferLegacyServiceType,
     resolveFlexibleServiceIdentity,
 } from "../../lib/utils/serviceIdentity";
+import { PublicDocumentLinkService } from "../Website/publicDocumentLink.service";
+import { queueEstimateSentNotification } from "../../lib/notifications/businessNotificationEvents";
+import { createNotification } from "../../lib/utils/createNotification";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Resolve adminProfile.id from the authenticated user id.
- */
+const isPublicUrlConfigurationError = (error: unknown): boolean =>
+    error instanceof AppError &&
+    [
+        "WEBSITE_REQUIRED_FOR_PUBLIC_LINK",
+        "WEBSITE_PUBLIC_ORIGIN_UNAVAILABLE",
+    ].includes(error.code ?? "");
+
+const publicEstimateNotFound = () =>
+    new AppError(status.NOT_FOUND, "Estimate not found", {
+        code: "ESTIMATE_NOT_FOUND",
+        retryable: false,
+    });
+
+const estimateExpiredError = () =>
+    new AppError(
+        status.GONE,
+        "This estimate has expired and can no longer be approved or rejected.",
+        { code: "ESTIMATE_EXPIRED", retryable: false },
+    );
+
+const resolveEstimateShareUrlIfAvailable = async (
+    adminId: string,
+    publicToken: string | null,
+): Promise<string | null> => {
+    if (!publicToken) return null;
+    try {
+        return await PublicDocumentLinkService.buildPublicDocumentUrl({
+            adminId,
+            resourceType: "estimate",
+            token: publicToken,
+        });
+    } catch (error) {
+        if (isPublicUrlConfigurationError(error)) return null;
+        throw error;
+    }
+};
+
+const withEstimateShareUrl = async <T extends { publicToken: string | null }>(
+    adminId: string,
+    estimate: T,
+): Promise<T & { shareUrl: string | null }> => ({
+    ...estimate,
+    shareUrl: await resolveEstimateShareUrlIfAvailable(adminId, estimate.publicToken),
+});
+
+const resolveWebsiteAdminIdForPublicEstimate = async (
+    websiteId?: string,
+): Promise<string | null> => {
+    try {
+        return await PublicDocumentLinkService.resolveWebsiteAdminId(websiteId);
+    } catch {
+        throw publicEstimateNotFound();
+    }
+};
 
 /**
  * Compute estimate totals from line items with per-line tax and discount,
@@ -140,6 +194,52 @@ const estimateInclude = {
     },
     serviceCatalog: {
         select: { id: true, serviceName: true, basePrice: true, duration: true, legacyServiceType: true },
+    },
+} as const;
+
+const publicEstimateSelect = {
+    estimateRef: true,
+    status: true,
+    serviceType: true,
+    serviceNameSnapshot: true,
+    address: true,
+    subtotal: true,
+    taxRate: true,
+    tax: true,
+    total: true,
+    validUntil: true,
+    notes: true,
+    sentAt: true,
+    respondedAt: true,
+    responseNote: true,
+    lineItems: {
+        select: {
+            description: true,
+            quantity: true,
+            unitPrice: true,
+            total: true,
+        },
+    },
+    serviceCatalog: { select: { serviceName: true } },
+    client: { select: { name: true } },
+    admin: {
+        select: {
+            businessName: true,
+            businessEmail: true,
+            businessLogo: true,
+            brandColor: true,
+            mobileNumber: true,
+            currency: true,
+            businessWebsite: {
+                select: {
+                    primaryColor: true,
+                    secondaryColor: true,
+                    accentColor: true,
+                    logo: true,
+                    subdomain: true,
+                },
+            },
+        },
     },
 } as const;
 
@@ -308,7 +408,7 @@ const getEstimateById = async (id: string, user: IRequestUser) => {
 
     if (!estimate) throw new AppError(status.NOT_FOUND, "Estimate not found");
 
-    return estimate;
+    return withEstimateShareUrl(adminId, estimate);
 };
 
 const updateEstimate = async (
@@ -410,8 +510,14 @@ const updateEstimateStatus = async (
     newStatus: EstimateStatus,
     user: IRequestUser,
 ) => {
-
     const adminId = await getAdminId(user);
+
+    // Legacy callers that set SENT are routed through the canonical share
+    // lifecycle so a SENT estimate can never exist without a secure token and
+    // tenant-owned public URL. Email delivery remains an explicit operation.
+    if (newStatus === EstimateStatus.SENT) {
+        return activateEstimateShareForAdmin(id, adminId);
+    }
 
     const existing = await prisma.estimate.findFirst({
         where: { id, adminId },
@@ -425,18 +531,284 @@ const updateEstimateStatus = async (
         );
     }
 
-    const data: Record<string, unknown> = { status: newStatus };
-
-    // Record sentAt when first sent
-    if (newStatus === EstimateStatus.SENT && !existing.sentAt) {
-        data.sentAt = new Date();
-    }
-
-    return prisma.estimate.update({
+    const now = new Date();
+    const updated = await prisma.estimate.update({
         where: { id },
-        data,
+        data: {
+            status: newStatus,
+            ...((newStatus === EstimateStatus.APPROVED || newStatus === EstimateStatus.REJECTED) && !existing.respondedAt
+                ? { respondedAt: now }
+                : {}),
+        },
         include: estimateInclude,
     });
+    return withEstimateShareUrl(adminId, updated);
+};
+
+
+// ─── Public client document + canonical share lifecycle ──────────────────────
+
+const getPublicEstimate = async (publicToken: string, websiteId?: string) => {
+    if (!PublicDocumentLinkService.isValidToken(publicToken)) {
+        throw publicEstimateNotFound();
+    }
+
+    const websiteAdminId = await resolveWebsiteAdminIdForPublicEstimate(websiteId);
+    const estimate = await prisma.estimate.findFirst({
+        where: {
+            publicToken,
+            ...(websiteAdminId ? { adminId: websiteAdminId } : {}),
+        },
+        select: publicEstimateSelect,
+    });
+
+    if (!estimate || estimate.status === EstimateStatus.DRAFT) {
+        throw publicEstimateNotFound();
+    }
+
+    return {
+        ...estimate,
+        isExpired:
+            estimate.status === EstimateStatus.SENT &&
+            new Date() > estimate.validUntil,
+    };
+};
+
+const publicEstimateAction = async (
+    publicToken: string,
+    action: "approve" | "reject",
+    note?: string,
+    websiteId?: string,
+) => {
+    if (!PublicDocumentLinkService.isValidToken(publicToken)) {
+        throw publicEstimateNotFound();
+    }
+
+    const websiteAdminId = await resolveWebsiteAdminIdForPublicEstimate(websiteId);
+    const estimate = await prisma.estimate.findFirst({
+        where: {
+            publicToken,
+            ...(websiteAdminId ? { adminId: websiteAdminId } : {}),
+        },
+        select: {
+            id: true,
+            estimateRef: true,
+            adminId: true,
+            status: true,
+            validUntil: true,
+        },
+    });
+
+    if (!estimate || estimate.status === EstimateStatus.DRAFT) {
+        throw publicEstimateNotFound();
+    }
+
+    const newStatus =
+        action === "approve" ? EstimateStatus.APPROVED : EstimateStatus.REJECTED;
+
+    if (estimate.status === newStatus) {
+        return getPublicEstimate(publicToken, websiteId);
+    }
+
+    if (
+        estimate.status === EstimateStatus.APPROVED ||
+        estimate.status === EstimateStatus.REJECTED ||
+        estimate.status === EstimateStatus.CONVERTED
+    ) {
+        throw new AppError(
+            status.CONFLICT,
+            `This estimate has already been ${estimate.status.toLowerCase()}.`,
+            { code: "ESTIMATE_ALREADY_RESPONDED", retryable: false },
+        );
+    }
+
+    const now = new Date();
+    if (now > estimate.validUntil) throw estimateExpiredError();
+    if (estimate.status !== EstimateStatus.SENT) {
+        throw new AppError(
+            status.CONFLICT,
+            "This estimate is no longer awaiting a client response.",
+            { code: "ESTIMATE_NOT_ACTIONABLE", retryable: false },
+        );
+    }
+
+    const cleanNote = note?.trim() || null;
+    const transition = await prisma.estimate.updateMany({
+        where: {
+            id: estimate.id,
+            status: EstimateStatus.SENT,
+            validUntil: { gte: now },
+        },
+        data: {
+            status: newStatus,
+            respondedAt: now,
+            responseNote: action === "reject" ? cleanNote : null,
+        },
+    });
+
+    if (transition.count === 0) {
+        const current = await prisma.estimate.findUnique({
+            where: { id: estimate.id },
+            select: { status: true, validUntil: true },
+        });
+        if (!current) throw publicEstimateNotFound();
+        if (current.status === newStatus) return getPublicEstimate(publicToken, websiteId);
+        if (now > current.validUntil) throw estimateExpiredError();
+        throw new AppError(
+            status.CONFLICT,
+            `This estimate has already been ${current.status.toLowerCase()}.`,
+            { code: "ESTIMATE_ALREADY_RESPONDED", retryable: false },
+        );
+    }
+
+    createNotification({
+        adminId: estimate.adminId,
+        type: NotificationType.GENERAL,
+        title: `Estimate ${estimate.estimateRef} ${action === "approve" ? "approved" : "rejected"}`,
+        message:
+            action === "approve"
+                ? "Client approved the estimate — it is ready to convert to a booking or quote."
+                : cleanNote
+                  ? `Client rejected the estimate: ${cleanNote}`
+                  : "Client rejected the estimate.",
+        relatedId: estimate.id,
+    }).catch(() => {});
+
+    return getPublicEstimate(publicToken, websiteId);
+};
+
+const activateEstimateShareForAdmin = async (
+    id: string,
+    adminId: string,
+    options: { refreshSentAt?: boolean; requireSendable?: boolean } = {},
+) => {
+    // Fail before changing status when website/domain routing cannot produce a
+    // client URL. This keeps DRAFT/SENT state consistent with actual reachability.
+    const publicUrl = await PublicDocumentLinkService.resolveForAdmin(adminId);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            const shared = await prisma.$transaction(async (tx) => {
+                const existing = await tx.estimate.findFirst({
+                    where: { id, adminId },
+                    select: {
+                        id: true,
+                        status: true,
+                        publicToken: true,
+                        sentAt: true,
+                        validUntil: true,
+                    },
+                });
+                if (!existing) throw new AppError(status.NOT_FOUND, "Estimate not found");
+
+                const now = new Date();
+                if (
+                    (existing.status === EstimateStatus.DRAFT || existing.status === EstimateStatus.SENT) &&
+                    now > existing.validUntil
+                ) {
+                    throw estimateExpiredError();
+                }
+                if (
+                    options.requireSendable === true &&
+                    (existing.status === EstimateStatus.APPROVED ||
+                        existing.status === EstimateStatus.REJECTED ||
+                        existing.status === EstimateStatus.CONVERTED)
+                ) {
+                    throw new AppError(
+                        status.BAD_REQUEST,
+                        `Cannot send an estimate that is ${existing.status.toLowerCase()}`,
+                        { code: "ESTIMATE_NOT_SENDABLE", retryable: false },
+                    );
+                }
+
+                const publicToken =
+                    existing.publicToken ?? await PublicDocumentLinkService.generateUniqueToken();
+                const shouldSetSentAt =
+                    options.refreshSentAt === true ||
+                    existing.status === EstimateStatus.DRAFT ||
+                    !existing.sentAt;
+
+                return tx.estimate.update({
+                    where: { id: existing.id },
+                    data: {
+                        ...(existing.publicToken ? {} : { publicToken }),
+                        ...(existing.status === EstimateStatus.DRAFT
+                            ? { status: EstimateStatus.SENT }
+                            : {}),
+                        ...(shouldSetSentAt ? { sentAt: now } : {}),
+                    },
+                    include: estimateInclude,
+                });
+            });
+
+            if (!shared.publicToken) {
+                throw new AppError(
+                    status.INTERNAL_SERVER_ERROR,
+                    "Could not create a secure estimate link. Please try again.",
+                    { code: "ESTIMATE_TOKEN_GENERATION_FAILED", retryable: true },
+                );
+            }
+
+            return {
+                ...shared,
+                shareUrl: PublicDocumentLinkService.buildFromResolution(publicUrl, {
+                    resourceType: "estimate",
+                    token: shared.publicToken,
+                }),
+            };
+        } catch (error) {
+            const prismaCode =
+                typeof error === "object" && error !== null && "code" in error
+                    ? String((error as { code?: unknown }).code ?? "")
+                    : "";
+            if (prismaCode === "P2002") continue;
+            throw error;
+        }
+    }
+
+    throw new AppError(
+        status.INTERNAL_SERVER_ERROR,
+        "Could not create a secure estimate link. Please try again.",
+        { code: "ESTIMATE_TOKEN_GENERATION_FAILED", retryable: true },
+    );
+};
+
+const shareEstimate = async (id: string, user: IRequestUser) =>
+    activateEstimateShareForAdmin(id, await getAdminId(user));
+
+const sendEstimateEmail = async (id: string, user: IRequestUser) => {
+    const adminId = await getAdminId(user);
+    const estimate = await prisma.estimate.findFirst({
+        where: { id, adminId },
+        select: {
+            id: true,
+            status: true,
+            client: { select: { email: true } },
+        },
+    });
+    if (!estimate) throw new AppError(status.NOT_FOUND, "Estimate not found");
+    if (!estimate.client.email) {
+        throw new AppError(status.BAD_REQUEST, "Client has no email address on file");
+    }
+    if (
+        estimate.status === EstimateStatus.APPROVED ||
+        estimate.status === EstimateStatus.REJECTED ||
+        estimate.status === EstimateStatus.CONVERTED
+    ) {
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Cannot send an estimate that is ${estimate.status.toLowerCase()}`,
+            { code: "ESTIMATE_NOT_SENDABLE", retryable: false },
+        );
+    }
+
+    const updated = await activateEstimateShareForAdmin(id, adminId, {
+        refreshSentAt: true,
+        requireSendable: true,
+    });
+    const occurrence = updated.sentAt?.toISOString() ?? new Date().toISOString();
+    await queueEstimateSentNotification(updated.id, occurrence, updated.shareUrl);
+    return updated;
 };
 
 const deleteEstimate = async (id: string, user: IRequestUser) => {
@@ -664,6 +1036,10 @@ export const estimateService = {
     getEstimateById,
     updateEstimate,
     updateEstimateStatus,
+    shareEstimate,
+    sendEstimateEmail,
+    getPublicEstimate,
+    publicEstimateAction,
     deleteEstimate,
     convertEstimateToBooking,
     convertEstimateToQuote,

@@ -11,11 +11,13 @@ if (!process.env.DATABASE_URL) {
 const REQUIRED_MIGRATIONS = [
   "20260901021500_phase6_local_draft_seo_ga4",
   "20260901034000_phase1_notification_preference_reliability",
+  "20260901052000_phase3_estimate_public_sharing",
 ];
 
 const REQUIRED_COLUMNS = [
   ["notification_preference", "emailBookingDayOfReminder"],
   ["notification_preference", "emailQuoteSent"],
+  ["notification_preference", "emailEstimateSent"],
   ["notification_preference", "emailInvoiceSent"],
   ["notification_preference", "emailReviewRequest"],
   ["business_website", "metaKeywords"],
@@ -23,6 +25,9 @@ const REQUIRED_COLUMNS = [
   ["business_website", "googleAnalyticsMeasurementId"],
   ["website_page", "seoKeywords"],
   ["website_page", "socialImageUrl"],
+  ["estimate", "publicToken"],
+  ["estimate", "respondedAt"],
+  ["estimate", "responseNote"],
 ];
 
 const client = new Client({ connectionString: process.env.DATABASE_URL });

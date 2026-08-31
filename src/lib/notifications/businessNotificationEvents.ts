@@ -154,6 +154,36 @@ export const queueQuoteSentNotification = async (quoteId: string, occurrence: st
   });
 };
 
+export const queueEstimateSentNotification = async (estimateId: string, occurrence: string, estimateLink: string) => {
+  const estimate = await prisma.estimate.findUnique({
+    where: { id: estimateId },
+    select: {
+      id: true, estimateRef: true, adminId: true, total: true, validUntil: true,
+      serviceType: true, serviceNameSnapshot: true,
+      serviceCatalog: { select: { serviceName: true } },
+      client: { select: { name: true, email: true } },
+      admin: { select: { currency: true } },
+    },
+  });
+  if (!estimate?.client.email) return { queued: false as const, deliveryId: null };
+  return BusinessNotificationOutbox.enqueue({
+    adminId: estimate.adminId,
+    eventKey: `estimate-sent:${estimate.id}:${occurrence}`,
+    templateKey: "estimate-sent",
+    recipientEmail: estimate.client.email,
+    entityType: "Estimate",
+    entityId: estimate.id,
+    variables: {
+      clientName: estimate.client.name,
+      estimateRef: estimate.estimateRef,
+      serviceType: serviceName(estimate),
+      estimateTotal: formatMoney(estimate.total, estimate.admin.currency),
+      validUntil: fmtDate(estimate.validUntil),
+      estimateLink,
+    },
+  });
+};
+
 export const queueInvoiceNotification = async (
   invoiceId: string,
   templateKey: "invoice-sent" | "invoice-due",

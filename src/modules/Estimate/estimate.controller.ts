@@ -82,6 +82,87 @@ const updateEstimateStatus = catchAsync(async (req, res) => {
     });
 });
 
+
+const shareEstimate = catchAsync(async (req, res) => {
+    const result = await estimateService.shareEstimate(req.params.id as string, req.user);
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Estimate client link activated successfully",
+        data: result,
+    });
+});
+
+const sendEstimateEmail = catchAsync(async (req, res) => {
+    const result = await estimateService.sendEstimateEmail(req.params.id as string, req.user);
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Estimate email queued successfully",
+        data: result,
+    });
+});
+
+const getPublicEstimate = catchAsync(async (req, res) => {
+    const result = await estimateService.getPublicEstimate(req.params.token as string);
+    res.set("Cache-Control", "private, no-store, max-age=0");
+    res.set("Pragma", "no-cache");
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Estimate retrieved successfully",
+        data: result,
+    });
+});
+
+const getPublicEstimateForWebsite = catchAsync(async (req, res) => {
+    const result = await estimateService.getPublicEstimate(
+        req.params.token as string,
+        req.params.websiteId as string,
+    );
+    res.set("Cache-Control", "private, no-store, max-age=0");
+    res.set("Pragma", "no-cache");
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Estimate retrieved successfully",
+        data: result,
+    });
+});
+
+const publicEstimateAction = catchAsync(async (req, res) => {
+    const result = await estimateService.publicEstimateAction(
+        req.params.token as string,
+        req.body.action,
+        req.body.note,
+    );
+    res.set("Cache-Control", "private, no-store, max-age=0");
+    res.set("Pragma", "no-cache");
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: `Estimate ${req.body.action === "approve" ? "approved" : "rejected"} successfully`,
+        data: result,
+    });
+});
+
+const publicEstimateActionForWebsite = catchAsync(async (req, res) => {
+    const result = await estimateService.publicEstimateAction(
+        req.params.token as string,
+        req.body.action,
+        req.body.note,
+        req.params.websiteId as string,
+    );
+    res.set("Cache-Control", "private, no-store, max-age=0");
+    res.set("Pragma", "no-cache");
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: `Estimate ${req.body.action === "approve" ? "approved" : "rejected"} successfully`,
+        data: result,
+    });
+});
+
 const deleteEstimate = catchAsync(async (req, res) => {
     await estimateService.deleteEstimate(req.params.id as string, req.user);
 
@@ -137,6 +218,12 @@ export const estimateController = {
     getEstimateById,
     updateEstimate,
     updateEstimateStatus,
+    shareEstimate,
+    sendEstimateEmail,
+    getPublicEstimate,
+    getPublicEstimateForWebsite,
+    publicEstimateAction,
+    publicEstimateActionForWebsite,
     deleteEstimate,
     convertEstimateToBooking,
     convertEstimateToQuote,

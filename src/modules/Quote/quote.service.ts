@@ -18,25 +18,14 @@ import {
 } from "./quote.interface";
 import { quoteSearchableFields, quoteFilterableFields } from "./quote.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
-import { randomBytes } from "node:crypto";
 import { createNotification } from "../../lib/utils/createNotification";
 import { nextReference } from "../../lib/utils/referenceNumber";
 import { inferLegacyServiceType, resolveFlexibleServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 import { queueQuoteSentNotification } from "../../lib/notifications/businessNotificationEvents";
-import { TenantPublicUrlService } from "../Website/tenantPublicUrl.service";
+import { PublicDocumentLinkService } from "../Website/publicDocumentLink.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const PUBLIC_QUOTE_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
-const WEBSITE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-/**
- * 32 bytes of cryptographically secure entropy encoded as URL-safe base64.
- * 32 bytes => 256 bits and a 43-character base64url token without padding.
- */
-const generatePublicQuoteToken = (): string =>
-    randomBytes(32).toString("base64url");
 
 const ensurePublicQuoteToken = async (
     quoteId: string,
@@ -44,10 +33,8 @@ const ensurePublicQuoteToken = async (
 ): Promise<string> => {
     if (existingToken) return existingToken;
 
-    // A collision is astronomically unlikely, but retrying keeps the helper
-    // correct even if the unique index rejects a generated value.
     for (let attempt = 0; attempt < 3; attempt += 1) {
-        const publicToken = generatePublicQuoteToken();
+        const publicToken = await PublicDocumentLinkService.generateUniqueToken();
         try {
             const updated = await prisma.quote.updateMany({
                 where: { id: quoteId, publicToken: null },
@@ -55,9 +42,6 @@ const ensurePublicQuoteToken = async (
             });
             if (updated.count === 1) return publicToken;
 
-            // Another request may have generated the token at the same time.
-            // Reuse that value instead of overwriting it and invalidating a
-            // secure link already returned to another admin tab.
             const current = await prisma.quote.findUnique({
                 where: { id: quoteId },
                 select: { publicToken: true },
@@ -94,15 +78,12 @@ const resolveQuoteShareUrlIfAvailable = async (
 ): Promise<string | null> => {
     if (!publicToken) return null;
     try {
-        return await TenantPublicUrlService.buildRootDocumentUrlForAdmin(
+        return await PublicDocumentLinkService.buildPublicDocumentUrl({
             adminId,
-            publicToken,
-        );
+            resourceType: "quote",
+            token: publicToken,
+        });
     } catch (error) {
-        // Admin quote reads/creation must remain usable if the website address
-        // is temporarily unavailable. The explicit share/send operations below
-        // fail closed before changing quote state, so a client is never handed
-        // a broken URL.
         if (isPublicUrlConfigurationError(error)) return null;
         throw error;
     }
@@ -119,15 +100,11 @@ const withQuoteShareUrl = async <T extends { publicToken: string | null }>(
 const resolveWebsiteAdminIdForPublicQuote = async (
     websiteId?: string,
 ): Promise<string | null> => {
-    if (!websiteId) return null;
-    if (!WEBSITE_ID_RE.test(websiteId)) throw publicQuoteNotFound();
-
-    const website = await prisma.businessWebsite.findUnique({
-        where: { id: websiteId },
-        select: { adminId: true },
-    });
-    if (!website) throw publicQuoteNotFound();
-    return website.adminId;
+    try {
+        return await PublicDocumentLinkService.resolveWebsiteAdminId(websiteId);
+    } catch {
+        throw publicQuoteNotFound();
+    }
 };
 
 /**
@@ -247,13 +224,14 @@ const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
     ]);
 
     const { subtotal, tax, total } = computeTotals(payload.lineItems, payload.taxRate);
+    const publicToken = await PublicDocumentLinkService.generateUniqueToken();
 
     const quote = await prisma.$transaction(async (tx) => {
         const quoteRef = await nextReference(tx, "quote");
         return tx.quote.create({
             data: {
                 quoteRef,
-                publicToken: generatePublicQuoteToken(),
+                publicToken,
                 adminId,
                 clientId: resolvedClientId,
                 serviceCatalogId: serviceIdentity.serviceCatalogId,
@@ -584,13 +562,13 @@ const convertQuoteToBooking = async (
 // ─── Public unauthenticated endpoint ─────────────────────────────────────────
 
 const publicQuoteSelect = {
+    // Internal lookup key only; stripped before the public DTO is returned.
     id: true,
     quoteRef: true,
     status: true,
     serviceType: true,
-    serviceCatalogId: true,
     serviceNameSnapshot: true,
-    serviceCatalog: { select: { id: true, serviceName: true } },
+    serviceCatalog: { select: { serviceName: true } },
     address: true,
     subtotal: true,
     taxRate: true,
@@ -604,7 +582,6 @@ const publicQuoteSelect = {
     createdAt: true,
     lineItems: {
         select: {
-            id: true,
             description: true,
             quantity: true,
             unitPrice: true,
@@ -617,7 +594,17 @@ const publicQuoteSelect = {
             businessEmail: true,
             businessLogo: true,
             brandColor: true,
+            mobileNumber: true,
             currency: true,
+            businessWebsite: {
+                select: {
+                    primaryColor: true,
+                    secondaryColor: true,
+                    accentColor: true,
+                    logo: true,
+                    subdomain: true,
+                },
+            },
         },
     },
 } as const;
@@ -639,7 +626,7 @@ const getPublicQuote = async (publicToken: string, websiteId?: string) => {
     // Reject obviously invalid values before hitting the database. Return 404
     // rather than validation details so the endpoint does not reveal token
     // format or quote existence information.
-    if (!PUBLIC_QUOTE_TOKEN_RE.test(publicToken)) {
+    if (!PublicDocumentLinkService.isValidToken(publicToken)) {
         throw publicQuoteNotFound();
     }
 
@@ -667,7 +654,8 @@ const getPublicQuote = async (publicToken: string, websiteId?: string) => {
         quote = { ...quote, status: QuoteStatus.EXPIRED };
     }
 
-    return quote;
+    const { id: _internalQuoteId, ...publicQuote } = quote;
+    return publicQuote;
 };
 
 const publicQuoteAction = async (
@@ -676,7 +664,7 @@ const publicQuoteAction = async (
     note?: string,
     websiteId?: string,
 ) => {
-    if (!PUBLIC_QUOTE_TOKEN_RE.test(publicToken)) {
+    if (!PublicDocumentLinkService.isValidToken(publicToken)) {
         throw publicQuoteNotFound();
     }
 
@@ -807,7 +795,7 @@ const activateQuoteShareForAdmin = async (
     // Resolve the public address before mutating quote state. If website/domain
     // routing is unavailable, a DRAFT stays a DRAFT instead of becoming SENT
     // with a client link that cannot open.
-    const publicUrl = await TenantPublicUrlService.resolveForAdminId(adminId);
+    const publicUrl = await PublicDocumentLinkService.resolveForAdmin(adminId);
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
@@ -844,7 +832,7 @@ const activateQuoteShareForAdmin = async (
                     );
                 }
 
-                const publicToken = existing.publicToken ?? generatePublicQuoteToken();
+                const publicToken = existing.publicToken ?? await PublicDocumentLinkService.generateUniqueToken();
                 const shouldSetSentAt =
                     options.refreshSentAt === true ||
                     existing.status === QuoteStatus.DRAFT ||
@@ -873,9 +861,9 @@ const activateQuoteShareForAdmin = async (
 
             return {
                 ...shared,
-                shareUrl: TenantPublicUrlService.buildRootDocumentUrl(
+                shareUrl: PublicDocumentLinkService.buildFromResolution(
                     publicUrl,
-                    shared.publicToken,
+                    { resourceType: "quote", token: shared.publicToken },
                 ),
             };
         } catch (error) {

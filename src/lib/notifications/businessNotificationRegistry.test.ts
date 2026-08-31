@@ -10,6 +10,7 @@ const expectedKeys = [
   "booking-reminder-day-of",
   "staff-assigned",
   "quote-sent",
+  "estimate-sent",
   "invoice-sent",
   "invoice-due",
   "review-request",

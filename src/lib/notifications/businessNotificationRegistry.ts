@@ -4,6 +4,7 @@ export const BUSINESS_NOTIFICATION_TEMPLATE_KEYS = [
   "booking-reminder-day-of",
   "staff-assigned",
   "quote-sent",
+  "estimate-sent",
   "invoice-sent",
   "invoice-due",
   "review-request",
@@ -23,6 +24,7 @@ export interface BusinessNotificationDefinition {
     | "emailBookingDayOfReminder"
     | "emailStaffAssigned"
     | "emailQuoteSent"
+    | "emailEstimateSent"
     | "emailInvoiceSent"
     | "emailInvoiceOverdue"
     | "emailReviewRequest";
@@ -70,6 +72,13 @@ export const BUSINESS_NOTIFICATION_REGISTRY: Record<BusinessNotificationTemplate
     availableVariables: ["client_name", "quote_ref", "service_type", "quote_total", "valid_until", "quote_link", "business_name"],
     defaultSubject: "Your quote from {{business_name}}",
     defaultBody: `Hi {{client_name}},\n\nThank you for your enquiry. Your quote {{quote_ref}} for {{service_type}} is ready.\n\nTotal: {{quote_total}}\nValid until: {{valid_until}}\n\nView and accept your quote: {{quote_link}}\n\nIf you have any questions, please get in touch.\n\n{{business_name}}`,
+    timing: "IMMEDIATE", maxAttempts: 8, defaultEnabled: true,
+  },
+  "estimate-sent": {
+    key: "estimate-sent", event: "ESTIMATE_SENT", recipient: "CLIENT", preferenceKey: "emailEstimateSent",
+    availableVariables: ["client_name", "estimate_ref", "service_type", "estimate_total", "valid_until", "estimate_link", "business_name"],
+    defaultSubject: "Your estimate from {{business_name}}",
+    defaultBody: `Hi {{client_name}},\n\nYour estimate {{estimate_ref}} for {{service_type}} is ready.\n\nEstimated total: {{estimate_total}}\nValid until: {{valid_until}}\n\nView and respond to your estimate: {{estimate_link}}\n\nIf you have any questions, please get in touch.\n\n{{business_name}}`,
     timing: "IMMEDIATE", maxAttempts: 8, defaultEnabled: true,
   },
   "invoice-sent": {

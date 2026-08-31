@@ -56,6 +56,19 @@ router.delete(
     estimateController.deleteEstimate,
 );
 
+// Canonical tenant-owned client share lifecycle.
+router.post(
+    "/:id/share",
+    checkAuth(UserRole.ADMIN),
+    estimateController.shareEstimate,
+);
+
+router.post(
+    "/:id/send-email",
+    checkAuth(UserRole.ADMIN),
+    estimateController.sendEstimateEmail,
+);
+
 // ── Convert to Booking ────────────────────────────────────────────────────────
 
 router.post(

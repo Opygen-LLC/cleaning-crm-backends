@@ -109,6 +109,7 @@ model NotificationPreference {
   emailNewClient        Boolean      @default(false)
   emailStaffAssigned    Boolean      @default(false)
   emailQuoteSent        Boolean      @default(true)
+  emailEstimateSent     Boolean      @default(true)
   emailInvoiceSent      Boolean      @default(true)
   emailReviewRequest    Boolean      @default(true)
   emailWeeklySummary    Boolean      @default(true)

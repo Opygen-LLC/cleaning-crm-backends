@@ -54,6 +54,9 @@ model QuoteLineItem {
 model Estimate {
   id                    String             @id @default(uuid())
   estimateRef           String             @unique
+  /// High-entropy capability token used by the unauthenticated client estimate page.
+  /// Human-readable estimateRef/UUID values must never authorize public access.
+  publicToken           String?            @unique @db.VarChar(64)
   status                EstimateStatus     @default(DRAFT)
   // Canonical service identity. serviceType is retained only for legacy rows/clients.
   serviceType           String?
@@ -72,6 +75,8 @@ model Estimate {
   notes                 String?
   internalNotes         String?
   sentAt                DateTime?
+  respondedAt           DateTime?
+  responseNote          String?            @db.Text
   convertedToBookingRef String?
   convertedToQuoteRef   String?
   adminId               String

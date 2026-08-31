@@ -90,6 +90,13 @@ const updateStatusSchema = z
     })
     .strict();
 
+const publicEstimateActionSchema = z
+    .object({
+        action: z.enum(["approve", "reject"]),
+        note: z.string().trim().max(2000).optional(),
+    })
+    .strict();
+
 // ── Convert to Booking ─────────────────────────────────────────────────────────
 
 const convertToBookingSchema = z
@@ -119,6 +126,7 @@ export const estimateValidation = {
     createEstimate: createEstimateSchema,
     updateEstimate: updateEstimateSchema,
     updateStatus: updateStatusSchema,
+    publicEstimateAction: publicEstimateActionSchema,
     convertToBooking: convertToBookingSchema,
     convertToQuote: convertToQuoteSchema,
 };

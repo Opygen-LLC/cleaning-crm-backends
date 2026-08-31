@@ -10,6 +10,7 @@ export interface UpdateNotificationPrefsPayload {
   emailNewClient?: boolean;
   emailStaffAssigned?: boolean;
   emailQuoteSent?: boolean;
+  emailEstimateSent?: boolean;
   emailInvoiceSent?: boolean;
   emailReviewRequest?: boolean;
   emailWeeklySummary?: boolean;

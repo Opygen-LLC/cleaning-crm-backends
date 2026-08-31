@@ -15,7 +15,9 @@ import { leadRoutes } from "../modules/Lead/lead.routes";
 import { jobRoutes } from "../modules/Job/job.routes";
 import { quoteRoutes } from "../modules/Quote/quote.routes";
 import { quotePublicRoutes } from "../modules/Quote/quote.public.routes";
+import { publicDocumentRoutes } from "../modules/PublicDocument/publicDocument.routes";
 import { estimateRoutes } from "../modules/Estimate/estimate.routes";
+import { estimatePublicRoutes } from "../modules/Estimate/estimate.public.routes";
 import { estimateFormRoutes } from "../modules/EstimateForm/estimateForm.routes";
 import { reviewRoutes } from "../modules/Review/review.routes";
 import { reportsRoutes } from "../modules/Reports/reports.routes";
@@ -47,6 +49,8 @@ const openRoutes: { path: string; route: Router }[] = [
     { path: "/booking-form",    route: bookingFormRoutes },
     { path: "/estimate-form",   route: estimateFormRoutes },
     { path: "/quote/public",    route: quotePublicRoutes },
+    { path: "/estimate/public", route: estimatePublicRoutes },
+    { path: "/public-document", route: publicDocumentRoutes },
     { path: "/website/public", route: publicWebsiteRoutes },
     { path: "/super-admin",     route: superAdminRoutes },
     { path: "/telemetry",       route: telemetryRoutes },
