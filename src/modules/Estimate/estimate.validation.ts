@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { e164PhoneSchema } from "../../lib/validation/phone";
 import { EstimateStatus } from "../../generated/prisma/enums";
 
 // ── Shared sub-schemas ─────────────────────────────────────────────────────────
@@ -17,7 +18,16 @@ const lineItemSchema = z
 
 const createEstimateSchema = z
     .object({
-        clientId: z.string().uuid("Invalid client ID"),
+        clientId: z.string().uuid("Invalid client ID").optional(),
+        newClient: z.object({
+            name: z.string().trim().min(1, "Client name is required"),
+            email: z.string().trim().email("Invalid client email"),
+            phone: e164PhoneSchema(),
+            addressLine1: z.string().trim().min(1, "Client address is required"),
+            city: z.string().trim().optional(),
+            postcode: z.string().trim().optional(),
+            country: z.string().trim().optional(),
+        }).strict().optional(),
         serviceCatalogId: z.string().uuid("Invalid service catalog ID").optional(),
         serviceType: z.string().trim().min(1).optional(),
         address: z.string().min(1, "Address is required"),
@@ -36,6 +46,13 @@ const createEstimateSchema = z
     })
     .strict()
     .superRefine((value, ctx) => {
+        if (Boolean(value.clientId) === Boolean(value.newClient)) {
+            ctx.addIssue({
+                code: "custom",
+                path: [value.clientId ? "newClient" : "clientId"],
+                message: "Choose exactly one client mode: existing client or new client",
+            });
+        }
         if (!value.serviceCatalogId && !value.serviceType) {
             ctx.addIssue({
                 code: "custom",

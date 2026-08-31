@@ -100,6 +100,7 @@ const convertLeadToClient = catchAsync(async (req, res) => {
             clientId: result.clientId,
             clientName: result.clientName,
             portalAccessToken: result.portalAccessToken,
+            alreadyConverted: result.alreadyConverted,
         },
     });
 });

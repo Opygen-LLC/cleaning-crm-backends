@@ -19,6 +19,8 @@ model User {
   accounts           Account[]
   sessions           Session[]
   pushSubscriptions  PushSubscription[]
+  assignedLeadActivities LeadActivity[] @relation("LeadActivityAssignee")
+  createdLeadActivities  LeadActivity[] @relation("LeadActivityCreator")
 
   // PERF FIX (audit #14): seedSuperAdmin() runs
   // prisma.user.findFirst({ where: { role: UserRole.SUPER_ADMIN } }) on

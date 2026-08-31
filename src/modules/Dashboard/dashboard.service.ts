@@ -134,6 +134,7 @@ const getDashboardOverview = async (
     jobsCompletedPrevCount: bigint | number;
     monthlyRecurringValue: string | number | null;
     currency: string | null;
+    businessEmail: string | null;
   };
   type ChartRow = { bucket: Date; revenue: string | number | null; jobsCompleted: bigint | number; newClients: bigint | number };
 
@@ -159,7 +160,12 @@ const getDashboardOverview = async (
           WHEN rs.frequency = 'BIWEEKLY' THEN rs.total * 2
           ELSE rs.total END), 0)
           FROM "recurring_schedule" rs WHERE rs."adminId" = ${adminId} AND rs.status = 'ACTIVE') AS "monthlyRecurringValue",
-        (SELECT ap.currency::text FROM "AdminProfile" ap WHERE ap.id = ${adminId} LIMIT 1) AS currency
+        (SELECT ap.currency::text FROM "AdminProfile" ap WHERE ap.id = ${adminId} LIMIT 1) AS currency,
+        (SELECT COALESCE(NULLIF(ap."businessEmail", ''), u.email)
+           FROM "AdminProfile" ap
+           JOIN "user" u ON u.id = ap."userId"
+          WHERE ap.id = ${adminId}
+          LIMIT 1) AS "businessEmail"
     `,
     includeRevenueInsight ? prisma.$queryRaw<ChartRow[]>`
       SELECT bucket,
@@ -303,6 +309,7 @@ const getDashboardOverview = async (
 
   const result = {
     currency,
+    businessEmail: summary.businessEmail ?? null,
     stats,
     revenueInsight,
     recentBookings,

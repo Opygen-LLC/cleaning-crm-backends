@@ -16,11 +16,16 @@ model Lead {
     // Stable website attribution survives subdomain/domain renames. Legacy
     // sourceRef remains for human-readable/history compatibility.
     sourceWebsiteId  String?
+    convertedClientId String?
+    convertedAt       DateTime?
+    lastContactedAt   DateTime?
 
     adminId String
     admin          AdminProfile      @relation(fields: [adminId], references: [id], onDelete: Cascade)
     serviceCatalog ServiceCatalog?   @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
     sourceWebsite  BusinessWebsite?  @relation("WebsiteAcquisitionLead", fields: [sourceWebsiteId], references: [id], onDelete: SetNull)
+    convertedClient Client?           @relation("LeadConvertedClient", fields: [convertedClientId], references: [id], onDelete: SetNull)
+    activities      LeadActivity[]
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
@@ -32,6 +37,37 @@ model Lead {
     @@index([adminId, phone])
     @@index([adminId, serviceCatalogId])
     @@index([sourceWebsiteId, createdAt])
+    @@index([adminId, lastContactedAt])
+    @@index([adminId, convertedAt])
+    @@index([convertedClientId])
     @@index([stage])
     @@map("lead")
+}
+
+
+model LeadActivity {
+    id               String             @id @default(uuid())
+    adminId          String
+    leadId           String
+    type             LeadActivityType
+    status           LeadActivityStatus @default(PENDING)
+    scheduledAt      DateTime?
+    completedAt      DateTime?
+    assignedToUserId String?
+    note             String?            @db.Text
+    outcome          String?            @db.Text
+    createdBy         String?
+    createdAt         DateTime           @default(now())
+    updatedAt         DateTime           @updatedAt
+
+    admin      AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+    lead       Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+    assignedTo User?        @relation("LeadActivityAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+    creator    User?        @relation("LeadActivityCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+    @@index([adminId, status, scheduledAt])
+    @@index([leadId, createdAt(sort: Desc)])
+    @@index([leadId, status, scheduledAt])
+    @@index([assignedToUserId, status, scheduledAt])
+    @@map("lead_activity")
 }

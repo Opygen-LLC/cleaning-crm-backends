@@ -5,6 +5,8 @@ import {
     zodValidate,
 } from "../../middlewares/validations/zodValidation.middleware";
 import { leadController } from "./lead.controller";
+import { leadActivityController } from "./leadActivity.controller";
+import { leadActivityValidation } from "./leadActivity.validation";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { checkFeature } from "../../middlewares/checkSubscription";
 import { UserRole } from "../../generated/prisma/enums";
@@ -31,6 +33,36 @@ router.get("/", isAdmin, hasLeadsPipeline, leadController.getLeads);
 // Get single lead by id
 router.get("/:id", isAdmin, hasLeadsPipeline, leadController.getLeadById);
 
+
+// Lead follow-up/activity timeline. These routes stay inside the existing Lead
+// module so the CRM has one source of truth rather than a parallel follow-up app.
+router.get(
+    "/:id/activities",
+    isAdmin,
+    hasLeadsPipeline,
+    leadActivityController.getActivities,
+);
+router.post(
+    "/:id/activities",
+    isAdmin,
+    hasLeadsPipeline,
+    zodValidate(leadActivityValidation.create, ValidationProperty.BODY),
+    leadActivityController.createActivity,
+);
+router.patch(
+    "/:id/activities/:activityId",
+    isAdmin,
+    hasLeadsPipeline,
+    zodValidate(leadActivityValidation.update, ValidationProperty.BODY),
+    leadActivityController.updateActivity,
+);
+router.delete(
+    "/:id/activities/:activityId",
+    isAdmin,
+    hasLeadsPipeline,
+    leadActivityController.deleteActivity,
+);
+
 // Update lead fields
 router.patch(
     "/:id",
@@ -50,8 +82,8 @@ router.patch(
 );
 
 // Convert a Won lead into a Client record.
-// The lead is deleted after conversion; the response includes the new clientId
-// so the frontend can redirect to /admin/dashboard/clients/:clientId.
+// The lead is retained after conversion with convertedClientId/convertedAt and
+// its complete activity history; the response includes the linked clientId.
 router.post(
     "/:id/convert-to-client",
     isAdmin,

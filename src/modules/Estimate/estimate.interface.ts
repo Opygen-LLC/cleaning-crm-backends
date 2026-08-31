@@ -12,8 +12,19 @@ export interface IEstimateLineItemInput {
 
 // ── Create ──────────────────────────────────────────────────────────────────
 
+export interface IEstimateNewClientInput {
+    name: string;
+    email: string;
+    phone: string;
+    addressLine1: string;
+    city?: string;
+    postcode?: string;
+    country?: string;
+}
+
 export interface IEstimateCreate {
-    clientId: string;
+    clientId?: string;
+    newClient?: IEstimateNewClientInput;
     serviceCatalogId?: string;
     serviceType?: string; // legacy compatibility
     address: string;

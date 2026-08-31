@@ -9,6 +9,13 @@ import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resour
 
 const createEstimate = catchAsync(async (req, res) => {
     const result = await estimateService.createEstimate(req.body, req.user);
+    if (req.body.newClient) {
+        await bumpCacheResourcesForUser(req.user, [
+            CacheResource.clients,
+            CacheResource.dashboard,
+            CacheResource.reports,
+        ]);
+    }
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,

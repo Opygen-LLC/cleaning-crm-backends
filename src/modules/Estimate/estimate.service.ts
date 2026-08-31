@@ -16,6 +16,9 @@ import {
     estimateFilterableFields,
 } from "./estimate.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
+import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
+import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
+import { requireE164Phone } from "../../lib/validation/phone";
 import { quoteInclude } from "../Quote/quote.service";
 import { nextReference } from "../../lib/utils/referenceNumber";
 import {
@@ -145,11 +148,20 @@ const estimateInclude = {
 const createEstimate = async (payload: IEstimateCreate, user: IRequestUser) => {
     const adminId = await getAdminId(user);
 
-    // Verify client belongs to this admin
-    const client = await prisma.client.findFirst({
-        where: { id: payload.clientId, adminId },
-    });
-    if (!client) throw new AppError(status.NOT_FOUND, "Client not found");
+    if (Boolean(payload.clientId) === Boolean(payload.newClient)) {
+        throw new AppError(status.BAD_REQUEST, "Choose exactly one client mode: existing client or new client", {
+            code: "VALIDATION_ERROR",
+            retryable: false,
+            fieldErrors: { clientId: "Choose an existing client or enter a new client, not both." },
+        });
+    }
+
+    if (payload.newClient) {
+        // Keep the plan check outside the transaction so the transaction only
+        // contains the client + estimate write set. The email advisory lock
+        // below prevents duplicate new-client creation from double submits.
+        await assertWithinLimit(adminId, "client");
+    }
 
     const [serviceIdentity, totals] = await Promise.all([
         resolveFlexibleServiceIdentity(adminId, {
@@ -166,12 +178,69 @@ const createEstimate = async (payload: IEstimateCreate, user: IRequestUser) => {
     ]);
 
     return prisma.$transaction(async (tx) => {
+        let clientId: string;
+
+        if (payload.clientId) {
+            const client = await tx.client.findFirst({
+                where: { id: payload.clientId, adminId },
+                select: { id: true },
+            });
+            if (!client) {
+                throw new AppError(status.NOT_FOUND, "Client not found", {
+                    code: "CLIENT_NOT_FOUND",
+                    retryable: false,
+                    fieldErrors: { clientId: "Choose a client from this business." },
+                });
+            }
+            clientId = client.id;
+        } else {
+            const newClient = payload.newClient!;
+            const email = newClient.email.trim().toLowerCase();
+            const phone = requireE164Phone(newClient.phone, "newClient.phone");
+
+            await acquireExtendedTextTransactionAdvisoryLock(
+                tx,
+                `estimate-new-client:${adminId}:${email}`,
+            );
+
+            const existing = await tx.client.findUnique({
+                where: { email_adminId: { email, adminId } },
+                select: { id: true },
+            });
+            if (existing) {
+                throw new AppError(status.CONFLICT, "A client with this email already exists", {
+                    code: "CLIENT_EMAIL_EXISTS",
+                    retryable: false,
+                    fieldErrors: { "newClient.email": "This client already exists. Use the Existing Client tab." },
+                });
+            }
+
+            const created = await tx.client.create({
+                data: {
+                    adminId,
+                    name: newClient.name.trim(),
+                    email,
+                    phone,
+                    addressLine1: newClient.addressLine1.trim(),
+                    city: newClient.city?.trim() ?? "",
+                    zipcode: newClient.postcode?.trim() ?? "",
+                    country: newClient.country?.trim() ?? "",
+                    servicePreference:
+                        serviceIdentity.serviceNameSnapshot ??
+                        serviceIdentity.serviceType ??
+                        "",
+                },
+                select: { id: true },
+            });
+            clientId = created.id;
+        }
+
         const estimateRef = await nextReference(tx, "estimate");
         return tx.estimate.create({
             data: {
                 estimateRef,
                 adminId,
-                clientId: payload.clientId,
+                clientId,
                 serviceCatalogId: serviceIdentity.serviceCatalogId,
                 serviceType: serviceIdentity.serviceType,
                 serviceNameSnapshot: serviceIdentity.serviceNameSnapshot,

@@ -10,6 +10,12 @@ import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resour
 const createQuote = catchAsync(async (req, res) => {
     const result = await quoteService.createQuote(req.body, req.user);
 
+    // Quote creation can also create a new client. Keep client/dashboard cache
+    // generations causally fresh before the response reaches the browser.
+    if (!req.body.clientId) {
+        await bumpCacheResourcesForUser(req.user, [CacheResource.clients, CacheResource.dashboard]);
+    }
+
     sendResponse(res, {
         httpStatusCode: status.CREATED,
         success: true,

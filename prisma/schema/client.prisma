@@ -54,6 +54,7 @@ model Client {
   // rename to match whatever `BookingChangeRequest` calls this
   // relation on your side if it differs.
   bookingChangeRequests BookingChangeRequest[]
+  convertedLeads       Lead[] @relation("LeadConvertedClient")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

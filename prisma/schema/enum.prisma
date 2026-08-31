@@ -424,6 +424,21 @@ enum LeadStage {
   LOST
 }
 
+enum LeadActivityType {
+  CALL
+  EMAIL
+  FOLLOW_UP
+  MEETING
+  NOTE
+  REMINDER
+}
+
+enum LeadActivityStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
 enum NoteType {
   GENERAL
   CLIENT

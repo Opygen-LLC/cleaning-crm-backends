@@ -48,6 +48,7 @@ model AdminProfile {
   jobNotes              JobNote[] // [NEW] Phase 1
   jobAttachments        JobAttachment[] // [NEW] Phase 1
   leads                 Lead[]
+  leadActivities        LeadActivity[]
   notificationPrefs     NotificationPreference?
   payment               Payment[]
   quotes                Quote[]
