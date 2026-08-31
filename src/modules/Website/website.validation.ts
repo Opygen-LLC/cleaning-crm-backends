@@ -67,20 +67,13 @@ const pagePatch = z.object({
 
 const updatePage = pagePatch;
 
-const saveDraft = z.object({
+const localDraftPayload = z.object({
   expectedRevisionNumber: z.number().int().min(0).optional(),
   website: websitePatch.optional(),
   pages: z.array(pagePatch.extend({ id: z.string().uuid() })).max(50).optional(),
-}).strict().refine(
-  (value) => Boolean(value.website && Object.keys(value.website).length) || Boolean(value.pages?.length),
-  "Draft contains no changes",
-);
+}).strict();
 
-const publishWebsite = z.object({
-  expectedRevisionNumber: z.number().int().min(0).optional(),
-  website: websitePatch.optional(),
-  pages: z.array(pagePatch.extend({ id: z.string().uuid() })).max(50).optional(),
-}).strict().default({});
+const publishWebsite = localDraftPayload.default({});
 
 const previewLocalDraft = z.object({
   website: websitePatch,
@@ -132,21 +125,6 @@ const createAsset = z.object({
 const addDomain = z.object({ domain: z.string().trim().min(3).max(253) }).strict();
 const renameSubdomain = z.object({ subdomain: z.string().trim().min(3).max(63) }).strict();
 
-const publicAnalyticsMetadata = z
-  .record(z.string().trim().min(1).max(80), z.union([z.string().max(500), z.number().finite(), z.boolean(), z.null()]))
-  .refine((value) => Object.keys(value).length <= 20, "Too many analytics metadata fields");
-
-const publicAnalytics = z.object({
-  eventType: z.literal("PAGE_VIEW"),
-  path: z.string().trim().min(1).max(500).regex(/^\//, "Path must be relative to the website"),
-  sessionId: z.string().trim().min(8).max(160).regex(/^[A-Za-z0-9._:-]+$/, "Invalid session id").optional(),
-  referrer: z.string().trim().url().max(2048).optional(),
-  utmSource: z.string().trim().max(120).optional(),
-  utmMedium: z.string().trim().max(120).optional(),
-  utmCampaign: z.string().trim().max(160).optional(),
-  metadata: publicAnalyticsMetadata.optional(),
-}).strict();
-
 const publicClientError = z.object({
   message: z.string().trim().min(1).max(1000),
   digest: z.string().trim().max(240).regex(/^[A-Za-z0-9._:-]+$/, "Invalid error digest").optional(),
@@ -180,7 +158,6 @@ export const websiteValidation = {
   createWebsite,
   updateWebsite,
   updatePage,
-  saveDraft,
   publishWebsite,
   previewLocalDraft,
   googleAnalyticsOAuthCallback,
@@ -194,6 +171,5 @@ export const websiteValidation = {
   renameSubdomain,
   configureWebsiteBooking,
   publicContact,
-  publicAnalytics,
   publicClientError,
 };

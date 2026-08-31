@@ -115,16 +115,6 @@ router.post(
 );
 
 router.post(
-  "/:identifier/analytics",
-  publicTelemetryRateLimit,
-  publicResourceTelemetryRateLimit,
-  publicJsonOnly,
-  publicTelemetryBodyLimit,
-  publicWebsiteMutationOriginGuard,
-  zodValidate(websiteValidation.publicAnalytics, ValidationProperty.BODY),
-  websiteController.trackPublicWebsiteAnalytics,
-);
-router.post(
   "/:identifier/error",
   publicTelemetryRateLimit,
   publicResourceTelemetryRateLimit,

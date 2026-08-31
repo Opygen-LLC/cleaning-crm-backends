@@ -67,7 +67,7 @@ export interface WebsiteDraftPageInput extends WebsitePageUpdateInput {
   id: string;
 }
 
-export interface WebsiteDraftSaveInput {
+export interface WebsiteLocalDraftInput {
   /**
    * Optimistic concurrency guard used by Website Studio. Legacy callers may
    * omit it; Studio always sends the revision it loaded.
@@ -77,7 +77,7 @@ export interface WebsiteDraftSaveInput {
   pages?: WebsiteDraftPageInput[];
 }
 
-export interface WebsitePublishInput extends WebsiteDraftSaveInput {
+export interface WebsitePublishInput extends WebsiteLocalDraftInput {
   /**
    * Optimistic guard against a publish based on an older confirmed server
    * revision. Website Studio now sends its complete local draft here and the

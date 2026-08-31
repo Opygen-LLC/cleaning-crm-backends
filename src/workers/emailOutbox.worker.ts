@@ -30,6 +30,11 @@ import {
   recordEmailOutboxSuccessfulDelivery,
   recordEmailOutboxWorkerHeartbeat,
 } from "../lib/monitoring/emailOutboxHealth";
+import {
+  recordNotificationDelivery,
+  recordOutboxOutcome,
+  recordSmtpDelivery,
+} from "../lib/monitoring/operationalMetrics";
 
 type ClaimedOutboxEvent = {
   id: string;
@@ -222,6 +227,8 @@ const deliverBusinessNotification = async (deliveryId: string, attempt: number) 
     where: { id: delivery.id },
     data: { status: "SENT", attempts: attempt, sentAt: now, processedAt: now, lastError: null },
   });
+  recordNotificationDelivery(delivery.templateKey, "success");
+  recordSmtpDelivery(true);
   return "sent" as const;
 };
 
@@ -235,6 +242,7 @@ const processEvent = async (event: ClaimedOutboxEvent) => {
         // Best-effort operational marker. PostgreSQL outbox state remains the
         // delivery source of truth; monitoring must never make email fail.
         await recordEmailOutboxSuccessfulDelivery().catch(() => undefined);
+        recordSmtpDelivery(true);
       }
       return;
     }
@@ -255,9 +263,9 @@ const processEvent = async (event: ClaimedOutboxEvent) => {
   }
 };
 
-const markProcessed = async (id: string) => {
+const markProcessed = async (event: ClaimedOutboxEvent) => {
   await prisma.outboxEvent.update({
-    where: { id },
+    where: { id: event.id },
     data: {
       status: "PROCESSED",
       processedAt: new Date(),
@@ -265,6 +273,7 @@ const markProcessed = async (id: string) => {
       lastError: null,
     },
   });
+  recordOutboxOutcome(event.topic, "success");
 };
 
 const markFailed = async (event: ClaimedOutboxEvent, error: unknown) => {
@@ -282,10 +291,18 @@ const markFailed = async (event: ClaimedOutboxEvent, error: unknown) => {
       lastError: normalizeError(error),
     },
   });
+  recordOutboxOutcome(event.topic, dead ? "dead" : "retry");
+  if (event.topic === AUTH_EMAIL_OUTBOX_TOPIC.EMAIL_VERIFICATION_REQUESTED || event.topic === BUSINESS_NOTIFICATION_OUTBOX_TOPIC.DELIVERY_REQUESTED) {
+    recordSmtpDelivery(false);
+  }
 
   if (event.topic === BUSINESS_NOTIFICATION_OUTBOX_TOPIC.DELIVERY_REQUESTED) {
     try {
       const deliveryId = parseBusinessDeliveryId(event.payload);
+      const delivery = await prisma.notificationDelivery.findUnique({
+        where: { id: deliveryId },
+        select: { templateKey: true },
+      });
       await prisma.notificationDelivery.updateMany({
         where: { id: deliveryId, status: { not: "SENT" } },
         data: {
@@ -295,6 +312,9 @@ const markFailed = async (event: ClaimedOutboxEvent, error: unknown) => {
           processedAt: dead ? new Date() : null,
         },
       });
+      if (delivery?.templateKey) {
+        recordNotificationDelivery(delivery.templateKey, dead ? "failed" : "retry");
+      }
     } catch {
       // The outbox failure remains authoritative even if the delivery row is gone/corrupt.
     }
@@ -326,7 +346,7 @@ export const processEmailOutboxOnce = async () => {
       const execute = async () => {
         try {
           await processEvent(event);
-          await markProcessed(event.id);
+          await markProcessed(event);
           const trace = getRequestTrace();
           if (NODE_ENV === "production") {
             logger.info("outbox_event_processed", {

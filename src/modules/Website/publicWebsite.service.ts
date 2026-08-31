@@ -14,7 +14,7 @@ import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { deriveWebsiteEntitlements, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
 import { ServiceStatus } from "../../generated/prisma/enums";
-import type { WebsiteDraftSaveInput } from "./website.interface";
+import type { WebsiteLocalDraftInput } from "./website.interface";
 
 const WEBSITE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -552,7 +552,7 @@ const getPreviewWebsite = async (user: IRequestUser) => {
   return projectWebsite(source, { mode: "preview" });
 };
 
-const getLocalDraftPreviewWebsite = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => {
+const getLocalDraftPreviewWebsite = async (payload: WebsiteLocalDraftInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");

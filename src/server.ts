@@ -43,6 +43,7 @@ import { getRedisCircuitSnapshot } from "./config/redis";
 import { AUTH_ERROR_CODES } from "./modules/Auth/auth.codes";
 import { getDatabasePoolSnapshot, probeDatabaseConnection } from "./lib/prisma/prisma";
 import { getEmailOutboxHealth } from "./lib/monitoring/emailOutboxHealth";
+import { getOperationalHealthSnapshot } from "./lib/monitoring/operationalHealth";
 
 const app = express();
 
@@ -212,7 +213,7 @@ app.get("/", (_req: Request, res: Response) => {
   res.setHeader("Cache-Control", "no-store, max-age=0");
   return res.status(200).json({
     success: true,
-    service: "Cleaning CRM Backend API 31 AUG 10:38 PM",
+    service: "Cleaning CRM Backend API",
     status: "healthy",
     version: APP_VERSION,
     gitSha: GIT_SHA,
@@ -281,6 +282,13 @@ app.get("/health/alerts", (req: Request, res: Response) => {
 app.get("/health/email-outbox", async (req: Request, res: Response) => {
   if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
   const data = await getEmailOutboxHealth();
+  res.setHeader("Cache-Control", "private, no-store");
+  return res.status(data.healthy ? 200 : 503).json({ success: data.healthy, data });
+});
+
+app.get("/health/operations", async (req: Request, res: Response) => {
+  if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
+  const data = await getOperationalHealthSnapshot();
   res.setHeader("Cache-Control", "private, no-store");
   return res.status(data.healthy ? 200 : 503).json({ success: data.healthy, data });
 });

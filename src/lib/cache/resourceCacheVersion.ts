@@ -1,6 +1,7 @@
 import redis from "../../config/redis";
 import logger from "../logger";
 import type { IRequestUser } from "../../types/requestUser.interface";
+import { recordCacheVersionInvalidation } from "../monitoring/operationalMetrics";
 
 export const CacheResource = Object.freeze({
   clients: "clients",
@@ -48,7 +49,9 @@ export async function bumpCacheResourceVersions(
   const unique = [...new Set(resources)];
   try {
     await Promise.all(unique.map((resource) => redis.incr(versionKey(tenantId, resource))));
+    recordCacheVersionInvalidation(unique, true);
   } catch (error) {
+    recordCacheVersionInvalidation(unique, false);
     // Never roll back a committed DB mutation because Redis is unavailable.
     // A Redis outage also makes the GET cache miss naturally; once Redis is
     // healthy again the short response TTLs bound any residual old generation.

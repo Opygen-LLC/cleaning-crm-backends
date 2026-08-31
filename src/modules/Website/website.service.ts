@@ -14,7 +14,7 @@ import type {
   WebsiteAssetCreateInput,
   WebsiteManagedBrandAssetInput,
   WebsiteCreateInput,
-  WebsiteDraftSaveInput,
+  WebsiteLocalDraftInput,
   WebsitePageUpdateInput,
   WebsitePublishInput,
   WebsiteRevisionRestoreInput,
@@ -123,7 +123,7 @@ const assertManagedBrandReferences = async (
 
 const assertManagedPageSocialReferences = async (
   websiteId: string,
-  pages: WebsiteDraftSaveInput["pages"],
+  pages: WebsiteLocalDraftInput["pages"],
   db: WebsiteDb,
 ) => {
   for (const page of pages ?? []) {
@@ -430,7 +430,7 @@ const loadWebsiteDetailsWhere = async (
     ...safeWebsite,
     // Omitted relations are explicit empty/null values so old clients never
     // crash, while the Studio can request only the relations needed by the
-    // active tab. No omitted relation is interpreted as a delete by saveDraft.
+    // active tab. No omitted relation in a local publish payload is interpreted as a delete.
     pages: Array.isArray((website as any).pages) ? (website as any).pages : [],
     domains: presentedDomains,
     assets: Array.isArray((website as any).assets) ? (website as any).assets : [],
@@ -777,7 +777,7 @@ const applyDraftPayloadTx = async (
   args: {
     websiteId: string;
     adminId: string;
-    payload: WebsiteDraftSaveInput;
+    payload: WebsiteLocalDraftInput;
     entitlements: WebsiteEntitlements;
     applyDraftLifecycle?: boolean;
   },
@@ -849,40 +849,6 @@ const applyDraftPayloadTx = async (
   });
   await applyPagePatchesBatch(tx, lockedCurrent.id, normalizedPagePatches);
   return lockedCurrent;
-};
-
-const saveDraft = async (payload: WebsiteDraftSaveInput, user: IRequestUser) => {
-  const adminId = await getAdminId(user);
-  const [current, entitlements] = await Promise.all([
-    getWebsiteOrThrow(adminId),
-    WebsiteEntitlementService.getForAdminId(adminId),
-  ]);
-
-  const result = await prisma.$transaction(async (tx) => {
-    await acquireTextTransactionAdvisoryLock(tx, current.id);
-    const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
-    await ensurePublishedSnapshotBeforeDraftMutationTx(tx, current.id);
-    await applyDraftPayloadTx(tx, {
-      websiteId: current.id,
-      adminId,
-      payload,
-      entitlements,
-      applyDraftLifecycle: true,
-    });
-
-    const snapshot = normalizeDraftPageContent(await loadDraftSnapshot(current.id, tx));
-    const revision = await createRevisionSnapshotTx(
-      tx,
-      current.id,
-      user.id,
-      "Draft saved",
-      baseRevisionNumber,
-      snapshot,
-    );
-    return presentDraftSnapshot(snapshot, { draftRevisionNumber: revision.revisionNumber });
-  });
-  await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
-  return result;
 };
 
 const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) => {
@@ -1677,7 +1643,6 @@ export const WebsiteService = {
   getWebsiteEditor,
   getWebsiteEditorForAdmin,
   updateWebsite,
-  saveDraft,
   publishWebsite,
   launchWebsite,
   listPages,

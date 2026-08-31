@@ -12,6 +12,7 @@ import {
 import { prisma } from "../../lib/prisma/prisma";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
+import { recordGoogleAnalyticsRequest } from "../../lib/monitoring/operationalMetrics";
 
 const OAUTH_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -106,10 +107,12 @@ const fetchJson = async <T>(url: string, init: RequestInit, errorCode: string): 
   try {
     response = await fetch(url, { ...init, signal: timeoutSignal() });
   } catch {
+    recordGoogleAnalyticsRequest(errorCode, false);
     throw new AppError(status.BAD_GATEWAY, "Google Analytics is temporarily unavailable", { code: errorCode, retryable: true });
   }
   const body = await response.json().catch(() => ({})) as any;
   if (!response.ok) {
+    recordGoogleAnalyticsRequest(errorCode, false);
     const message = typeof body?.error_description === "string"
       ? body.error_description
       : typeof body?.error?.message === "string"
@@ -120,6 +123,7 @@ const fetchJson = async <T>(url: string, init: RequestInit, errorCode: string): 
       retryable: response.status >= 500 || response.status === 429,
     });
   }
+  recordGoogleAnalyticsRequest(errorCode, true);
   return body as T;
 };
 

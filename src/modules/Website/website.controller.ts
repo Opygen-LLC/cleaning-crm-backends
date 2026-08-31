@@ -22,6 +22,7 @@ import logger from "../../lib/logger";
 import { RELEASE_VERSION } from "../../config/ENV";
 import { recordProductReliabilitySignal } from "../../lib/monitoring/productReliabilityMetrics";
 import { WebsiteGoogleAnalyticsService } from "./websiteGoogleAnalytics.service";
+import { recordWebsitePublishAttempt, recordWebsitePublishResult } from "../../lib/monitoring/operationalMetrics";
 
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
@@ -48,15 +49,31 @@ const getStudio = catchAsync(async (req, res) => {
   return ok(res, "Website Studio retrieved successfully", await WebsiteStudioService.getStudio(req.user));
 });
 const updateWebsite = catchAsync(async (req, res) => ok(res, "Website updated successfully", await WebsiteService.updateWebsite(req.body, req.user)));
-const saveDraft = catchAsync(async (req, res) => ok(res, "Website draft saved successfully", await WebsiteService.saveDraft(req.body, req.user)));
-const publishWebsite = catchAsync(async (req, res) => ok(res, "Website published successfully", await WebsiteService.publishWebsite(req.body ?? {}, req.user)));
+const publishWebsite = catchAsync(async (req, res) => {
+  recordWebsitePublishAttempt();
+  try {
+    const data = await WebsiteService.publishWebsite(req.body ?? {}, req.user);
+    recordWebsitePublishResult(true);
+    return ok(res, "Website published successfully", data);
+  } catch (error) {
+    recordWebsitePublishResult(false);
+    throw error;
+  }
+});
 const launchWebsite = catchAsync(async (req, res) => {
-  const launch = await WebsiteService.launchWebsite(req.body ?? {}, req.user);
-  const onboarding = await adminService.getOnboardingStatus(req.user.id);
-  return ok(res, "Website launched successfully", {
-    ...launch,
-    onboarding,
-  });
+  recordWebsitePublishAttempt();
+  try {
+    const launch = await WebsiteService.launchWebsite(req.body ?? {}, req.user);
+    const onboarding = await adminService.getOnboardingStatus(req.user.id);
+    recordWebsitePublishResult(true);
+    return ok(res, "Website launched successfully", {
+      ...launch,
+      onboarding,
+    });
+  } catch (error) {
+    recordWebsitePublishResult(false);
+    throw error;
+  }
 });
 const getWebsiteBookingSetup = catchAsync(async (req, res) =>
   ok(res, "Website booking setup retrieved successfully", await WebsiteBookingProvisioningService.getSetup(req.user)),
@@ -335,16 +352,6 @@ const submitPublicWebsiteContact = catchAsync(async (req, res) => {
   });
 });
 
-const trackPublicWebsiteAnalytics = catchAsync(async (req, res) => {
-  const data = await WebsiteAnalyticsService.trackPublicPageView(
-    paramStr(req.params.identifier),
-    req.body,
-    { ip: req.ip, userAgent: req.get("User-Agent") },
-  );
-  res.setHeader("Cache-Control", "no-store");
-  return sendResponse(res, { httpStatusCode: status.ACCEPTED, success: true, message: "Analytics accepted", data });
-});
-
 const reportPublicWebsiteError = catchAsync(async (req, res) => {
   const resolved = await PublicWebsiteService.resolveIdentifier(paramStr(req.params.identifier));
   await PublicWebsiteService.getPublicWebsiteById(resolved.websiteId);
@@ -357,17 +364,6 @@ const reportPublicWebsiteError = catchAsync(async (req, res) => {
   });
   res.setHeader("Cache-Control", "no-store");
   return sendResponse(res, { httpStatusCode: status.ACCEPTED, success: true, message: "Error report accepted", data: { accepted: true } });
-});
-
-const getWebsiteAnalytics = catchAsync(async (req, res) => {
-  const days = Number(req.query.days ?? 30);
-  const entitlements = await WebsiteEntitlementService.getForUser(req.user);
-  WebsiteEntitlementService.assertAnalyticsWindow(days, entitlements);
-  const data = await WebsiteAnalyticsService.getSummary(req.user, days);
-  // Redis is the shared cache of record for these aggregates. Never let a CDN
-  // or shared HTTP proxy cache one tenant's authenticated dashboard payload.
-  res.setHeader("Cache-Control", "private, no-store");
-  return ok(res, "Website analytics retrieved successfully", data);
 });
 
 const getPublicWebsiteById = catchAsync(async (req, res) => {
@@ -398,7 +394,6 @@ export const websiteController = {
   getWebsiteBookingSetup,
   configureWebsiteBooking,
   updateWebsite,
-  saveDraft,
   publishWebsite,
   launchWebsite,
   previewWebsite,
@@ -440,9 +435,7 @@ export const websiteController = {
   calculatePublicWebsiteEstimate,
   submitPublicWebsiteEstimate,
   submitPublicWebsiteContact,
-  trackPublicWebsiteAnalytics,
   reportPublicWebsiteError,
-  getWebsiteAnalytics,
   getPublicWebsiteById,
   getPublicWebsite,
 };
