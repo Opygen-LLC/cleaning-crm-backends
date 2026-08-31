@@ -62,9 +62,9 @@ services:
       - "3000:3000"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/livez"]
-      interval: 20s
-      timeout: 5s
-      start_period: 20s
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
       retries: 5
 
   # Explicit one-shot seed/bootstrap task. Never runs with normal compose up.
