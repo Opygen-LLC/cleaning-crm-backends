@@ -16,7 +16,7 @@ x-app-common: &app-common
       max-size: "10m"
       max-file: "3"
   env_file:
-    - .env
+    - ${RUNTIME_ENV_FILE:-.env}
   environment: &common-environment
     NODE_ENV: production
     DEPLOYMENT_PROFILE: primary-region
@@ -36,8 +36,8 @@ x-app-common: &app-common
     AUTH_ALLOWED_ORIGINS: https://cleaningcrm.opygen.com,http://34.131.56.92,http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001
     ACCESS_TOKEN_EXPIRES_IN: 15m
     REFRESH_TOKEN_EXPIRES_IN: 30d
-    PERFORMANCE_METRICS_TOKEN: 72b6597c9a90a5c88652494f37d6da57894888763d49cdlwfjoer234234
-    NEXT_REVALIDATE_SECRET: 72b6597c9a90a5c88652494f37d6da57894888763d49cdlwfjoer234234
+    PERFORMANCE_METRICS_TOKEN: ${PERFORMANCE_METRICS_TOKEN:?PERFORMANCE_METRICS_TOKEN must be set}
+    NEXT_REVALIDATE_SECRET: ${NEXT_REVALIDATE_SECRET:?NEXT_REVALIDATE_SECRET must be set}
     NEXT_REVALIDATE_URL: https://cleaningcrm.opygen.com/api/public-site/revalidate
     CHOKIDAR_USEPOLLING: "1"
     WATCHPACK_POLLING: "true"
@@ -61,7 +61,7 @@ services:
     ports:
       - "3000:3000"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/livez"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/readyz"]
       interval: 15s
       timeout: 10s
       start_period: 30s
@@ -85,7 +85,7 @@ services:
     profiles: ["release"]
     restart: "no"
     env_file:
-      - .env
+      - ${RUNTIME_ENV_FILE:-.env.runtime}
     environment:
       NODE_ENV: production
       DEPLOYMENT_PROFILE: primary-region

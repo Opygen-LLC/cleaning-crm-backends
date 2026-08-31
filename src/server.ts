@@ -20,10 +20,6 @@ import { notFound } from "./middlewares/notFound";
 import { maintenanceModeGate } from "./middlewares/maintenanceMode";
 import path from "path";
 import {
-  DB_POOL_CONNECTION_TIMEOUT_MS,
-  DB_POOL_IDLE_TIMEOUT_MS,
-  DB_POOL_MAX,
-  DB_POOL_MIN,
   APP_VERSION,
   BUILD_DATE,
   GIT_SHA,
@@ -45,6 +41,7 @@ import { getAuthenticatedOrigins } from "./config/authSecurity";
 import { browserOriginGuard } from "./middlewares/browserOriginGuard";
 import { getRedisCircuitSnapshot } from "./config/redis";
 import { AUTH_ERROR_CODES } from "./modules/Auth/auth.codes";
+import { getDatabasePoolSnapshot, probeDatabaseConnection } from "./lib/prisma/prisma";
 
 const app = express();
 
@@ -181,12 +178,9 @@ const dependencyHealth = async () => {
 
   await Promise.all([
     (async () => {
-      const started = process.hrtime.bigint();
-      try {
-        const { prisma } = await import("./lib/prisma/prisma");
-        await prisma.$queryRaw`SELECT 1`;
-        dbOk = true;
-      } finally { databaseLatencyMs = safeDurationMs(started); }
+      const probe = await probeDatabaseConnection();
+      dbOk = probe.ok;
+      databaseLatencyMs = probe.latencyMs;
     })().catch(() => {}),
     (async () => {
       const started = process.hrtime.bigint();
@@ -217,7 +211,7 @@ app.get("/", (_req: Request, res: Response) => {
   res.setHeader("Cache-Control", "no-store, max-age=0");
   return res.status(200).json({
     success: true,
-    service: "Cleaning CRM Backend API 31 AUG 5:26 PM",
+    service: "Cleaning CRM Backend API 31 AUG 8:00 PM",
     status: "healthy",
     version: APP_VERSION,
     gitSha: GIT_SHA,
@@ -259,12 +253,7 @@ app.get("/health/details", async (req: Request, res: Response) => {
     checks,
     infrastructure,
     redisCircuit: getRedisCircuitSnapshot(),
-    databasePool: {
-      min: DB_POOL_MIN,
-      max: DB_POOL_MAX,
-      idleTimeoutMs: DB_POOL_IDLE_TIMEOUT_MS,
-      connectionTimeoutMs: DB_POOL_CONNECTION_TIMEOUT_MS,
-    },
+    databasePool: getDatabasePoolSnapshot(),
   });
 });
 
@@ -276,12 +265,7 @@ app.get("/health/performance", (req: Request, res: Response) => {
       ...getPerformanceSnapshot(),
       productReliability: getProductReliabilitySnapshot(),
       infrastructure: getInfrastructureAlignment(),
-      databasePool: {
-        min: DB_POOL_MIN,
-        max: DB_POOL_MAX,
-        idleTimeoutMs: DB_POOL_IDLE_TIMEOUT_MS,
-        connectionTimeoutMs: DB_POOL_CONNECTION_TIMEOUT_MS,
-      },
+      databasePool: getDatabasePoolSnapshot(),
     },
   });
 });
