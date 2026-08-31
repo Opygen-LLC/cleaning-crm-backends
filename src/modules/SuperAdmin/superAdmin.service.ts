@@ -397,9 +397,15 @@ const getAllAdminAccounts = async (
     paginationOptions: IPaginationOptions,
 ) => {
     const { page, limit, skip } = buildPagination(paginationOptions);
-    const { searchTerm, status: accountStatus, subscriptionStatus } = filters;
+    const {
+        searchTerm,
+        status: accountStatus,
+        subscriptionStatus,
+        plan,
+        isTrial,
+    } = filters;
 
-    const userWhere: Record<string, unknown> = {
+    const userWhere: Prisma.UserWhereInput = {
         role: UserRole.ADMIN,
     };
 
@@ -419,7 +425,31 @@ const getAllAdminAccounts = async (
         ];
     }
 
-    const [total, data] = await Promise.all([
+    const subscriptionFilter: Prisma.SubscriptionWhereInput = {
+        ...(subscriptionStatus ? { status: subscriptionStatus } : {}),
+        ...(plan ? { subscriptionPlan: { name: plan } } : {}),
+        ...(isTrial !== undefined ? { isTrial } : {}),
+    };
+    const hasSubscriptionFilter = Object.keys(subscriptionFilter).length > 0;
+    if (hasSubscriptionFilter) {
+        userWhere.admin = {
+            is: {
+                subscription: { some: subscriptionFilter },
+            },
+        };
+    }
+
+    const [
+        total,
+        data,
+        activeAccountCount,
+        pendingAccountCount,
+        suspendedAccountCount,
+        activeSubscriptionCount,
+        trialSubscriptionCount,
+        suspendedSubscriptionCount,
+        activeMrrSubscriptions,
+    ] = await Promise.all([
         prisma.user.count({ where: userWhere }),
         prisma.user.findMany({
             where: userWhere,
@@ -427,11 +457,7 @@ const getAllAdminAccounts = async (
                 admin: {
                     include: {
                         subscription: {
-                            where: subscriptionStatus
-                                ? {
-                                      status: subscriptionStatus as SubscriptionStatus,
-                                  }
-                                : {},
+                            where: hasSubscriptionFilter ? subscriptionFilter : {},
                             include: {
                                 plan: true,
                                 subscriptionPlan: {
@@ -455,11 +481,47 @@ const getAllAdminAccounts = async (
             skip,
             take: limit,
         }),
+        prisma.user.count({
+            where: { role: UserRole.ADMIN, status: AccountStatus.ACTIVE },
+        }),
+        prisma.user.count({
+            where: { role: UserRole.ADMIN, status: AccountStatus.PENDING },
+        }),
+        prisma.user.count({
+            where: { role: UserRole.ADMIN, status: AccountStatus.SUSPENDED },
+        }),
+        prisma.subscription.count({
+            where: { status: SubscriptionStatus.ACTIVE, isTrial: false },
+        }),
+        prisma.subscription.count({
+            where: { status: SubscriptionStatus.ACTIVE, isTrial: true },
+        }),
+        prisma.subscription.count({
+            where: { status: SubscriptionStatus.SUSPENDED },
+        }),
+        prisma.subscription.findMany({
+            where: { status: SubscriptionStatus.ACTIVE, isTrial: false },
+            select: { plan: { select: { price: true } } },
+        }),
     ]);
+
+    const totalMRR = activeMrrSubscriptions.reduce(
+        (sum, subscription) => sum + Number(subscription.plan?.price ?? 0),
+        0,
+    );
 
     return {
         meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
         data,
+        stats: {
+            totalMRR: Number(totalMRR.toFixed(2)),
+            activeCount: activeSubscriptionCount,
+            trialCount: trialSubscriptionCount,
+            suspendedCount: suspendedSubscriptionCount,
+            activeAccountCount,
+            pendingAccountCount,
+            suspendedAccountCount,
+        },
     };
 };
 

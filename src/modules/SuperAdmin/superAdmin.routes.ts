@@ -7,11 +7,13 @@ import {
     ValidationProperty,
 } from "../../middlewares/validations/zodValidation.middleware";
 import {
+    adminAccountListQuerySchema,
     createAdminAccountSchema,
     createSubscriptionPlanSchema,
     toggleSubscriptionPlanStatusSchema,
     updatePricingTierSchema,
     updateSubscriptionPlanSchema,
+    subscriptionListQuerySchema,
 } from "./superAdmin.validation";
 
 const router = Router();
@@ -50,10 +52,11 @@ router.get(
 
 // ─── Admin Account Management ─────────────────────────────────────────────────
 // GET /api/v1/super-admin/admin-accounts
-// Query: searchTerm, status, subscriptionStatus, page, limit
+// Query: searchTerm, status, subscriptionStatus, plan, isTrial, page, limit
 router.get(
     "/admin-accounts",
     isSuperAdmin,
+    zodValidate(adminAccountListQuerySchema, ValidationProperty.QUERY),
     superAdminController.getAllAdminAccounts,
 );
 
@@ -142,10 +145,11 @@ router.patch(
 
 // ─── Subscription Management ──────────────────────────────────────────────────
 // GET    /api/v1/super-admin/subscriptions
-// Query: status, planId, isTrial, page, limit
+// Query: status, planId, isTrial, search, plan, billingCycle, sortField, sortDir, page, limit
 router.get(
     "/subscriptions",
     isSuperAdmin,
+    zodValidate(subscriptionListQuerySchema, ValidationProperty.QUERY),
     superAdminController.getAllSubscriptions,
 );
 

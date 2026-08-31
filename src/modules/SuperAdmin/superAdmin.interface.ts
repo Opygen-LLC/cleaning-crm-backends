@@ -1,3 +1,5 @@
+import type { AccountStatus, SubscriptionName, SubscriptionStatus } from "../../generated/prisma/enums";
+
 // ─── Activity Logs ────────────────────────────────────────────────────────────
 
 export interface IActivityLogFilters {
@@ -13,8 +15,10 @@ export interface IActivityLogFilters {
 
 export interface IAdminAccountFilters {
     searchTerm?: string;
-    status?: string;
-    subscriptionStatus?: string;
+    status?: AccountStatus;
+    subscriptionStatus?: SubscriptionStatus;
+    plan?: SubscriptionName;
+    isTrial?: boolean;
 }
 
 // ─── Billing History ──────────────────────────────────────────────────────────
@@ -29,14 +33,14 @@ export interface IBillingHistoryFilters {
 // ─── Subscriptions ────────────────────────────────────────────────────────────
 
 export interface ISubscriptionFilters {
-    status?: string;
+    status?: SubscriptionStatus;
     /** Pricing-tier (Plan) row id — distinct from `plan` (tier name) below. */
     planId?: string;
     isTrial?: string;
     /** Free-text match against admin business name / owner name / email. */
     search?: string;
     /** SubscriptionPlan tier name, e.g. STARTER/GROWTH/PRO/CUSTOM. */
-    plan?: string;
+    plan?: SubscriptionName;
     /** Plan pricing-row interval — MONTHLY maps to "monthly", YEARLY to "annual". */
     billingCycle?: "monthly" | "annual";
     sortField?:

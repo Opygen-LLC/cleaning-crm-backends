@@ -5,6 +5,7 @@ import { superAdminService } from "./superAdmin.service";
 import {
     IActivityLogFilters,
     IAdminAccountFilters,
+    ISubscriptionFilters,
 } from "./superAdmin.interface";
 import AppError from "../../errorHelper/AppError";
 
@@ -82,8 +83,12 @@ const getActivityLogStats = catchAsync(async (req, res) => {
 const getAllAdminAccounts = catchAsync(async (req, res) => {
     const filters: IAdminAccountFilters = {
         searchTerm: req.query.searchTerm as string,
-        status: req.query.status as string,
-        subscriptionStatus: req.query.subscriptionStatus as string,
+        status: req.query.status as IAdminAccountFilters["status"],
+        subscriptionStatus: req.query.subscriptionStatus as IAdminAccountFilters["subscriptionStatus"],
+        plan: req.query.plan as IAdminAccountFilters["plan"],
+        isTrial: req.query.isTrial === undefined
+            ? undefined
+            : req.query.isTrial === "true",
     };
     const paginationOptions = {
         page: req.query.page ? parseInt(req.query.page as string) : undefined,
@@ -102,6 +107,7 @@ const getAllAdminAccounts = catchAsync(async (req, res) => {
         message: "Admin accounts retrieved successfully",
         meta: result.meta,
         data: result.data,
+        stats: result.stats,
     });
 });
 
@@ -240,12 +246,12 @@ const toggleSubscriptionPlanStatus = catchAsync(async (req, res) => {
 // ─── Subscription Management ──────────────────────────────────────────────────
 
 const getAllSubscriptions = catchAsync(async (req, res) => {
-    const filters = {
-        status: req.query.status as string,
+    const filters: ISubscriptionFilters = {
+        status: req.query.status as ISubscriptionFilters["status"],
         planId: req.query.planId as string,
         isTrial: req.query.isTrial as string,
         search: req.query.search as string,
-        plan: req.query.plan as string,
+        plan: req.query.plan as ISubscriptionFilters["plan"],
         billingCycle: req.query.billingCycle as
             | "monthly"
             | "annual"

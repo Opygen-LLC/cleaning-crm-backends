@@ -1,6 +1,42 @@
 import { API_SCHEMA } from "../../contracts/apiContract";
 import { z } from "zod";
 
+
+// ─── Read/list query contracts ───────────────────────────────────────────────
+
+const positiveIntQuery = z.string().regex(/^\d+$/).optional();
+
+export const adminAccountListQuerySchema = z.object({
+    searchTerm: z.string().trim().max(120).optional(),
+    status: API_SCHEMA.accountStatus.optional(),
+    subscriptionStatus: API_SCHEMA.subscriptionStatus.optional(),
+    plan: API_SCHEMA.subscriptionName.optional(),
+    isTrial: z.enum(["true", "false"]).optional(),
+    page: positiveIntQuery,
+    limit: positiveIntQuery,
+});
+
+export const subscriptionListQuerySchema = z.object({
+    status: API_SCHEMA.subscriptionStatus.optional(),
+    planId: z.string().uuid().optional(),
+    isTrial: z.enum(["true", "false"]).optional(),
+    search: z.string().trim().max(120).optional(),
+    plan: API_SCHEMA.subscriptionName.optional(),
+    billingCycle: z.enum(["monthly", "annual"]).optional(),
+    sortField: z.enum([
+        "adminName",
+        "plan",
+        "status",
+        "mrr",
+        "billingCycle",
+        "startedAt",
+        "nextBillingDate",
+    ]).optional(),
+    sortDir: z.enum(["asc", "desc"]).optional(),
+    page: positiveIntQuery,
+    limit: positiveIntQuery,
+});
+
 // ─── Create Admin Account (super-admin endpoint) ───────────────────────────────
 // Mirrors the fields the service actually consumes.
 // Extra fields sent by the frontend (plan, billingCycle, country …) are
