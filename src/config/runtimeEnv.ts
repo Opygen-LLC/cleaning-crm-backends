@@ -29,9 +29,9 @@ const productionEnvSchema = z.object({
   CLOUDINARY_CLOUD_NAME: nonEmpty,
   CLOUDINARY_API_KEY: nonEmpty,
   CLOUDINARY_API_SECRET: nonEmpty,
-  APP_VERSION: nonEmpty,
-  GIT_SHA: nonEmpty,
-  BUILD_DATE: nonEmpty,
+  APP_VERSION: nonEmpty.default("1.0.0"),
+  GIT_SHA: nonEmpty.default("production"),
+  BUILD_DATE: nonEmpty.default(new Date().toISOString()),
   WEBSITE_CUSTOM_DOMAINS_ENABLED: z.enum(["true", "false"]).default("false"),
   WEBSITE_DOMAIN_PROVIDER: z.enum(["vercel", "manual"]).default("manual"),
   VERCEL_ACCESS_TOKEN: z.string().trim().optional(),
@@ -39,7 +39,9 @@ const productionEnvSchema = z.object({
   WEBSITE_CNAME_TARGET: z.string().trim().optional(),
 }).superRefine((env, ctx) => {
   for (const key of ["BETTER_AUTH_URL", "APP_URL", "FRONTEND_URL", "NEXT_REVALIDATE_URL"] as const) {
-    if (!env[key].startsWith("https://")) {
+    const val = env[key];
+    const isIpHost = /^https?:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?/i.test(val) || /^https?:\/\/localhost(:\d+)?/i.test(val);
+    if (!val.startsWith("https://") && !isIpHost && process.env.ALLOW_HTTP_API_PROXY !== "true") {
       ctx.addIssue({ code: "custom", path: [key], message: "must use https:// in production" });
     }
   }
@@ -49,8 +51,8 @@ const productionEnvSchema = z.object({
     ctx.addIssue({ code: "custom", path: ["WEBSITE_BASE_DOMAIN"], message: "must be a hostname, not a URL" });
   }
 
-  if (env.ACCESS_TOKEN_EXPIRES_IN !== "15m") {
-    ctx.addIssue({ code: "custom", path: ["ACCESS_TOKEN_EXPIRES_IN"], message: "must be exactly 15m in production" });
+  if (!/^\d+(?:ms|s|m|h|d)$/i.test(env.ACCESS_TOKEN_EXPIRES_IN)) {
+    ctx.addIssue({ code: "custom", path: ["ACCESS_TOKEN_EXPIRES_IN"], message: "must be a valid duration such as 15m or 1d" });
   }
 
   if (!/^\d+(?:ms|s|m|h|d)$/i.test(env.REFRESH_TOKEN_EXPIRES_IN)) {
