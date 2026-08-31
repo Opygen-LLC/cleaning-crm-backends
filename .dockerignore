@@ -3,6 +3,9 @@ dist
 logs
 .env
 .env.local
+.env.runtime
+.env.production
+.env.staging
 .env.*.local
 *.log
 .git

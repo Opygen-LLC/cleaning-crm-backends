@@ -15,6 +15,11 @@ if ! grep -q '^DATABASE_URL=' "$TMP_FILE"; then
   echo "Secret payload is missing DATABASE_URL" >&2
   exit 1
 fi
+if ! grep -q '^DIRECT_URL=' "$TMP_FILE"; then
+  rm -f "$TMP_FILE"
+  echo "Secret payload is missing DIRECT_URL (direct Neon URL for Prisma migrations)" >&2
+  exit 1
+fi
 if ! grep -q '^BETTER_AUTH_SECRET=' "$TMP_FILE"; then
   rm -f "$TMP_FILE"
   echo "Secret payload is missing BETTER_AUTH_SECRET" >&2

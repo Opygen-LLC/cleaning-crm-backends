@@ -5,20 +5,17 @@
     }
 }
 
-http://34.131.56.92, http://:80, :80, localhost {
+(api_proxy) {
     encode zstd gzip
 
     header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
         -Server
     }
 
-    # Realtime Socket.IO (WebSocket upgrade & HTTP long-polling on the same port)
     handle /socket.io/* {
         reverse_proxy api:3000 {
-            header_up Host {host}
             header_up X-Real-IP {remote_host}
             header_up X-Forwarded-For {remote_host}
             header_up X-Forwarded-Proto {scheme}
@@ -29,10 +26,8 @@ http://34.131.56.92, http://:80, :80, localhost {
         }
     }
 
-    # REST API & Health checks
     handle {
         reverse_proxy api:3000 {
-            header_up Host {host}
             header_up X-Real-IP {remote_host}
             header_up X-Forwarded-For {remote_host}
             header_up X-Forwarded-Proto {scheme}
@@ -49,3 +44,14 @@ http://34.131.56.92, http://:80, :80, localhost {
     }
 }
 
+# Current raw-IP upstream used by the Next.js BFF.
+http://34.131.56.92 {
+    import api_proxy
+}
+
+# Preferred production endpoint. Once api.opygen.com points to 34.131.56.92,
+# Caddy automatically provisions TLS and the BFF can switch to HTTPS upstream.
+{$API_DOMAIN:api.opygen.com} {
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    import api_proxy
+}

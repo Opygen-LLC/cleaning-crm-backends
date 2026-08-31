@@ -8,6 +8,7 @@ const port = z.coerce.number().int().min(1).max(65535);
 
 const productionEnvSchema = z.object({
   DATABASE_URL: nonEmpty,
+  DIRECT_URL: nonEmpty,
   REDIS_HOST: nonEmpty,
   REDIS_PORT: port,
   ACCESS_TOKEN_SECRET: secret,
@@ -38,6 +39,28 @@ const productionEnvSchema = z.object({
   VERCEL_PROJECT_ID: z.string().trim().optional(),
   WEBSITE_CNAME_TARGET: z.string().trim().optional(),
 }).superRefine((env, ctx) => {
+  const parseDbUrl = (value: string) => {
+    try { return new URL(value); } catch { return null; }
+  };
+  const runtimeDb = parseDbUrl(env.DATABASE_URL);
+  const directDb = parseDbUrl(env.DIRECT_URL);
+  const isNeon = (url: URL | null) => Boolean(url && /(?:^|\.)neon\.tech$/i.test(url.hostname));
+
+  if (isNeon(runtimeDb) && !runtimeDb!.hostname.includes("-pooler.")) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["DATABASE_URL"],
+      message: "must use the Neon pooled (-pooler) endpoint for runtime traffic",
+    });
+  }
+  if (isNeon(directDb) && directDb!.hostname.includes("-pooler.")) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["DIRECT_URL"],
+      message: "must use the direct non-pooler Neon endpoint for Prisma migrations",
+    });
+  }
+
   for (const key of ["BETTER_AUTH_URL", "APP_URL", "FRONTEND_URL", "NEXT_REVALIDATE_URL"] as const) {
     const val = env[key];
     const isIpHost = /^https?:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?/i.test(val) || /^https?:\/\/localhost(:\d+)?/i.test(val);

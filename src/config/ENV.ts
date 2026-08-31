@@ -5,23 +5,27 @@ export const NODE_ENV: string = process.env.NODE_ENV as string;
 export const BACKEND_IP: string = process.env.BACKEND_IP as string;
 export const PORT: number = parseInt(process.env.PORT as string, 10);
 export const DATABASE_URL: string = process.env.DATABASE_URL as string;
+export const DIRECT_URL: string | undefined = process.env.DIRECT_URL?.trim() || undefined;
 
-// ─── DB connection pool (Phase 1.2 of the performance audit) ───────────────
-// Neon's pooled ("PgBouncer") connection strings comfortably support far
-// more than the previous hardcoded max of 10 — check your Neon compute
-// size/plan for the actual ceiling and set DB_POOL_MAX accordingly in env.
-// Falls back to 10 only if the env var is missing/invalid, matching the
-// previous hardcoded behaviour so this is a safe no-op until configured.
-export const DB_POOL_MAX: number = Math.min(100, Math.max(1, Number(process.env.DB_POOL_MAX) || 10));
+const numberEnv = (name: string, fallback: number): number => {
+    const raw = process.env[name]?.trim();
+    if (!raw) return fallback;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : fallback;
+};
+
+// Runtime API traffic uses Neon's pooled endpoint (`-pooler` hostname).
+// Prisma CLI/migrations use DIRECT_URL in prisma.config.ts. Keep the local
+// node-postgres pool deliberately small because Neon already provides PgBouncer.
+export const DB_POOL_MAX: number = Math.min(50, Math.max(1, Math.trunc(numberEnv("DB_POOL_MAX", 10))));
 export const DB_POOL_MIN: number = Math.min(
     DB_POOL_MAX,
-    Math.max(0, Number(process.env.DB_POOL_MIN) || Math.min(2, DB_POOL_MAX)),
+    Math.max(0, Math.trunc(numberEnv("DB_POOL_MIN", 0))),
 );
-export const DB_POOL_IDLE_TIMEOUT_MS: number = Math.min(30 * 60_000, Math.max(30_000, Number(process.env.DB_POOL_IDLE_TIMEOUT_MS) || 600_000));
-// Fail a new TCP/TLS database connection fast enough that the API/BFF can
-// return a useful 503 before its own upstream timeout expires. This does not
-// limit normal SQL execution time; it only covers establishing a connection.
-export const DB_POOL_CONNECTION_TIMEOUT_MS: number = Math.min(30_000, Math.max(1_000, Number(process.env.DB_POOL_CONNECTION_TIMEOUT_MS) || 8_000));
+export const DB_POOL_IDLE_TIMEOUT_MS: number = Math.min(30 * 60_000, Math.max(5_000, Math.trunc(numberEnv("DB_POOL_IDLE_TIMEOUT_MS", 60_000))));
+// Fail a new TCP/TLS database connection before the Next.js BFF's upstream
+// timeout, while still allowing a Neon compute cold-start to complete.
+export const DB_POOL_CONNECTION_TIMEOUT_MS: number = Math.min(30_000, Math.max(1_000, Math.trunc(numberEnv("DB_POOL_CONNECTION_TIMEOUT_MS", 10_000))));
 
 // Logs any query slower than this many ms via the Phase 1.3 slow-query
 // logger in src/lib/prisma/prisma.ts. Defaults to 300ms.
