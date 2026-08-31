@@ -2,6 +2,7 @@ import PDFDocument from "pdfkit";
 import { prisma } from "../../lib/prisma/prisma";
 import { JobStatus } from "../../generated/prisma/enums";
 import redis from "../../config/redis";
+import { CacheResource, getCacheResourceVersion } from "../../lib/cache/resourceCacheVersion";
 // PERF FIX #7: Import the Redis-cached admin ID resolver instead of running
 // a raw prisma.adminProfile.findUnique on every report request. The old
 // requireAdminProfile() below was bypassing the cache added in Phase 2,
@@ -88,8 +89,9 @@ async function setCache(key: string, value: unknown): Promise<void> {
   }
 }
 
-function cacheKey(reportType: string, adminId: string, period: string) {
-  return `reports:${reportType}:${adminId}:${period}`;
+async function cacheKey(reportType: string, adminId: string, period: string) {
+  const version = await getCacheResourceVersion(adminId, CacheResource.reports);
+  return `reports:${reportType}:${adminId}:v${version}:${period}`;
 }
 
 // ── CSV helpers ───────────────────────────────────────────────────────────────
@@ -229,7 +231,7 @@ export const getRevenueReport = async (
   const admin = await requireAdminProfile(user);
   const adminId = admin.id;
 
-  const key = cacheKey("revenue", adminId, period);
+  const key = await cacheKey("revenue", adminId, period);
   const cached = await getCached<RevenueReportResult>(key);
   if (cached) return cached;
 
@@ -429,7 +431,7 @@ export const getStaffPerformanceReport = async (
   const admin = await requireAdminProfile(user);
   const adminId = admin.id;
 
-  const key = cacheKey("staff-performance", adminId, period);
+  const key = await cacheKey("staff-performance", adminId, period);
   const cached = await getCached<StaffPerformanceResult>(key);
   if (cached) return cached;
 
@@ -578,7 +580,7 @@ export const getClientRetentionReport = async (
   const admin = await requireAdminProfile(user);
   const adminId = admin.id;
 
-  const key = cacheKey("client-retention", adminId, period);
+  const key = await cacheKey("client-retention", adminId, period);
   const cached = await getCached<ClientRetentionResult>(key);
   if (cached) return cached;
 
@@ -684,7 +686,7 @@ export const getJobCompletionReport = async (
   const admin = await requireAdminProfile(user);
   const adminId = admin.id;
 
-  const key = cacheKey("job-completion", adminId, period);
+  const key = await cacheKey("job-completion", adminId, period);
   const cached = await getCached<JobCompletionResult>(key);
   if (cached) return cached;
 

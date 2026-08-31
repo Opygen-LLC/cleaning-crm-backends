@@ -4,12 +4,14 @@ import { sendResponse } from "../../shared/sendResponse";
 import { serviceCatalogService } from "./serviceCatalog.service";
 import { IServiceCatalogFilters } from "./serviceCatalog.interface";
 import { ServiceStatus } from "../../generated/prisma/enums";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 const createServiceCatalog = catchAsync(async (req, res) => {
   const result = await serviceCatalogService.createServiceCatalog(
     req.body,
     req.user,
   );
+  await bumpCacheResourcesForUser(req.user, [CacheResource.services, CacheResource.dashboard]);
 
   sendResponse(res, {
     httpStatusCode: status.CREATED,
@@ -22,6 +24,7 @@ const createServiceCatalog = catchAsync(async (req, res) => {
 
 const bulkUpsertServiceCatalogs = catchAsync(async (req, res) => {
   const result = await serviceCatalogService.bulkUpsertServiceCatalogs(req.body, req.user);
+  await bumpCacheResourcesForUser(req.user, [CacheResource.services, CacheResource.dashboard]);
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
@@ -72,6 +75,7 @@ const updateServiceCatalog = catchAsync(async (req, res) => {
     req.body,
     req.user,
   );
+  await bumpCacheResourcesForUser(req.user, [CacheResource.services, CacheResource.dashboard]);
 
   sendResponse(res, {
     httpStatusCode: status.OK,
@@ -84,6 +88,7 @@ const updateServiceCatalog = catchAsync(async (req, res) => {
 const deleteServiceCatalog = catchAsync(async (req, res) => {
   const { id } = req.params;
   const result = await serviceCatalogService.deleteServiceCatalog(id as string, req.user);
+  await bumpCacheResourcesForUser(req.user, [CacheResource.services, CacheResource.dashboard]);
 
   sendResponse(res, {
     httpStatusCode: status.OK,

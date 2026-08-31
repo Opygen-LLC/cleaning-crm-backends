@@ -3,11 +3,13 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { bookingService } from "./booking.service";
 import { IQueryParams } from "../../interface/query.interface";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
 const createBooking = catchAsync(async (req, res) => {
   const result = await bookingService.createBooking(req.body, req.user);
+  await bumpCacheResourcesForUser(req.user, [CacheResource.bookings, CacheResource.dashboard, CacheResource.reports]);
 
   sendResponse(res, {
     httpStatusCode: status.CREATED,
@@ -52,6 +54,8 @@ const updateBooking = catchAsync(async (req, res) => {
     req.user,
   );
 
+  await bumpCacheResourcesForUser(req.user, [CacheResource.bookings, CacheResource.dashboard, CacheResource.reports]);
+
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
@@ -67,6 +71,8 @@ const updateBookingStatus = catchAsync(async (req, res) => {
     req.user,
   );
 
+  await bumpCacheResourcesForUser(req.user, [CacheResource.bookings, CacheResource.dashboard, CacheResource.reports]);
+
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
@@ -77,6 +83,7 @@ const updateBookingStatus = catchAsync(async (req, res) => {
 
 const deleteBooking = catchAsync(async (req, res) => {
   await bookingService.deleteBooking(req.params.id as string, req.user);
+  await bumpCacheResourcesForUser(req.user, [CacheResource.bookings, CacheResource.dashboard, CacheResource.reports]);
 
   sendResponse(res, {
     httpStatusCode: status.OK,
@@ -94,6 +101,8 @@ const assignStaff = catchAsync(async (req, res) => {
     req.body,
     req.user,
   );
+
+  await bumpCacheResourcesForUser(req.user, [CacheResource.bookings, CacheResource.dashboard]);
 
   sendResponse(res, {
     httpStatusCode: status.OK,

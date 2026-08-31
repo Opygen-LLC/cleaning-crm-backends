@@ -24,7 +24,7 @@ export const CacheTtl = Object.freeze({
   authContext: 300,
   subscription: 300,
   entitlements: 300,
-  dashboardSummary: 300,
+  dashboardSummary: 45,
   serviceCatalog: 300,
   bookingForm: 300,
 });

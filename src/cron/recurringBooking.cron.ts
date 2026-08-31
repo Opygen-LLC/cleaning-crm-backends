@@ -4,6 +4,7 @@ import type { Prisma } from "../generated/prisma/client";
 import { prisma } from "../lib/prisma/prisma";
 import { advanceNextRunAt } from "../modules/RecurringBooking/recurringBooking.service";
 import { fail, log } from "./index.cron";
+import { bumpCacheResourceVersions, CacheResource } from "../lib/cache/resourceCacheVersion";
 
 // ─── Booking ref generator (mirrors booking.service.ts) ───────────────────────
 
@@ -135,6 +136,13 @@ export const runRecurringBookingEngine = async (
                     `(next run: ${nextRunAt.toISOString()})`,
                 );
             });
+
+            await bumpCacheResourceVersions(schedule.adminId, [
+                CacheResource.bookings,
+                CacheResource.clients,
+                CacheResource.dashboard,
+                CacheResource.reports,
+            ]);
 
             created++;
         } catch (err) {

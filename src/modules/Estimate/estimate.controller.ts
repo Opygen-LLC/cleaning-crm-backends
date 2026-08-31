@@ -3,6 +3,7 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { estimateService } from "./estimate.service";
 import { IQueryParams } from "../../interface/query.interface";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
@@ -93,6 +94,8 @@ const convertEstimateToBooking = catchAsync(async (req, res) => {
         req.body,
         req.user,
     );
+
+    await bumpCacheResourcesForUser(req.user, [CacheResource.bookings, CacheResource.dashboard, CacheResource.reports, CacheResource.clients]);
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,

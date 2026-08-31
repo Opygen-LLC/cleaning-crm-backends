@@ -12,6 +12,7 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { adminService } from "./admin.service";
 import { uploadToCloudinary } from "../../lib/utils/cloudinary";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 // ─── Existing handlers (unchanged) ───────────────────────────────────────────
 
@@ -38,6 +39,7 @@ const updateAdmin = catchAsync(async (req, res) => {
     payload.businessLogo = uploadResult.secure_url;
   }
   const result = await adminService.updateAdmin(userId, payload);
+  await bumpCacheResourcesForUser(req.user, [CacheResource.profile, CacheResource.dashboard]);
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
@@ -55,6 +57,7 @@ const updateWorkLocation = catchAsync(async (req, res) => {
     locationId as string,
     payload,
   );
+  await bumpCacheResourcesForUser(req.user, [CacheResource.profile]);
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
@@ -70,6 +73,7 @@ const deleteWorkLocation = catchAsync(async (req, res) => {
     userId,
     locationId as string,
   );
+  await bumpCacheResourcesForUser(req.user, [CacheResource.profile]);
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,

@@ -5,9 +5,12 @@ import { paymentService } from "./payment.service";
 import { IPaymentFilters } from "./payment.interface";
 import { PaymentMethod, PaymentStatus } from "../../generated/prisma/enums";
 import AppError from "../../errorHelper/AppError";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 const createPayment = catchAsync(async (req, res) => {
   const result = await paymentService.createPayment(req.body, req.user);
+
+  await bumpCacheResourcesForUser(req.user, [CacheResource.payments, CacheResource.invoices, CacheResource.dashboard, CacheResource.reports]);
 
   sendResponse(res, {
     httpStatusCode: httpStatus.CREATED,
@@ -57,6 +60,8 @@ const updatePayment = catchAsync(async (req, res) => {
     req.user,
   );
 
+  await bumpCacheResourcesForUser(req.user, [CacheResource.payments, CacheResource.invoices, CacheResource.dashboard, CacheResource.reports]);
+
   sendResponse(res, {
     httpStatusCode: httpStatus.OK,
     success: true,
@@ -67,6 +72,8 @@ const updatePayment = catchAsync(async (req, res) => {
 
 const deletePayment = catchAsync(async (req, res) => {
   const result = await paymentService.deletePayment(req.params.id as string, req.user);
+
+  await bumpCacheResourcesForUser(req.user, [CacheResource.payments, CacheResource.invoices, CacheResource.dashboard, CacheResource.reports]);
 
   sendResponse(res, {
     httpStatusCode: httpStatus.OK,
@@ -86,6 +93,8 @@ const uploadReceipt = catchAsync(async (req, res) => {
     req.file,
     req.user,
   );
+
+  await bumpCacheResourcesForUser(req.user, [CacheResource.payments, CacheResource.invoices]);
 
   sendResponse(res, {
     httpStatusCode: httpStatus.OK,

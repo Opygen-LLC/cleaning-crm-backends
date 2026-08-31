@@ -5,9 +5,12 @@ import { invoiceService } from "./invoice.service";
 import { IInvoiceFilters } from "./invoice.interface";
 import { InvoiceStatus } from "../../generated/prisma/enums";
 import AppError from "../../errorHelper/AppError";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 const createInvoice = catchAsync(async (req, res) => {
     const result = await invoiceService.createInvoice(req.body, req.user);
+
+    await bumpCacheResourcesForUser(req.user, [CacheResource.invoices, CacheResource.dashboard, CacheResource.reports]);
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,
@@ -50,6 +53,8 @@ const updateInvoice = catchAsync(async (req, res) => {
     const { id } = req.params;
     const result = await invoiceService.updateInvoice(id as string, req.body, req.user);
 
+    await bumpCacheResourcesForUser(req.user, [CacheResource.invoices, CacheResource.dashboard, CacheResource.reports]);
+
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -66,6 +71,7 @@ const updateInvoiceStatus = catchAsync(async (req, res) => {
         invoiceStatus,
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.invoices, CacheResource.dashboard, CacheResource.reports]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -78,6 +84,8 @@ const updateInvoiceStatus = catchAsync(async (req, res) => {
 const deleteInvoice = catchAsync(async (req, res) => {
     const { id } = req.params;
     const result = await invoiceService.deleteInvoice(id as string, req.user);
+
+    await bumpCacheResourcesForUser(req.user, [CacheResource.invoices, CacheResource.dashboard, CacheResource.reports]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -113,6 +121,7 @@ const recordPayment = catchAsync(async (req, res) => {
         req.body,
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.invoices, CacheResource.payments, CacheResource.dashboard, CacheResource.reports]);
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,
@@ -127,6 +136,7 @@ const sendInvoice = catchAsync(async (req, res) => {
         req.params["id"] as string,
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.invoices, CacheResource.dashboard]);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -148,6 +158,9 @@ const submitPaymentProof = catchAsync(async (req, res) => {
         req.file,
         { user: req.user, portalClient: req.portalClient },
     );
+    if (req.user) {
+        await bumpCacheResourcesForUser(req.user, [CacheResource.invoices, CacheResource.payments, CacheResource.dashboard]);
+    }
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -171,6 +184,7 @@ const approvePayment = catchAsync(async (req, res) => {
         { action, rejectionReason },
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.invoices, CacheResource.payments, CacheResource.dashboard, CacheResource.reports]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,

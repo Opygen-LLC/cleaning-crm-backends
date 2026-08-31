@@ -3,6 +3,7 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { recurringBookingService } from "./recurringBooking.service";
 import { IQueryParams } from "../../interface/query.interface";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 const createSchedule = catchAsync(async (req, res) => {
   const result = await recurringBookingService.createSchedule(
@@ -106,6 +107,8 @@ const generateNextBooking = catchAsync(async (req, res) => {
     req.params["id"] as string,
     req.user,
   );
+  await bumpCacheResourcesForUser(req.user, [CacheResource.bookings, CacheResource.dashboard, CacheResource.reports, CacheResource.clients]);
+
   sendResponse(res, {
     httpStatusCode: status.CREATED,
     success: true,

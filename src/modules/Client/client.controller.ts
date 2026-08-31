@@ -4,6 +4,7 @@ import { sendResponse } from "../../shared/sendResponse";
 import { clientService } from "./client.service";
 import { IQueryParams } from "../../interface/query.interface";
 import { IRequestUser } from "../../types/requestUser.interface";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 const createClient = catchAsync(async (req, res) => {
     const user = req.user;
@@ -11,6 +12,8 @@ const createClient = catchAsync(async (req, res) => {
         req.body,
         user as IRequestUser,
     );
+
+    await bumpCacheResourcesForUser(user as IRequestUser, [CacheResource.clients, CacheResource.dashboard, CacheResource.reports]);
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,
@@ -53,6 +56,8 @@ const updateClient = catchAsync(async (req, res) => {
         req.user,
     );
 
+    await bumpCacheResourcesForUser(req.user as IRequestUser, [CacheResource.clients, CacheResource.dashboard, CacheResource.reports]);
+
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -64,6 +69,8 @@ const updateClient = catchAsync(async (req, res) => {
 const deleteClient = catchAsync(async (req, res) => {
     const { id } = req.params;
     const result = await clientService.deleteClient(id as string, req.user);
+
+    await bumpCacheResourcesForUser(req.user as IRequestUser, [CacheResource.clients, CacheResource.dashboard, CacheResource.reports]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -95,6 +102,8 @@ const regeneratePortalToken = catchAsync(async (req, res) => {
         id as string,
         req.user,
     );
+
+    await bumpCacheResourcesForUser(req.user as IRequestUser, [CacheResource.clients]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,

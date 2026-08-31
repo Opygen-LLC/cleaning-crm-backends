@@ -16,6 +16,7 @@ import { IRequestUser } from "../../types/requestUser.interface";
 import { currencyPrefix } from "../../lib/utils/money";
 import { serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import type { Prisma } from "../../generated/prisma/client";
+import { CacheResource, getCacheResourceVersion } from "../../lib/cache/resourceCacheVersion";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -98,7 +99,8 @@ const getDashboardOverview = async (
     .update(JSON.stringify({ status: statusEnum ?? "all", search: search ?? "", limit: takeLimit, includeRevenueInsight }))
     .digest("hex")
     .slice(0, 12);
-  const cacheKey = CacheNamespaces.dashboardSummary(adminId, `${period}:${filterHash}`);
+  const dashboardVersion = await getCacheResourceVersion(adminId, CacheResource.dashboard);
+  const cacheKey = CacheNamespaces.dashboardSummary(adminId, `v${dashboardVersion}:${period}:${filterHash}`);
   const cached = await redis.get(cacheKey).catch(() => null);
   if (cached) {
     try { return JSON.parse(cached); } catch { /* rebuild corrupt cache */ }
@@ -319,7 +321,8 @@ const getDashboardRevenueInsight = async (
 ) => {
   const adminId = typeof user === "string" ? user : await getAdminId(user);
   const safePeriod = ["7d", "30d", "90d", "12m"].includes(period) ? period : "30d";
-  const cacheKey = `dashboard:revenue-insight:${adminId}:${safePeriod}`;
+  const dashboardVersion = await getCacheResourceVersion(adminId, CacheResource.dashboard);
+  const cacheKey = `dashboard:revenue-insight:${adminId}:v${dashboardVersion}:${safePeriod}`;
   const cached = await redis.get(cacheKey).catch(() => null);
   if (cached) {
     try { return JSON.parse(cached); } catch { /* rebuild corrupt cache */ }
@@ -408,7 +411,8 @@ const getRevenuePage = async (
   period: RevenuePeriod,
 ) => {
   const adminId = typeof user === "string" ? user : await getAdminId(user);
-  const revCacheKey = `dashboard:revenue:${adminId}:${period}`;
+  const dashboardVersion = await getCacheResourceVersion(adminId, CacheResource.dashboard);
+  const revCacheKey = `dashboard:revenue:${adminId}:v${dashboardVersion}:${period}`;
   const revCached = await redis.get(revCacheKey).catch(() => null);
   if (revCached) {
     try { return JSON.parse(revCached); } catch { /* rebuild corrupt entry */ }

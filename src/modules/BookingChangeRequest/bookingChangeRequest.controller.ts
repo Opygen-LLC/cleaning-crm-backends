@@ -4,6 +4,7 @@ import { sendResponse } from "../../shared/sendResponse";
 import { bookingChangeRequestService } from "./bookingChangeRequest.service";
 import AppError from "../../errorHelper/AppError";
 import { BookingChangeRequestStatus } from "../../generated/prisma/enums";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 // Client (portal): POST /client/portal/:portalToken/booking-requests
 const createRequest = catchAsync(async (req, res) => {
@@ -46,6 +47,8 @@ const decideRequest = catchAsync(async (req, res) => {
         req.body,
         req.user,
     );
+
+    await bumpCacheResourcesForUser(req.user, [CacheResource.bookings, CacheResource.dashboard, CacheResource.reports]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,

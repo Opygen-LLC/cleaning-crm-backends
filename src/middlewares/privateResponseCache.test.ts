@@ -13,6 +13,11 @@ const { redisMock, redisStore, redisSets } = vi.hoisted(() => {
         redisStore.set(key, value);
         return "OK";
       }),
+      incr: vi.fn(async (key: string) => {
+        const next = Number(redisStore.get(key) ?? "0") + 1;
+        redisStore.set(key, String(next));
+        return next;
+      }),
       sadd: vi.fn(async (key: string, value: string) => {
         const set = redisSets.get(key) ?? new Set<string>();
         const before = set.size;
@@ -21,15 +26,10 @@ const { redisMock, redisStore, redisSets } = vi.hoisted(() => {
         return set.size > before ? 1 : 0;
       }),
       expire: vi.fn().mockResolvedValue(1),
-      sscan: vi.fn(async (key: string) => [
-        "0",
-        Array.from(redisSets.get(key) ?? []),
-      ]),
+      sscan: vi.fn(async (key: string) => ["0", Array.from(redisSets.get(key) ?? [])]),
       unlink: vi.fn(async (...keys: string[]) => {
         let removed = 0;
-        for (const key of keys) {
-          if (redisStore.delete(key)) removed += 1;
-        }
+        for (const key of keys) if (redisStore.delete(key)) removed += 1;
         return removed;
       }),
       del: vi.fn(async (key: string) => {
@@ -42,22 +42,15 @@ const { redisMock, redisStore, redisSets } = vi.hoisted(() => {
 
 vi.mock("../config/redis", () => ({ default: redisMock }));
 
-import {
-  invalidatePrivateResponseCache,
-  privateResponseCache,
-} from "./privateResponseCache";
+import { privateResponseCache } from "./privateResponseCache";
+import { bumpCacheResourceVersions, CacheResource } from "../lib/cache/resourceCacheVersion";
 
 function makeRequest(method = "GET") {
   return {
     method,
     originalUrl: "/api/v1/dashboard/overview?period=30d",
     headers: {},
-    user: {
-      id: "user-1",
-      adminId: "tenant-1",
-      role: "ADMIN",
-      email: "admin@example.com",
-    },
+    user: { id: "user-1", adminId: "tenant-1", role: "ADMIN", email: "admin@example.com" },
   } as unknown as Request;
 }
 
@@ -66,30 +59,12 @@ function makeResponse() {
   const result = { body: "", ended: false };
   const response = {
     statusCode: 200,
-    setHeader(this: any, name: string, value: string) {
-      headers.set(name.toLowerCase(), String(value));
-      return this;
-    },
-    getHeader(name: string) {
-      return headers.get(name.toLowerCase());
-    },
-    type(this: any, value: string) {
-      this.setHeader("Content-Type", value);
-      return this;
-    },
-    status(this: any, value: number) {
-      this.statusCode = value;
-      return this;
-    },
-    send(this: any, body: unknown) {
-      result.body = String(body);
-      return this;
-    },
-    end(this: any) {
-      result.ended = true;
-      return this;
-    },
-    once: vi.fn(),
+    setHeader(this: any, name: string, value: string) { headers.set(name.toLowerCase(), String(value)); return this; },
+    getHeader(name: string) { return headers.get(name.toLowerCase()); },
+    type(this: any, value: string) { this.setHeader("Content-Type", value); return this; },
+    status(this: any, value: number) { this.statusCode = value; return this; },
+    send(this: any, body: unknown) { result.body = String(body); return this; },
+    end(this: any) { result.ended = true; return this; },
   } as unknown as Response;
   return { response, result, headers };
 }
@@ -98,14 +73,14 @@ async function flushAsyncCacheWrites() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-describe("privateResponseCache", () => {
+describe("privateResponseCache resource generations", () => {
   beforeEach(() => {
     redisStore.clear();
     redisSets.clear();
     vi.clearAllMocks();
   });
 
-  it("serves the second tenant-scoped GET from Redis without controller work", async () => {
+  it("serves the second GET from the same tenant/resource generation", async () => {
     const first = makeResponse();
     const payload = JSON.stringify({ success: true, data: { revenue: 123 } });
     const firstNext: NextFunction = vi.fn(() => {
@@ -118,39 +93,37 @@ describe("privateResponseCache", () => {
     expect(firstNext).toHaveBeenCalledOnce();
     expect(redisMock.setex).toHaveBeenCalledOnce();
     expect(redisMock.sadd).toHaveBeenCalledOnce();
-    expect(redisStore.size).toBe(1);
 
-    redisMock.get.mockClear();
     const second = makeResponse();
     const secondNext: NextFunction = vi.fn();
-    const started = performance.now();
     await privateResponseCache(makeRequest(), second.response, secondNext);
-    const duration = performance.now() - started;
 
     expect(secondNext).not.toHaveBeenCalled();
-    expect(redisMock.get).toHaveBeenCalledOnce();
     expect(second.result.body).toBe(payload);
     expect(second.headers.get("x-response-cache")).toBe("HIT-REDIS");
-    expect(duration).toBeLessThan(50);
   });
 
-  it("invalidates via the tenant index instead of scanning the Redis keyspace", async () => {
-    const output = makeResponse();
-    const next: NextFunction = vi.fn(() => {
-      output.response.setHeader("Content-Type", "application/json");
-      output.response.send(JSON.stringify({ success: true }));
+  it("makes the next GET miss immediately after an awaited resource bump", async () => {
+    const first = makeResponse();
+    const firstNext: NextFunction = vi.fn(() => {
+      first.response.setHeader("Content-Type", "application/json");
+      first.response.send(JSON.stringify({ success: true, data: { count: 1 } }));
     });
-
-    await privateResponseCache(makeRequest(), output.response, next);
-    await flushAsyncCacheWrites();
-    expect(redisStore.size).toBe(1);
-
-    invalidatePrivateResponseCache("tenant-1");
+    await privateResponseCache(makeRequest(), first.response, firstNext);
     await flushAsyncCacheWrites();
 
-    expect(redisMock.sscan).toHaveBeenCalled();
-    expect(redisMock.unlink).toHaveBeenCalled();
-    expect(redisStore.size).toBe(0);
+    await bumpCacheResourceVersions("tenant-1", [CacheResource.dashboard]);
+
+    const second = makeResponse();
+    const secondNext: NextFunction = vi.fn(() => {
+      second.response.setHeader("Content-Type", "application/json");
+      second.response.send(JSON.stringify({ success: true, data: { count: 2 } }));
+    });
+    await privateResponseCache(makeRequest(), second.response, secondNext);
+
+    expect(redisMock.incr).toHaveBeenCalledWith("tenant:tenant-1:dashboard:version");
+    expect(secondNext).toHaveBeenCalledOnce();
+    expect(second.headers.get("x-response-cache")).toBe("MISS");
   });
 
   it("does not cache non-JSON responses", async () => {
@@ -163,6 +136,5 @@ describe("privateResponseCache", () => {
     await flushAsyncCacheWrites();
     expect(redisMock.setex).not.toHaveBeenCalled();
     expect(redisMock.sadd).not.toHaveBeenCalled();
-    expect(redisStore.size).toBe(0);
   });
 });

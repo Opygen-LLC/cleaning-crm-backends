@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import redis from "../config/redis";
-import { API_RESPONSE_CACHE_TTL_SECONDS } from "../config/ENV";
 import logger from "../lib/logger";
 import { recordTraceResponseCache } from "../lib/monitoring/requestTrace";
+import {
+  CacheResource,
+  type CacheResourceName,
+  getCacheResourceVersion,
+} from "../lib/cache/resourceCacheVersion";
 
 interface CachedResponse {
   body: string;
@@ -17,18 +21,26 @@ const MIN_INDEX_TTL_SECONDS = 60 * 60;
 
 const tenantScope = (req: Request) => req.user?.adminId ?? req.user?.id ?? "global";
 const userScope = (req: Request) => req.user?.id ?? "anonymous";
-const scopePrefix = (tenantId: string) => `http-response:${tenantId}:`;
-const cacheIndexKey = (tenantId: string) => `http-response-index:${tenantId}`;
 const userIndexKey = (userId: string) => `http-response-user-index:${userId}`;
 
-const cacheKey = (req: Request): string => {
-  const routeHash = createHash("sha256")
-    .update(req.originalUrl)
-    .digest("hex")
-    .slice(0, 32);
-  const tenant = tenantScope(req);
-  const user = userScope(req);
-  return `${scopePrefix(tenant)}${user}:${routeHash}`;
+const resourceForRequest = (req: Request): CacheResourceName | null => {
+  const path = req.originalUrl.toLowerCase();
+  if (path.includes("/dashboard")) return CacheResource.dashboard;
+  if (path.includes("/client")) return CacheResource.clients;
+  if (path.includes("/lead")) return CacheResource.leads;
+  if (path.includes("/booking")) return CacheResource.bookings;
+  if (path.includes("/invoice")) return CacheResource.invoices;
+  if (path.includes("/payment")) return CacheResource.payments;
+  if (path.includes("/notification")) return CacheResource.notifications;
+  if (path.includes("/report")) return CacheResource.reports;
+  if (path.includes("/admin/profile") || path.includes("/user/me")) return CacheResource.profile;
+  if (path.includes("/service")) return CacheResource.services;
+  return null;
+};
+
+const isLiveAvailabilityRequest = (req: Request) => {
+  const path = req.originalUrl.toLowerCase();
+  return path.includes("availability") || path.includes("available-slot") || path.includes("available-staff");
 };
 
 const isCacheableRequest = (req: Request): boolean =>
@@ -37,32 +49,53 @@ const isCacheableRequest = (req: Request): boolean =>
   !req.originalUrl.includes("/auth/") &&
   !req.originalUrl.includes("/session") &&
   !req.originalUrl.includes("/pdf") &&
-  !req.originalUrl.includes("/export");
+  !req.originalUrl.includes("/export") &&
+  !isLiveAvailabilityRequest(req);
 
-const ttlFor = (req: Request): number => {
-  if (req.originalUrl.includes("/notification/inbox")) return 5;
-  if (req.originalUrl.includes("/dashboard/")) {
-    return Math.max(60, API_RESPONSE_CACHE_TTL_SECONDS);
+const ttlForResource = (resource: CacheResourceName | null): number => {
+  switch (resource) {
+    case CacheResource.notifications:
+      return 10;
+    case CacheResource.clients:
+    case CacheResource.leads:
+    case CacheResource.bookings:
+    case CacheResource.dashboard:
+    case CacheResource.invoices:
+    case CacheResource.payments:
+      return 45;
+    case CacheResource.profile:
+      return 10 * 60;
+    case CacheResource.services:
+      return 5 * 60;
+    case CacheResource.reports:
+      return 15 * 60;
+    default:
+      return 45;
   }
-  return API_RESPONSE_CACHE_TTL_SECONDS;
+};
+
+const cacheKey = async (req: Request, resource: CacheResourceName | null): Promise<string> => {
+  const routeHash = createHash("sha256")
+    .update(req.originalUrl)
+    .digest("hex")
+    .slice(0, 32);
+  const tenant = tenantScope(req);
+  const user = userScope(req);
+  const version = resource ? await getCacheResourceVersion(tenant, resource) : 0;
+  const resourceSegment = resource ?? "generic";
+  return `http-response:${tenant}:${resourceSegment}:v${version}:${user}:${routeHash}`;
 };
 
 const parseSharedEntry = (raw: string): CachedResponse | null => {
   try {
     const value = JSON.parse(raw) as CachedResponse;
-    return typeof value.body === "string" && typeof value.etag === "string"
-      ? value
-      : null;
+    return typeof value.body === "string" && typeof value.etag === "string" ? value : null;
   } catch {
     return null;
   }
 };
 
-const sendHit = (
-  req: Request,
-  res: Response,
-  entry: CachedResponse,
-): void => {
+const sendHit = (req: Request, res: Response, entry: CachedResponse): void => {
   res.setHeader("X-Response-Cache", "HIT-REDIS");
   res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
   res.setHeader("ETag", entry.etag);
@@ -75,44 +108,26 @@ const sendHit = (
   res.status(entry.statusCode).send(entry.body);
 };
 
-/**
- * Cache keys are indexed per tenant/user at write time. Invalidating a tenant
- * scans only that tenant's indexed Redis set instead of scanning the entire
- * keyspace. When data changes, all old cached responses are unlinked and
- * subsequent requests fetch fresh data from the DB and cache the new data again.
- */
 async function deleteIndexedResponses(indexKey: string): Promise<void> {
   let cursor = "0";
-
   do {
-    const [next, keys] = await redis.sscan(
-      indexKey,
-      cursor,
-      "COUNT",
-      100,
-    );
+    const [next, keys] = await redis.sscan(indexKey, cursor, "COUNT", 100);
     cursor = next;
     if (keys.length) await redis.unlink(...keys);
   } while (cursor !== "0");
-
   await redis.del(indexKey);
 }
 
-export function invalidatePrivateResponseCache(tenantId: string): void {
-  void deleteIndexedResponses(cacheIndexKey(tenantId)).catch((error) => {
-    logger.warn(
-      `[CACHE] Shared response cache invalidation skipped: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  });
-}
-
+/**
+ * Logout/profile identity cleanup remains user-indexed because it must remove
+ * every cached route belonging to that browser identity immediately.
+ * Normal CRM writes use resource generation bumps instead of tenant scans.
+ */
 export async function invalidatePrivateResponseCacheForUser(userId: string): Promise<void> {
   if (!userId || userId === "anonymous") return;
   try {
     await deleteIndexedResponses(userIndexKey(userId));
   } catch (error) {
-    // Cache cleanup must never make logout fail. The short-lived cache entries
-    // remain isolated by user id and expire naturally if Redis is unavailable.
     logger.warn(
       `[CACHE] User response cache invalidation skipped: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -120,26 +135,19 @@ export async function invalidatePrivateResponseCacheForUser(userId: string): Pro
 }
 
 function persistCacheEntry(
-  tenantId: string,
   userId: string,
   key: string,
   ttlSeconds: number,
   entry: CachedResponse,
 ): void {
-  const indexKey = cacheIndexKey(tenantId);
   const perUserIndexKey = userIndexKey(userId);
   const indexTtl = Math.max(MIN_INDEX_TTL_SECONDS, ttlSeconds * 2);
-
   const writes: Promise<unknown>[] = [
     redis.setex(key, ttlSeconds, JSON.stringify(entry)),
-    redis.sadd(indexKey, key),
-    redis.expire(indexKey, indexTtl),
     redis.sadd(perUserIndexKey, key),
     redis.expire(perUserIndexKey, indexTtl),
   ];
 
-  // Best-effort cache write. These commands are independent of request
-  // correctness, so Redis trouble must never fail an otherwise valid API call.
   void Promise.all(writes).catch((error) => {
     logger.warn(
       `[CACHE] Shared response cache write skipped: ${error instanceof Error ? error.message : String(error)}`,
@@ -148,32 +156,24 @@ function persistCacheEntry(
 }
 
 /**
- * Per-user Redis response cache. It runs after authorization, so cached data
- * is strictly isolated to the authenticated user_id. Mutations immediately
- * invalidate the cache so subsequent reads reflect fresh database state.
+ * Per-user Redis response cache with tenant/resource generations.
+ * Mutations no longer trigger an asynchronous tenant-wide delete from here.
+ * Owning controllers bump the exact affected resource generations after their
+ * DB transaction succeeds and before sending the mutation response.
  */
 export async function privateResponseCache(
   req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const tenantId = tenantScope(req);
-  const userId = userScope(req);
-
   if (!isCacheableRequest(req)) {
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      res.once("finish", () => {
-        if (res.statusCode >= 200 && res.statusCode < 400) {
-          invalidatePrivateResponseCache(tenantId);
-        }
-      });
-    }
     next();
     return;
   }
 
-  const key = cacheKey(req);
-  const ttlSeconds = ttlFor(req);
+  const resource = resourceForRequest(req);
+  const key = await cacheKey(req, resource);
+  const ttlSeconds = ttlForResource(resource);
   const sharedRaw = await redis.get(key).catch(() => null);
   const shared = sharedRaw ? parseSharedEntry(sharedRaw) : null;
   if (shared) {
@@ -186,6 +186,7 @@ export async function privateResponseCache(
   res.setHeader("X-Response-Cache", "MISS");
   res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
   const originalSend = res.send.bind(res);
+  const userId = userScope(req);
 
   res.send = ((body: unknown) => {
     const contentType = res.getHeader("Content-Type")?.toString() ?? "";
@@ -205,14 +206,9 @@ export async function privateResponseCache(
       !res.getHeader("Content-Disposition")
     ) {
       const etag = `W/"${createHash("sha1").update(serialized).digest("base64url")}"`;
-      const entry: CachedResponse = {
-        body: serialized,
-        contentType,
-        etag,
-        statusCode: res.statusCode,
-      };
+      const entry: CachedResponse = { body: serialized, contentType, etag, statusCode: res.statusCode };
       res.setHeader("ETag", etag);
-      persistCacheEntry(tenantId, userId, key, ttlSeconds, entry);
+      persistCacheEntry(userId, key, ttlSeconds, entry);
     }
 
     return originalSend(body);

@@ -2,6 +2,7 @@ import status from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { notificationService } from "./notification.service";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 const getPrefs = catchAsync(async (req, res) => {
     const result = await notificationService.getNotificationPrefs(req.user);
@@ -19,6 +20,7 @@ const updatePrefs = catchAsync(async (req, res) => {
         req.user,
         req.body,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.notifications]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -43,6 +45,7 @@ const getInbox = catchAsync(async (req, res) => {
 
 const markRead = catchAsync(async (req, res) => {
     await notificationService.markRead(req.user, req.params.id as string);
+    await bumpCacheResourcesForUser(req.user, [CacheResource.notifications]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -54,6 +57,7 @@ const markRead = catchAsync(async (req, res) => {
 
 const markAllRead = catchAsync(async (req, res) => {
     await notificationService.markAllRead(req.user);
+    await bumpCacheResourcesForUser(req.user, [CacheResource.notifications]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -79,6 +83,7 @@ const upsertTemplate = catchAsync(async (req, res) => {
         req.params.key as string,
         req.body,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.notifications]);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -92,6 +97,7 @@ const deleteTemplate = catchAsync(async (req, res) => {
         req.user,
         req.params.key as string,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.notifications]);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
