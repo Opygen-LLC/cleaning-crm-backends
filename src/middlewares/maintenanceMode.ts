@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from "express";
 import { getPlatformConfig } from "../lib/utils/platformConfig";
+import { sendStructuredError } from "../shared/sendStructuredError";
 
 // Routes that must keep working even while maintenanceMode is on:
 //   - /api/v1/auth/*         so a super-admin (or anyone) can still log in
@@ -26,11 +27,12 @@ export const maintenanceModeGate = async (
     try {
         const config = await getPlatformConfig();
         if (config.maintenanceMode) {
-            return res.status(503).json({
-                success: false,
-                message:
-                    "The platform is currently undergoing scheduled maintenance. Please try again shortly.",
-            });
+            return sendStructuredError(res, {
+                statusCode: 503,
+                code: "MAINTENANCE_MODE",
+                message: "The platform is currently undergoing scheduled maintenance. Please try again shortly.",
+                retryable: true,
+            }, req);
         }
     } catch {
         // fail open

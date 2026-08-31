@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalE164PhoneSchema } from "../../lib/validation/phone";
 import { QuoteStatus } from "../../generated/prisma/enums";
 
 const lineItemSchema = z.object({
@@ -22,7 +23,7 @@ const createQuoteSchema = z.object({
     clientId: z.string().uuid("Invalid client ID").optional(),
     clientName: z.string().trim().min(1, "Client name is required").optional(),
     clientEmail: z.string().trim().email("Invalid email address").optional(),
-    clientPhone: z.string().trim().optional(),
+    clientPhone: optionalE164PhoneSchema(),
     ...serviceIdentityFields,
     address: z.string().min(1, "Address is required"),
     lineItems: z.array(lineItemSchema).min(1, "At least one line item is required"),

@@ -12,6 +12,7 @@ import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { cacheBookingForm, getCachedBookingForm, invalidateBookingForm, invalidateBookingFormsForAdmin } from "./bookingForm.cache";
 import { buildBookingSubmissionAttribution } from "./bookingSubmissionAttribution";
+import { requireE164Phone } from "../../lib/validation/phone";
 
 type PublicBookingAddOn = { id: string; name: string; price: number };
 
@@ -1083,7 +1084,7 @@ const submitPublicBookingFormBySelector = async (
                 timeSlot: payload.timeSlot,
                 name: payload.name.trim(),
                 email: payload.email.trim().toLowerCase(),
-                phone: payload.phone.trim(),
+                phone: requireE164Phone(payload.phone, "phone"),
                 address: payload.address.trim(),
                 notes: payload.notes?.trim() || undefined,
                 answers: customAnswers as Prisma.InputJsonValue,

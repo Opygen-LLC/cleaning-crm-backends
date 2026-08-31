@@ -4,6 +4,7 @@ import status from "http-status";
 import { prisma } from "../../lib/prisma/prisma";
 import logger from "../../lib/logger";
 import AppError from "../../errorHelper/AppError";
+import { normalizeOptionalE164Phone, requireE164Phone } from "../../lib/validation/phone";
 import { countryEnumToIso, resolveCountryEnum } from "../../lib/constants/countryIsoMap";
 import {
   GETTING_STARTED_STEPS,
@@ -142,6 +143,9 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
 
   const data: Record<string, unknown> = {
     ...scalarFields,
+    ...(scalarFields.mobileNumber !== undefined
+      ? { mobileNumber: normalizeOptionalE164Phone(scalarFields.mobileNumber, "mobileNumber") ?? null }
+      : {}),
     ...(postcode !== undefined || zipcode !== undefined
       ? { zipcode: postcode ?? zipcode }
       : {}),
@@ -249,7 +253,9 @@ const createAdmin = async (
       businessName: payload.businessName,
       // Persist optional wizard fields immediately so they are available
       // to the onboarding flow without an extra PATCH round-trip.
-      ...(payload.mobileNumber && { mobileNumber: payload.mobileNumber }),
+      ...(payload.mobileNumber && {
+        mobileNumber: requireE164Phone(payload.mobileNumber, "mobileNumber"),
+      }),
       ...(payload.businessType && { businessType: payload.businessType }),
       ...(payload.licenseNumber && { licenseNumber: payload.licenseNumber.trim() }),
     },

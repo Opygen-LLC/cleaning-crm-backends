@@ -17,6 +17,7 @@ import { Prisma } from "../../generated/prisma/client";
 import { randomBytes } from "crypto";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
+import { normalizePhoneToE164 } from "../../lib/utils/normalizePhone";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -271,9 +272,13 @@ const validateAndSnapshotAnswers = (
             fieldErrors[path] = `Enter a valid email address for ${field.label}`;
             continue;
         }
-        if (field.type === FormFieldType.PHONE && value.replace(/\D/g, "").length < 6) {
-            fieldErrors[path] = `Enter a valid phone number for ${field.label}`;
-            continue;
+        if (field.type === FormFieldType.PHONE) {
+            const normalizedPhone = normalizePhoneToE164(value);
+            if (!normalizedPhone) {
+                fieldErrors[path] = `Enter a valid phone number including country code for ${field.label}`;
+                continue;
+            }
+            value = normalizedPhone;
         }
         if (field.type === FormFieldType.NUMBER && !Number.isFinite(Number(value))) {
             fieldErrors[path] = `Enter a valid number for ${field.label}`;

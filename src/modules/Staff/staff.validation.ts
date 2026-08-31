@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { WeekDay } from "../../generated/prisma/enums";
+import { e164PhoneSchema, optionalE164PhoneSchema } from "../../lib/validation/phone";
 
 const staffAvailabilitySchema = z.object({
     day: z.enum(WeekDay, "Invalid day of the week"),
@@ -13,7 +14,7 @@ export const createStaffSchema = z.object({
     email: z.string().email("Invalid email address"),
 
     staffRole: z.string().min(1, "Staff role is required"),
-    mobileNumber: z.string(),
+    mobileNumber: e164PhoneSchema(),
     address: z.string().optional(),
 
     hourlyRate: z.number().optional(),
@@ -22,7 +23,7 @@ export const createStaffSchema = z.object({
     specialty: z.array(z.string()).optional(),
 
     emergencyName: z.string().optional(),
-    emergencyMobileNumber: z.string().optional(),
+    emergencyMobileNumber: optionalE164PhoneSchema(),
     adminNote: z.string().optional(),
 
     staffAvailability: z
@@ -34,7 +35,7 @@ export const createStaffSchema = z.object({
 const updateStaffSchema = z
     .object({
         staffRole: z.string().optional(),
-        mobileNumber: z.string().optional(),
+        mobileNumber: optionalE164PhoneSchema(),
         address: z.string().optional(),
     })
     .strict()

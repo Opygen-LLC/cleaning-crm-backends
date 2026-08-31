@@ -2,15 +2,12 @@ import type { NextFunction, Request, Response } from "express";
 import { NODE_ENV } from "../config/ENV";
 import { PublicWebsiteService } from "../modules/Website/publicWebsite.service";
 import { WebsiteHostResolverService } from "../modules/Website/websiteHostResolver.service";
+import { sendStructuredError } from "../shared/sendStructuredError";
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
 const fail = (res: Response, code: string, message: string, statusCode = 403) =>
-  res.status(statusCode).json({
-    success: false,
-    message,
-    error: { code, retryable: false },
-  });
+  sendStructuredError(res, { statusCode, code, message, retryable: false });
 
 const originHost = (req: Request): string | null => {
   const raw = req.get("Origin")?.trim() || req.get("Referer")?.trim();

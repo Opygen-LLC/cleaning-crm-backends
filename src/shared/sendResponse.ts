@@ -1,30 +1,42 @@
 import { Response } from "express";
 
-interface IResponseData<T> {
-    httpStatusCode: number;
-    success: boolean;
-    message: string;
-    data?: T;
-    meta?: {
-        page: number;
-        limit: number;
-        total: number;
-        totalPages: number;
-    };
-    stats?: Record<string, unknown>;
+export interface PaginationMeta {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
 }
 
+export type ResponseMeta = Partial<PaginationMeta> & Record<string, unknown>;
+
+interface IResponseData<T> {
+    httpStatusCode: number;
+    success: true;
+    message: string;
+    data?: T;
+    meta?: ResponseMeta;
+}
+
+/**
+ * Canonical success envelope.
+ *
+ * Keep HTTP-only information (status code) on the transport and return only
+ * success/message/data/meta in the payload. Endpoint-specific aggregates must
+ * live under `data` or `meta`; top-level `stats` is intentionally unsupported.
+ */
 export const sendResponse = <T>(
     res: Response,
     responseData: IResponseData<T>,
 ) => {
-    const { httpStatusCode, success, message, data, meta, stats } = responseData;
+    const { httpStatusCode, success, message, data, meta } = responseData;
 
-    res.status(httpStatusCode).json({
+    const body: Record<string, unknown> = {
         success,
         message,
-        data,
-        meta,
-        ...(stats !== undefined ? { stats } : {}),
-    });
+        data: data ?? null,
+    };
+
+    if (meta !== undefined) body.meta = meta;
+
+    res.status(httpStatusCode).json(body);
 };

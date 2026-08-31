@@ -3,6 +3,7 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { reportsService } from "./reports.service";
 import type { IRequestUser } from "../../types/requestUser.interface";
+import AppError from "../../errorHelper/AppError";
 
 type Period = "7d" | "30d" | "90d" | "12m";
 const VALID_PERIODS: Period[] = ["7d", "30d", "90d", "12m"];
@@ -94,11 +95,15 @@ const exportReport = catchAsync(async (req, res) => {
     const type = req.params.type as ExportType;
 
     if (!VALID_TYPES.includes(type)) {
-        res.status(httpStatus.BAD_REQUEST).json({
-            success: false,
-            message: `Invalid report type. Valid types: ${VALID_TYPES.join(", ")}`,
-        });
-        return;
+        throw new AppError(
+            httpStatus.BAD_REQUEST,
+            `Invalid report type. Valid types: ${VALID_TYPES.join(", ")}`,
+            {
+                code: "VALIDATION_ERROR",
+                retryable: false,
+                fieldErrors: { type: `Choose one of: ${VALID_TYPES.join(", ")}` },
+            },
+        );
     }
 
     const period = parsePeriod(req.query.period);

@@ -25,7 +25,10 @@ const getMe = async (userId: string) => {
         },
     });
     if (!user) {
-        throw new Error("User not found");
+        throw new AppError(status.NOT_FOUND, "User not found", {
+            code: "USER_NOT_FOUND",
+            retryable: false,
+        });
     }
     return user;
 };

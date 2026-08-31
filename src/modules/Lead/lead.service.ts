@@ -10,7 +10,7 @@ import { leadFilterableFields, leadSearchableFields } from "./lead.constant";
 import { LeadStage } from "../../generated/prisma/enums";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { allocateLeadRef } from "./leadRef.service";
-import { normalizePhone } from "../../lib/utils/normalizePhone";
+import { requireE164Phone } from "../../lib/validation/phone";
 
 // ─── Resolve admin profile ────────────────────────────────────────────────────
 
@@ -90,7 +90,7 @@ function serializeLead(
 const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
     const adminProfile = await resolveAdminProfile(user);
     const email = payload.email.trim().toLowerCase();
-    const phone = payload.phone?.trim() ? normalizePhone(payload.phone) : undefined;
+    const phone = payload.phone?.trim() ? requireE164Phone(payload.phone, "phone") : undefined;
 
     const lead = await prisma.$transaction(async (tx) => {
         // Website acquisition and manual CRM entry share this email lock, so
@@ -239,7 +239,7 @@ const updateLead = async (
     const updateData: Prisma.LeadUpdateInput = {
         ...payloadWithoutCatalogId,
         ...(payload.email !== undefined ? { email: payload.email.trim().toLowerCase() } : {}),
-        ...(payload.phone !== undefined ? { phone: payload.phone.trim() ? normalizePhone(payload.phone) : null } : {}),
+        ...(payload.phone !== undefined ? { phone: payload.phone.trim() ? requireE164Phone(payload.phone, "phone") : null } : {}),
     };
     if (service) {
         updateData.serviceCatalog = { connect: { id: service.id } };

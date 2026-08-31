@@ -1,6 +1,6 @@
 import { z } from "zod";
+import { optionalE164PhoneSchema } from "../../lib/validation/phone";
 import { BookingStatus, ServiceType } from "../../generated/prisma/enums";
-import { normalizePhone } from "../../lib/utils/normalizePhone";
 
 // ── Create ────────────────────────────────────────────────────────────────────
 
@@ -13,16 +13,10 @@ const createBookingSchema = z
         // Form submission that hasn't been added as a client yet).
         clientName:    z.string().min(1, "Client name is required").optional(),
         clientEmail:   z.string().email("Invalid email address").optional(),
-        // S6 — accept the same flexible formats the frontend allows
-        // (spaces, dashes, parens, a leading "+"), then normalize to
-        // digits-only (+ leading "+") before it ever reaches the DB, so
-        // "07700 900100" and "(07700) 900-100" are stored identically.
-        clientPhone:   z
-            .string()
-            .min(1, "Client phone is required")
-            .regex(/^[+\d\s\-()]+$/, "Invalid phone number")
-            .transform(normalizePhone)
-            .optional(),
+        // Require an international country code and persist canonical E.164.
+        clientPhone:   optionalE164PhoneSchema(
+            "Enter a valid client phone number including country code",
+        ),
         serviceCatalogId: z.string().uuid("Invalid service catalog ID").optional(),
         serviceType:   z.enum(ServiceType).optional(),
         address:       z.string().min(1, "Address is required"),

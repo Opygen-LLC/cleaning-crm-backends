@@ -105,9 +105,8 @@ const getAllAdminAccounts = catchAsync(async (req, res) => {
         httpStatusCode: status.OK,
         success: true,
         message: "Admin accounts retrieved successfully",
-        meta: result.meta,
+        meta: { ...result.meta, stats: result.stats },
         data: result.data,
-        stats: result.stats,
     });
 });
 
@@ -282,9 +281,8 @@ const getAllSubscriptions = catchAsync(async (req, res) => {
         httpStatusCode: status.OK,
         success: true,
         message: "Subscriptions retrieved successfully",
-        meta: result.meta,
+        meta: { ...result.meta, stats: result.stats },
         data: result.data,
-        stats: result.stats,
     });
 });
 

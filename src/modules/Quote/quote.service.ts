@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
+import { requireE164Phone } from "../../lib/validation/phone";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import {
@@ -175,7 +176,9 @@ const resolveOrCreateClient = async (
             adminId,
             name: payload.clientName.trim(),
             email,
-            phone: payload.clientPhone?.trim() ?? "",
+            phone: payload.clientPhone
+                ? requireE164Phone(payload.clientPhone, "clientPhone")
+                : "",
             addressLine1: payload.address,
             city: "",
             zipcode: "",

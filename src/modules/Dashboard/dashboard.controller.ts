@@ -2,6 +2,7 @@ import status from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { dashboardService } from "./dashboard.service";
+import AppError from "../../errorHelper/AppError";
 
 const getDashboardOverview = catchAsync(async (req, res) => {
     const result = await dashboardService.getDashboardOverview(req.user, req.query);
@@ -27,12 +28,15 @@ const getDashboardRevenueInsight = catchAsync(async (req, res) => {
     const period = (req.query.period as string | undefined) ?? "30d";
     const validPeriods = ["7d", "30d", "90d", "12m"];
     if (!validPeriods.includes(period)) {
-        sendResponse(res, {
-            httpStatusCode: status.BAD_REQUEST,
-            success: false,
-            message: `Invalid period. Must be one of: ${validPeriods.join(", ")}`,
-        });
-        return;
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Invalid period. Must be one of: ${validPeriods.join(", ")}`,
+            {
+                code: "VALIDATION_ERROR",
+                retryable: false,
+                fieldErrors: { period: `Choose one of: ${validPeriods.join(", ")}` },
+            },
+        );
     }
 
     const result = await dashboardService.getDashboardRevenueInsight(req.user, period);
@@ -49,12 +53,15 @@ const getRevenueData = catchAsync(async (req, res) => {
 
     const validPeriods = ["7d", "30d", "90d", "12m"];
     if (!validPeriods.includes(period)) {
-        sendResponse(res, {
-            httpStatusCode: status.BAD_REQUEST,
-            success: false,
-            message: `Invalid period. Must be one of: ${validPeriods.join(", ")}`,
-        });
-        return;
+        throw new AppError(
+            status.BAD_REQUEST,
+            `Invalid period. Must be one of: ${validPeriods.join(", ")}`,
+            {
+                code: "VALIDATION_ERROR",
+                retryable: false,
+                fieldErrors: { period: `Choose one of: ${validPeriods.join(", ")}` },
+            },
+        );
     }
 
     const result = await dashboardService.getRevenuePage(req.user, period);

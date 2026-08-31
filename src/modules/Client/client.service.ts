@@ -13,6 +13,7 @@ import {
     clientSearchableFields,
 } from "./client.constant";
 import { randomUUID } from "crypto";
+import { requireE164Phone } from "../../lib/validation/phone";
 import { serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import {
     buildAddressString,
@@ -54,9 +55,13 @@ const createClient = async (
     // Enforce plan limits before inserting
     await assertWithinLimit(adminId, "client");
 
-    const { notes, servicePreference, email, postcode, zipcode, ...rest } = payload;
+    const { notes, servicePreference, email, phone, postcode, zipcode, ...rest } = payload;
     const canonicalPostcode = postcode ?? zipcode ?? "";
-    const dbAddress = { ...rest, zipcode: canonicalPostcode };
+    const dbAddress = {
+        ...rest,
+        phone: requireE164Phone(phone),
+        zipcode: canonicalPostcode,
+    };
 
     // Best-effort geocode — never blocks client creation on a bad/unmatched
     // address or a provider outage.
@@ -201,11 +206,12 @@ const updateClient = async (
           })
         : {};
 
-    const { postcode, zipcode, ...restPayload } = payload;
+    const { postcode, zipcode, phone, ...restPayload } = payload;
     const updated = await prisma.client.update({
         where: { id },
         data: {
             ...restPayload,
+            ...(phone !== undefined ? { phone: requireE164Phone(phone) } : {}),
             ...(postcode !== undefined || zipcode !== undefined ? { zipcode: postcode ?? zipcode } : {}),
             ...geo,
         },

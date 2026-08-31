@@ -2,6 +2,20 @@ import { z } from "zod";
 import { Currency, ServiceCategory } from "../../generated/prisma/enums";
 import { ONBOARDING_STEPS, SKIPPABLE_ONBOARDING_STEPS } from "./admin.constant";
 import { businessHoursInputSchema, jsonArrayInput, nullableMultipartInput } from "./businessHours";
+import { e164PhoneSchema } from "../../lib/validation/phone";
+
+const businessWebsiteUrlSchema = z
+  .string()
+  .trim()
+  .transform((value) => (/^https?:\/\//i.test(value) ? value : `https://${value}`))
+  .refine((value) => {
+    try {
+      const parsed = new URL(value);
+      return (parsed.protocol === "https:" || parsed.protocol === "http:") && parsed.hostname.includes(".");
+    } catch {
+      return false;
+    }
+  }, "Invalid URL");
 
 export const createAdminSchema = z.object({
   businessName: z.string().min(1, "Business name is required"),
@@ -24,9 +38,9 @@ const updateAdminSchema = z
     businessEmail: nullableMultipartInput(z.string().trim().email().max(320)),
     businessDescription: nullableMultipartInput(z.string().trim().max(1000)),
     businessHours: businessHoursInputSchema,
-    website: nullableMultipartInput(z.string().url()),
+    website: nullableMultipartInput(businessWebsiteUrlSchema),
     currency: z.enum(Currency).optional(),
-    mobileNumber: nullableMultipartInput(z.string().trim().min(3).max(40)),
+    mobileNumber: nullableMultipartInput(e164PhoneSchema()),
 
     address: nullableMultipartInput(z.string().trim().max(300)),
     city: nullableMultipartInput(z.string().trim().min(1).max(120)),

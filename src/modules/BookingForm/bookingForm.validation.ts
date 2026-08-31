@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { e164PhoneSchema } from "../../lib/validation/phone";
 import { FormFieldType, FormSubmissionStatus, ServiceType } from "../../generated/prisma/enums";
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -80,12 +81,7 @@ export const publicBookingSubmissionSchema = z.object({
     timeSlot:    z.string().regex(TIME_RE, "Time must be in HH:MM format"),
     name:        z.string().trim().min(1, "Full name is required").max(120),
     email:       z.string().trim().email("Enter a valid email address").max(254),
-    phone:       z.string().trim()
-        .regex(/^[+\d\s()\-.]{7,40}$/, "Enter a valid phone number")
-        .refine((value) => {
-            const digits = value.replace(/\D/g, "");
-            return digits.length >= 7 && digits.length <= 20;
-        }, "Enter a valid phone number"),
+    phone:       e164PhoneSchema(),
     address:     z.string().trim().min(3, "Service address is required").max(500),
     propertyType: z.enum(["HOUSE", "FLAT", "OFFICE", "COMMERCIAL", "OTHER"]).optional(),
     bedrooms:    z.number().int().min(0).max(50).optional(),

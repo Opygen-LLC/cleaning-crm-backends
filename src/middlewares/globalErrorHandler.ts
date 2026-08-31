@@ -2,7 +2,7 @@ import { NextFunction, Request, Response } from "express";
 import status from "http-status";
 import z from "zod";
 import { randomUUID } from "crypto";
-import { TErrorResponse, TErrorSources, TFieldErrors } from "../interface/error.interface";
+import { TErrorSources, TFieldErrors } from "../interface/error.interface";
 import AppError from "../errorHelper/AppError";
 import { handleZodError } from "../errorHelper/handleZodError";
 import { Prisma } from "../generated/prisma/client";
@@ -26,6 +26,7 @@ import { ErrorMonitor } from "../lib/monitoring/errorMonitor";
 import { isAPIError } from "better-auth/api";
 import { AUTH_ERROR_CODES } from "../modules/Auth/auth.codes";
 import { classifyError, type ErrorKind } from "../errorHelper/errorClassification";
+import { sendStructuredError } from "../shared/sendStructuredError";
 
 const BETTER_AUTH_STATUS_CODES: Record<string, number> = {
     BAD_REQUEST: status.BAD_REQUEST,
@@ -305,19 +306,13 @@ export const globalErrorHandler = async (
         );
     }
 
-    const errorResponse: TErrorResponse = {
+    return sendStructuredError(res, {
         statusCode,
-        success: false,
         code,
         kind: errorKind,
         message,
-        errorSources,
         fieldErrors,
         retryable,
         requestId,
-        error: NODE_ENV === "development" ? err : undefined,
-        stack: NODE_ENV === "development" ? stack : undefined,
-    };
-
-    res.status(statusCode).json(errorResponse);
+    }, req);
 };

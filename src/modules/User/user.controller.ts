@@ -1,4 +1,5 @@
 import status from "http-status";
+import AppError from "../../errorHelper/AppError";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { userService } from "./user.service";
@@ -73,12 +74,11 @@ const updateUser = catchAsync(async (req, res) => {
  */
 const uploadMyAvatar = catchAsync(async (req, res) => {
     if (!req.file) {
-        sendResponse(res, {
-            httpStatusCode: status.BAD_REQUEST,
-            success: false,
-            message: "No file uploaded",
+        throw new AppError(status.BAD_REQUEST, "No file uploaded", {
+            code: "VALIDATION_ERROR",
+            retryable: false,
+            fieldErrors: { avatar: "Choose an image to upload." },
         });
-        return;
     }
 
     const result = await userService.uploadMyAvatar(

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalE164PhoneSchema } from "../../lib/validation/phone";
 import {
     ServiceType,
     FormFieldType,
@@ -92,7 +93,7 @@ const publicSubmissionSchema = publicCalculationBase.extend({
     // derives canonical contact data from semantic form answers when present.
     name:     z.string().trim().max(200).optional(),
     email:    z.string().trim().email("Invalid email").max(254).optional(),
-    phone:    z.string().trim().regex(/^[+\d\s()\-.]{7,40}$/, "Enter a valid phone number").max(40).optional(),
+    phone:    optionalE164PhoneSchema(),
     notes:    z.string().trim().max(3000).optional(),
     answers:  z.record(z.string().trim().min(1).max(100), z.string().trim().max(3000))
         .refine((answers) => Object.keys(answers).length <= 50, "Too many custom field answers")

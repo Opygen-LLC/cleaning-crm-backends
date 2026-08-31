@@ -1,9 +1,10 @@
 import z from "zod";
+import { e164PhoneSchema, optionalE164PhoneSchema } from "../../lib/validation/phone";
 
 const createClientSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email address"),
-  phone: z.string(),
+  phone: e164PhoneSchema(),
   servicePreference: z.string().optional(),
 
   addressLine1: z.string(),
@@ -28,7 +29,7 @@ const createClientSchema = z.object({
 
 const updateClientSchema = z.object({
   name: z.string().min(1, "Name is required").optional(),
-  phone: z.string().optional(),
+  phone: optionalE164PhoneSchema(),
   servicePreference: z.string().optional(),
   status: z.enum(["ACTIVE", "INACTIVE", "BLOCKED"]).optional(),
 

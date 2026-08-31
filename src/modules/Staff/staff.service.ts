@@ -26,6 +26,7 @@ import { geocodeAddressSafely } from "../../lib/utils/geocoding";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { revokeAllSessionsForUser } from "../Auth/sessionSecurity.service";
 import { invalidateRuntimeAuth } from "../../lib/cache/authRuntimeCache";
+import { normalizeOptionalE164Phone, requireE164Phone } from "../../lib/validation/phone";
 
 /**
  * [Phase 2 — location-aware dispatch] Best-effort geocode of a staff
@@ -113,14 +114,16 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser)
                 userId,
                 adminId,
                 staffRole: StaffRole,
-                mobileNumber,
+                mobileNumber: requireE164Phone(mobileNumber, "mobileNumber"),
                 address,
                 ...geo,
                 hourlyRate,
                 startDate: new Date(startDate),
                 specialty,
                 emergencyName,
-                emergencyMobileNumber,
+                emergencyMobileNumber: emergencyMobileNumber
+                    ? requireE164Phone(emergencyMobileNumber, "emergencyMobileNumber")
+                    : undefined,
                 adminNote,
                 staffAvailability: availabilityData.length
                     ? { create: availabilityData }
@@ -490,7 +493,21 @@ const updateMyProfile = async (
     if (!profile)
         throw new AppError(status.NOT_FOUND, "Staff profile not found");
 
-    const { name, ...profileFields } = payload;
+    const { name, ...rawProfileFields } = payload;
+    const profileFields = {
+        ...rawProfileFields,
+        ...(rawProfileFields.mobileNumber !== undefined
+            ? { mobileNumber: requireE164Phone(rawProfileFields.mobileNumber, "mobileNumber") }
+            : {}),
+        ...(rawProfileFields.emergencyMobileNumber !== undefined
+            ? {
+                  emergencyMobileNumber: normalizeOptionalE164Phone(
+                      rawProfileFields.emergencyMobileNumber,
+                      "emergencyMobileNumber",
+                  ),
+              }
+            : {}),
+    };
 
     const geo =
         profileFields.address !== undefined &&

@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { NODE_ENV } from "../config/ENV";
 import { getAuthenticatedOrigins } from "../config/authSecurity";
 import { AUTH_ERROR_CODES } from "../modules/Auth/auth.codes";
+import { sendStructuredError } from "../shared/sendStructuredError";
 
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const AUTH_COOKIE_NAMES = ["accessToken", "refreshToken", "better-auth.session_token"];
@@ -10,15 +11,12 @@ export const CSRF_PROTECTION_VALUE = "1";
 
 const deny = (res: Response, code: string, message: string) => {
     res.locals.authErrorCode = code;
-    return res.status(403).json({
+    return sendStructuredError(res, {
         statusCode: 403,
-        success: false,
         code,
         message,
-        errorSources: [],
         fieldErrors: {},
         retryable: false,
-        requestId: typeof res.locals.requestId === "string" ? res.locals.requestId : undefined,
     });
 };
 

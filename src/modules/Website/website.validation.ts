@@ -1,5 +1,6 @@
 import { WEBSITE_EDITOR_SURFACES } from "./website.interface";
 import { z } from "zod";
+import { optionalE164PhoneSchema } from "../../lib/validation/phone";
 
 const color = z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Use a 6-digit hex color");
 const nullableText = (max: number) => z.string().trim().max(max).nullable();
@@ -141,13 +142,7 @@ const configureWebsiteBooking = z.object({
 const publicContact = z.object({
   name: z.string().trim().min(2, "Name must be at least 2 characters").max(120),
   email: z.string().trim().toLowerCase().email("Invalid email address").max(254),
-  phone: z.string().trim()
-    .regex(/^[+\d\s()\-.]{7,40}$/, "Enter a valid phone number")
-    .refine((value) => {
-      const digits = value.replace(/\D/g, "");
-      return digits.length >= 7 && digits.length <= 20;
-    }, "Enter a valid phone number")
-    .optional(),
+  phone: optionalE164PhoneSchema(),
   message: z.string().trim().min(10, "Please provide a little more detail").max(3000),
   serviceCatalogId: z.string().uuid().optional(),
   companyWebsite: z.string().trim().max(500).optional(),

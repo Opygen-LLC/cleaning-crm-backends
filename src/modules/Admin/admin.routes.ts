@@ -9,6 +9,8 @@ import { checkAuth } from "../../middlewares/checkAuth";
 import { UserRole } from "../../generated/prisma/enums";
 import { multerMemory } from "../../config/multerMemory";
 import { convertHeicToPng } from "../../middlewares/convertHeicToPngMiddleware";
+import AppError from "../../errorHelper/AppError";
+import status from "http-status";
 
 const router = Router();
 
@@ -58,11 +60,11 @@ router.get(
   checkAuth(UserRole.ADMIN),
   (req, res, next) => {
     if (req.query.surface !== "onboarding") {
-      return res.status(400).json({
-        success: false,
-        message: "Unsupported bootstrap surface",
+      return next(new AppError(status.BAD_REQUEST, "Unsupported bootstrap surface", {
         code: "INVALID_BOOTSTRAP_SURFACE",
-      });
+        retryable: false,
+        fieldErrors: { surface: 'Use surface="onboarding".' },
+      }));
     }
     return adminController.getOnboardingBootstrap(req, res, next);
   },

@@ -9,6 +9,7 @@ import { catchAsync }       from "../../shared/catchAsync";
 import { sendResponse }     from "../../shared/sendResponse";
 import { jobNotesService }  from "./job.notes.service";
 import { NoteType }         from "../../generated/prisma/enums";
+import AppError              from "../../errorHelper/AppError";
 
 // ─── Notes ────────────────────────────────────────────────────────────────────
 
@@ -127,11 +128,11 @@ const getAttachments = catchAsync(async (req, res) => {
 const uploadAttachment = catchAsync(async (req, res) => {
     const file = req.file;
     if (!file) {
-        res.status(status.BAD_REQUEST).json({
-            success: false,
-            message: "No file uploaded — use multipart/form-data with field name 'file'",
+        throw new AppError(status.BAD_REQUEST, "No file uploaded", {
+            code: "VALIDATION_ERROR",
+            retryable: false,
+            fieldErrors: { file: "Use multipart/form-data with field name 'file'." },
         });
-        return;
     }
 
     const photoType = req.body?.photoType as "BEFORE" | "AFTER" | "ISSUE" | undefined;

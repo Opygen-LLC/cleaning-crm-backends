@@ -1,4 +1,5 @@
 import z from "zod";
+import { optionalE164PhoneSchema } from "../../lib/validation/phone";
 
 const registerValidation = z
     .object({
@@ -25,11 +26,7 @@ const registerValidation = z
                 "Must include at least one special character",
             ),
         // ── Optional fields from the 2-step wizard ────────────────────────────
-        mobileNumber: z
-            .string()
-            .min(7, "Enter a valid phone number")
-            .max(20, "Phone number is too long")
-            .optional(),
+        mobileNumber: optionalE164PhoneSchema(),
         businessType: z
             .enum(["residential", "commercial", "both"])
             .optional(),

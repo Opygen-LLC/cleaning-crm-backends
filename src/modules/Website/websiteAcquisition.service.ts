@@ -8,7 +8,7 @@ import { bookingFormService } from "../BookingForm/bookingForm.service";
 import { bookingService } from "../Booking/booking.service";
 import { estimateFormService } from "../EstimateForm/estimateForm.service";
 import { allocateLeadRef } from "../Lead/leadRef.service";
-import { normalizePhone } from "../../lib/utils/normalizePhone";
+import { normalizePhoneToE164 } from "../../lib/utils/normalizePhone";
 
 export interface PublicWebsiteContactPayload {
   name: string;
@@ -27,8 +27,7 @@ const normalizeOptional = (value?: string) => value?.trim() || undefined;
 const normalizeOptionalPhone = (value?: string) => {
   const raw = normalizeOptional(value);
   if (!raw) return undefined;
-  const normalized = normalizePhone(raw);
-  return normalized.replace(/\D/g, "").length >= 7 ? normalized : undefined;
+  return normalizePhoneToE164(raw) ?? undefined;
 };
 
 const appendBoundedNote = (existing: string | null, incoming: string) => {

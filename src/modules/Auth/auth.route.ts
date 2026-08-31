@@ -8,6 +8,8 @@ import authValidator from "./auth.validation";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { checkAuthSession } from "../../middlewares/checkAuthSession";
 import { UserRole } from "../../generated/prisma/enums";
+import AppError from "../../errorHelper/AppError";
+import status from "http-status";
 import { sessionController } from "../Session/session.controller";
 import {
     loginRateLimit,
@@ -77,13 +79,13 @@ router.post(
     zodValidate(authValidator.verifyEmailValidation, ValidationProperty.BODY),
     authController.verifyEmail,
 );
-router.get("/resend-otp", (_req, res) => {
+router.get("/resend-otp", (_req, res, next) => {
     res.setHeader("Allow", "POST");
-    return res.status(405).json({
-        success: false,
-        code: "METHOD_NOT_ALLOWED",
-        message: "Verification codes are resent with a POST request. Use the Resend code button on the verification screen.",
-    });
+    return next(new AppError(
+        status.METHOD_NOT_ALLOWED,
+        "Verification codes are resent with a POST request. Use the Resend code button on the verification screen.",
+        { code: "METHOD_NOT_ALLOWED", retryable: false },
+    ));
 });
 
 router.post(

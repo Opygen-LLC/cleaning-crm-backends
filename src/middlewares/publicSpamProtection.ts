@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { TURNSTILE_SECRET_KEY } from "../config/ENV";
 import { traceAsyncOperation } from "../lib/monitoring/requestTrace";
+import { sendStructuredError } from "../shared/sendStructuredError";
 
 const trapFields = ["companyWebsite", "website", "_gotcha", "fax"] as const;
 const MIN_FORM_AGE_MS = 750;
@@ -10,10 +11,11 @@ const MAX_TURNSTILE_TOKEN_LENGTH = 4096;
 type WebsiteSpamAction = "website_booking" | "website_estimate" | "website_contact";
 
 const fail = (res: Response, message = "Invalid public submission") =>
-  res.status(400).json({
-    success: false,
+  sendStructuredError(res, {
+    statusCode: 400,
+    code: "PUBLIC_SPAM_REJECTED",
     message,
-    error: { code: "PUBLIC_SPAM_REJECTED", retryable: false },
+    retryable: false,
   });
 
 const getRequestHostname = (req: Request): string | null => {
@@ -83,10 +85,11 @@ const guard = async (
         return fail(res, "Spam verification failed");
       }
     } catch {
-      return res.status(503).json({
-        success: false,
+      return sendStructuredError(res, {
+        statusCode: 503,
+        code: "SPAM_VERIFICATION_UNAVAILABLE",
         message: "Spam verification is temporarily unavailable. Please try again.",
-        error: { code: "SPAM_VERIFICATION_UNAVAILABLE", retryable: true },
+        retryable: true,
       });
     }
   }

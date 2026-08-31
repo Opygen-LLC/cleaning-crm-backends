@@ -20,6 +20,7 @@ import {
 } from "./booking.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
+import { requireE164Phone } from "../../lib/validation/phone";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
@@ -79,7 +80,7 @@ const resolveOrCreateClient = async (
       adminId,
       name: payload.clientName!.trim(),
       email,
-      phone: payload.clientPhone!.trim(),
+      phone: requireE164Phone(payload.clientPhone!, "clientPhone"),
       addressLine1: payload.address,
       city: "",
       zipcode: "",
@@ -406,7 +407,7 @@ const convertBookingFormSubmissionForAdmin = async (
           adminId,
           name: submission.name.trim(),
           email,
-          phone: submission.phone.trim(),
+          phone: requireE164Phone(submission.phone, "phone"),
           addressLine1: submission.address,
           city: "",
           zipcode: "",

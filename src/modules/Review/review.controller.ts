@@ -41,8 +41,7 @@ const getAllReviews = catchAsync(async (req, res) => {
         success: true,
         message: "Reviews retrieved.",
         data: result.data,
-        meta: result.meta,
-        stats: result.stats as Record<string, unknown>,
+        meta: { ...result.meta, stats: result.stats },
     });
 });
 
