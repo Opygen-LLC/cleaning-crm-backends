@@ -85,7 +85,7 @@ services:
     profiles: ["release"]
     restart: "no"
     env_file:
-      - ${RUNTIME_ENV_FILE:-.env.runtime}
+      - ${RUNTIME_ENV_FILE:-.env}
     environment:
       NODE_ENV: production
       DEPLOYMENT_PROFILE: primary-region
