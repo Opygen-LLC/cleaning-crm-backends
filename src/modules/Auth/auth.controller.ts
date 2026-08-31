@@ -85,7 +85,28 @@ const me = catchAsync(async (req, res) => {
 
 const session = catchAsync(async (req, res) => {
     const sessionToken = req.cookies["better-auth.session_token"];
-    const result = await authService.session(req.user, sessionToken);
+    let result: Awaited<ReturnType<typeof authService.session>>;
+
+    try {
+        result = await authService.session(req.user, sessionToken);
+    } catch (error) {
+        // At this point checkAuthSession has already accepted the access JWT.
+        // A 401/403 from the canonical DB-backed session read therefore means
+        // the persisted session/account itself is no longer usable. Clear the
+        // browser credentials + role hint to prevent auth-route redirect loops.
+        if (
+            error instanceof AppError &&
+            (error.statusCode === httpStatus.UNAUTHORIZED ||
+                error.statusCode === httpStatus.FORBIDDEN)
+        ) {
+            tokenUtils.clearAuthCookies(res);
+        }
+        throw error;
+    }
+
+    // Establish the only browser routing hint from the canonical session read.
+    // This cookie is HttpOnly and is never authorization authority.
+    tokenUtils.setRoleHintCookie(res, result.user.role);
     // The canonical session snapshot is user-specific security state and must
     // never be cached by a CDN/BFF/shared intermediary.
     res.setHeader("Cache-Control", "private, no-store");

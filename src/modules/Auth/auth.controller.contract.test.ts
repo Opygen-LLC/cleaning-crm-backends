@@ -81,6 +81,9 @@ describe("auth HTTP/controller contract",()=>{
         );
         expect(r.headers["cache-control"]).toBe("private, no-store");
         expect(r.headers.vary).toBe("Cookie");
+        expect(r.cookies).toEqual(expect.arrayContaining([
+            expect.objectContaining({name:"user_role",value:"ADMIN",options:expect.objectContaining({httpOnly:true,path:"/"})}),
+        ]));
         expect(r.body).toMatchObject({
             success:true,
             data:{
@@ -102,6 +105,6 @@ describe("auth HTTP/controller contract",()=>{
     it("logout revokes the session and clears all auth cookies",async()=>{
         const r=await call(authController.logout,{cookies:{"better-auth.session_token":"session-secret"}} as never);
         expect(mocks.logout).toHaveBeenCalledWith("session-secret"); expect(r.statusCode).toBe(200);
-        expect(r.cleared.map(c=>c.name)).toEqual(expect.arrayContaining(["accessToken","refreshToken","better-auth.session_token"]));
+        expect(r.cleared.map(c=>c.name)).toEqual(expect.arrayContaining(["accessToken","refreshToken","better-auth.session_token","user_role"]));
     });
 });

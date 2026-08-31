@@ -15,6 +15,7 @@ import {
 const ACCESS_COOKIE_MAX_AGE_MS = 15 * 60 * 1000;
 const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_COOKIE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
+const ROLE_HINT_COOKIE_MAX_AGE_MS = SESSION_COOKIE_MAX_AGE_MS;
 const SECURE_COOKIE = NODE_ENV === "production";
 
 const getAccessToken = (payload: JwtPayload) =>
@@ -75,12 +76,28 @@ const setBetterAuthSessionCookie = (res: Response, token: string) => {
     });
 };
 
+/**
+ * Non-authoritative route hint for Next.js edge routing. It is HttpOnly so the
+ * browser has no JavaScript-readable authentication cookies at all. Backend
+ * authorization never trusts this value; role/tenant access is revalidated
+ * from the signed access token and current database state.
+ */
+const setRoleHintCookie = (res: Response, role: string) => {
+    CookieUtils.setCookie(res, "user_role", role, {
+        httpOnly: true,
+        secure: SECURE_COOKIE,
+        sameSite: "lax",
+        path: "/",
+        maxAge: ROLE_HINT_COOKIE_MAX_AGE_MS,
+    });
+};
+
 const clearAuthCookies = (res: Response) => {
     const host = { httpOnly: true, secure: SECURE_COOKIE, sameSite: "lax" as const, path: "/" };
-    const sharedRole = { ...host, domain: COOKIE_DOMAIN };
 
     CookieUtils.clearCookie(res, "accessToken", host);
     CookieUtils.clearCookie(res, "refreshToken", host);
+    CookieUtils.clearCookie(res, "user_role", host);
 
     // Rollout cleanup: old direct-API/BFF experiments may have left a refresh
     // cookie on one of these paths. Clear them explicitly so there is never a
@@ -88,7 +105,6 @@ const clearAuthCookies = (res: Response) => {
     CookieUtils.clearCookie(res, "refreshToken", { ...host, path: "/api/v1/auth" });
     CookieUtils.clearCookie(res, "refreshToken", { ...host, path: "/backend-api/auth" });
     CookieUtils.clearCookie(res, "better-auth.session_token", host);
-    CookieUtils.clearCookie(res, "user_role", sharedRole);
 
     // Rollout cleanup for the previous JS-readable/cross-site cookie contract.
     for (const name of ["opygen_access_token", "opygen_token"]) {
@@ -102,6 +118,7 @@ const clearAuthCookies = (res: Response) => {
             CookieUtils.clearCookie(res, name, { path: "/", domain: COOKIE_DOMAIN });
         }
         CookieUtils.clearCookie(res, "refreshToken", { path: "/api/v1/auth", domain: COOKIE_DOMAIN });
+        CookieUtils.clearCookie(res, "user_role", { path: "/", domain: COOKIE_DOMAIN });
     }
 };
 
@@ -111,5 +128,6 @@ export const tokenUtils = {
     setAccessTokenCookie,
     setRefreshTokenCookie,
     setBetterAuthSessionCookie,
+    setRoleHintCookie,
     clearAuthCookies,
 };
