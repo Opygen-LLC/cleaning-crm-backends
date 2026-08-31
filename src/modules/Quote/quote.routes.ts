@@ -79,6 +79,14 @@ router.patch(
 
 router.delete("/:id", checkAuth(UserRole.ADMIN), quoteController.deleteQuote);
 
+// ── Canonical client share link ──────────────────────────────────────────────
+
+router.post(
+    "/:id/share",
+    checkAuth(UserRole.ADMIN),
+    quoteController.shareQuote,
+);
+
 // ── Send email ────────────────────────────────────────────────────────────────
 
 router.post(

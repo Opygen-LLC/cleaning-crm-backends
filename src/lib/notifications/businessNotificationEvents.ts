@@ -124,11 +124,11 @@ export const queueStaffAssignedNotifications = async (
   })));
 };
 
-export const queueQuoteSentNotification = async (quoteId: string, occurrence: string) => {
+export const queueQuoteSentNotification = async (quoteId: string, occurrence: string, quoteLink: string) => {
   const quote = await prisma.quote.findUnique({
     where: { id: quoteId },
     select: {
-      id: true, quoteRef: true, publicToken: true, adminId: true, total: true, validUntil: true,
+      id: true, quoteRef: true, adminId: true, total: true, validUntil: true,
       serviceType: true, serviceNameSnapshot: true,
       serviceCatalog: { select: { serviceName: true } },
       client: { select: { name: true, email: true } },
@@ -136,7 +136,6 @@ export const queueQuoteSentNotification = async (quoteId: string, occurrence: st
     },
   });
   if (!quote?.client.email) return { queued: false as const, deliveryId: null };
-  const quoteLink = quote.publicToken ? `${FRONTEND_URL}/quote/${encodeURIComponent(quote.publicToken)}` : "";
   return BusinessNotificationOutbox.enqueue({
     adminId: quote.adminId,
     eventKey: `quote-sent:${quote.id}:${occurrence}`,

@@ -24,10 +24,12 @@ import { nextReference } from "../../lib/utils/referenceNumber";
 import { inferLegacyServiceType, resolveFlexibleServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 import { queueQuoteSentNotification } from "../../lib/notifications/businessNotificationEvents";
+import { TenantPublicUrlService } from "../Website/tenantPublicUrl.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const PUBLIC_QUOTE_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+const WEBSITE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * 32 bytes of cryptographically secure entropy encoded as URL-safe base64.
@@ -79,10 +81,54 @@ const ensurePublicQuoteToken = async (
     );
 };
 
-/**
- * Resolve adminProfile.id from the authenticated user id.
- * Throws 404 when not found.
- */
+const isPublicUrlConfigurationError = (error: unknown): boolean =>
+    error instanceof AppError &&
+    [
+        "WEBSITE_REQUIRED_FOR_PUBLIC_LINK",
+        "WEBSITE_PUBLIC_ORIGIN_UNAVAILABLE",
+    ].includes(error.code ?? "");
+
+const resolveQuoteShareUrlIfAvailable = async (
+    adminId: string,
+    publicToken: string | null,
+): Promise<string | null> => {
+    if (!publicToken) return null;
+    try {
+        return await TenantPublicUrlService.buildRootDocumentUrlForAdmin(
+            adminId,
+            publicToken,
+        );
+    } catch (error) {
+        // Admin quote reads/creation must remain usable if the website address
+        // is temporarily unavailable. The explicit share/send operations below
+        // fail closed before changing quote state, so a client is never handed
+        // a broken URL.
+        if (isPublicUrlConfigurationError(error)) return null;
+        throw error;
+    }
+};
+
+const withQuoteShareUrl = async <T extends { publicToken: string | null }>(
+    adminId: string,
+    quote: T,
+): Promise<T & { shareUrl: string | null }> => ({
+    ...quote,
+    shareUrl: await resolveQuoteShareUrlIfAvailable(adminId, quote.publicToken),
+});
+
+const resolveWebsiteAdminIdForPublicQuote = async (
+    websiteId?: string,
+): Promise<string | null> => {
+    if (!websiteId) return null;
+    if (!WEBSITE_ID_RE.test(websiteId)) throw publicQuoteNotFound();
+
+    const website = await prisma.businessWebsite.findUnique({
+        where: { id: websiteId },
+        select: { adminId: true },
+    });
+    if (!website) throw publicQuoteNotFound();
+    return website.adminId;
+};
 
 /**
  * Compute subtotal, tax and total from line items + taxRate.
@@ -237,7 +283,7 @@ const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
     });
 
     if (payload.templateId) await recordTemplateUsage(payload.templateId);
-    return quote;
+    return withQuoteShareUrl(adminId, quote);
 };
 
 const getAllQuotes = async (queryParams: IQueryParams, user: IRequestUser) => {
@@ -271,10 +317,10 @@ const getQuoteById = async (id: string, user: IRequestUser) => {
     // secure share link is immediately available without a weak DB backfill.
     if (!quote.publicToken) {
         const publicToken = await ensurePublicQuoteToken(quote.id);
-        return { ...quote, publicToken };
+        return withQuoteShareUrl(adminId, { ...quote, publicToken });
     }
 
-    return quote;
+    return withQuoteShareUrl(adminId, quote);
 };
 
 const updateQuote = async (
@@ -391,11 +437,12 @@ const updateQuoteStatus = async (
         data.sentAt = new Date();
     }
 
-    return prisma.quote.update({
+    const updated = await prisma.quote.update({
         where: { id },
         data,
         include: quoteInclude,
     });
+    return withQuoteShareUrl(adminId, updated);
 };
 
 const deleteQuote = async (id: string, user: IRequestUser) => {
@@ -584,11 +631,11 @@ const publicQuoteNotFound = () =>
 const quoteExpiredError = () =>
     new AppError(
         status.GONE,
-        "This quote has expired and can no longer be accepted.",
+        "This quote has expired and can no longer be shared or accepted.",
         { code: "QUOTE_EXPIRED", retryable: false },
     );
 
-const getPublicQuote = async (publicToken: string) => {
+const getPublicQuote = async (publicToken: string, websiteId?: string) => {
     // Reject obviously invalid values before hitting the database. Return 404
     // rather than validation details so the endpoint does not reveal token
     // format or quote existence information.
@@ -596,8 +643,12 @@ const getPublicQuote = async (publicToken: string) => {
         throw publicQuoteNotFound();
     }
 
-    let quote = await prisma.quote.findUnique({
-        where: { publicToken },
+    const websiteAdminId = await resolveWebsiteAdminIdForPublicQuote(websiteId);
+    let quote = await prisma.quote.findFirst({
+        where: {
+            publicToken,
+            ...(websiteAdminId ? { adminId: websiteAdminId } : {}),
+        },
         select: publicQuoteSelect,
     });
 
@@ -623,13 +674,18 @@ const publicQuoteAction = async (
     publicToken: string,
     action: "accept" | "decline",
     note?: string,
+    websiteId?: string,
 ) => {
     if (!PUBLIC_QUOTE_TOKEN_RE.test(publicToken)) {
         throw publicQuoteNotFound();
     }
 
-    const quote = await prisma.quote.findUnique({
-        where: { publicToken },
+    const websiteAdminId = await resolveWebsiteAdminIdForPublicQuote(websiteId);
+    const quote = await prisma.quote.findFirst({
+        where: {
+            publicToken,
+            ...(websiteAdminId ? { adminId: websiteAdminId } : {}),
+        },
         select: {
             id: true,
             quoteRef: true,
@@ -649,7 +705,7 @@ const publicQuoteAction = async (
     // Idempotency: retries/double-clicks of the same action return the current
     // quote instead of surfacing a false error or creating duplicate work.
     if (quote.status === newStatus) {
-        return getPublicQuote(publicToken);
+        return getPublicQuote(publicToken, websiteId);
     }
 
     if (
@@ -707,7 +763,7 @@ const publicQuoteAction = async (
         });
 
         if (!current) throw publicQuoteNotFound();
-        if (current.status === newStatus) return getPublicQuote(publicToken);
+        if (current.status === newStatus) return getPublicQuote(publicToken, websiteId);
         if (
             current.status === QuoteStatus.EXPIRED ||
             now > current.validUntil
@@ -738,8 +794,109 @@ const publicQuoteAction = async (
         relatedId: quote.id,
     }).catch(() => {});
 
-    return getPublicQuote(publicToken);
+    return getPublicQuote(publicToken, websiteId);
 };
+
+// ─── Share lifecycle ──────────────────────────────────────────────────────────
+
+const activateQuoteShareForAdmin = async (
+    id: string,
+    adminId: string,
+    options: { refreshSentAt?: boolean; requireSendable?: boolean } = {},
+) => {
+    // Resolve the public address before mutating quote state. If website/domain
+    // routing is unavailable, a DRAFT stays a DRAFT instead of becoming SENT
+    // with a client link that cannot open.
+    const publicUrl = await TenantPublicUrlService.resolveForAdminId(adminId);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            const shared = await prisma.$transaction(async (tx) => {
+                const existing = await tx.quote.findFirst({
+                    where: { id, adminId },
+                    select: {
+                        id: true,
+                        status: true,
+                        publicToken: true,
+                        sentAt: true,
+                        validUntil: true,
+                    },
+                });
+                if (!existing) throw new AppError(status.NOT_FOUND, "Quote not found");
+
+                const now = new Date();
+                if (
+                    (existing.status === QuoteStatus.DRAFT || existing.status === QuoteStatus.SENT) &&
+                    now > existing.validUntil
+                ) {
+                    throw quoteExpiredError();
+                }
+                if (
+                    options.requireSendable === true &&
+                    (existing.status === QuoteStatus.ACCEPTED ||
+                        existing.status === QuoteStatus.DECLINED ||
+                        existing.status === QuoteStatus.EXPIRED)
+                ) {
+                    throw new AppError(
+                        status.BAD_REQUEST,
+                        `Cannot send a quote that is ${existing.status.toLowerCase()}`,
+                        { code: "QUOTE_NOT_SENDABLE", retryable: false },
+                    );
+                }
+
+                const publicToken = existing.publicToken ?? generatePublicQuoteToken();
+                const shouldSetSentAt =
+                    options.refreshSentAt === true ||
+                    existing.status === QuoteStatus.DRAFT ||
+                    !existing.sentAt;
+
+                return tx.quote.update({
+                    where: { id: existing.id },
+                    data: {
+                        ...(existing.publicToken ? {} : { publicToken }),
+                        ...(existing.status === QuoteStatus.DRAFT
+                            ? { status: QuoteStatus.SENT }
+                            : {}),
+                        ...(shouldSetSentAt ? { sentAt: now } : {}),
+                    },
+                    include: quoteInclude,
+                });
+            });
+
+            if (!shared.publicToken) {
+                throw new AppError(
+                    status.INTERNAL_SERVER_ERROR,
+                    "Could not create a secure quote link. Please try again.",
+                    { code: "QUOTE_TOKEN_GENERATION_FAILED", retryable: true },
+                );
+            }
+
+            return {
+                ...shared,
+                shareUrl: TenantPublicUrlService.buildRootDocumentUrl(
+                    publicUrl,
+                    shared.publicToken,
+                ),
+            };
+        } catch (error) {
+            const prismaCode =
+                typeof error === "object" && error !== null && "code" in error
+                    ? String((error as { code?: unknown }).code ?? "")
+                    : "";
+            if (prismaCode === "P2002") continue;
+            throw error;
+        }
+    }
+
+    throw new AppError(
+        status.INTERNAL_SERVER_ERROR,
+        "Could not create a secure quote link. Please try again.",
+        { code: "QUOTE_TOKEN_GENERATION_FAILED", retryable: true },
+    );
+};
+
+const shareQuote = async (id: string, user: IRequestUser) =>
+    activateQuoteShareForAdmin(id, await getAdminId(user));
 
 // ─── Send quote email ─────────────────────────────────────────────────────────
 
@@ -779,23 +936,13 @@ const sendQuoteEmail = async (id: string, user: IRequestUser) => {
         );
     }
 
-    await ensurePublicQuoteToken(quote.id, quote.publicToken);
-    const sentAt = new Date();
-
-    // Stamp sentAt and advance DRAFT → SENT
-    const updated = await prisma.quote.update({
-        where: { id },
-        data: {
-            sentAt,
-            status:
-                quote.status === QuoteStatus.DRAFT
-                    ? QuoteStatus.SENT
-                    : quote.status,
-        },
-        include: quoteInclude,
+    const updated = await activateQuoteShareForAdmin(id, adminId, {
+        refreshSentAt: true,
+        requireSendable: true,
     });
+    const occurrence = updated.sentAt?.toISOString() ?? new Date().toISOString();
 
-    await queueQuoteSentNotification(updated.id, sentAt.toISOString());
+    await queueQuoteSentNotification(updated.id, occurrence, updated.shareUrl);
     return updated;
 };
 
@@ -1061,6 +1208,7 @@ export const quoteService = {
     convertQuoteToJob,
     getPublicQuote,
     publicQuoteAction,
+    shareQuote,
     sendQuoteEmail,
     getAllQuoteTemplates,
     createQuoteTemplate,

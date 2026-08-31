@@ -15,6 +15,25 @@ import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRat
  */
 const router = Router();
 
+// Canonical tenant-root quote pages pass the website id resolved by the edge
+// proxy. The service binds the token to that tenant before returning commercial
+// data or accepting a client response. Legacy /quote/:token links remain below
+// for rolling-deploy/backward compatibility.
+router.get(
+    "/:token/website/:websiteId",
+    publicSensitiveNoStore,
+    publicReadRateLimit,
+    quoteController.getPublicQuoteForWebsite,
+);
+router.post(
+    "/:token/website/:websiteId/action",
+    publicSensitiveNoStore,
+    publicMutationRateLimit,
+    publicResourceMutationRateLimit,
+    zodValidate(quoteValidation.publicQuoteAction, ValidationProperty.BODY),
+    quoteController.publicQuoteActionForWebsite,
+);
+
 router.get("/:token", publicSensitiveNoStore, publicReadRateLimit, quoteController.getPublicQuote);
 
 router.post(

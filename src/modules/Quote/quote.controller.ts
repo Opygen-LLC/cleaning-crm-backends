@@ -112,6 +112,22 @@ const convertQuoteToBooking = catchAsync(async (req, res) => {
     });
 });
 
+// ── Share lifecycle ──────────────────────────────────────────────────────────
+
+const shareQuote = catchAsync(async (req, res) => {
+    const result = await quoteService.shareQuote(
+        req.params.id as string,
+        req.user,
+    );
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Quote client link activated successfully",
+        data: result,
+    });
+});
+
 // ── Public (unauthenticated) ──────────────────────────────────────────────────
 
 const getPublicQuote = catchAsync(async (req, res) => {
@@ -130,11 +146,47 @@ const getPublicQuote = catchAsync(async (req, res) => {
     });
 });
 
+const getPublicQuoteForWebsite = catchAsync(async (req, res) => {
+    const result = await quoteService.getPublicQuote(
+        req.params.token as string,
+        req.params.websiteId as string,
+    );
+
+    res.set("Cache-Control", "private, no-store, max-age=0");
+    res.set("Pragma", "no-cache");
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Quote retrieved successfully",
+        data: result,
+    });
+});
+
 const publicQuoteAction = catchAsync(async (req, res) => {
     const result = await quoteService.publicQuoteAction(
         req.params.token as string,
         req.body.action,
         req.body.note,
+    );
+
+    res.set("Cache-Control", "private, no-store, max-age=0");
+    res.set("Pragma", "no-cache");
+
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: `Quote ${req.body.action === "accept" ? "accepted" : "declined"} successfully`,
+        data: result,
+    });
+});
+
+const publicQuoteActionForWebsite = catchAsync(async (req, res) => {
+    const result = await quoteService.publicQuoteAction(
+        req.params.token as string,
+        req.body.action,
+        req.body.note,
+        req.params.websiteId as string,
     );
 
     res.set("Cache-Control", "private, no-store, max-age=0");
@@ -240,8 +292,11 @@ export const quoteController = {
     deleteQuote,
     convertQuoteToBooking,
     convertQuoteToJob,
+    shareQuote,
     getPublicQuote,
+    getPublicQuoteForWebsite,
     publicQuoteAction,
+    publicQuoteActionForWebsite,
     sendQuoteEmail,
     getAllQuoteTemplates,
     createQuoteTemplate,
