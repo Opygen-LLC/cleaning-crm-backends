@@ -61,7 +61,7 @@ services:
     ports:
       - "3000:3000"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/readyz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/livez"]
       interval: 15s
       timeout: 10s
       start_period: 30s
