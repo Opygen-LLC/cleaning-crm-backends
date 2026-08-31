@@ -214,11 +214,14 @@ const monitoringTokenAllowed = (req: Request): boolean => {
 };
 
 app.get("/", (_req: Request, res: Response) => {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
   return res.status(200).json({
     success: true,
-    service: "Cleaning CRM Backend API 31 AUG 2:02 AM",
+    service: "Cleaning CRM Backend API 31 AUG 4:57 PM",
     status: "healthy",
     version: APP_VERSION,
+    gitSha: GIT_SHA,
+    buildDate: BUILD_DATE,
   });
 });
 
@@ -310,12 +313,6 @@ app.get("/version", (_req: Request, res: Response) => {
   });
 });
 
-app.get("/", (_req: Request, res: Response) => {
-  res.status(200).json({
-    success: true,
-    message: "Cleaning CRM API is running....",
-  });
-});
 
 app.use("/api/v1", browserOriginGuard, maintenanceModeGate, routes);
 
