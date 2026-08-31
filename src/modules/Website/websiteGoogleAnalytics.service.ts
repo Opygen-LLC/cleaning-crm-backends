@@ -320,7 +320,7 @@ const getReport = async (days: number, user: IRequestUser) => {
   const token = await accessTokenForConnection(connection);
   const authorization = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const dateRanges = [{ startDate: `${days}daysAgo`, endDate: "today" }];
-  const runReport = <T>(body: unknown) => fetchJson<T>(
+  const runReport = <T>(body: Record<string, unknown>) => fetchJson<T>(
     `${DATA_API}/properties/${encodeURIComponent(connection.propertyId!)}:runReport`,
     { method: "POST", headers: authorization, body: JSON.stringify({ dateRanges, ...body }) },
     "GOOGLE_ANALYTICS_REPORT_FAILED",
