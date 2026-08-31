@@ -5,6 +5,7 @@ import { sendResponse } from "../../shared/sendResponse";
 import { tokenUtils } from "../../lib/utils/token";
 import AppError from "../../errorHelper/AppError";
 import { AUTH_ERROR_CODES } from "./auth.codes";
+import { logAuthLoginStage } from "./authLoginDiagnostics";
 
 const setAuthenticatedCookies = (
     res: Parameters<typeof tokenUtils.setAccessTokenCookie>[0],
@@ -26,6 +27,9 @@ const register = catchAsync(async (req, res) => {
 });
 
 const login = catchAsync(async (req, res) => {
+    const startedAt = process.hrtime.bigint();
+    logAuthLoginStage("AUTH_LOGIN_STARTED");
+
     const result = await authService.login(req.body, {
         ipAddress: req.ip,
         userAgent: typeof req.get === "function" ? req.get("user-agent") : undefined,
@@ -38,6 +42,9 @@ const login = catchAsync(async (req, res) => {
         !result.accessToken ||
         !result.refreshToken
     ) {
+        logAuthLoginStage("AUTH_LOGIN_FAILED", {
+            errorCode: AUTH_ERROR_CODES.AUTH_LOGIN_STATE_INCOMPLETE,
+        });
         throw new AppError(
             httpStatus.INTERNAL_SERVER_ERROR,
             "The authenticated session is incomplete.",
@@ -50,6 +57,7 @@ const login = catchAsync(async (req, res) => {
         refreshToken: result.refreshToken,
         sessionToken: result.sessionToken,
     });
+    logAuthLoginStage("AUTH_COOKIES_CREATED");
 
     sendResponse(res, {
         httpStatusCode: httpStatus.OK,
@@ -58,6 +66,10 @@ const login = catchAsync(async (req, res) => {
         // The login response intentionally carries no routing/account state.
         // The browser must confirm GET /auth/session before navigation.
         data: { sessionCreated: true },
+    });
+
+    logAuthLoginStage("AUTH_LOGIN_COMPLETED", {
+        durationMs: Number(process.hrtime.bigint() - startedAt) / 1_000_000,
     });
 });
 

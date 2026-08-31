@@ -56,6 +56,9 @@ bash -lc "$PRODUCTION_BACKUP_CMD"
 echo '[release] deploy production migrations only after backup succeeds'
 bash -lc "$PRODUCTION_MIGRATION_CMD"
 
+echo '[release] verify auth-session hardening schema and drift after migrations'
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:auth-session:verify && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:drift:check )
+
 echo '[release] production data-integrity gate after migrations'
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run data:audit:ci )
 

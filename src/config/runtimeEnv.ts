@@ -13,9 +13,12 @@ const productionEnvSchema = z.object({
   ACCESS_TOKEN_SECRET: secret,
   REFRESH_TOKEN_SECRET: secret,
   BETTER_AUTH_SECRET: secret,
+  ACCESS_TOKEN_EXPIRES_IN: nonEmpty,
+  REFRESH_TOKEN_EXPIRES_IN: nonEmpty,
   BETTER_AUTH_URL: absoluteUrl,
   APP_URL: absoluteUrl,
   FRONTEND_URL: absoluteUrl,
+  AUTH_ALLOWED_ORIGINS: nonEmpty,
   WEBSITE_BASE_DOMAIN: nonEmpty,
   NEXT_REVALIDATE_SECRET: secret,
   NEXT_REVALIDATE_URL: absoluteUrl,
@@ -41,6 +44,19 @@ const productionEnvSchema = z.object({
   const baseDomain = env.WEBSITE_BASE_DOMAIN.toLowerCase().replace(/^\.+|\.+$/g, "");
   if (!baseDomain.includes(".") || baseDomain.includes("/") || baseDomain.includes(":")) {
     ctx.addIssue({ code: "custom", path: ["WEBSITE_BASE_DOMAIN"], message: "must be a hostname, not a URL" });
+  }
+
+  if (env.ACCESS_TOKEN_EXPIRES_IN !== "15m") {
+    ctx.addIssue({ code: "custom", path: ["ACCESS_TOKEN_EXPIRES_IN"], message: "must be exactly 15m in production" });
+  }
+
+  if (!/^\d+(?:ms|s|m|h|d)$/i.test(env.REFRESH_TOKEN_EXPIRES_IN)) {
+    ctx.addIssue({ code: "custom", path: ["REFRESH_TOKEN_EXPIRES_IN"], message: "must be a duration such as 30d" });
+  }
+
+  const authSecrets = [env.ACCESS_TOKEN_SECRET, env.REFRESH_TOKEN_SECRET, env.BETTER_AUTH_SECRET];
+  if (new Set(authSecrets).size !== authSecrets.length) {
+    ctx.addIssue({ code: "custom", path: ["ACCESS_TOKEN_SECRET"], message: "access, refresh and Better Auth secrets must be distinct" });
   }
 
   if (env.WEBSITE_CUSTOM_DOMAINS_ENABLED === "true" && env.WEBSITE_DOMAIN_PROVIDER === "vercel") {

@@ -64,7 +64,8 @@
     "data:audit": "tsx src/scripts/phase1/dataAudit.ts",
     "verify:phase3": "node scripts/verifyPhase3Runtime.mjs",
     "data:audit:ci": "tsx src/scripts/phase1/dataAudit.ts --ci",
-    "data:audit:report": "tsx src/scripts/phase1/dataAudit.ts --report-only"
+    "data:audit:report": "tsx src/scripts/phase1/dataAudit.ts --report-only",
+    "db:auth-session:verify": "node scripts/verifyAuthSessionSchema.mjs"
   },
   "keywords": [],
   "author": "opygen",

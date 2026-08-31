@@ -25,6 +25,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { AUTH_ERROR_CODES } from "./auth.codes";
 import { ACCOUNT_SETUP_STEPS } from "../Admin/admin.constant";
 import logger from "../../lib/logger";
+import { logAuthLoginStage } from "./authLoginDiagnostics";
 import {
     bindRefreshCredentialToSession,
     createRefreshFamilyId,
@@ -180,9 +181,18 @@ const login = async (
     // Better Auth remains the credential/session authority. Its successful
     // sign-in gives us the persisted opaque session token; Phase 5 only binds
     // our rotating refresh credential to that session row.
-    const signIn = await auth.api.signInEmail({
-        body: { email: normalizedEmail, password },
-    });
+    let signIn: Awaited<ReturnType<typeof auth.api.signInEmail>>;
+    try {
+        signIn = await auth.api.signInEmail({
+            body: { email: normalizedEmail, password },
+        });
+    } catch (error) {
+        logAuthLoginStage("AUTH_LOGIN_FAILED", {
+            errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+        throw error;
+    }
+    logAuthLoginStage("AUTH_CREDENTIAL_ACCEPTED");
 
     const sessionToken =
         typeof signIn?.token === "string" && signIn.token.trim()
@@ -190,6 +200,9 @@ const login = async (
             : null;
 
     if (!signIn?.user?.id || !sessionToken) {
+        logAuthLoginStage("AUTH_LOGIN_FAILED", {
+            errorCode: AUTH_ERROR_CODES.AUTH_SESSION_NOT_CREATED,
+        });
         await revokeSessionSilently(sessionToken);
         throw new AppError(
             status.INTERNAL_SERVER_ERROR,
@@ -197,6 +210,8 @@ const login = async (
             { code: AUTH_ERROR_CODES.AUTH_SESSION_NOT_CREATED, retryable: true },
         );
     }
+
+    logAuthLoginStage("AUTH_SESSION_CREATED");
 
     try {
         const signedInUser = signIn.user as typeof signIn.user & {
@@ -226,6 +241,7 @@ const login = async (
             emailVerified: signedInUser.emailVerified,
             staff,
         });
+        logAuthLoginStage("AUTH_ACCOUNT_VALIDATED");
 
         const tokenPayload = {
             userId: signedInUser.id,
@@ -248,6 +264,7 @@ const login = async (
                 { code: AUTH_ERROR_CODES.AUTH_TOKEN_CREATION_FAILED, retryable: true },
             );
         }
+        logAuthLoginStage("AUTH_TOKEN_PAIR_CREATED");
 
         const binding = await bindRefreshCredentialToSession({
             userId: signedInUser.id,
@@ -265,6 +282,7 @@ const login = async (
             );
         }
 
+        logAuthLoginStage("AUTH_REFRESH_BOUND");
         invalidateRuntimeAuth(signedInUser.id);
 
         return {
@@ -280,6 +298,11 @@ const login = async (
             refreshToken,
         };
     } catch (error) {
+        const errorCode = error instanceof AppError ? error.code ?? null : null;
+        logAuthLoginStage("AUTH_LOGIN_FAILED", {
+            errorCode,
+            errorName: error instanceof Error ? error.name : "UnknownError",
+        });
         await revokeSessionSilently(sessionToken);
         throw error;
     }
