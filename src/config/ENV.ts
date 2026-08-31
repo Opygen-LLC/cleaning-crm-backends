@@ -17,8 +17,11 @@ export const DB_POOL_MIN: number = Math.min(
     DB_POOL_MAX,
     Math.max(0, Number(process.env.DB_POOL_MIN) || Math.min(2, DB_POOL_MAX)),
 );
-export const DB_POOL_IDLE_TIMEOUT_MS: number = Math.max(30_000, Number(process.env.DB_POOL_IDLE_TIMEOUT_MS) || 600_000);
-export const DB_POOL_CONNECTION_TIMEOUT_MS: number = Math.max(5_000, Number(process.env.DB_POOL_CONNECTION_TIMEOUT_MS) || 15_000);
+export const DB_POOL_IDLE_TIMEOUT_MS: number = Math.min(30 * 60_000, Math.max(30_000, Number(process.env.DB_POOL_IDLE_TIMEOUT_MS) || 600_000));
+// Fail a new TCP/TLS database connection fast enough that the API/BFF can
+// return a useful 503 before its own upstream timeout expires. This does not
+// limit normal SQL execution time; it only covers establishing a connection.
+export const DB_POOL_CONNECTION_TIMEOUT_MS: number = Math.min(30_000, Math.max(1_000, Number(process.env.DB_POOL_CONNECTION_TIMEOUT_MS) || 8_000));
 
 // Logs any query slower than this many ms via the Phase 1.3 slow-query
 // logger in src/lib/prisma/prisma.ts. Defaults to 300ms.

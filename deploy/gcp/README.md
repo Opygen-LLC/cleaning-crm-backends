@@ -44,22 +44,29 @@ Never commit `.env.runtime`. Load it on the VM using:
 # 1. Load/refresh runtime secrets
 ./scripts/gcp/load-secrets.sh
 
-# 2. Build and run the one-shot migration before application rollout
+# 2. Verify that THIS VM can resolve and connect to PostgreSQL before rollout
+node --env-file=.env.runtime scripts/dbConnectivityCheck.mjs
+
+# 3. Build and run the one-shot migration before application rollout
 docker compose --env-file .env.runtime --profile release build migrate
 docker compose --env-file .env.runtime --profile release run --rm migrate
 
-# 3. First installation only (or when an explicit bootstrap is required)
+# 4. First installation only (or when an explicit bootstrap is required)
 docker compose --env-file .env.runtime --profile bootstrap run --rm bootstrap
 
-# 4. Run isolated long-lived processes
+# 5. Run isolated long-lived processes
 docker compose --env-file .env.runtime up -d --build redis api worker scheduler caddy
 
-# 5. Verify readiness
+# 6. Verify readiness
 curl -fsS https://api.opygen.com/livez
 curl -fsS https://api.opygen.com/readyz
 ```
 
 The API container never runs migrations, seeds, cron schedules, or the email outbox worker. Worker/scheduler roles fail startup if launched with the wrong `PROCESS_ROLE`.
+The compose services load `${RUNTIME_ENV_FILE:-.env.runtime}` directly. This is intentional: `docker compose --env-file .env.runtime` controls Compose interpolation, while the service `env_file` controls which variables (including `DATABASE_URL`) reach the running container. Keeping both on `.env.runtime` prevents a stale `.env` from silently supplying an old database host.
+
+If `dbConnectivityCheck.mjs` reports `ETIMEDOUT`, `EHOSTUNREACH` or `ENETUNREACH`, fix the database provider/VPC firewall or IP allowlist before deploying. If it reports `ENOTFOUND`, fix the hostname in `DATABASE_URL`; if it reports `ECONNREFUSED`, verify the database is running and the URL uses the provider's correct PostgreSQL/pooler port.
+
 
 ## Credential rotation
 

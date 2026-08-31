@@ -26,12 +26,30 @@ const connectionString = DATABASE_URL;
 const pool = new pg.Pool({
     connectionString,
     max: DB_POOL_MAX,
-    min: 0,
-    idleTimeoutMillis: 10_000,
-    connectionTimeoutMillis: Math.max(DB_POOL_CONNECTION_TIMEOUT_MS, 30_000),
+    min: DB_POOL_MIN,
+    idleTimeoutMillis: DB_POOL_IDLE_TIMEOUT_MS,
+    connectionTimeoutMillis: DB_POOL_CONNECTION_TIMEOUT_MS,
     keepAlive: true,
     keepAliveInitialDelayMillis: 5_000,
-    ssl: connectionString.includes("neon.tech") ? { rejectUnauthorized: false } : undefined,
+});
+
+const safeDriverCode = (error: unknown): string | undefined => {
+    if (!error || typeof error !== "object") return undefined;
+    const code = (error as { code?: unknown }).code;
+    return typeof code === "string" && code.trim() ? code.trim().toUpperCase() : undefined;
+};
+
+pool.on("error", (error) => {
+    // Never log DATABASE_URL or driver messages here: both can contain host or
+    // credential details. The code + pool counters are enough to diagnose the
+    // common network/provider failures while keeping production logs safe.
+    logger.error("database_pool_error", {
+        event: "database_pool_error",
+        code: safeDriverCode(error) ?? "UNKNOWN",
+        total: pool.totalCount,
+        idle: pool.idleCount,
+        waiting: pool.waitingCount,
+    });
 });
 
 const adapter = new PrismaPg(pool);
@@ -94,5 +112,32 @@ prisma.$on("query", (e: { query: string; params: string; duration: number }) => 
         }
     }
 });
+
+export const getDatabasePoolSnapshot = () => ({
+    configuredMin: DB_POOL_MIN,
+    configuredMax: DB_POOL_MAX,
+    idleTimeoutMs: DB_POOL_IDLE_TIMEOUT_MS,
+    connectionTimeoutMs: DB_POOL_CONNECTION_TIMEOUT_MS,
+    total: pool.totalCount,
+    idle: pool.idleCount,
+    waiting: pool.waitingCount,
+});
+
+export const probeDatabaseConnection = async () => {
+    const started = process.hrtime.bigint();
+    try {
+        await pool.query("SELECT 1");
+        return {
+            ok: true as const,
+            latencyMs: Math.round((Number(process.hrtime.bigint() - started) / 1_000_000) * 10) / 10,
+        };
+    } catch (error) {
+        return {
+            ok: false as const,
+            latencyMs: Math.round((Number(process.hrtime.bigint() - started) / 1_000_000) * 10) / 10,
+            errorCode: safeDriverCode(error) ?? "DATABASE_CONNECTION_FAILED",
+        };
+    }
+};
 
 export { prisma };

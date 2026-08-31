@@ -33,6 +33,7 @@
     "db:migrate:dev": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:migrate:status": "prisma migrate status",
+    "db:connectivity:check": "node scripts/dbConnectivityCheck.mjs",
     "db:migrate:preflight": "node scripts/phase2MigrationPreflight.mjs",
     "db:drift:check": "node scripts/phase2DriftCheck.mjs",
     "db:baseline:capture": "node scripts/captureProductionSchemaBaseline.mjs",

@@ -12,7 +12,8 @@ for (const [rel, markers] of Object.entries({
   'src/middlewares/logger.middleware.ts': ['request_storm_detected', 'endpoint_query_budget_exceeded', 'X-DB-Query-Count'],
   'src/errorHelper/errorClassification.ts': ['AUTH_BOOTSTRAP', 'TENANT_INVARIANT', 'LIFECYCLE_CONFLICT'],
   'src/lib/utils/resolveAdminId.ts': ['TENANT_CONTEXT_RESOLUTION_FAILED'],
-  'src/scripts/phase1/dataAudit.ts': ['--ci', 'DANGLING_PRIMARY_BOOKING_FORM', 'SUBSCRIPTION_WITHOUT_SUBSCRIPTION_PLAN'],
+  'src/scripts/phase1/dataAudit.ts': ['--ci', 'runIntegrityChecks'],
+  'src/scripts/integrity/integrityChecks.ts': ['ORPHANED_PRIMARY_BOOKING_FORM', 'SUBSCRIPTION_PLAN_REFERENCE_INVALID'],
   'src/contracts/endpointContract.ts': ['Auth', 'Notifications', 'Website Studio', 'Super Admin', 'TErrorResponse'],
   'src/lib/utils/resolveAdminId.tenantIsolation.test.ts': ['Admin A', 'Admin B', 'Staff A', 'Staff B', 'Super Admin'],
 })) for (const marker of markers) requireMarker(rel, marker);

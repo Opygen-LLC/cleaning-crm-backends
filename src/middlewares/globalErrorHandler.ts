@@ -10,6 +10,8 @@ import { NODE_ENV, RELEASE_VERSION } from "../config/ENV";
 import {
     handlePrismaClientKnownRequestError,
     handlePrismaClientUnknownError,
+    handleDatabaseConnectivityError,
+    isDatabaseConnectivityError,
     handlePrismaClientValidationError,
     handlerPrismaClientInitializationError,
     handlerPrismaClientRustPanicError,
@@ -155,7 +157,16 @@ export const globalErrorHandler = async (
     let kind: ErrorKind | undefined;
     let stack: string | undefined;
 
-    if (isAPIError(err)) {
+    if (isDatabaseConnectivityError(err)) {
+        const simplified = handleDatabaseConnectivityError(err);
+        statusCode = simplified.statusCode ?? status.SERVICE_UNAVAILABLE;
+        code = simplified.code ?? "DATABASE_UNAVAILABLE";
+        message = simplified.message;
+        errorSources = simplified.errorSources;
+        fieldErrors = simplified.fieldErrors ?? {};
+        retryable = simplified.retryable ?? true;
+        stack = err instanceof Error ? err.stack : undefined;
+    } else if (isAPIError(err)) {
         const simplified = parseBetterAuthError(err);
         statusCode = simplified.statusCode;
         code = simplified.code;

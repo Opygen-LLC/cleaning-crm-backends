@@ -3,6 +3,90 @@ import { TErrorResponse, TErrorSources } from "../interface/error.interface";
 import { Prisma } from "../generated/prisma/client";
 import { buildFieldErrors, getErrorCodeFromStatus, isRetryableStatus } from "./errorContract";
 
+
+const DATABASE_CONNECTIVITY_CODES = new Set([
+    "ETIMEDOUT",
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ENETUNREACH",
+    "EHOSTUNREACH",
+    "ENOTFOUND",
+    "EAI_AGAIN",
+    "EPIPE",
+    // PostgreSQL SQLSTATE class 08 = connection exception.
+    "08000",
+    "08001",
+    "08003",
+    "08004",
+    "08006",
+    "08007",
+    "08P01",
+    // Server shutdown / cannot accept connections now / too many connections.
+    "57P01",
+    "57P02",
+    "57P03",
+    "53300",
+]);
+
+const DATABASE_CONNECTIVITY_MESSAGE_PATTERNS = [
+    /can't reach database server/i,
+    /connection terminated unexpectedly/i,
+    /connection timeout/i,
+    /connect etimedout/i,
+    /failed to connect/i,
+    /server closed the connection unexpectedly/i,
+];
+
+const collectErrorSignals = (error: unknown, depth = 0, seen = new Set<unknown>()): string[] => {
+    if (depth > 5 || error == null || seen.has(error)) return [];
+    seen.add(error);
+
+    if (typeof error === "string") return [error];
+    if (typeof error !== "object") return [];
+
+    const record = error as {
+        code?: unknown;
+        message?: unknown;
+        cause?: unknown;
+        error?: unknown;
+        originalError?: unknown;
+        errors?: unknown;
+    };
+
+    const signals: string[] = [];
+    if (typeof record.code === "string") signals.push(record.code);
+    if (typeof record.message === "string") signals.push(record.message);
+    for (const nested of [record.cause, record.error, record.originalError]) {
+        signals.push(...collectErrorSignals(nested, depth + 1, seen));
+    }
+    if (Array.isArray(record.errors)) {
+        for (const nested of record.errors) signals.push(...collectErrorSignals(nested, depth + 1, seen));
+    }
+    return signals;
+};
+
+export const isDatabaseConnectivityError = (error: unknown): boolean => {
+    if (error instanceof Prisma.PrismaClientInitializationError) return true;
+
+    const signals = collectErrorSignals(error);
+    return signals.some((signal) => {
+        const normalized = signal.trim().toUpperCase();
+        if (DATABASE_CONNECTIVITY_CODES.has(normalized)) return true;
+        return DATABASE_CONNECTIVITY_MESSAGE_PATTERNS.some((pattern) => pattern.test(signal));
+    });
+};
+
+export const handleDatabaseConnectivityError = (_error: unknown): TErrorResponse => ({
+    success: false,
+    statusCode: status.SERVICE_UNAVAILABLE,
+    code: "DATABASE_UNAVAILABLE",
+    message: "The database is temporarily unavailable. Please try again shortly.",
+    // Do not leak ETIMEDOUT/host/driver details into form field errors.
+    errorSources: [],
+    fieldErrors: {},
+    retryable: true,
+});
+
 /**
  * Database/authentication/connectivity failures are server infrastructure
  * problems. They must never be returned as HTTP 401, otherwise the frontend
