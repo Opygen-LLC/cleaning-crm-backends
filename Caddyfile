@@ -49,6 +49,11 @@ http://34.131.56.92 {
     import api_proxy
 }
 
+api-3000.faysaldev.com {
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    import api_proxy
+}
+
 # Preferred production endpoint. Once api.opygen.com points to 34.131.56.92,
 # Caddy automatically provisions TLS and the BFF can switch to HTTPS upstream.
 {$API_DOMAIN:api.opygen.com} {
