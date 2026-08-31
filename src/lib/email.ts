@@ -16,7 +16,12 @@ import { prisma } from "./prisma/prisma";
 import logger from "./logger";
 
 const portNumber = Number(SMTP_PORT) || 587;
-const isSecure = SMTP_SECURE !== undefined ? SMTP_SECURE === "true" : portNumber === 465;
+const configuredSecure = SMTP_SECURE !== undefined ? SMTP_SECURE === "true" : portNumber === 465;
+// SMTP submission port 587 uses STARTTLS (`secure: false` in Nodemailer),
+// while port 465 uses implicit TLS. Normalize the two standard ports so a
+// stale SMTP_SECURE env value cannot silently break OTP delivery. Custom ports
+// continue to honor the explicit SMTP_SECURE setting.
+const isSecure = portNumber === 465 ? true : portNumber === 587 ? false : configuredSecure;
 const normalizedHost = (SMTP_HOST || "").trim().toLowerCase();
 
 // Google displays app passwords in groups separated by spaces. The actual
@@ -82,6 +87,11 @@ export const transporter = nodemailer.createTransport({
 
 export const verifyEmailTransport = async () => {
     assertSmtpConfiguration();
+    if (SMTP_SECURE !== undefined && configuredSecure !== isSecure) {
+        logger.warn(
+            `SMTP_SECURE=${SMTP_SECURE} is incompatible with standard submission port ${portNumber}; using secure=${String(isSecure)}.`,
+        );
+    }
     try {
         await transporter.verify();
         logger.info(

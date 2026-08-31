@@ -41,7 +41,9 @@ vi.mock("./sessionSecurity.service", () => ({
   revokeAllSessionsForUser: vi.fn(),
   revokeOtherSessionsForUser: vi.fn(),
   revokeSessionByToken: vi.fn(),
+  revokeSessionByTokenWithOwner: vi.fn(),
 }));
+vi.mock("../../middlewares/privateResponseCache", () => ({ invalidatePrivateResponseCacheForUser: vi.fn() }));
 vi.mock("../../lib/cache/authRuntimeCache", () => ({
   invalidateRuntimeAuth: mocks.invalidateRuntimeAuth,
   invalidateRuntimeSessionValidities: mocks.invalidateRuntimeSessionValidities,

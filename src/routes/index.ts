@@ -7,7 +7,6 @@ import { clientRoutes } from "../modules/Client/client.routes";
 import { serviceCatalogRoutes } from "../modules/ServiceCatalog/serviceCatalog.routes";
 import { invoiceRoutes } from "../modules/Invoice/invoice.routes";
 import { expenseRoutes } from "../modules/Expense/expense.routes";
-import { sessionRoutes } from "../modules/Session/session.routes";
 import { subscriptionPlanRoutes } from "../modules/SubscriptionPlan/subscriptionPlan.routes";
 import { subscriptionRoutes } from "../modules/Subscription/subscription.routes";
 import { notificationRoutes } from "../modules/Settings/notification.routes";
@@ -43,7 +42,6 @@ const router = Router();
 const openRoutes: { path: string; route: Router }[] = [
     { path: "/auth",            route: authRoutes },
     { path: "/user",            route: userRoutes },
-    { path: "/session",         route: sessionRoutes },
     { path: "/subscription",    route: subscriptionRoutes },
     { path: "/subscription-plan", route: subscriptionPlanRoutes },
     { path: "/booking-form",    route: bookingFormRoutes },

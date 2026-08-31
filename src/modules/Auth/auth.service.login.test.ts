@@ -12,8 +12,11 @@ const mocks = vi.hoisted(() => ({
   bindRefreshCredentialToSession: vi.fn(),
   createRefreshFamilyId: vi.fn(),
   revokeSessionByToken: vi.fn(),
+  revokeSessionByTokenWithOwner: vi.fn(),
   invalidateRuntimeAuth: vi.fn(),
   invalidateRuntimeSessionValidity: vi.fn(),
+  enqueueEmailVerification: vi.fn(),
+  invalidatePrivateResponseCacheForUser: vi.fn(),
 }));
 
 vi.mock("../../lib/prisma/prisma", () => ({
@@ -31,7 +34,7 @@ vi.mock("../../config/ENV", () => ({ REFRESH_TOKEN_SECRET: "test-refresh-secret"
 vi.mock("./accountProvisioning.service", () => ({ AccountProvisioningService: { provisionRegisteredAdmin: mocks.provisionRegisteredAdmin } }));
 vi.mock("./accountIntegrity.service", () => ({ AccountIntegrityService: { assertAdminReadyForActivation: vi.fn() } }));
 vi.mock("../../lib/utils/platformConfig", () => ({ getPlatformConfig: mocks.getPlatformConfig }));
-vi.mock("../../lib/outbox/authEmailOutbox", () => ({ AuthEmailOutbox: { enqueueEmailVerification: vi.fn() } }));
+vi.mock("../../lib/outbox/authEmailOutbox", () => ({ AuthEmailOutbox: { enqueueEmailVerification: mocks.enqueueEmailVerification } }));
 vi.mock("./sessionSecurity.service", () => ({
   bindRefreshCredentialToSession: mocks.bindRefreshCredentialToSession,
   createRefreshFamilyId: mocks.createRefreshFamilyId,
@@ -39,11 +42,15 @@ vi.mock("./sessionSecurity.service", () => ({
   revokeAllSessionsForUser: vi.fn(),
   revokeOtherSessionsForUser: vi.fn(),
   revokeSessionByToken: mocks.revokeSessionByToken,
+  revokeSessionByTokenWithOwner: mocks.revokeSessionByTokenWithOwner,
 }));
 vi.mock("../../lib/cache/authRuntimeCache", () => ({
   invalidateRuntimeAuth: mocks.invalidateRuntimeAuth,
   invalidateRuntimeSessionValidities: vi.fn(),
   invalidateRuntimeSessionValidity: mocks.invalidateRuntimeSessionValidity,
+}));
+vi.mock("../../middlewares/privateResponseCache", () => ({
+  invalidatePrivateResponseCacheForUser: mocks.invalidatePrivateResponseCacheForUser,
 }));
 
 import authService from "./auth.service";
@@ -68,6 +75,8 @@ beforeEach(() => {
   mocks.bindRefreshCredentialToSession.mockResolvedValue({ bound: true, revokedTokens: [] });
   mocks.revokeSessionByToken.mockResolvedValue(true);
   mocks.signOut.mockResolvedValue({ success: true });
+  mocks.revokeSessionByTokenWithOwner.mockResolvedValue({ revoked: true, userId: "user-1" });
+  mocks.enqueueEmailVerification.mockResolvedValue({ id: "outbox-1" });
   mocks.getPlatformConfig.mockResolvedValue({ registrationOpen: true, defaultTrialDays: 14 });
   mocks.provisionRegisteredAdmin.mockResolvedValue({ userId: "user-1", reservedSubdomain: "jamie-cleaning" });
 });
@@ -107,6 +116,31 @@ describe("login Better Auth + rotating refresh contract", () => {
       retryable: true,
     });
     expect(mocks.bindRefreshCredentialToSession).not.toHaveBeenCalled();
+  });
+
+  it("queues verification through the durable outbox when valid credentials belong to an unverified account", async () => {
+    mocks.signInEmail.mockRejectedValue({
+      status: "FORBIDDEN",
+      body: { code: "EMAIL_NOT_VERIFIED", message: "Email not verified" },
+    });
+    mocks.userFindUnique.mockResolvedValue({
+      id: "user-1",
+      email: "jamie@example.com",
+      emailVerified: false,
+    });
+
+    await expect(
+      authService.login({ email: "JAMIE@example.com", password: "correct-password" }),
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      code: "EMAIL_NOT_VERIFIED",
+      retryable: false,
+    });
+
+    expect(mocks.enqueueEmailVerification).toHaveBeenCalledWith(
+      { userId: "user-1", email: "jamie@example.com" },
+      { dedupeKey: expect.stringMatching(/^login-email-verification:user-1:/) },
+    );
   });
 
   it("revokes a newly-created Better Auth session when the account is suspended", async () => {
@@ -151,12 +185,12 @@ describe("complete auth lifecycle service regression", () => {
     expect(result.id).toBe("user-1");
   });
 
-  it("logout remains idempotent and invalidates the runtime session cache", async () => {
-    await expect(authService.logout("session-token")).resolves.toEqual({ success: true });
-    expect(mocks.signOut).toHaveBeenCalledOnce();
-    expect(mocks.invalidateRuntimeSessionValidity).toHaveBeenCalledWith("session-token");
-    mocks.signOut.mockClear();
-    await expect(authService.logout()).resolves.toEqual({ success: true });
-    expect(mocks.signOut).not.toHaveBeenCalled();
+  it("logout remains idempotent, revokes the session, and clears user-scoped caches", async () => {
+    await expect(authService.logout("session-token")).resolves.toEqual({ success: true, revoked: true });
+    expect(mocks.revokeSessionByTokenWithOwner).toHaveBeenCalledWith("session-token");
+    expect(mocks.invalidateRuntimeAuth).toHaveBeenCalledWith("user-1");
+    expect(mocks.invalidatePrivateResponseCacheForUser).toHaveBeenCalledWith("user-1");
+
+    await expect(authService.logout()).resolves.toEqual({ success: true, revoked: false });
   });
 });

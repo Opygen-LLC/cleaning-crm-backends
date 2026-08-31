@@ -106,19 +106,36 @@ export function invalidatePrivateResponseCache(tenantId: string): void {
   });
 }
 
+export async function invalidatePrivateResponseCacheForUser(userId: string): Promise<void> {
+  if (!userId || userId === "anonymous") return;
+  try {
+    await deleteIndexedResponses(userIndexKey(userId));
+  } catch (error) {
+    // Cache cleanup must never make logout fail. The short-lived cache entries
+    // remain isolated by user id and expire naturally if Redis is unavailable.
+    logger.warn(
+      `[CACHE] User response cache invalidation skipped: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 function persistCacheEntry(
   tenantId: string,
+  userId: string,
   key: string,
   ttlSeconds: number,
   entry: CachedResponse,
 ): void {
   const indexKey = cacheIndexKey(tenantId);
+  const perUserIndexKey = userIndexKey(userId);
   const indexTtl = Math.max(MIN_INDEX_TTL_SECONDS, ttlSeconds * 2);
 
   const writes: Promise<unknown>[] = [
     redis.setex(key, ttlSeconds, JSON.stringify(entry)),
     redis.sadd(indexKey, key),
     redis.expire(indexKey, indexTtl),
+    redis.sadd(perUserIndexKey, key),
+    redis.expire(perUserIndexKey, indexTtl),
   ];
 
   // Best-effort cache write. These commands are independent of request
@@ -195,7 +212,7 @@ export async function privateResponseCache(
         statusCode: res.statusCode,
       };
       res.setHeader("ETag", etag);
-      persistCacheEntry(tenantId, key, ttlSeconds, entry);
+      persistCacheEntry(tenantId, userId, key, ttlSeconds, entry);
     }
 
     return originalSend(body);

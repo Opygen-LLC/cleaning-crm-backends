@@ -19,6 +19,13 @@ router.get(
     userController.getMe,
 );
 
+router.patch(
+    "/me",
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    zodValidate(userValidation.updateUser, ValidationProperty.BODY),
+    userController.updateMe,
+);
+
 /**
  * POST /user/me/avatar
  * Multipart upload (field: "avatar") → Cloudinary → user.image updated.
@@ -46,8 +53,6 @@ router.get(
 router.patch(
     "/:id",
     checkAuth(UserRole.ADMIN, UserRole.STAFF, UserRole.SUPER_ADMIN),
-    multerMemory.single("image"),
-    convertHeicToPng,
     zodValidate(userValidation.updateUser, ValidationProperty.BODY),
     userController.updateUser,
 );

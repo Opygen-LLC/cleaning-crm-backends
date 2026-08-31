@@ -33,9 +33,11 @@ import {
     revokeAllSessionsForUser,
     revokeOtherSessionsForUser,
     revokeSessionByToken,
+    revokeSessionByTokenWithOwner,
     type SessionRequestMetadata,
 } from "./sessionSecurity.service";
 import { invalidateRuntimeAuth, invalidateRuntimeSessionValidities, invalidateRuntimeSessionValidity } from "../../lib/cache/authRuntimeCache";
+import { invalidatePrivateResponseCacheForUser } from "../../middlewares/privateResponseCache";
 
 //? Max sessions per user
 const MAX_SESSIONS = 3;
@@ -44,6 +46,40 @@ const BETTER_AUTH_SESSION_TTL_MS = 60 * 24 * 60 * 60 * 1000;
 const revokeSessionSilently = async (sessionToken?: string | null): Promise<void> => {
     if (!sessionToken?.trim()) return;
     await revokeSessionByToken(sessionToken).catch(() => undefined);
+};
+
+const getBetterAuthErrorCode = (error: unknown): string => {
+    if (!error || typeof error !== "object") return "";
+    const value = error as { code?: unknown; body?: { code?: unknown } };
+    const raw = typeof value.body?.code === "string"
+        ? value.body.code
+        : typeof value.code === "string"
+            ? value.code
+            : "";
+    return raw.trim().toUpperCase();
+};
+
+const verificationQueueDedupeKey = (source: "login" | "resend", userId: string): string => {
+    // Rate limits are the primary abuse control. The 30-second bucket prevents
+    // double-clicks/retries from queuing multiple OTP jobs inside one window.
+    const bucket = Math.floor(Date.now() / 30_000);
+    return `${source}-email-verification:${userId}:${bucket}`;
+};
+
+const queueVerificationForUnverifiedLogin = async (email: string): Promise<void> => {
+    const user = await prisma.user.findUnique({
+        where: { email },
+        select: { id: true, email: true, emailVerified: true },
+    });
+
+    // Better Auth only reports EMAIL_NOT_VERIFIED after validating credentials,
+    // but keep this check defensive and enumeration-safe.
+    if (!user || user.emailVerified) return;
+
+    await AuthEmailOutbox.enqueueEmailVerification(
+        { userId: user.id, email: user.email },
+        { dedupeKey: verificationQueueDedupeKey("login", user.id) },
+    );
 };
 
 const assertAccountCanUseAuthenticatedApp = (user: {
@@ -187,6 +223,19 @@ const login = async (
             body: { email: normalizedEmail, password },
         });
     } catch (error) {
+        const authCode = getBetterAuthErrorCode(error);
+        if (authCode === AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED) {
+            await queueVerificationForUnverifiedLogin(normalizedEmail);
+            logAuthLoginStage("AUTH_LOGIN_FAILED", {
+                errorCode: AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED,
+            });
+            throw new AppError(
+                status.FORBIDDEN,
+                "Please verify your email before signing in. A new verification code has been queued.",
+                { code: AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED, retryable: false },
+            );
+        }
+
         logAuthLoginStage("AUTH_LOGIN_FAILED", {
             errorName: error instanceof Error ? error.name : "UnknownError",
         });
@@ -737,10 +786,13 @@ const resendOtp = async (email: string) => {
     // whether the account exists/already verified or a new email job was queued.
     if (!user || user.emailVerified) return;
 
-    await AuthEmailOutbox.enqueueEmailVerification({
-        userId: user.id,
-        email: user.email,
-    });
+    await AuthEmailOutbox.enqueueEmailVerification(
+        {
+            userId: user.id,
+            email: user.email,
+        },
+        { dedupeKey: verificationQueueDedupeKey("resend", user.id) },
+    );
 };
 
 const forgotPassword = async (email: string) => {
@@ -898,21 +950,19 @@ const changePassword = async (
 };
 
 const logout = async (sessionToken?: string) => {
-    // Logout is idempotent, but server-side revocation must be authoritative.
-    // If Better Auth signOut cannot find an already-removed row, the direct
-    // delete remains a safe no-op and clears any cached session-validity key.
-    if (!sessionToken) return { success: true };
+    // Logout is intentionally a short, database-authoritative path. Better Auth
+    // sessions are persisted in the same Session table, so deleting the row is
+    // sufficient and avoids waiting on a second sign-out abstraction.
+    if (!sessionToken?.trim()) return { success: true, revoked: false };
 
-    try {
-        await auth.api.signOut({
-            headers: new Headers({ Authorization: `Bearer ${sessionToken}` }),
-        });
-    } catch {
-        await revokeSessionByToken(sessionToken);
-    } finally {
-        await invalidateRuntimeSessionValidity(sessionToken);
+    const { revoked, userId } = await revokeSessionByTokenWithOwner(sessionToken);
+
+    if (userId) {
+        invalidateRuntimeAuth(userId);
+        await invalidatePrivateResponseCacheForUser(userId);
     }
-    return { success: true };
+
+    return { success: true, revoked };
 };
 
 const userService = {

@@ -16,7 +16,8 @@ vi.mock("./accountProvisioning.service", () => ({ AccountProvisioningService: {}
 vi.mock("./accountIntegrity.service", () => ({ AccountIntegrityService: {} }));
 vi.mock("../../lib/utils/platformConfig", () => ({ getPlatformConfig: vi.fn() }));
 vi.mock("../../lib/outbox/authEmailOutbox", () => ({ AuthEmailOutbox: {} }));
-vi.mock("./sessionSecurity.service", () => ({ bindRefreshCredentialToSession: vi.fn(), createRefreshFamilyId: vi.fn(), hashRefreshCredential: vi.fn(), revokeAllSessionsForUser: vi.fn(), revokeOtherSessionsForUser: vi.fn(), revokeSessionByToken: vi.fn() }));
+vi.mock("./sessionSecurity.service", () => ({ bindRefreshCredentialToSession: vi.fn(), createRefreshFamilyId: vi.fn(), hashRefreshCredential: vi.fn(), revokeAllSessionsForUser: vi.fn(), revokeOtherSessionsForUser: vi.fn(), revokeSessionByToken: vi.fn(), revokeSessionByTokenWithOwner: vi.fn() }));
+vi.mock("../../middlewares/privateResponseCache", () => ({ invalidatePrivateResponseCacheForUser: vi.fn() }));
 vi.mock("../../lib/cache/authRuntimeCache", () => ({ invalidateRuntimeAuth: vi.fn(), invalidateRuntimeSessionValidities: vi.fn(), invalidateRuntimeSessionValidity: vi.fn() }));
 
 import authService from "./auth.service";

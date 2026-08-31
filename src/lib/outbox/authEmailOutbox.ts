@@ -34,16 +34,31 @@ const enqueueEmailVerificationTx = async (
 
 const enqueueEmailVerification = async (
   payload: EmailVerificationOutboxPayload,
-) => traceAsyncOperation("queue", "outbox.enqueue.auth-email", () => prisma.outboxEvent.create({
-  data: {
+  options: { dedupeKey?: string | null } = {},
+) => traceAsyncOperation("queue", "outbox.enqueue.auth-email", async () => {
+  const data = {
     topic: AUTH_EMAIL_OUTBOX_TOPIC.EMAIL_VERIFICATION_REQUESTED,
+    dedupeKey: options.dedupeKey ?? null,
     payload: withTraceMetadata({
       userId: payload.userId,
       email: payload.email.trim().toLowerCase(),
     }),
-  },
-  select: { id: true },
-}));
+  };
+
+  // Login/resend can be repeated quickly. A bounded dedupe key prevents
+  // generating several OTP jobs for the same browser action while preserving
+  // the durable registration event's existing exactly-once key.
+  if (data.dedupeKey) {
+    return prisma.outboxEvent.upsert({
+      where: { dedupeKey: data.dedupeKey },
+      create: data,
+      update: {},
+      select: { id: true },
+    });
+  }
+
+  return prisma.outboxEvent.create({ data, select: { id: true } });
+});
 
 export const AuthEmailOutbox = {
   enqueueEmailVerificationTx,

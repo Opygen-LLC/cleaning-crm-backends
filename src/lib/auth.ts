@@ -40,9 +40,11 @@ export const auth = betterAuth({
     emailVerification: {
         // Registration persists the credential user and tenant records in one
         // Prisma transaction, then a durable outbox worker requests the OTP.
-        // Better Auth must therefore never send automatically during sign-up.
+        // Better Auth never sends verification mail directly during sign-up or
+        // sign-in. Registration, resend, and unverified-login retries all use
+        // the durable outbox so SMTP failures are retryable and observable.
         sendOnSignUp: false,
-        sendOnSignIn: true,
+        sendOnSignIn: false,
         autoSignInAfterVerification: true,
     },
     user: {

@@ -20,6 +20,10 @@ import {
   PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC,
   type PublicWebsiteCacheInvalidationPayload,
 } from "../lib/outbox/publicWebsiteCacheOutbox";
+import {
+  recordEmailOutboxSuccessfulDelivery,
+  recordEmailOutboxWorkerHeartbeat,
+} from "../lib/monitoring/emailOutboxHealth";
 
 type ClaimedOutboxEvent = {
   id: string;
@@ -110,7 +114,7 @@ const deliverVerificationEmail = async (payload: EmailVerificationOutboxPayload)
 
   // User deletion or successful verification makes the event obsolete. Treat
   // that as successful consumption rather than retrying a dead message.
-  if (!user || user.emailVerified) return;
+  if (!user || user.emailVerified) return "skipped" as const;
   if (user.email.toLowerCase() !== payload.email) {
     throw new Error("Verification outbox email no longer matches the user record");
   }
@@ -121,6 +125,7 @@ const deliverVerificationEmail = async (payload: EmailVerificationOutboxPayload)
   await auth.api.sendVerificationOTP({
     body: { email: user.email, type: "email-verification" },
   });
+  return "sent" as const;
 };
 
 const parsePublicWebsiteCachePayload = (payload: unknown): PublicWebsiteCacheInvalidationPayload => {
@@ -167,11 +172,17 @@ const deliverPublicWebsiteCacheInvalidation = async (payload: PublicWebsiteCache
 
 const processEvent = async (event: ClaimedOutboxEvent) => {
   switch (event.topic) {
-    case AUTH_EMAIL_OUTBOX_TOPIC.EMAIL_VERIFICATION_REQUESTED:
-      await traceAsyncOperation("external", "email.verification-delivery", () =>
+    case AUTH_EMAIL_OUTBOX_TOPIC.EMAIL_VERIFICATION_REQUESTED: {
+      const outcome = await traceAsyncOperation("external", "email.verification-delivery", () =>
         deliverVerificationEmail(parseVerificationPayload(event.payload)),
       );
+      if (outcome === "sent") {
+        // Best-effort operational marker. PostgreSQL outbox state remains the
+        // delivery source of truth; monitoring must never make email fail.
+        await recordEmailOutboxSuccessfulDelivery().catch(() => undefined);
+      }
       return;
+    }
     case PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC.INVALIDATION_REQUESTED:
       await traceAsyncOperation("external", "frontend.cache-revalidation", () =>
         deliverPublicWebsiteCacheInvalidation(parsePublicWebsiteCachePayload(event.payload)),
@@ -270,6 +281,12 @@ export const startEmailOutboxWorker = () => {
   if (!OUTBOX_WORKER_ENABLED || timer) return;
 
   const tick = () => {
+    // Shared Redis heartbeat lets the API health endpoint distinguish an empty
+    // queue from a worker process that is not actually running. Heartbeat
+    // failures never stop durable delivery; PostgreSQL remains the source of
+    // truth for queued events.
+    void recordEmailOutboxWorkerHeartbeat().catch(() => undefined);
+
     void processEmailOutboxOnce().catch((error) => {
       logger.error(`Background delivery worker failed — ${normalizeError(error)}`);
     });

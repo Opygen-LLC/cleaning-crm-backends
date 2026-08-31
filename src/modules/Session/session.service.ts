@@ -6,6 +6,8 @@ import {
     revokeOtherSessionsForUser,
     revokeSessionByIdForUser,
 } from "../Auth/sessionSecurity.service";
+import { invalidateRuntimeAuth } from "../../lib/cache/authRuntimeCache";
+import { invalidatePrivateResponseCacheForUser } from "../../middlewares/privateResponseCache";
 
 const getMySessions = async (user: IRequestUser, currentSessionToken?: string) => {
     type SessionRow = {
@@ -47,8 +49,30 @@ const deleteMySession = async (
     currentSessionToken?: string,
 ) => {
     const result = await revokeSessionByIdForUser(user.id, sessionId, currentSessionToken);
-    if (!result.found) throw new AppError(status.NOT_FOUND, "Session not found");
-    return { id: sessionId, revokedCurrent: result.revokedCurrent };
+
+    // Idempotent by design: an expired/already-revoked session (or an id that
+    // does not belong to this user) returns the same safe success shape instead
+    // of leaking existence information or making repeat clicks fail with 404.
+    if (!result.found) {
+        return {
+            id: sessionId,
+            revoked: false,
+            alreadyRevoked: true,
+            revokedCurrent: false,
+        };
+    }
+
+    if (result.revokedCurrent) {
+        invalidateRuntimeAuth(user.id);
+        await invalidatePrivateResponseCacheForUser(user.id);
+    }
+
+    return {
+        id: sessionId,
+        revoked: true,
+        alreadyRevoked: false,
+        revokedCurrent: result.revokedCurrent,
+    };
 };
 
 const revokeOtherSessions = async (user: IRequestUser, currentSessionToken?: string) => {

@@ -1,4 +1,3 @@
-import { deleteFileFromCloudinary } from "../../config/cloudinary";
 import { uploadToCloudinary } from "../../lib/utils/cloudinary";
 import { prisma } from "../../lib/prisma/prisma";
 import { UpdateUserPayload, UploadAvatarResult } from "./user.interface";
@@ -8,6 +7,7 @@ import { AccountStatus, UserRole } from "../../generated/prisma/enums";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { invalidateRuntimeAuth } from "../../lib/cache/authRuntimeCache";
 import { revokeAllSessionsForUser } from "../Auth/sessionSecurity.service";
+import { invalidatePrivateResponseCacheForUser } from "../../middlewares/privateResponseCache";
 
 const ALLOWED_AVATAR_TYPES = [
     "image/jpeg",
@@ -96,6 +96,9 @@ const uploadMyAvatar = async (
         data: { image: result.secure_url },
     });
 
+    invalidateRuntimeAuth(userId);
+    await invalidatePrivateResponseCacheForUser(userId);
+
     return { avatarUrl: result.secure_url as string };
 };
 
@@ -111,11 +114,9 @@ const updateUser = async (id: string, payload: UpdateUserPayload, requester: IRe
 
     const user = await prisma.user.findUnique({
         where: { id },
-        select: { id: true, image: true, status: true },
+        select: { id: true, status: true },
     });
     if (!user) throw new AppError(status.NOT_FOUND, "User not found");
-
-    if (user.image && payload.image) await deleteFileFromCloudinary(user.image);
 
     const updated = await prisma.user.update({
         where: { id },
@@ -123,6 +124,7 @@ const updateUser = async (id: string, payload: UpdateUserPayload, requester: IRe
     });
 
     invalidateRuntimeAuth(id);
+    await invalidatePrivateResponseCacheForUser(id);
     if (payload.status === AccountStatus.SUSPENDED || payload.status === AccountStatus.DELETED) {
         await revokeAllSessionsForUser(id);
     }

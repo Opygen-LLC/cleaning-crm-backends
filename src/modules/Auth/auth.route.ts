@@ -54,8 +54,8 @@ router.get(
     authController.session,
 );
 
-// Canonical session-management surface. The legacy /session/my-session routes
-// remain mounted during rollout, but new clients use these auth-scoped paths.
+// Canonical session-management surface. Legacy /session/my-session routes are
+// no longer mounted; all clients use these auth-scoped endpoints.
 router.get(
     "/sessions",
     checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),

@@ -87,6 +87,30 @@ export async function revokeSessionByToken(sessionToken: string | null | undefin
   return result.count > 0;
 }
 
+/**
+ * Logout variant that revokes the persisted session and returns its owner in a
+ * single PostgreSQL round trip. This keeps ordinary logout on the shortest
+ * authoritative path while still allowing user-scoped cache invalidation.
+ */
+export async function revokeSessionByTokenWithOwner(
+  sessionToken: string | null | undefined,
+): Promise<{ revoked: boolean; userId: string | null }> {
+  if (!sessionToken) return { revoked: false, userId: null };
+
+  type Row = { userId: string };
+  const rows = await prisma.$queryRaw<Row[]>`
+    DELETE FROM "session"
+    WHERE token = ${sessionToken}
+    RETURNING "userId"
+  `;
+  await invalidateRuntimeSessionValidity(sessionToken);
+
+  return {
+    revoked: rows.length > 0,
+    userId: rows[0]?.userId ?? null,
+  };
+}
+
 export async function revokeAllSessionsForUser(userId: string): Promise<number> {
   const sessions = await prisma.session.findMany({
     where: { userId },

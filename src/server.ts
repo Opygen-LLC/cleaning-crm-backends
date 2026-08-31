@@ -42,6 +42,7 @@ import { browserOriginGuard } from "./middlewares/browserOriginGuard";
 import { getRedisCircuitSnapshot } from "./config/redis";
 import { AUTH_ERROR_CODES } from "./modules/Auth/auth.codes";
 import { getDatabasePoolSnapshot, probeDatabaseConnection } from "./lib/prisma/prisma";
+import { getEmailOutboxHealth } from "./lib/monitoring/emailOutboxHealth";
 
 const app = express();
 
@@ -273,6 +274,13 @@ app.get("/health/performance", (req: Request, res: Response) => {
 app.get("/health/alerts", (req: Request, res: Response) => {
   if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
   const data = getMonitoringAlerts();
+  res.setHeader("Cache-Control", "private, no-store");
+  return res.status(data.healthy ? 200 : 503).json({ success: data.healthy, data });
+});
+
+app.get("/health/email-outbox", async (req: Request, res: Response) => {
+  if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
+  const data = await getEmailOutboxHealth();
   res.setHeader("Cache-Control", "private, no-store");
   return res.status(data.healthy ? 200 : 503).json({ success: data.healthy, data });
 });
