@@ -4,6 +4,7 @@ import type { Prisma } from "../generated/prisma/client";
 import { prisma } from "../lib/prisma/prisma";
 import { advanceNextRunAt } from "../modules/RecurringBooking/recurringBooking.service";
 import { fail, log } from "./index.cron";
+import { queueBookingNotification } from "../lib/notifications/businessNotificationEvents";
 import { bumpCacheResourceVersions, CacheResource } from "../lib/cache/resourceCacheVersion";
 
 // ─── Booking ref generator (mirrors booking.service.ts) ───────────────────────
@@ -67,14 +68,14 @@ export const runRecurringBookingEngine = async (
 
     for (const schedule of dueSchedules) {
         try {
-            await prismaClient.$transaction(async (tx: Prisma.TransactionClient) => {
+            const bookingId = await prismaClient.$transaction(async (tx: Prisma.TransactionClient) => {
                 const bookingRef = await generateBookingRef(tx);
 
                 // Build the scheduledDate from the schedule's nextRunAt
                 const scheduledDate = new Date(schedule.nextRunAt);
 
                 // Create the booking
-                await tx.booking.create({
+                const booking = await tx.booking.create({
                     data: {
                         bookingRef,
                         adminId:      schedule.adminId,
@@ -135,7 +136,10 @@ export const runRecurringBookingEngine = async (
                     `  ✓ Created ${bookingRef} from ${schedule.scheduleRef} ` +
                     `(next run: ${nextRunAt.toISOString()})`,
                 );
+                return booking.id;
             });
+
+            await queueBookingNotification(bookingId, "booking-confirmation");
 
             await bumpCacheResourceVersions(schedule.adminId, [
                 CacheResource.bookings,

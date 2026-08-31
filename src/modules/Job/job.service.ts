@@ -44,7 +44,6 @@ import {
 } from "./job.interface";
 import { jobSearchableFields, jobFilterableFields } from "./job.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
-import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { FRONTEND_URL } from "../../config/ENV";
 import { emitToAdmin, emitToStaff } from "../../config/socketio";
 import { createNotification } from "../../lib/utils/createNotification";
@@ -56,6 +55,7 @@ import { sendPushToUsers } from "../Push/push.service";
 import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
 import { resolveServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import { nextReference } from "../../lib/utils/referenceNumber";
+import { queueReviewRequestNotification, queueStaffAssignedNotifications } from "../../lib/notifications/businessNotificationEvents";
 
 /**
  * PERF FIX (Phase 5.2): geocoding calls an external HTTP API (Google/Mapbox)
@@ -574,33 +574,11 @@ const updateJobStatus = async (
         });
 
         if (clientRecord) {
-          const staffNames = completedJob.staffAssignments.map(
-            (assignment) => assignment.staff.user.name,
+          await queueReviewRequestNotification(
+            completedJob.id,
+            `${FRONTEND_URL}/review/${reviewToken.token}`,
+            "initial",
           );
-
-          sendEmailSafely({
-            adminId: completedJob.adminId,
-            to: clientRecord.email,
-            subject: `How did we do? — ${completedJob.jobRef}`,
-            templateName: "review-request",
-            templateData: {
-              clientName: clientRecord.name,
-              jobRef: completedJob.jobRef,
-              serviceType: serviceDisplayName(completedJob),
-              completedDate: new Date(
-                completedJob.scheduledDate,
-              ).toLocaleDateString("en-GB", {
-                weekday: "long",
-                day: "numeric",
-                month: "long",
-                year: "numeric",
-              }),
-              staffNames,
-              reviewUrl: `${FRONTEND_URL}/review/${reviewToken.token}`,
-            },
-          }).catch((err) => {
-            logger.error("[REVIEW EMAIL] Failed to send review request", err);
-          });
         }
       }
     } catch (err) {
@@ -754,7 +732,6 @@ const assignStaff = async (
           where: { id: updatedJob.clientId },
           select: { name: true },
         });
-        const jobDetailUrl = `${FRONTEND_URL}/staff/dashboard/jobs/${jobId}`;
         const clientName = client?.name ?? "Client";
         const friendlyServiceType = serviceDisplayName(updatedJob);
         const scheduledDate = new Date(
@@ -796,32 +773,7 @@ const assignStaff = async (
           },
         );
 
-        Promise.all(
-          staffList.map((staff) =>
-            sendEmailSafely({
-              adminId,
-              to: staff.user.email,
-              subject: `You've been assigned to job ${updatedJob.jobRef}`,
-              templateName: "staff-job-dispatch",
-              templateData: {
-                staffName: staff.user.name,
-                jobRef: updatedJob.jobRef,
-                clientName,
-                serviceType: friendlyServiceType,
-                address: updatedJob.address,
-                scheduledDate,
-                scheduledTime,
-                durationMins: updatedJob.durationMins,
-                jobDetailUrl,
-              },
-            }),
-          ),
-        ).catch((err) => {
-          logger.error(
-            `[STAFF DISPATCH EMAIL] Failed to send dispatch emails for job ${updatedJob.jobRef}:`,
-            err,
-          );
-        });
+        await queueStaffAssignedNotifications(updatedJob.id, payload.staffIds);
       }
       return updatedJob;
     });

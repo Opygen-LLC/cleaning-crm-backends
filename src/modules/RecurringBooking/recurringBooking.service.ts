@@ -1,5 +1,6 @@
 import { resolveServiceIdentity } from "../../lib/utils/serviceIdentity";
 import { nextReference } from "../../lib/utils/referenceNumber";
+import { queueBookingNotification } from "../../lib/notifications/businessNotificationEvents";
 import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
@@ -449,6 +450,7 @@ const generateNextBooking = async (id: string, user: IRequestUser) => {
         return { booking, schedule: updatedSchedule };
     });
 
+    await queueBookingNotification(result.booking.id, "booking-confirmation");
     return result;
 };
 

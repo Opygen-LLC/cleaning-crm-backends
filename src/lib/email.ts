@@ -14,6 +14,11 @@ import {
 } from "../config/ENV";
 import { prisma } from "./prisma/prisma";
 import logger from "./logger";
+import {
+    BUSINESS_NOTIFICATION_REGISTRY,
+    isBusinessNotificationTemplateKey,
+    type BusinessNotificationTemplateKey,
+} from "./notifications/businessNotificationRegistry";
 
 const portNumber = Number(SMTP_PORT) || 587;
 const configuredSecure = SMTP_SECURE !== undefined ? SMTP_SECURE === "true" : portNumber === 465;
@@ -110,6 +115,8 @@ interface SendEmailOptions {
     templateName: string;
     templateData: Record<string, any>;
     adminId?: string;
+    useBusinessTemplate?: boolean;
+    messageId?: string;
     attachments?: {
         filename: string;
         content: Buffer | string;
@@ -117,11 +124,17 @@ interface SendEmailOptions {
     }[];
 }
 
-const TEMPLATE_KEY_ALIASES: Record<string, string> = {
+const TEMPLATE_KEY_ALIASES: Record<string, BusinessNotificationTemplateKey> = {
     "booking-confirmation": "booking-confirmation",
+    "booking-reminder-24h": "booking-reminder-24h",
+    "booking-reminder-day-of": "booking-reminder-day-of",
     "staff-job-dispatch": "staff-assigned",
+    "staff-assigned": "staff-assigned",
     "quote-send": "quote-sent",
-    "invoice-send": "invoice-due",
+    "quote-sent": "quote-sent",
+    "invoice-send": "invoice-sent",
+    "invoice-sent": "invoice-sent",
+    "invoice-due": "invoice-due",
     "review-request": "review-request",
 };
 
@@ -177,22 +190,28 @@ export const sendEmail = async ({
     to,
     attachments,
     adminId,
+    useBusinessTemplate = true,
+    messageId,
 }: SendEmailOptions) => {
     assertSmtpConfiguration();
 
     try {
+        const canonicalKey = useBusinessTemplate
+            ? (TEMPLATE_KEY_ALIASES[templateName]
+                ?? (isBusinessNotificationTemplateKey(templateName) ? templateName : null))
+            : null;
         const [admin, customTemplate] = adminId
             ? await Promise.all([
                 prisma.adminProfile.findUnique({
                     where: { id: adminId },
                     select: { businessName: true, brandColor: true },
                 }),
-                TEMPLATE_KEY_ALIASES[templateName]
+                canonicalKey
                     ? prisma.notificationTemplate.findUnique({
                         where: {
                             adminId_key: {
                                 adminId,
-                                key: TEMPLATE_KEY_ALIASES[templateName],
+                                key: canonicalKey,
                             },
                         },
                     })
@@ -211,10 +230,13 @@ export const sendEmail = async ({
 
         let resolvedSubject = subject;
         let html: string;
-        if (customTemplate) {
+        if (canonicalKey) {
+            const definition = BUSINESS_NOTIFICATION_REGISTRY[canonicalKey];
             const variables = templateVariables(dataWithBrand, admin?.businessName);
-            resolvedSubject = replaceVariables(customTemplate.subject || subject, variables, false);
-            const escapedBody = escapeHtml(customTemplate.body);
+            const subjectTemplate = customTemplate?.subject || definition.defaultSubject || subject;
+            const bodyTemplate = customTemplate?.body || definition.defaultBody;
+            resolvedSubject = replaceVariables(subjectTemplate, variables, false);
+            const escapedBody = escapeHtml(bodyTemplate);
             const body = replaceVariables(escapedBody, variables, true).replace(/\r?\n/g, "<br />");
             html = `<!doctype html><html><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#111827"><div style="max-width:640px;margin:24px auto;background:#fff;border:1px solid #e5e7eb;border-top:5px solid ${brandColor};border-radius:12px;padding:32px;line-height:1.65">${body}</div></body></html>`;
         } else {
@@ -232,6 +254,7 @@ export const sendEmail = async ({
             },
             to,
             subject: resolvedSubject,
+            messageId,
             html,
             attachments: attachments?.map((attachment) => ({
                 filename: attachment.filename,

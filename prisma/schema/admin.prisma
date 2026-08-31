@@ -61,6 +61,7 @@ model AdminProfile {
   activityLogs          ActivityLog[]
   notifications         Notification[]
   notificationTemplates NotificationTemplate[]
+  notificationDeliveries NotificationDelivery[]
   // Added to satisfy BookingChangeRequest.admin's back-relation —
   // rename to match whatever `BookingChangeRequest` calls this
   // relation on your side if it differs.
@@ -100,12 +101,16 @@ model NotificationPreference {
   emailNewBooking       Boolean      @default(true)
   emailBookingCancelled Boolean      @default(true)
   emailBookingReminder  Boolean      @default(true)
+  emailBookingDayOfReminder Boolean   @default(false)
   emailQuoteAccepted    Boolean      @default(true)
   emailQuoteDeclined    Boolean      @default(true)
   emailInvoicePaid      Boolean      @default(true)
   emailInvoiceOverdue   Boolean      @default(true)
   emailNewClient        Boolean      @default(false)
   emailStaffAssigned    Boolean      @default(false)
+  emailQuoteSent        Boolean      @default(true)
+  emailInvoiceSent      Boolean      @default(true)
+  emailReviewRequest    Boolean      @default(true)
   emailWeeklySummary    Boolean      @default(true)
   appNewBooking         Boolean      @default(true)
   appJobStatusChange    Boolean      @default(true)

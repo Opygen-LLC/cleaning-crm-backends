@@ -16,13 +16,13 @@ import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { uploadFileToCloudinary } from "../../config/cloudinary";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
-import { FRONTEND_URL } from "../../config/ENV";
 import { logActivity } from "../../lib/utils/logActivity";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
 import { nextReference } from "../../lib/utils/referenceNumber";
 import { formatMoney } from "../../lib/utils/money";
+import { queueInvoiceNotification } from "../../lib/notifications/businessNotificationEvents";
 import type { Payment, Prisma } from "../../generated/prisma/client";
 
 const createInvoice = async (payload: IInvoiceCreate, user: IRequestUser) => {
@@ -530,44 +530,13 @@ const sendInvoice = async (id: string, user: IRequestUser) => {
         );
     }
 
-    // Format helpers
-    const fmt = (d: Date) =>
-        d.toLocaleDateString("en-GB", {
-            day: "numeric",
-            month: "long",
-            year: "numeric",
-        });
-
-    // Optional "View Invoice" deep-link — works if public invoice pages exist
-    const invoiceViewUrl = FRONTEND_URL
-        ? `${FRONTEND_URL}/invoice/${invoice.invoiceRef}`
-        : null;
-
-    await sendEmailSafely({
-        adminId: admin.id,
-        to: invoice.clientEmail,
-        subject: `Invoice ${invoice.invoiceRef} — Payment due ${fmt(invoice.dueDate)}`,
-        templateName: "invoice-send",
-        templateData: {
-            invoiceRef: invoice.invoiceRef,
-            clientName: invoice.clientName,
-            serviceAddress: invoice.serviceAddress,
-            issuedDate: fmt(invoice.issuedDate),
-            dueDate: fmt(invoice.dueDate),
-            subtotal: formatMoney(invoice.subtotal, admin.currency),
-            taxRate: Number(invoice.taxRate),
-            taxAmount: formatMoney(invoice.taxAmount, admin.currency),
-            total: formatMoney(invoice.total, admin.currency),
-            notes: invoice.notes ?? null,
-            invoiceViewUrl,
-        },
-    });
+    const sentAt = new Date();
 
     // Stamp sentAt and move to SENT if still DRAFT
     const updatedInvoice = await prisma.invoice.update({
         where: { id },
         data: {
-            sentAt: new Date(),
+            sentAt,
             status:
                 invoice.status === InvoiceStatus.DRAFT
                     ? InvoiceStatus.SENT
@@ -575,6 +544,7 @@ const sendInvoice = async (id: string, user: IRequestUser) => {
         },
     });
 
+    await queueInvoiceNotification(updatedInvoice.id, "invoice-sent", sentAt.toISOString());
     return updatedInvoice;
 };
 

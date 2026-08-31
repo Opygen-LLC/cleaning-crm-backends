@@ -1,4 +1,5 @@
 import { auth } from "../lib/auth";
+import { sendEmail } from "../lib/email";
 import logger from "../lib/logger";
 import { getRequestTrace, runWithRequestTrace, traceAsyncOperation } from "../lib/monitoring/requestTrace";
 import { prisma } from "../lib/prisma/prisma";
@@ -20,6 +21,11 @@ import {
   PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC,
   type PublicWebsiteCacheInvalidationPayload,
 } from "../lib/outbox/publicWebsiteCacheOutbox";
+import { BUSINESS_NOTIFICATION_OUTBOX_TOPIC } from "../lib/outbox/businessNotificationOutbox";
+import {
+  BUSINESS_NOTIFICATION_REGISTRY,
+  isBusinessNotificationTemplateKey,
+} from "../lib/notifications/businessNotificationRegistry";
 import {
   recordEmailOutboxSuccessfulDelivery,
   recordEmailOutboxWorkerHeartbeat,
@@ -170,6 +176,55 @@ const deliverPublicWebsiteCacheInvalidation = async (payload: PublicWebsiteCache
   }
 };
 
+
+const parseBusinessDeliveryId = (payload: unknown): string => {
+  if (!payload || typeof payload !== "object") throw new Error("Invalid business notification outbox payload");
+  const deliveryId = typeof (payload as Record<string, unknown>).deliveryId === "string"
+    ? String((payload as Record<string, unknown>).deliveryId).trim()
+    : "";
+  if (!deliveryId) throw new Error("Business notification outbox payload is missing deliveryId");
+  return deliveryId;
+};
+
+const deliverBusinessNotification = async (deliveryId: string, attempt: number) => {
+  const delivery = await prisma.notificationDelivery.findUnique({
+    where: { id: deliveryId },
+    select: {
+      id: true, adminId: true, templateKey: true, recipientEmail: true, payload: true, status: true,
+    },
+  });
+  if (!delivery || delivery.status === "SENT") return "skipped" as const;
+  if (!isBusinessNotificationTemplateKey(delivery.templateKey)) {
+    throw new Error(`Unsupported business notification template: ${delivery.templateKey}`);
+  }
+
+  const definition = BUSINESS_NOTIFICATION_REGISTRY[delivery.templateKey];
+  const variables = delivery.payload && typeof delivery.payload === "object" && !Array.isArray(delivery.payload)
+    ? delivery.payload as Record<string, unknown>
+    : {};
+
+  await prisma.notificationDelivery.update({
+    where: { id: delivery.id },
+    data: { status: "PROCESSING", attempts: attempt, lastError: null },
+  });
+
+  await sendEmail({
+    adminId: delivery.adminId,
+    to: delivery.recipientEmail,
+    subject: definition.defaultSubject,
+    templateName: delivery.templateKey,
+    templateData: variables,
+    messageId: `<business-notification-${delivery.id}@cleaningcrm.local>`,
+  });
+
+  const now = new Date();
+  await prisma.notificationDelivery.update({
+    where: { id: delivery.id },
+    data: { status: "SENT", attempts: attempt, sentAt: now, processedAt: now, lastError: null },
+  });
+  return "sent" as const;
+};
+
 const processEvent = async (event: ClaimedOutboxEvent) => {
   switch (event.topic) {
     case AUTH_EMAIL_OUTBOX_TOPIC.EMAIL_VERIFICATION_REQUESTED: {
@@ -188,6 +243,13 @@ const processEvent = async (event: ClaimedOutboxEvent) => {
         deliverPublicWebsiteCacheInvalidation(parsePublicWebsiteCachePayload(event.payload)),
       );
       return;
+    case BUSINESS_NOTIFICATION_OUTBOX_TOPIC.DELIVERY_REQUESTED: {
+      const outcome = await traceAsyncOperation("external", "email.business-notification-delivery", () =>
+        deliverBusinessNotification(parseBusinessDeliveryId(event.payload), event.attempts),
+      );
+      if (outcome === "sent") await recordEmailOutboxSuccessfulDelivery().catch(() => undefined);
+      return;
+    }
     default:
       throw new Error(`Unsupported outbox topic: ${event.topic}`);
   }
@@ -220,6 +282,23 @@ const markFailed = async (event: ClaimedOutboxEvent, error: unknown) => {
       lastError: normalizeError(error),
     },
   });
+
+  if (event.topic === BUSINESS_NOTIFICATION_OUTBOX_TOPIC.DELIVERY_REQUESTED) {
+    try {
+      const deliveryId = parseBusinessDeliveryId(event.payload);
+      await prisma.notificationDelivery.updateMany({
+        where: { id: deliveryId, status: { not: "SENT" } },
+        data: {
+          status: dead ? "FAILED" : "RETRY",
+          attempts: event.attempts,
+          lastError: normalizeError(error),
+          processedAt: dead ? new Date() : null,
+        },
+      });
+    } catch {
+      // The outbox failure remains authoritative even if the delivery row is gone/corrupt.
+    }
+  }
 
   if (NODE_ENV === "production") {
     logger.error("outbox_delivery_failed", {

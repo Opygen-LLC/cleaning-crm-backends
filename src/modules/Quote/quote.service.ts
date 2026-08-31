@@ -19,13 +19,11 @@ import {
 import { quoteSearchableFields, quoteFilterableFields } from "./quote.constant";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { randomBytes } from "node:crypto";
-import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
-import { FRONTEND_URL } from "../../config/ENV";
 import { createNotification } from "../../lib/utils/createNotification";
 import { nextReference } from "../../lib/utils/referenceNumber";
 import { inferLegacyServiceType, resolveFlexibleServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
-import { formatMoney } from "../../lib/utils/money";
+import { queueQuoteSentNotification } from "../../lib/notifications/businessNotificationEvents";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -781,52 +779,14 @@ const sendQuoteEmail = async (id: string, user: IRequestUser) => {
         );
     }
 
-    const fmt = (d: Date) =>
-        d.toLocaleDateString("en-GB", {
-            day: "numeric",
-            month: "long",
-            year: "numeric",
-        });
-    const publicToken = await ensurePublicQuoteToken(
-        quote.id,
-        quote.publicToken,
-    );
-
-    const quoteViewUrl = FRONTEND_URL
-        ? `${FRONTEND_URL}/quote/${encodeURIComponent(publicToken)}`
-        : null;
-
-    await sendEmailSafely({
-        adminId,
-        to: quote.client.email,
-        subject: `Quote ${quote.quoteRef} from ${quote.admin.businessName} — valid until ${fmt(quote.validUntil)}`,
-        templateName: "quote-send",
-        templateData: {
-            quoteRef: quote.quoteRef,
-            businessName: quote.admin.businessName,
-            clientName: quote.client.name,
-            serviceType: serviceDisplayName(quote),
-            address: quote.address,
-            lineItems: quote.lineItems.map((li) => ({
-                description: li.description,
-                quantity: li.quantity,
-                total: formatMoney(li.total, quote.admin.currency),
-            })),
-            subtotal: formatMoney(quote.subtotal, quote.admin.currency),
-            taxRate: Number(quote.taxRate),
-            tax: formatMoney(quote.tax, quote.admin.currency),
-            total: formatMoney(quote.total, quote.admin.currency),
-            validUntil: fmt(quote.validUntil),
-            notes: quote.notes ?? null,
-            quoteViewUrl,
-        },
-    });
+    await ensurePublicQuoteToken(quote.id, quote.publicToken);
+    const sentAt = new Date();
 
     // Stamp sentAt and advance DRAFT → SENT
     const updated = await prisma.quote.update({
         where: { id },
         data: {
-            sentAt: new Date(),
+            sentAt,
             status:
                 quote.status === QuoteStatus.DRAFT
                     ? QuoteStatus.SENT
@@ -835,6 +795,7 @@ const sendQuoteEmail = async (id: string, user: IRequestUser) => {
         include: quoteInclude,
     });
 
+    await queueQuoteSentNotification(updated.id, sentAt.toISOString());
     return updated;
 };
 

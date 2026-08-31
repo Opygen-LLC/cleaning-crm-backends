@@ -1,6 +1,5 @@
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
-import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { FRONTEND_URL } from "../../config/ENV";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
@@ -10,6 +9,7 @@ import { IRequestUser } from "../../types/requestUser.interface";
 import { serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { invalidateBookingFormsForAdmin } from "../BookingForm/bookingForm.cache";
+import { queueReviewRequestNotification } from "../../lib/notifications/businessNotificationEvents";
 
 function deriveSentiment(rating: number): string {
     if (rating >= 4) return "positive";
@@ -324,7 +324,7 @@ const getStaffReviewSummaries = async (user: IRequestUser) => {
     };
 };
 
-const generateTokenForJob = async (jobId: string, user: IRequestUser) => {
+const generateTokenForJob = async (jobId: string, user: IRequestUser, occurrence = "initial") => {
     const adminId = await getAdminId(user);
     const job = await prisma.job.findFirst({
         where: { id: jobId, adminId },
@@ -340,28 +340,11 @@ const generateTokenForJob = async (jobId: string, user: IRequestUser) => {
     if (job.status !== "COMPLETED") throw new AppError(status.BAD_REQUEST, "Job must be COMPLETED to generate a review token.");
 
     const token = await generateReviewToken(jobId, adminId);
-    const client = await prisma.client.findFirst({
-        where: { id: job.clientId, adminId },
-        select: { name: true, email: true },
-    });
-    if (client) {
-        await sendEmailSafely({
-            adminId,
-            to: client.email,
-            subject: `How did we do? — ${job.jobRef}`,
-            templateName: "review-request",
-            templateData: {
-                clientName: client.name,
-                jobRef: job.jobRef,
-                serviceType: serviceDisplayName(job),
-                completedDate: new Date(job.scheduledDate).toLocaleDateString("en-GB", {
-                    weekday: "long", day: "numeric", month: "long", year: "numeric",
-                }),
-                staffNames: job.staffAssignments.map((a) => a.staff.user.name),
-                reviewUrl: `${FRONTEND_URL}/review/${token.token}`,
-            },
-        });
-    }
+    await queueReviewRequestNotification(
+        job.id,
+        `${FRONTEND_URL}/review/${token.token}`,
+        occurrence,
+    );
     return token;
 };
 
@@ -369,7 +352,7 @@ const resendReviewEmail = async (reviewId: string, user: IRequestUser) => {
     const adminId = await getAdminId(user);
     const review = await prisma.review.findFirst({ where: { id: reviewId, adminId }, select: { jobId: true } });
     if (!review) throw new AppError(status.NOT_FOUND, "Review not found.");
-    return generateTokenForJob(review.jobId, user);
+    return generateTokenForJob(review.jobId, user, `resend:${reviewId}:${Date.now()}`);
 };
 
 export const reviewService = {

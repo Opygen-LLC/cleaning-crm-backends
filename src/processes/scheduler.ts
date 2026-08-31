@@ -16,6 +16,7 @@ async function main() {
     await import("../cron/staffStatus.cron");
     await import("../cron/recurringBooking.cron");
     await import("../cron/invoiceOverdue.cron");
+    await import("../cron/bookingReminder.cron");
     await import("../cron/dbKeepAlive.cron");
     await import("../cron/websiteAnalyticsRetention.cron");
 

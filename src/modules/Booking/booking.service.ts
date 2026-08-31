@@ -31,6 +31,7 @@ import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/adv
 import type { Prisma } from "../../generated/prisma/client";
 import { nextReference } from "../../lib/utils/referenceNumber";
 import { observeBackgroundTask } from "../../lib/monitoring/observeBackgroundTask";
+import { queueBookingNotification } from "../../lib/notifications/businessNotificationEvents";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -185,6 +186,7 @@ const sendBookingEmail = async (
     to: clientEmail,
     subject: subjectMap[eventType],
     templateName: "booking-confirmation",
+    useBusinessTemplate: eventType === "created",
     templateData: {
       clientName: booking.client?.name ?? "Valued Customer",
       bookingRef: booking.bookingRef,
@@ -279,7 +281,7 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
   });
 
   // Fire confirmation email (non-blocking)
-  observeBackgroundTask(sendBookingEmail(booking, "created"), { operation: "booking_confirmation_email", adminId, entityType: "Booking", entityId: booking.id });
+  await queueBookingNotification(booking.id, "booking-confirmation");
 
   // Persist notification + push to bell
   createNotification({
@@ -483,7 +485,7 @@ const convertBookingFormSubmissionForAdmin = async (
   });
 
   if (!result.alreadyConverted) {
-    observeBackgroundTask(sendBookingEmail(result.booking, "created"), { operation: "booking_confirmation_email", adminId, entityType: "Booking", entityId: result.booking.id });
+    await queueBookingNotification(result.booking.id, "booking-confirmation");
     createNotification({
       adminId,
       type: NotificationType.BOOKING,

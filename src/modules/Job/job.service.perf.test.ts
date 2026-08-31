@@ -76,8 +76,9 @@ vi.mock("../../lib/prisma/prisma", () => ({
   },
 }));
 
-vi.mock("../../lib/utils/sendEmailSafely", () => ({
-  sendEmailSafely: vi.fn().mockResolvedValue({ success: true }),
+vi.mock("../../lib/notifications/businessNotificationEvents", () => ({
+  queueReviewRequestNotification: vi.fn().mockResolvedValue({ queued: true, deliveryId: "delivery-1" }),
+  queueStaffAssignedNotifications: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("../../config/socketio", () => ({
@@ -97,7 +98,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import { jobService } from "./job.service";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { JobStatus, UserRole } from "../../generated/prisma/enums";
-import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
+import { queueReviewRequestNotification } from "../../lib/notifications/businessNotificationEvents";
 
 describe("Job Service Performance Fixes", () => {
   beforeEach(() => {
@@ -151,7 +152,7 @@ describe("Job Service Performance Fixes", () => {
     expect(prisma.adminProfile.findUnique).not.toHaveBeenCalled();
   });
 
-  it("updateJobStatus triggers non-blocking review email when COMPLETED", async () => {
+  it("updateJobStatus queues a durable review request when COMPLETED", async () => {
     const mockAdminUser: IRequestUser = {
       id: "user-admin-1",
       email: "admin@example.com",
@@ -178,11 +179,10 @@ describe("Job Service Performance Fixes", () => {
     const result = await jobService.updateJobStatus("job-1", JobStatus.COMPLETED, mockAdminUser);
 
     expect(result?.status).toBe(JobStatus.COMPLETED);
-    expect(sendEmailSafely).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: "client@example.com",
-        templateName: "review-request",
-      }),
+    expect(queueReviewRequestNotification).toHaveBeenCalledWith(
+      "job-1",
+      expect.stringContaining("/review/rev-123"),
+      "initial",
     );
   });
 });

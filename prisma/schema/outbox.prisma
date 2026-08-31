@@ -18,3 +18,33 @@ model OutboxEvent {
   @@index([processedAt, createdAt])
   @@map("outbox_event")
 }
+
+
+model NotificationDelivery {
+  id              String   @id @default(uuid())
+  adminId         String
+  eventKey        String   @unique
+  event           String
+  templateKey     String
+  recipientType   String
+  recipientEmail  String
+  recipientUserId String?
+  entityType      String?
+  entityId        String?
+  payload         Json
+  scheduledFor    DateTime @default(now())
+  status          String   @default("QUEUED")
+  attempts        Int      @default(0)
+  maxAttempts     Int      @default(8)
+  sentAt          DateTime?
+  processedAt     DateTime?
+  lastError       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  admin           AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId, status, createdAt(sort: Desc)])
+  @@index([status, scheduledFor])
+  @@index([entityType, entityId])
+  @@map("notification_delivery")
+}
