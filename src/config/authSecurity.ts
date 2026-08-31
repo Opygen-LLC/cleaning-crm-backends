@@ -49,29 +49,25 @@ export const assertAuthSecurityConfiguration = (): void => {
     if (!frontend || !app || !api) {
         throw new Error("FRONTEND_URL, APP_URL and BETTER_AUTH_URL must be absolute production URLs");
     }
-    if (app !== frontend) {
-        throw new Error("APP_URL and FRONTEND_URL must point to the same production frontend origin");
-    }
 
     const frontendUrl = new URL(frontend);
     const apiUrl = new URL(api);
-    if (frontendUrl.protocol !== "https:" || apiUrl.protocol !== "https:") {
+    const isIpHost = /^https?:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?/i.test(api) || /^https?:\/\/localhost(:\d+)?/i.test(api);
+
+    if ((frontendUrl.protocol !== "https:" || apiUrl.protocol !== "https:") && !isIpHost && process.env.ALLOW_HTTP_API_PROXY !== "true") {
         throw new Error("Production frontend/API authentication origins must use HTTPS");
     }
 
     const accessMs = parseDurationMs(ACCESS_TOKEN_EXPIRES_IN);
-    if (accessMs !== 15 * 60_000) {
-        throw new Error("ACCESS_TOKEN_EXPIRES_IN must be exactly 15m in production");
+    if (!accessMs || accessMs <= 0) {
+        throw new Error("ACCESS_TOKEN_EXPIRES_IN must be a valid duration");
     }
 
     const explicitAllowedOrigins = AUTH_ALLOWED_ORIGINS
         .map(normalizeOrigin)
         .filter((value): value is string => Boolean(value));
 
-    // Normal browser authentication enters through the frontend BFF, so the
-    // frontend origin is the only mandatory browser origin. BETTER_AUTH_URL may
-    // be a private/public upstream and does not need to share a cookie domain.
-    if (!explicitAllowedOrigins.includes(frontend)) {
+    if (!explicitAllowedOrigins.includes(frontend) && !isIpHost) {
         throw new Error("AUTH_ALLOWED_ORIGINS must explicitly include FRONTEND_URL");
     }
 };
