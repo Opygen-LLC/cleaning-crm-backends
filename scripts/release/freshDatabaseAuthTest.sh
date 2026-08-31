@@ -14,6 +14,9 @@ export DATABASE_URL="$FRESH_DB_TEST_DATABASE_URL"
 echo '[fresh-db] applying forward migrations to disposable database'
 pnpm prisma migrate deploy
 
+echo '[fresh-db] verifying Phase 1 schema contract after migrations'
+pnpm run db:phase1:verify
+
 echo '[fresh-db] generating Prisma client and building server'
 pnpm prisma generate
 pnpm run build:docker

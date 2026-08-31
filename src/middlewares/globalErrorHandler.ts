@@ -15,6 +15,7 @@ import {
     handlePrismaClientValidationError,
     handlerPrismaClientInitializationError,
     handlerPrismaClientRustPanicError,
+    getPrismaErrorLogContext,
 } from "../errorHelper/handlePrismaError";
 import {
     buildFieldErrors,
@@ -263,6 +264,9 @@ export const globalErrorHandler = async (
     }
 
     const traceId = typeof res.locals.traceId === "string" ? res.locals.traceId : null;
+    const prismaContext = err instanceof Prisma.PrismaClientKnownRequestError
+        ? getPrismaErrorLogContext(err)
+        : {};
     const errorMessage = err instanceof Error ? err.message : String(err);
     const monitoredMessage = NODE_ENV === "production" ? message : errorMessage;
     const errorStack = err instanceof Error ? err.stack ?? null : null;
@@ -272,12 +276,14 @@ export const globalErrorHandler = async (
                 event: "http_error",
                 requestId,
                 traceId,
-                route: req.path,
+                route: req.originalUrl || req.path,
                 method: req.method,
                 statusCode,
                 code,
                 kind: errorKind,
+                releaseVersion: RELEASE_VERSION,
                 releaseSha: RELEASE_VERSION,
+                ...prismaContext,
                 errorMessage: monitoredMessage,
             });
         } else {

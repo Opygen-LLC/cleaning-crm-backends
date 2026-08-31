@@ -17,7 +17,11 @@ try {
   const session = await call("/auth/session"); if(session?.data?.authenticated!==true) throw new Error("session contract failed after verification");
   await call("/auth/logout", {method:"POST"}); jar.clear();
   const login = await call("/auth/login", {method:"POST",body:JSON.stringify({email,password})}); if(login?.data?.sessionCreated!==true) throw new Error("login contract failed");
+  await call("/notification");
+  const websiteOverview = await call("/website/studio/overview");
+  if (!websiteOverview?.data?.website?.id) throw new Error("website overview contract failed on fresh database");
+  await call("/website/editor?surface=content");
   const refresh = await call("/auth/refresh-token", {method:"POST"}); if(refresh?.data?.refreshed!==true) throw new Error("refresh contract failed");
   await call("/auth/logout", {method:"POST"});
-  console.log("Fresh database migrate/register/verify/login/refresh/logout smoke: OK");
+  console.log("Fresh database migrate/register/verify/notification/website/login/refresh/logout smoke: OK");
 } catch(error) { console.error(`Fresh database auth smoke FAILED: ${error instanceof Error?error.message:String(error)}`); process.exit(1); }

@@ -3,7 +3,6 @@ import { TErrorResponse, TErrorSources } from "../interface/error.interface";
 import { Prisma } from "../generated/prisma/client";
 import { buildFieldErrors, getErrorCodeFromStatus, isRetryableStatus } from "./errorContract";
 
-
 const DATABASE_CONNECTIVITY_CODES = new Set([
     "ETIMEDOUT",
     "ECONNREFUSED",
@@ -13,7 +12,6 @@ const DATABASE_CONNECTIVITY_CODES = new Set([
     "ENOTFOUND",
     "EAI_AGAIN",
     "EPIPE",
-    // PostgreSQL SQLSTATE class 08 = connection exception.
     "08000",
     "08001",
     "08003",
@@ -21,7 +19,6 @@ const DATABASE_CONNECTIVITY_CODES = new Set([
     "08006",
     "08007",
     "08P01",
-    // Server shutdown / cannot accept connections now / too many connections.
     "57P01",
     "57P02",
     "57P03",
@@ -81,20 +78,18 @@ export const handleDatabaseConnectivityError = (_error: unknown): TErrorResponse
     statusCode: status.SERVICE_UNAVAILABLE,
     code: "DATABASE_UNAVAILABLE",
     message: "The database is temporarily unavailable. Please try again shortly.",
-    // Do not leak ETIMEDOUT/host/driver details into form field errors.
     errorSources: [],
     fieldErrors: {},
     retryable: true,
 });
 
 /**
- * Database/authentication/connectivity failures are server infrastructure
- * problems. They must never be returned as HTTP 401, otherwise the frontend
- * mistakes them for an expired user token and starts an unnecessary refresh
- * cycle.
+ * Prisma known-request errors cover both expected data conflicts and genuine
+ * database/runtime faults. Never collapse the whole P2xxx family into a 400:
+ * schema drift (P2021/P2022) and raw-query failures (P2010) are server errors.
  */
-const getStatusCodeFromPrismaError = (errorCode: string): number => {
-    if (errorCode === "P2002") return status.CONFLICT;
+export const getStatusCodeFromPrismaError = (errorCode: string): number => {
+    if (errorCode === "P2002" || errorCode === "P2003") return status.CONFLICT;
 
     if (["P2025", "P2001", "P2015", "P2018"].includes(errorCode)) {
         return status.NOT_FOUND;
@@ -114,7 +109,15 @@ const getStatusCodeFromPrismaError = (errorCode: string): number => {
         return status.SERVICE_UNAVAILABLE;
     }
 
-    if (errorCode.startsWith("P2")) return status.BAD_REQUEST;
+    // P2010 = raw query failed; P2021/P2022 = table/column missing. These are
+    // deployment/schema defects and must be observable as server failures.
+    if (["P2010", "P2021", "P2022"].includes(errorCode)) {
+        return status.INTERNAL_SERVER_ERROR;
+    }
+
+    // Unknown P2xxx errors are safer as server faults than as fake validation
+    // failures. Add explicit mappings above when a code is proven user-caused.
+    if (errorCode.startsWith("P2")) return status.INTERNAL_SERVER_ERROR;
 
     return status.INTERNAL_SERVER_ERROR;
 };
@@ -139,16 +142,24 @@ const consumerMessageForKnownError = (errorCode: string): string => {
         return "A record with the same details already exists.";
     }
 
+    if (errorCode === "P2003") {
+        return "This change conflicts with related data. Refresh and try again.";
+    }
+
     if (["P2025", "P2001", "P2015", "P2018"].includes(errorCode)) {
         return "The requested record could not be found.";
     }
 
-    if (errorCode === "P2003") {
-        return "This request references data that does not exist or cannot be changed.";
+    if (errorCode === "P2024" || errorCode === "P1008") {
+        return "The database is taking too long to respond. Please try again.";
     }
 
-    if (errorCode === "P2024" || errorCode === "P1008") {
-        return "The service is taking too long to respond. Please try again.";
+    if (["P2021", "P2022"].includes(errorCode)) {
+        return "The database schema is not ready for this release. Please try again shortly.";
+    }
+
+    if (errorCode === "P2010") {
+        return "A database query failed. Please try again shortly.";
     }
 
     if (errorCode === "P5011") {
@@ -166,11 +177,44 @@ const consumerMessageForKnownError = (errorCode: string): string => {
         return "The service is temporarily unavailable. Please try again shortly.";
     }
 
-    if (errorCode.startsWith("P2")) {
-        return "The request could not be completed with the supplied data.";
-    }
-
     return "A database error prevented the request from completing.";
+};
+
+const codeForKnownError = (errorCode: string, statusCode: number): string => {
+    if (errorCode === "P2002") return "DUPLICATE_RESOURCE";
+    if (errorCode === "P2003") return "RELATION_CONFLICT";
+    if (["P2021", "P2022"].includes(errorCode)) return "DATABASE_SCHEMA_MISMATCH";
+    if (errorCode === "P2010") return "DATABASE_QUERY_ERROR";
+    if (errorCode === "P2024" || errorCode === "P1008") return "DATABASE_TIMEOUT";
+    if (errorCode.startsWith("P2") && statusCode >= 500) return "DATABASE_ERROR";
+    return getErrorCodeFromStatus(statusCode);
+};
+
+const safeMetaValue = (value: unknown): string | undefined => {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.length > 240) return undefined;
+    // Log only identifier-like Prisma metadata; never SQL, values or secrets.
+    return /^[A-Za-z0-9_."-]+$/.test(trimmed) ? trimmed : undefined;
+};
+
+export interface PrismaErrorLogContext {
+    prismaCode: string;
+    prismaModel?: string;
+    prismaTable?: string;
+    prismaColumn?: string;
+}
+
+export const getPrismaErrorLogContext = (
+    error: Prisma.PrismaClientKnownRequestError,
+): PrismaErrorLogContext => {
+    const meta = error.meta ?? {};
+    return {
+        prismaCode: error.code,
+        prismaModel: safeMetaValue(meta.modelName ?? meta.model),
+        prismaTable: safeMetaValue(meta.table),
+        prismaColumn: safeMetaValue(meta.column),
+    };
 };
 
 export const handlePrismaClientKnownRequestError = (
@@ -178,20 +222,20 @@ export const handlePrismaClientKnownRequestError = (
 ): TErrorResponse => {
     const statusCode = getStatusCodeFromPrismaError(error.code);
     const message = consumerMessageForKnownError(error.code);
-    const targetFields = extractTargetFields(error.meta);
+    const isSystemFailure = statusCode >= 500;
+    const targetFields = isSystemFailure ? [] : extractTargetFields(error.meta);
 
-    const errorSources: TErrorSources[] =
-        targetFields.length > 0
-            ? targetFields.map((field) => ({ path: field, message }))
-            : [{ path: error.code, message }];
+    const errorSources: TErrorSources[] = targetFields.length > 0
+        ? targetFields.map((field) => ({ path: field, message }))
+        : [];
 
     return {
         success: false,
         statusCode,
-        code: error.code === "P2002" ? "DUPLICATE_RESOURCE" : getErrorCodeFromStatus(statusCode),
+        code: codeForKnownError(error.code, statusCode),
         message,
         errorSources,
-        fieldErrors: buildFieldErrors(errorSources),
+        fieldErrors: isSystemFailure ? {} : buildFieldErrors(errorSources),
         retryable: isRetryableStatus(statusCode),
     };
 };

@@ -72,7 +72,9 @@
     "smoke:same-origin-auth": "node scripts/release/sameOriginAuthSmoke.mjs",
     "test:fresh-db-auth": "bash scripts/release/freshDatabaseAuthTest.sh",
     "check:production-cleanup": "node scripts/checkProductionCleanup.mjs",
-    "monitoring:operations": "node scripts/phase7/checkOperationalHealth.mjs"
+    "monitoring:operations": "node scripts/phase7/checkOperationalHealth.mjs",
+    "db:phase1:verify": "node scripts/release/verifyPhase1Schema.mjs",
+    "smoke:phase1-reliability": "node scripts/release/phase1ReliabilitySmoke.mjs"
   },
   "keywords": [],
   "author": "opygen",
