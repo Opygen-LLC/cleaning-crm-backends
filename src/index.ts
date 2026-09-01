@@ -1,5 +1,5 @@
 import http from "http";
-import { BACKEND_IP, PORT } from "./config/ENV";
+import { BACKEND_IP, OUTBOX_WORKER_ENABLED, PORT } from "./config/ENV";
 import { assertAuthSecurityConfiguration, assertProcessRole } from "./config/authSecurity";
 import { assertRuntimeEnvironment } from "./config/runtimeEnv";
 import setUpSocketIO from "./config/socketio";
@@ -9,6 +9,7 @@ import logger from "./lib/logger";
 import { ErrorMonitor } from "./lib/monitoring/errorMonitor";
 import { assertInfrastructureAlignment, getInfrastructureAlignment } from "./lib/monitoring/infrastructure";
 import { assertWebsitePlatformConfiguration } from "./modules/Website/websitePlatformConfig";
+import { startEmailOutboxWorker, stopEmailOutboxWorker } from "./workers/emailOutbox.worker";
 
 const installFatalHandlers = () => {
   process.on("unhandledRejection", (reason) => {
@@ -48,10 +49,19 @@ const main = async () => {
 
   const host = BACKEND_IP || "0.0.0.0";
   const port = Number(process.env.PORT || PORT || 5000);
-  server.listen(port, host, () => logger.info(`API process listening at http://${host}:${port}`));
+  server.listen(port, host, () => {
+    logger.info(`API process listening at http://${host}:${port}`);
+    if (OUTBOX_WORKER_ENABLED) {
+      logger.info("Starting background email outbox worker");
+      startEmailOutboxWorker();
+    }
+  });
 
   const shutdown = (signal: string) => {
     logger.info(`${signal} received; draining API process`);
+    if (OUTBOX_WORKER_ENABLED) {
+      stopEmailOutboxWorker();
+    }
     server.close(() => process.exit(0));
     const timer = setTimeout(() => process.exit(1), 10_000);
     timer.unref();
