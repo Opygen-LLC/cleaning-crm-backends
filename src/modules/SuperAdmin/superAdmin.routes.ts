@@ -19,7 +19,8 @@ import {
 import {
     tenantListQuerySchema, reasonSchema, tenantProfileSchema, tenantOwnerSchema, hardDeleteSchema,
     globalUsersQuerySchema, userRoleSchema, userStatusSchema, verifyUserSchema, subscriptionRequestQuerySchema,
-    planChangeSchema, cancellationSchema, trialManagementSchema, entitlementSchema, platformConfigPatchSchema,
+    superAdminAuditQuerySchema,
+    planChangeSchema, cancellationSchema, trialManagementSchema, entitlementSchema, platformConfigPatchSchema, subscriptionRequestReviewSchema,
 } from "./tenantAdmin.validation";
 
 const router = Router();
@@ -85,8 +86,14 @@ router.patch("/users/:id/role", isSuperAdmin, zodValidate(userRoleSchema, Valida
 router.patch("/users/:id/status", isSuperAdmin, zodValidate(userStatusSchema, ValidationProperty.BODY), tenantAdminController.changeStatus);
 router.patch("/users/:id/verify", isSuperAdmin, zodValidate(verifyUserSchema, ValidationProperty.BODY), tenantAdminController.verify);
 
+// ─── Super Admin Audit ────────────────────────────────────────────────────────
+router.get("/audit-logs", isSuperAdmin, zodValidate(superAdminAuditQuerySchema, ValidationProperty.QUERY), tenantAdminController.auditLogs);
+router.get("/audit-logs/stats", isSuperAdmin, tenantAdminController.auditStats);
+
 // ─── Subscription Request Queue ───────────────────────────────────────────────
 router.get("/subscription-requests", isSuperAdmin, zodValidate(subscriptionRequestQuerySchema, ValidationProperty.QUERY), tenantAdminController.subscriptionRequests);
+router.patch("/subscription-requests/:id/approve", isSuperAdmin, zodValidate(subscriptionRequestReviewSchema, ValidationProperty.BODY), tenantAdminController.approveSubscriptionRequest);
+router.patch("/subscription-requests/:id/reject", isSuperAdmin, zodValidate(subscriptionRequestReviewSchema, ValidationProperty.BODY), tenantAdminController.rejectSubscriptionRequest);
 
 // ─── Admin Account Management ─────────────────────────────────────────────────
 // GET /api/v1/super-admin/admin-accounts

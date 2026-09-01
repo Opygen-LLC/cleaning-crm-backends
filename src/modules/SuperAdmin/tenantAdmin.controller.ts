@@ -28,7 +28,12 @@ const changeRole = catchAsync(async (req, res) => ok(res, "User role updated suc
 const changeStatus = catchAsync(async (req, res) => ok(res, "User status updated successfully", await TenantAdminService.updateGlobalUserStatus(req.params.id as string, req.body.status, context(req))));
 const verify = catchAsync(async (req, res) => ok(res, "User manually verified successfully", await TenantAdminService.verifyGlobalUser(req.params.id as string, context(req))));
 
+const auditLogs = catchAsync(async (req, res) => ok(res, "Super Admin audit logs retrieved successfully", await TenantAdminService.getSuperAdminAuditLogs(req.query as Record<string, unknown>)));
+const auditStats = catchAsync(async (_req, res) => ok(res, "Super Admin audit stats retrieved successfully", await TenantAdminService.getSuperAdminAuditStats()));
+
 const subscriptionRequests = catchAsync(async (req, res) => ok(res, "Subscription requests retrieved successfully", await TenantAdminService.getSubscriptionRequests(req.query as Record<string, unknown>)));
+const approveSubscriptionRequest = catchAsync(async (req, res) => ok(res, "Subscription request approved successfully", await TenantAdminService.approveSubscriptionRequest(req.params.id as string, context(req))));
+const rejectSubscriptionRequest = catchAsync(async (req, res) => ok(res, "Subscription request rejected successfully", await TenantAdminService.rejectSubscriptionRequest(req.params.id as string, context(req))));
 const changePlan = catchAsync(async (req, res) => ok(res, "Tenant plan changed successfully", await TenantAdminService.changeTenantPlan(req.params.adminId as string, req.body.targetPlanId, context(req))));
 const scheduleDowngrade = catchAsync(async (req, res) => ok(res, "Tenant downgrade scheduled successfully", await TenantAdminService.scheduleTenantDowngrade(req.params.adminId as string, req.body.targetPlanId, context(req))));
 const cancelScheduled = catchAsync(async (req, res) => ok(res, "Scheduled tenant plan change cancelled", await TenantAdminService.cancelScheduledTenantChange(req.params.adminId as string, context(req))));
@@ -38,4 +43,4 @@ const getEntitlements = catchAsync(async (req, res) => { const tenant = await re
 const setEntitlements = catchAsync(async (req, res) => ok(res, "Tenant entitlement override saved", await TenantAdminService.setTenantEntitlements(req.params.adminId as string, req.body, actor(req))));
 const revokeEntitlements = catchAsync(async (req, res) => ok(res, "Tenant entitlement override revoked", await TenantAdminService.revokeTenantEntitlements(req.params.adminId as string, context(req))));
 
-export const tenantAdminController = { getTenants, getTenantsHealth, getTenant, updateProfile, updateOwner, suspend, reactivate, archive, restore, deletionPreview, hardDelete, getUsers, getUsersSummary, exportUsers, changeRole, changeStatus, verify, subscriptionRequests, changePlan, scheduleDowngrade, cancelScheduled, cancellation, trial, getEntitlements, setEntitlements, revokeEntitlements };
+export const tenantAdminController = { getTenants, getTenantsHealth, getTenant, updateProfile, updateOwner, suspend, reactivate, archive, restore, deletionPreview, hardDelete, getUsers, getUsersSummary, exportUsers, changeRole, changeStatus, verify, auditLogs, auditStats, subscriptionRequests, approveSubscriptionRequest, rejectSubscriptionRequest, changePlan, scheduleDowngrade, cancelScheduled, cancellation, trial, getEntitlements, setEntitlements, revokeEntitlements };
