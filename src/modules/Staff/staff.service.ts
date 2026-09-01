@@ -408,8 +408,8 @@ const resetStaffPassword = async (id: string, adminUser: IRequestUser) => {
             subject: "Your password has been reset",
             templateName: "staff-password-reset",
             templateData: {
-                name,
-                email,
+                name: staffProfile.user.name,
+                email: staffProfile.user.email,
                 password: newPassword,
                 loginUrl: `${process.env.FRONTEND_URL}/login`,
             },

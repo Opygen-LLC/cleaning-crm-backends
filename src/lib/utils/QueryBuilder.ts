@@ -484,7 +484,7 @@ export class QueryBuilder<
     select(selection: Record<string, unknown>): this {
         this.explicitSelect = true;
         this.selectFields = selection as Record<string, boolean | Record<string, unknown>>;
-        this.query.select = selection;
+        this.query.select = selection as Record<string, boolean | Record<string, unknown>>;
         delete this.query.include;
         return this;
     }

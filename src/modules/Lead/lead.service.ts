@@ -298,7 +298,7 @@ const getLeadById = async (id: string, user: IRequestUser) => {
         where: { id, adminId },
         select: leadDetailSelect,
     });
-    return serializeLead(lead as Lead & Record<string, unknown>);
+    return serializeLead(lead as unknown as Lead & Record<string, unknown>);
 };
 
 const updateLead = async (
