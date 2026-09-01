@@ -73,7 +73,7 @@ const resolveAdminIdForJob = async (
             where: { userId: user.id },
             select: { id: true, adminId: true },
         });
-        if (!staff) throw new AppError(status.NOT_FOUND, "Staff profile not found");
+        if (!staff) throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
 
         const assignment = await prisma.jobStaffAssignment.findFirst({
             where: { jobId, staffId: staff.id },
@@ -152,7 +152,7 @@ const createNote = async (
     payload: ICreateNote,
     user: IRequestUser,
 ) => {
-    const adminId = await getAdminId(user);
+    const { adminId } = await resolveAdminIdForJob(user, jobId);
     await assertJobOwnership(jobId, adminId);
 
     if (!payload.body?.trim()) {
@@ -228,15 +228,7 @@ const ALLOWED_MIMES = new Set([
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 const getAttachments = async (jobId: string, user: IRequestUser) => {
-    const adminId = await getAdminId(user).catch(async () => {
-        // STAFF role: fetch adminId via job
-        const job = await prisma.job.findUnique({
-            where: { id: jobId },
-            select: { adminId: true },
-        });
-        if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
-        return job.adminId;
-    });
+    const { adminId } = await resolveAdminIdForJob(user, jobId);
     await assertJobOwnership(jobId, adminId);
 
     return prisma.jobAttachment.findMany({

@@ -7,6 +7,8 @@ export const CacheResource = Object.freeze({
   clients: "clients",
   leads: "leads",
   bookings: "bookings",
+  jobs: "jobs",
+  staff: "staff",
   dashboard: "dashboard",
   profile: "profile",
   notifications: "notifications",

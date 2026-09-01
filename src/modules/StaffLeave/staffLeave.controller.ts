@@ -2,12 +2,14 @@ import status from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { staffLeaveService } from "./staffLeave.service";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 // ─── Staff endpoints ──────────────────────────────────────────────────────────
 
 /** POST /api/v1/staff/leave  — staff submits a leave request */
 const requestLeave = catchAsync(async (req, res) => {
     const result = await staffLeaveService.requestLeave(req.user.id, req.body);
+    await bumpCacheResourcesForUser(req.user, [CacheResource.staff, CacheResource.dashboard]);
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,
@@ -35,6 +37,7 @@ const cancelLeave = catchAsync(async (req, res) => {
         req.user.id,
         req.params.id as string,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.staff, CacheResource.dashboard]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -70,6 +73,7 @@ const reviewLeave = catchAsync(async (req, res) => {
         req.params.id as string,
         req.body,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.staff, CacheResource.dashboard]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,

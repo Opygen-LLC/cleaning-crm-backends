@@ -42,7 +42,7 @@ const requireStaffProfile = async (userId: string) => {
     where: { userId },
     include: { user: { select: { name: true } } },
   });
-  if (!staff) throw new AppError(status.NOT_FOUND, "Staff profile not found");
+  if (!staff) throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
   return staff;
 };
 

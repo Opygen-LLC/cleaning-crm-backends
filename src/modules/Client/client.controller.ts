@@ -48,6 +48,16 @@ const getClientById = catchAsync(async (req, res) => {
     });
 });
 
+const getClientBookingPrefill = catchAsync(async (req, res) => {
+    const result = await clientService.getClientBookingPrefill(req.params.id as string, req.user);
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Client booking prefill retrieved successfully",
+        data: result,
+    });
+});
+
 const updateClient = catchAsync(async (req, res) => {
     const { id } = req.params;
     const result = await clientService.updateClient(
@@ -117,6 +127,7 @@ export const clientController = {
     createClient,
     getClients,
     getClientById,
+    getClientBookingPrefill,
     updateClient,
     deleteClient,
     getClientPortal,

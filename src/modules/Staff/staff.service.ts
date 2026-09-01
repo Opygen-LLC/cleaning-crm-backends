@@ -45,6 +45,40 @@ const geocodeStaffAddress = async (address: string | null | undefined) => {
     };
 };
 
+const validateStaffSpecialties = async (adminId: string, specialty: string[] | undefined) => {
+    if (specialty === undefined) return undefined;
+
+    const normalized = Array.from(
+        new Set(specialty.map((value) => value.trim()).filter(Boolean)),
+    );
+    if (normalized.length === 0) return [];
+
+    const services = await prisma.serviceCatalog.findMany({
+        where: {
+            adminId,
+            status: "ACTIVE",
+            serviceName: { in: normalized },
+        },
+        select: { serviceName: true },
+    });
+    const allowed = new Set(services.map((service) => service.serviceName));
+    const invalid = normalized.filter((value) => !allowed.has(value));
+
+    if (invalid.length > 0) {
+        throw new AppError(
+            status.UNPROCESSABLE_ENTITY,
+            "One or more selected specialisations are no longer available.",
+            {
+                code: "INVALID_STAFF_SPECIALTY",
+                retryable: false,
+                fieldErrors: { specialty: `Unavailable specialisations: ${invalid.join(", ")}` },
+            },
+        );
+    }
+
+    return normalized;
+};
+
 const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser) => {
     const {
         name,
@@ -64,6 +98,14 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser)
     const adminId = await getAdminId(adminUser);
 
     await assertWithinLimit(adminId, "staff");
+
+    // Validate tenant-owned catalogue selections and phone data before creating
+    // the Better Auth user so a bad staff payload cannot leave an orphan STAFF user.
+    const normalizedSpecialty = (await validateStaffSpecialties(adminId, specialty)) ?? [];
+    const normalizedMobileNumber = requireE164Phone(mobileNumber, "mobileNumber");
+    const normalizedEmergencyMobileNumber = emergencyMobileNumber
+        ? requireE164Phone(emergencyMobileNumber, "emergencyMobileNumber")
+        : undefined;
 
     const password = generateRandomPassword() ?? "Staff@123";
     let userId: string;
@@ -99,7 +141,12 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser)
     const StaffRole = staffRole.toUpperCase();
     const geo = await geocodeStaffAddress(address);
 
-    const staffProfile = await prisma.$transaction(async (tx) => {
+    let staffProfile: Prisma.StaffProfileGetPayload<{
+        include: { user: true; staffAvailability: true };
+    }>;
+
+    try {
+        staffProfile = await prisma.$transaction(async (tx) => {
         await tx.user.update({
             where: { id: userId },
             data: {
@@ -114,16 +161,14 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser)
                 userId,
                 adminId,
                 staffRole: StaffRole,
-                mobileNumber: requireE164Phone(mobileNumber, "mobileNumber"),
+                mobileNumber: normalizedMobileNumber,
                 address,
                 ...geo,
                 hourlyRate,
                 startDate: new Date(startDate),
-                specialty,
+                specialty: normalizedSpecialty,
                 emergencyName,
-                emergencyMobileNumber: emergencyMobileNumber
-                    ? requireE164Phone(emergencyMobileNumber, "emergencyMobileNumber")
-                    : undefined,
+                emergencyMobileNumber: normalizedEmergencyMobileNumber,
                 adminNote,
                 staffAvailability: availabilityData.length
                     ? { create: availabilityData }
@@ -131,7 +176,15 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser)
             },
             include: { user: true, staffAvailability: true },
         });
-    });
+        });
+    } catch (provisioningError) {
+        // Better Auth creates the user before our StaffProfile transaction. If
+        // profile provisioning fails, remove that just-created user so the
+        // invariant remains: every STAFF user has exactly one StaffProfile.
+        await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
+        invalidateRuntimeAuth(userId);
+        throw provisioningError;
+    }
 
     waitUntil(
         sendEmailSafely({
@@ -231,6 +284,7 @@ const updateStaff = async (
         where: { id, adminId },
     });
 
+    const normalizedSpecialty = await validateStaffSpecialties(adminId, payload.specialty);
     const geo =
         payload.address !== undefined && payload.address !== existing.address
             ? await geocodeStaffAddress(payload.address)
@@ -238,7 +292,11 @@ const updateStaff = async (
 
     return prisma.staffProfile.update({
         where: { id },
-        data: { ...payload, ...geo },
+        data: {
+            ...payload,
+            ...(normalizedSpecialty !== undefined ? { specialty: normalizedSpecialty } : {}),
+            ...geo,
+        },
     });
 };
 
@@ -401,7 +459,7 @@ const getMyProfile = async (userId: string) => {
     });
 
     if (!profile)
-        throw new AppError(status.NOT_FOUND, "Staff profile not found");
+        throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
 
     // Count completed jobs and compute avg rating
     const [jobsCompleted, jobsThisMonth, reviewData] = await Promise.all([
@@ -491,7 +549,7 @@ const updateMyProfile = async (
 ) => {
     const profile = await prisma.staffProfile.findFirst({ where: { userId } });
     if (!profile)
-        throw new AppError(status.NOT_FOUND, "Staff profile not found");
+        throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
 
     const { name, ...rawProfileFields } = payload;
     const profileFields = {
@@ -545,7 +603,7 @@ const uploadMyAvatar = async (
 ) => {
     const profile = await prisma.staffProfile.findFirst({ where: { userId } });
     if (!profile)
-        throw new AppError(status.NOT_FOUND, "Staff profile not found");
+        throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
 
     const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     if (!allowedTypes.includes(mimeType)) {
@@ -595,7 +653,7 @@ const updateMyAvailability = async (
 ) => {
     const profile = await prisma.staffProfile.findFirst({ where: { userId } });
     if (!profile)
-        throw new AppError(status.NOT_FOUND, "Staff profile not found");
+        throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
 
     await upsertAvailability(profile.id, payload.availability);
     return getMyProfile(userId);

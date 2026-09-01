@@ -4,9 +4,11 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { staffService } from "./staff.service";
 import { IQueryParams } from "../../interface/query.interface";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 const createStaff = catchAsync(async (req, res) => {
     const result = await staffService.createStaff(req.body, req.user);
+    await bumpCacheResourcesForUser(req.user, [CacheResource.staff, CacheResource.dashboard]);
     sendResponse(res, {
         httpStatusCode: status.CREATED,
         success: true,
@@ -47,6 +49,7 @@ const updateStaff = catchAsync(async (req, res) => {
         req.body,
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.staff, CacheResource.dashboard]);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -60,6 +63,7 @@ const deleteStaff = catchAsync(async (req, res) => {
         req.params.id as string,
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.staff, CacheResource.dashboard]);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -74,6 +78,7 @@ const updateAvailability = catchAsync(async (req, res) => {
         req.body,
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.staff, CacheResource.dashboard]);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -119,6 +124,7 @@ const getMyProfile = catchAsync(async (req, res) => {
 /** PATCH /staff/me — update personal details */
 const updateMyProfile = catchAsync(async (req, res) => {
     const result = await staffService.updateMyProfile(req.user.id, req.body);
+    await bumpCacheResourcesForUser(req.user, [CacheResource.staff, CacheResource.dashboard]);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -142,6 +148,7 @@ const uploadMyAvatar = catchAsync(async (req, res) => {
         req.file.buffer,
         req.file.mimetype,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.staff, CacheResource.dashboard]);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -160,6 +167,7 @@ const updateMyAvailability = catchAsync(async (req, res) => {
         req.user.id,
         req.body,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.staff, CacheResource.dashboard]);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,

@@ -75,7 +75,9 @@
     "monitoring:operations": "node scripts/phase7/checkOperationalHealth.mjs",
     "db:phase1:verify": "node scripts/release/verifyPhase1Schema.mjs",
     "smoke:phase1-reliability": "node scripts/release/phase1ReliabilitySmoke.mjs",
-    "db:critical-schema:verify": "node scripts/release/verifyCriticalSchemaCompatibility.mjs"
+    "db:critical-schema:verify": "node scripts/release/verifyCriticalSchemaCompatibility.mjs",
+    "staff:reconcile:report": "tsx src/scripts/phase1/reconcileStaffProfiles.ts",
+    "staff:reconcile:ci": "tsx src/scripts/phase1/reconcileStaffProfiles.ts --ci"
   },
   "keywords": [],
   "author": "opygen",

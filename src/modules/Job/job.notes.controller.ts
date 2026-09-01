@@ -10,6 +10,7 @@ import { sendResponse }     from "../../shared/sendResponse";
 import { jobNotesService }  from "./job.notes.service";
 import { NoteType }         from "../../generated/prisma/enums";
 import AppError              from "../../errorHelper/AppError";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 // ─── Notes ────────────────────────────────────────────────────────────────────
 
@@ -53,6 +54,7 @@ const createNote = catchAsync(async (req, res) => {
         },
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs]);
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,
@@ -77,6 +79,7 @@ const updateNote = catchAsync(async (req, res) => {
         },
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -95,6 +98,7 @@ const deleteNote = catchAsync(async (req, res) => {
         req.params.noteId as string,
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -143,6 +147,7 @@ const uploadAttachment = catchAsync(async (req, res) => {
         req.user,
         photoType,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs]);
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,
@@ -161,6 +166,7 @@ const deleteAttachment = catchAsync(async (req, res) => {
         req.params.attachId as string,
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,

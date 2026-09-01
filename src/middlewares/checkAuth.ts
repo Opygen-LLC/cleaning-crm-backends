@@ -74,7 +74,7 @@ export const checkAuth =
                 authRoles.length > 0 &&
                 !authRoles.includes(tokenData.role as UserRole)
             ) {
-                throw new AppError(status.FORBIDDEN, "Forbidden access.");
+                throw new AppError(status.FORBIDDEN, "Forbidden access.", { code: "FORBIDDEN", retryable: false });
             }
 
             // checkSubscription runs before route-level auth on gated ADMIN
@@ -108,7 +108,15 @@ export const checkAuth =
                 adminId = await getRuntimeTenantId(tokenData.userId as string, role);
             }
 
-            if ((role === UserRole.ADMIN || role === UserRole.STAFF) && !adminId) {
+            if (role === UserRole.STAFF && !adminId) {
+                throw new AppError(
+                    status.NOT_FOUND,
+                    "Staff profile not found for this account.",
+                    { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" },
+                );
+            }
+
+            if (role === UserRole.ADMIN && !adminId) {
                 throw new AppError(
                     status.INTERNAL_SERVER_ERROR,
                     "Authenticated tenant context could not be resolved.",

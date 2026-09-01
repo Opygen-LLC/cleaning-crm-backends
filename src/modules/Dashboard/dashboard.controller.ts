@@ -77,7 +77,17 @@ const getRevenueData = catchAsync(async (req, res) => {
 const getStaffDashboard = catchAsync(async (req, res) => {
     const userId = req.user.id;
 
-    const result = await dashboardService.getStaffDashboard(userId);
+    let result;
+    try {
+        result = await dashboardService.getStaffDashboard(userId);
+    } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError(
+            status.SERVICE_UNAVAILABLE,
+            "Staff dashboard is temporarily unavailable.",
+            { code: "STAFF_DASHBOARD_UNAVAILABLE", retryable: true, kind: "SYSTEM" },
+        );
+    }
 
     sendResponse(res, {
         httpStatusCode: status.OK,

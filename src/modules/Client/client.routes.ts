@@ -52,6 +52,13 @@ router.post(
 
 // ── Admin routes ─────────────────────────────────────────────────────────────
 
+// Lightweight projection used when starting a booking from an existing client.
+router.get(
+    "/detail/:id/booking-prefill",
+    checkAuth(UserRole.ADMIN),
+    clientController.getClientBookingPrefill,
+);
+
 // Get client by id
 router.get(
     "/detail/:id",

@@ -648,11 +648,22 @@ const getRevenuePage = async (
 // ─── Helpers shared by getStaffDashboard ──────────────────────────────────────
 
 const requireStaffProfile = async (userId: string) => {
-  const staff = await prisma.staffProfile.findFirst({
+  const staff = await prisma.staffProfile.findUnique({
     where: { userId },
-    include: { user: { select: { name: true, image: true } } },
+    select: {
+      id: true,
+      adminId: true,
+      hourlyRate: true,
+      user: { select: { name: true, image: true } },
+    },
   });
-  if (!staff) throw new AppError(status.NOT_FOUND, "Staff profile not found");
+  if (!staff) {
+    throw new AppError(status.NOT_FOUND, "Staff profile not found", {
+      code: "STAFF_PROFILE_MISSING",
+      retryable: false,
+      kind: "TENANT_INVARIANT",
+    });
+  }
   return staff;
 };
 
@@ -673,32 +684,32 @@ const formatScheduledDate = (date: Date): string =>
     hour12: true,
   });
 
-// ─── Staff Dashboard Overview ─────────────────────────────────────────────────
-//
-// Additions vs previous version:
-//  • weekEarnings  — sum of hoursWorked × hourlyRate for the current week
-//  • weekRating    — avg review rating received this week
-//  • weekCompleted — completed jobs this week (for the stats bar)
-//  • completedCount — today's completed jobs count (for the dashboard greeting)
-//  • unreadNotifications — badge count for the bell icon
-//  • activeLeave   — current approved leave record (if any), so the profile
-//                    page can show an "On leave" banner
-//  • upcomingLeave — next pending or approved leave request
+const staffDashboardJobSelect = {
+  job: {
+    select: {
+      id: true,
+      jobRef: true,
+      serviceType: true,
+      address: true,
+      scheduledDate: true,
+      durationMins: true,
+      status: true,
+      notes: true,
+      client: { select: { name: true, phone: true } },
+    },
+  },
+} satisfies Prisma.JobStaffAssignmentSelect;
 
+/**
+ * Staff dashboard read model.
+ *
+ * This intentionally uses purpose-specific projections. The dashboard does not
+ * need checklist rows, client email, staff-assignment graphs or full Job
+ * records; checklist progress belongs on the job-detail surface. Weekly counts
+ * and earnings are derived from one compact assignment query instead of five
+ * independent count/findMany calls.
+ */
 const getStaffDashboard = async (userId: string) => {
-  // PERF FIX #12: Staff dashboard had no caching — every load hit the DB
-  // with 11 parallel queries. Apply the same 5-minute Redis cache pattern
-  // as the admin dashboard. The short TTL still reflects job changes fast.
-  const staffCacheKey = `dashboard:staff:${userId}`;
-  const staffCached = await redis.get(staffCacheKey).catch(() => null);
-  if (staffCached) {
-    try {
-      return JSON.parse(staffCached);
-    } catch {
-      // fall through on corrupt entry
-    }
-  }
-
   const staffProfile = await requireStaffProfile(userId);
   const staffId = staffProfile.id;
 
@@ -707,6 +718,7 @@ const getStaffDashboard = async (userId: string) => {
   todayStart.setHours(0, 0, 0, 0);
   const todayEnd = new Date(now);
   todayEnd.setHours(23, 59, 59, 999);
+
   const weekStart = new Date(now);
   weekStart.setDate(now.getDate() - now.getDay());
   weekStart.setHours(0, 0, 0, 0);
@@ -714,167 +726,115 @@ const getStaffDashboard = async (userId: string) => {
   prevWeekStart.setDate(weekStart.getDate() - 7);
   const prevWeekEnd = new Date(weekStart);
   prevWeekEnd.setMilliseconds(-1);
+  const upcomingEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
   const [
     todaysAssignments,
     upcomingAssignments,
-    weekJobsCount,
-    prevWeekJobsCount,
+    recentAssignments,
     completedTotalCount,
-    completedTodayCount,
-    weekCompletedCount,
     unreadCount,
     weekReviewAgg,
-    weekAssignmentsForEarnings,
     leaveRecords,
   ] = await Promise.all([
-    // Today's jobs
     prisma.jobStaffAssignment.findMany({
       where: {
         staffId,
         job: {
+          adminId: staffProfile.adminId,
           scheduledDate: { gte: todayStart, lte: todayEnd },
           status: { not: JobStatus.CANCELLED },
         },
       },
-      include: {
-        job: {
-          include: {
-            client: { select: { name: true, phone: true, email: true } },
-            checklists: {
-              include: { items: { select: { id: true, completed: true } } },
-            },
-          },
-        },
-      },
+      select: staffDashboardJobSelect,
       orderBy: { job: { scheduledDate: "asc" } },
     }),
-    // Upcoming (next 7 days)
     prisma.jobStaffAssignment.findMany({
       where: {
         staffId,
         job: {
-          scheduledDate: {
-            gt: todayEnd,
-            lte: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
-          },
+          adminId: staffProfile.adminId,
+          scheduledDate: { gt: todayEnd, lte: upcomingEnd },
           status: { not: JobStatus.CANCELLED },
         },
       },
-      include: {
-        job: {
-          include: {
-            client: { select: { name: true, phone: true, email: true } },
-            checklists: {
-              include: { items: { select: { id: true, completed: true } } },
-            },
-          },
-        },
-      },
+      select: staffDashboardJobSelect,
       orderBy: { job: { scheduledDate: "asc" } },
       take: 10,
     }),
-    // Jobs this week (for stats bar)
-    prisma.jobStaffAssignment.count({
-      where: { staffId, job: { scheduledDate: { gte: weekStart, lte: now } } },
+    prisma.jobStaffAssignment.findMany({
+      where: {
+        staffId,
+        OR: [
+          { job: { adminId: staffProfile.adminId, scheduledDate: { gte: prevWeekStart, lte: now } } },
+          { checkOutAt: { gte: weekStart, lte: now } },
+          { job: { adminId: staffProfile.adminId, updatedAt: { gte: weekStart, lte: now } } },
+        ],
+      },
+      select: {
+        hoursWorked: true,
+        checkOutAt: true,
+        job: { select: { scheduledDate: true, status: true, updatedAt: true } },
+      },
     }),
-    // Jobs prev week (for changePercent)
     prisma.jobStaffAssignment.count({
       where: {
         staffId,
-        job: { scheduledDate: { gte: prevWeekStart, lte: prevWeekEnd } },
+        job: { adminId: staffProfile.adminId, status: JobStatus.COMPLETED },
       },
     }),
-    // Total completed ever
-    prisma.jobStaffAssignment.count({
-      where: { staffId, job: { status: JobStatus.COMPLETED } },
-    }),
-    // Completed today (for "you're done!" greeting)
-    prisma.jobStaffAssignment.count({
-      where: {
-        staffId,
-        job: {
-          status: JobStatus.COMPLETED,
-          updatedAt: { gte: todayStart, lte: todayEnd },
-        },
-      },
-    }),
-    // Completed this week
-    prisma.jobStaffAssignment.count({
-      where: {
-        staffId,
-        job: {
-          status: JobStatus.COMPLETED,
-          updatedAt: { gte: weekStart, lte: now },
-        },
-      },
-    }),
-    // Unread notifications scoped to this staff member's adminId.
-    // PERF FIX #13 (partial): The Notification model currently has no
-    // per-recipient field — it only tracks adminId. Until a `recipientId`
-    // column is added via migration (see prisma/schema/admin.prisma), we
-    // filter by adminId AND limit to a small recent window to avoid a full
-    // table scan on busy accounts.
     prisma.notification.count({
       where: {
         adminId: staffProfile.adminId,
         isRead: false,
-        createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+        createdAt: { gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) },
       },
     }),
-    // Avg review rating this week
     prisma.review.aggregate({
       where: { staffId, createdAt: { gte: weekStart, lte: now } },
       _avg: { rating: true },
     }),
-    // This week's completed assignments with hoursWorked for earnings calc
-    prisma.jobStaffAssignment.findMany({
-      where: {
-        staffId,
-        checkOutAt: { gte: weekStart, lte: now },
-        hoursWorked: { not: null },
-      },
-      select: { hoursWorked: true },
-    }),
-    // Leave records: active + upcoming
     prisma.staffLeave.findMany({
       where: {
         staffId,
         status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
         endDate: { gte: todayStart },
       },
+      select: { id: true, startDate: true, endDate: true, status: true },
       orderBy: { startDate: "asc" },
     }),
   ]);
 
-  // ── Earnings this week ───────────────────────────────────────────────────
+  const inRange = (date: Date, from: Date, to: Date) => date >= from && date <= to;
+  const weekJobsCount = recentAssignments.filter((a) =>
+    inRange(a.job.scheduledDate, weekStart, now),
+  ).length;
+  const prevWeekJobsCount = recentAssignments.filter((a) =>
+    inRange(a.job.scheduledDate, prevWeekStart, prevWeekEnd),
+  ).length;
+  const completedTodayCount = recentAssignments.filter(
+    (a) => a.job.status === JobStatus.COMPLETED && inRange(a.job.updatedAt, todayStart, todayEnd),
+  ).length;
+  const weekCompletedCount = recentAssignments.filter(
+    (a) => a.job.status === JobStatus.COMPLETED && inRange(a.job.updatedAt, weekStart, now),
+  ).length;
   const hourlyRate = staffProfile.hourlyRate ?? 0;
-  const weekEarnings = weekAssignmentsForEarnings.reduce(
-    (sum, a) => sum + Number(a.hoursWorked ?? 0) * hourlyRate,
-    0,
-  );
+  const weekEarnings = recentAssignments.reduce((sum, assignment) => {
+    if (!assignment.checkOutAt || assignment.checkOutAt < weekStart || assignment.checkOutAt > now) return sum;
+    return sum + Number(assignment.hoursWorked ?? 0) * hourlyRate;
+  }, 0);
 
-  // ── Leave status ─────────────────────────────────────────────────────────
   const activeLeave =
     leaveRecords.find(
-      (l) =>
-        l.status === LeaveStatus.APPROVED &&
-        l.startDate <= now &&
-        l.endDate >= now,
+      (leave) =>
+        leave.status === LeaveStatus.APPROVED &&
+        leave.startDate <= now &&
+        leave.endDate >= now,
     ) ?? null;
-  const upcomingLeave = leaveRecords.find((l) => l.startDate > now) ?? null;
+  const upcomingLeave = leaveRecords.find((leave) => leave.startDate > now) ?? null;
 
-  // ── Shape jobs ───────────────────────────────────────────────────────────
-  const shapeJob = (assignment: (typeof todaysAssignments)[0]) => {
+  const shapeJob = (assignment: (typeof todaysAssignments)[number]) => {
     const job = assignment.job;
-    const checklistTotal = job.checklists.reduce(
-      (acc, cl) => acc + cl.items.length,
-      0,
-    );
-    const checklistDone = job.checklists.reduce(
-      (acc, cl) => acc + cl.items.filter((i) => i.completed).length,
-      0,
-    );
     return {
       id: job.id,
       bookingRef: job.jobRef,
@@ -892,76 +852,48 @@ const getStaffDashboard = async (userId: string) => {
       duration: formatDuration(job.durationMins),
       status: job.status as string,
       notes: job.notes ?? undefined,
-      checklistTotal,
-      checklistDone,
     };
   };
 
   const todaysJobs = todaysAssignments.map(shapeJob);
   const upcomingJobs = upcomingAssignments.map(shapeJob);
-
-  // ── Stats ────────────────────────────────────────────────────────────────
   const weekChangePct =
     prevWeekJobsCount === 0
       ? 0
-      : Math.round(
-          ((weekJobsCount - prevWeekJobsCount) / prevWeekJobsCount) * 100,
-        );
-  const stats = [
-    { label: "Jobs today", value: todaysJobs.length },
-    { label: "This week", value: weekJobsCount, changePercent: weekChangePct },
-    { label: "Completed total", value: completedTotalCount },
-  ];
+      : Math.round(((weekJobsCount - prevWeekJobsCount) / prevWeekJobsCount) * 100);
 
   const staffName = staffProfile.user.name;
   const initials = staffName
     .split(" ")
-    .map((w) => w[0])
+    .map((word) => word[0])
     .join("")
     .toUpperCase()
     .slice(0, 2);
 
-  const staffResult = {
+  return {
     staffId,
     staffName,
     avatarInitials: initials,
     avatarUrl: staffProfile.user.image ?? undefined,
-    stats,
+    stats: [
+      { label: "Jobs today", value: todaysJobs.length },
+      { label: "This week", value: weekJobsCount, changePercent: weekChangePct },
+      { label: "Completed total", value: completedTotalCount },
+    ],
     todaysJobs,
     upcomingJobs,
-    // Extended fields consumed by StaffDashboardContent
     weekEarnings: Math.round(weekEarnings * 100) / 100,
     weekCompleted: weekCompletedCount,
     weekRating: Number((weekReviewAgg._avg.rating ?? 0).toFixed(1)),
     completedCount: completedTodayCount,
     unreadNotifications: unreadCount,
-    // Leave info for profile page and dashboard banner
     activeLeave: activeLeave
-      ? {
-          id: activeLeave.id,
-          startDate: activeLeave.startDate,
-          endDate: activeLeave.endDate,
-          status: activeLeave.status,
-        }
+      ? { id: activeLeave.id, startDate: activeLeave.startDate, endDate: activeLeave.endDate, status: activeLeave.status }
       : null,
     upcomingLeave: upcomingLeave
-      ? {
-          id: upcomingLeave.id,
-          startDate: upcomingLeave.startDate,
-          endDate: upcomingLeave.endDate,
-          status: upcomingLeave.status,
-        }
+      ? { id: upcomingLeave.id, startDate: upcomingLeave.startDate, endDate: upcomingLeave.endDate, status: upcomingLeave.status }
       : null,
   };
-
-  // PERF FIX #12: Write staff dashboard result to Redis for 5 minutes.
-  // This eliminates the 11-query DB hit on every staff page load.
-  // Job status updates from Socket.IO invalidate this key when needed.
-  await redis
-    .setex(staffCacheKey, 300, JSON.stringify(staffResult))
-    .catch(() => {});
-
-  return staffResult;
 };
 
 export const dashboardService = {

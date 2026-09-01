@@ -29,6 +29,8 @@ const resourceForRequest = (req: Request): CacheResourceName | null => {
   if (path.includes("/client")) return CacheResource.clients;
   if (path.includes("/lead")) return CacheResource.leads;
   if (path.includes("/booking")) return CacheResource.bookings;
+  if (path.includes("/job")) return CacheResource.jobs;
+  if (path.includes("/staff")) return CacheResource.staff;
   if (path.includes("/invoice")) return CacheResource.invoices;
   if (path.includes("/payment")) return CacheResource.payments;
   if (path.includes("/notification")) return CacheResource.notifications;
@@ -59,6 +61,8 @@ const ttlForResource = (resource: CacheResourceName | null): number => {
     case CacheResource.clients:
     case CacheResource.leads:
     case CacheResource.bookings:
+    case CacheResource.jobs:
+    case CacheResource.staff:
     case CacheResource.dashboard:
     case CacheResource.invoices:
     case CacheResource.payments:

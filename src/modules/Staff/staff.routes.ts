@@ -19,7 +19,7 @@
  *   POST   /staff/                create staff member
  *   GET    /staff/                list own staff (paginated, searchable)
  *   GET    /staff/:id             single staff record
- *   PATCH  /staff/:id             update staff (admin or staff can call)
+ *   PATCH  /staff/:id             update staff (admin only; STAFF uses /staff/me)
  *   PUT    /staff/:id/availability update availability slots
  *   POST   /staff/:id/reset-password admin resets staff member's password
  *   DELETE /staff/:id             soft-delete staff
@@ -92,10 +92,10 @@ router.get("/", checkAuth(UserRole.ADMIN), staffController.getMyStaff);
 /** GET /staff/:id — admin fetches a single staff record */
 router.get("/:id", checkAuth(UserRole.ADMIN), staffController.getStaffById);
 
-/** PATCH /staff/:id — admin or staff updates a record */
+/** PATCH /staff/:id — admin-only record update; STAFF must use /staff/me. */
 router.patch(
     "/:id",
-    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.STAFF),
+    checkAuth(UserRole.SUPER_ADMIN, UserRole.ADMIN),
     zodValidate(staffValidation.updateStaff, ValidationProperty.BODY),
     staffController.updateStaff,
 );

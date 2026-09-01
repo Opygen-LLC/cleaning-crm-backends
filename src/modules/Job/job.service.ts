@@ -123,6 +123,12 @@ const jobInclude = {
   serviceCatalog: { select: { id: true, serviceName: true, basePrice: true, duration: true, category: true } },
 } as const;
 
+// Staff job list/detail surfaces need only the client contact projection.
+// Assignment graphs, booking data and service pricing remain admin-only payloads.
+const staffJobInclude = {
+  client: { select: { name: true, email: true, phone: true } },
+} as const;
+
 // Map JS getDay() → Prisma WeekDay enum
 const JS_DAY_TO_WEEKDAY: Record<number, WeekDay> = {
   0: WeekDay.SUNDAY,
@@ -248,26 +254,47 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
 };
 
 const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
-  // STAFF: return only jobs where this staff member is assigned
   if (user.role === "STAFF") {
     const staffProfile = await prisma.staffProfile.findUnique({
       where: { userId: user.id },
+      select: { id: true, adminId: true },
     });
-    if (!staffProfile)
-      throw new AppError(status.NOT_FOUND, "Staff profile not found");
+    if (!staffProfile) {
+      throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
+    }
+
+    const scope = typeof queryParams.scope === "string" ? queryParams.scope : "all";
+    const now = new Date();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const tomorrowStart = new Date(todayStart);
+    tomorrowStart.setDate(todayStart.getDate() + 1);
+
+    const scopeWhere: Record<string, unknown> = {};
+    if (scope === "today") {
+      scopeWhere.scheduledDate = { gte: todayStart, lt: tomorrowStart };
+      scopeWhere.status = { not: JobStatus.CANCELLED };
+    } else if (scope === "upcoming") {
+      scopeWhere.scheduledDate = { gte: tomorrowStart };
+      scopeWhere.status = JobStatus.SCHEDULED;
+    } else if (scope === "completed") {
+      scopeWhere.status = JobStatus.COMPLETED;
+    }
 
     return new QueryBuilder(prisma.job, queryParams, {
       searchableFields: jobSearchableFields,
       filterableFields: jobFilterableFields,
     })
       .where({
+        adminId: staffProfile.adminId,
+        ...scopeWhere,
         staffAssignments: { some: { staffId: staffProfile.id } },
       })
       .search()
       .filter()
       .sort()
       .paginate()
-      .include(jobInclude)
+      .include(staffJobInclude)
       .execute();
   }
 
@@ -286,26 +313,29 @@ const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
 };
 
 const getJobById = async (id: string, user: IRequestUser) => {
-  // STAFF: verify the job is assigned to them
   if (user.role === "STAFF") {
     const staffProfile = await prisma.staffProfile.findUnique({
       where: { userId: user.id },
+      select: { id: true, adminId: true },
     });
-    if (!staffProfile)
-      throw new AppError(status.NOT_FOUND, "Staff profile not found");
+    if (!staffProfile) {
+      throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
+    }
 
     const job = await prisma.job.findFirst({
       where: {
         id,
+        adminId: staffProfile.adminId,
         staffAssignments: { some: { staffId: staffProfile.id } },
       },
-      include: jobInclude,
+      include: staffJobInclude,
     });
-    if (!job)
-      throw new AppError(
-        status.NOT_FOUND,
-        "Job not found or not assigned to you",
-      );
+    if (!job) {
+      throw new AppError(status.NOT_FOUND, "Job not found or not assigned to you", {
+        code: "STAFF_JOB_NOT_ASSIGNED",
+        retryable: false,
+      });
+    }
     return job;
   }
 
@@ -389,15 +419,31 @@ const updateJobStatus = async (
   newStatus: JobStatus,
   user: IRequestUser,
 ) => {
-  // Both ADMIN and STAFF can update status — resolve adminId correctly
   let adminId: string;
   if (user.role === "STAFF") {
-    const job = await prisma.job.findUnique({
-      where: { id },
-      select: { adminId: true },
+    const staffProfile = await prisma.staffProfile.findUnique({
+      where: { userId: user.id },
+      select: { id: true, adminId: true },
     });
-    if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
-    adminId = job.adminId;
+    if (!staffProfile) {
+      throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
+    }
+
+    const assignment = await prisma.jobStaffAssignment.findFirst({
+      where: {
+        jobId: id,
+        staffId: staffProfile.id,
+        job: { adminId: staffProfile.adminId },
+      },
+      select: { jobId: true },
+    });
+    if (!assignment) {
+      throw new AppError(status.FORBIDDEN, "You are not assigned to this job", {
+        code: "STAFF_JOB_NOT_ASSIGNED",
+        retryable: false,
+      });
+    }
+    adminId = staffProfile.adminId;
   } else {
     adminId = await getAdminId(user);
   }
@@ -928,27 +974,34 @@ const resolveStaffAssignment = async (
   if (user.role === "STAFF") {
     const staffProfile = await prisma.staffProfile.findUnique({
       where: { userId },
+      select: { id: true, adminId: true },
     });
-    if (!staffProfile)
-      throw new AppError(status.NOT_FOUND, "Staff profile not found");
-
-    const assignment = await prisma.jobStaffAssignment.findFirst({
-      where: { jobId, staffId: staffProfile.id },
-    });
-    if (!assignment) {
-      throw new AppError(status.FORBIDDEN, "You are not assigned to this job");
+    if (!staffProfile) {
+      throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
     }
 
-    const job = await prisma.job.findUnique({ where: { id: jobId } });
-    if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
+    const assignment = await prisma.jobStaffAssignment.findFirst({
+      where: {
+        jobId,
+        staffId: staffProfile.id,
+        job: { adminId: staffProfile.adminId },
+      },
+      select: { jobId: true, staffId: true },
+    });
+    if (!assignment) {
+      throw new AppError(status.FORBIDDEN, "You are not assigned to this job", {
+        code: "STAFF_JOB_NOT_ASSIGNED",
+        retryable: false,
+      });
+    }
 
-    return { adminId: job.adminId, assignment };
+    return { adminId: staffProfile.adminId, assignment };
   }
 
-  // ADMIN path
   const adminId = await getAdminId(user);
   const assignment = await prisma.jobStaffAssignment.findFirst({
-    where: { jobId },
+    where: { jobId, job: { adminId } },
+    select: { jobId: true, staffId: true },
   });
   if (!assignment) {
     throw new AppError(status.BAD_REQUEST, "No staff assigned to this job");

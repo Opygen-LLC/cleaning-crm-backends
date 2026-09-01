@@ -169,6 +169,45 @@ const getClientById = async (id: string, user: IRequestUser) => {
     return { ...client, postcode: client.zipcode ?? "" };
 };
 
+const getClientBookingPrefill = async (id: string, user: IRequestUser) => {
+    const adminId = await getAdminId(user);
+    const client = await prisma.client.findFirst({
+        where: { id, adminId },
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            addressLine1: true,
+            addressLine2: true,
+            city: true,
+            zipcode: true,
+            country: true,
+        },
+    });
+
+    if (!client) {
+        throw new AppError(status.NOT_FOUND, "Client not found", {
+            code: "CLIENT_NOT_FOUND",
+            retryable: false,
+        });
+    }
+
+    return {
+        id: client.id,
+        name: client.name,
+        email: client.email,
+        phone: client.phone,
+        address: {
+            line1: client.addressLine1 ?? "",
+            line2: client.addressLine2 ?? undefined,
+            city: client.city ?? "",
+            postcode: client.zipcode ?? "",
+            country: client.country ?? undefined,
+        },
+    };
+};
+
 const updateClient = async (
     id: string,
     payload: updateClientPayload,
@@ -345,6 +384,7 @@ export const clientService = {
     createClient,
     getClients,
     getClientById,
+    getClientBookingPrefill,
     updateClient,
     deleteClient,
     getClientPortal,

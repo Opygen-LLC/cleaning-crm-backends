@@ -1,6 +1,7 @@
 export const jobSearchableFields = [
     "jobRef",
     "address",
+    "serviceNameSnapshot",
     "client.name",
     "client.email",
 ];

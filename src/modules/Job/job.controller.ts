@@ -3,11 +3,13 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { jobService } from "./job.service";
 import { IQueryParams } from "../../interface/query.interface";
+import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
 
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
 const createJob = catchAsync(async (req, res) => {
     const result = await jobService.createJob(req.body, req.user);
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs, CacheResource.dashboard]);
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,
@@ -51,6 +53,7 @@ const updateJob = catchAsync(async (req, res) => {
         req.body,
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs, CacheResource.dashboard]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -66,6 +69,7 @@ const updateJobStatus = catchAsync(async (req, res) => {
         req.body.status,
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs, CacheResource.dashboard]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -77,6 +81,7 @@ const updateJobStatus = catchAsync(async (req, res) => {
 
 const deleteJob = catchAsync(async (req, res) => {
     await jobService.deleteJob(req.params.id as string, req.user);
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs, CacheResource.dashboard]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -93,6 +98,7 @@ const convertBookingToJob = catchAsync(async (req, res) => {
         req.params.bookingId as string,
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs, CacheResource.bookings, CacheResource.dashboard, CacheResource.reports]);
 
     sendResponse(res, {
         httpStatusCode: status.CREATED,
@@ -110,6 +116,7 @@ const assignStaff = catchAsync(async (req, res) => {
         req.body,
         req.user,
     );
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs, CacheResource.staff, CacheResource.dashboard]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -155,6 +162,7 @@ const getStaffAvailability = catchAsync(async (req, res) => {
 
 const checkIn = catchAsync(async (req, res) => {
     const result = await jobService.checkIn(req.params.id as string, req.user);
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs, CacheResource.dashboard]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -166,6 +174,7 @@ const checkIn = catchAsync(async (req, res) => {
 
 const checkOut = catchAsync(async (req, res) => {
     const result = await jobService.checkOut(req.params.id as string, req.user);
+    await bumpCacheResourcesForUser(req.user, [CacheResource.jobs, CacheResource.dashboard]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
