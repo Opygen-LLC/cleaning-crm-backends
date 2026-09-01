@@ -879,7 +879,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
     assertLifecycleAllowsPublish(draft.status as WebsiteLifecycleStatus);
     const publishTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     WebsiteEntitlementService.assertTemplateAllowed(publishTemplate, entitlements);
-    if ((draft.socialImageUrl || draft.metaKeywords.length || draft.pages.some((page: any) => page.seoKeywords?.length || page.socialImageUrl)) && !entitlements.advancedSeo) {
+    if ((draft.socialImageUrl || draft.metaKeywords?.length || draft.pages.some((page: any) => page.seoKeywords?.length || page.socialImageUrl)) && !entitlements.advancedSeo) {
       throw new AppError(status.FORBIDDEN, "Remove advanced SEO overrides or upgrade to Advanced Website SEO before publishing.", {
         code: "WEBSITE_ADVANCED_SEO_REQUIRED",
         retryable: false,
@@ -1110,7 +1110,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
     );
     const launchTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     WebsiteEntitlementService.assertTemplateAllowed(launchTemplate, entitlements);
-    if ((draft.socialImageUrl || draft.metaKeywords.length || draft.pages.some((page: any) => page.seoKeywords?.length || page.socialImageUrl)) && !entitlements.advancedSeo) {
+    if ((draft.socialImageUrl || draft.metaKeywords?.length || draft.pages.some((page: any) => page.seoKeywords?.length || page.socialImageUrl)) && !entitlements.advancedSeo) {
       throw new AppError(status.FORBIDDEN, "Remove advanced SEO overrides or upgrade to Advanced Website SEO before launching.", { code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false });
     }
 

@@ -63,8 +63,8 @@ const openRoutes: { path: string; route: Router }[] = [
 const gatedRoutes: { path: string; route: Router }[] = [
     { path: "/admin/data-export", route: dataExportRoutes },
     { path: "/admin",             route: adminRoutes },
-    { path: "/staff",             route: staffRoutes },
     { path: "/staff",             route: staffLeaveRoutes },
+    { path: "/staff",             route: staffRoutes },
     { path: "/client",            route: clientRoutes },
     { path: "/service-catalog",   route: serviceCatalogRoutes },
     { path: "/invoice",           route: invoiceRoutes },
