@@ -1,7 +1,7 @@
 model ServiceCatalog {
   id           String        @id @default(uuid())
   serviceName  String
-  slug         String
+  slug         String        @default("")
   description  String
   // Canonical price amount in the owning business's AdminProfile.currency.
   // The database column keeps its legacy name for a zero-downtime rollout.
