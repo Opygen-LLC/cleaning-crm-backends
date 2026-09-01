@@ -6,6 +6,18 @@ import { leadActivityService } from "./leadActivity.service";
 
 const param = (value: string | string[]) => (Array.isArray(value) ? value[0] : value);
 
+
+const getFollowUps = catchAsync(async (req, res) => {
+    const result = await leadActivityService.getFollowUps(req.query, req.user);
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Follow-ups retrieved successfully",
+        data: result.rows,
+        meta: result.meta,
+    });
+});
+
 const getActivities = catchAsync(async (req, res) => {
     const result = await leadActivityService.getActivities(param(req.params.id), req.user);
     sendResponse(res, {
@@ -59,6 +71,7 @@ const deleteActivity = catchAsync(async (req, res) => {
 });
 
 export const leadActivityController = {
+    getFollowUps,
     getActivities,
     createActivity,
     updateActivity,

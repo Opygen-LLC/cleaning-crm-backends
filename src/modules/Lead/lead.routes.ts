@@ -30,6 +30,16 @@ router.post(
 // Get all leads for the authenticated admin
 router.get("/", isAdmin, hasLeadsPipeline, leadController.getLeads);
 
+// Purpose-built follow-up list. Keep this before /:id so Express never
+// interprets "follow-ups" as a lead id.
+router.get(
+    "/follow-ups",
+    isAdmin,
+    hasLeadsPipeline,
+    zodValidate(leadActivityValidation.followUpsQuery, ValidationProperty.QUERY),
+    leadActivityController.getFollowUps,
+);
+
 // Get single lead by id
 router.get("/:id", isAdmin, hasLeadsPipeline, leadController.getLeadById);
 

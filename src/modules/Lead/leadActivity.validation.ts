@@ -22,6 +22,28 @@ const createLeadActivitySchema = z
     })
     .strict();
 
+
+const dateKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must use YYYY-MM-DD format");
+
+const getFollowUpsQuerySchema = z.object({
+    date: dateKey.optional(),
+    from: dateKey.optional(),
+    to: dateKey.optional(),
+    assignedTo: z.string().trim().min(1).max(128).optional(),
+    status: z.enum(["PENDING", "COMPLETED", "CANCELLED", "ALL"]).optional(),
+    scope: z.enum(["today", "overdue", "upcoming"]).optional(),
+    page: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(500).optional(),
+    sort: z.enum(["asc", "desc"]).optional(),
+}).strict().superRefine((value, ctx) => {
+    if (value.date && (value.from || value.to)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Use date or from/to, not both", path: ["date"] });
+    }
+    if (value.from && value.to && value.from > value.to) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "from must be on or before to", path: ["from"] });
+    }
+});
+
 const updateLeadActivitySchema = z
     .object({
         type: z.enum(leadActivityTypes).optional(),
@@ -39,6 +61,7 @@ const updateLeadActivitySchema = z
 export const leadActivityValidation = {
     create: createLeadActivitySchema,
     update: updateLeadActivitySchema,
+    followUpsQuery: getFollowUpsQuerySchema,
 };
 
 export type LeadActivityTypeInput = (typeof leadActivityTypes)[number];

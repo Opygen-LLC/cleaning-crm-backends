@@ -51,7 +51,7 @@ const ensureLead = async (
     if (!lead) throw new AppError(status.NOT_FOUND, "Lead not found");
 };
 
-const ensureAssignableUser = async (
+export const ensureLeadActivityAssignee = async (
     db: Pick<Prisma.TransactionClient, "user">,
     adminId: string,
     assignedToUserId?: string | null,
@@ -99,6 +99,177 @@ const recomputeLastContactedAt = async (
     });
 };
 
+
+export interface FollowUpQuery {
+    date?: string;
+    from?: string;
+    to?: string;
+    assignedTo?: string;
+    status?: LeadActivityStatusInput | "ALL";
+    scope?: "today" | "overdue" | "upcoming";
+    page?: number | string;
+    limit?: number | string;
+    sort?: "asc" | "desc";
+}
+
+const validTimeZone = (value: unknown): string => {
+    if (typeof value !== "string" || !value.trim()) return "UTC";
+    try {
+        new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+        return value;
+    } catch {
+        return "UTC";
+    }
+};
+
+const dateKeyInZone = (date: Date, timeZone: string): string => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(date);
+    const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+    return `${pick("year")}-${pick("month")}-${pick("day")}`;
+};
+
+const addDaysToDateKey = (dateKey: string, days: number): string => {
+    const [year, month, day] = dateKey.split("-").map(Number);
+    const value = new Date(Date.UTC(year, month - 1, day + days));
+    return value.toISOString().slice(0, 10);
+};
+
+const localMidnightToUtc = (dateKey: string, timeZone: string): Date => {
+    const [year, month, day] = dateKey.split("-").map(Number);
+    const localAsUtc = Date.UTC(year, month - 1, day, 0, 0, 0);
+    const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        hour12: false,
+        hourCycle: "h23",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+    });
+    const offsetAt = (instant: Date) => {
+        const parts = formatter.formatToParts(instant);
+        const number = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+        const represented = Date.UTC(
+            number("year"),
+            number("month") - 1,
+            number("day"),
+            number("hour") % 24,
+            number("minute"),
+            number("second"),
+        );
+        return represented - instant.getTime();
+    };
+    const guess = new Date(localAsUtc);
+    let utc = new Date(localAsUtc - offsetAt(guess));
+    // Re-evaluate once so boundaries remain correct around DST transitions.
+    utc = new Date(localAsUtc - offsetAt(utc));
+    return utc;
+};
+
+const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
+    const adminId = await getAdminId(user);
+    const admin = await prisma.adminProfile.findFirst({
+        where: { id: adminId },
+        select: { businessHours: true },
+    });
+    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+
+    const businessHours = admin.businessHours as { timezone?: unknown } | null;
+    const timeZone = validTimeZone(businessHours?.timezone);
+    const now = new Date();
+    const today = dateKeyInZone(now, timeZone);
+    const todayStart = localMidnightToUtc(today, timeZone);
+    const tomorrowStart = localMidnightToUtc(addDaysToDateKey(today, 1), timeZone);
+
+    const where: Prisma.LeadActivityWhereInput = {
+        adminId,
+        type: "FOLLOW_UP",
+        scheduledAt: { not: null },
+    };
+
+    const statusFilter = query.status ?? "PENDING";
+    if (statusFilter !== "ALL") where.status = statusFilter;
+    if (query.assignedTo) where.assignedToUserId = query.assignedTo === "me" ? user.id : query.assignedTo;
+
+    if (query.date) {
+        where.scheduledAt = {
+            gte: localMidnightToUtc(query.date, timeZone),
+            lt: localMidnightToUtc(addDaysToDateKey(query.date, 1), timeZone),
+        };
+    } else if (query.from || query.to) {
+        where.scheduledAt = {
+            ...(query.from ? { gte: localMidnightToUtc(query.from, timeZone) } : {}),
+            ...(query.to ? { lt: localMidnightToUtc(addDaysToDateKey(query.to, 1), timeZone) } : {}),
+        };
+    } else if (query.scope === "overdue") {
+        where.scheduledAt = { lt: todayStart };
+    } else if (query.scope === "upcoming") {
+        where.scheduledAt = { gte: tomorrowStart };
+    } else {
+        // No explicit range means "today" in the business timezone, not the browser timezone.
+        where.scheduledAt = { gte: todayStart, lt: tomorrowStart };
+    }
+
+    const page = Math.max(1, Number(query.page ?? 1) || 1);
+    const limit = Math.min(500, Math.max(1, Number(query.limit ?? 20) || 20));
+    const sort = query.sort === "desc" ? "desc" : "asc";
+
+    const [rows, total] = await prisma.$transaction([
+        prisma.leadActivity.findMany({
+            where,
+            select: {
+                id: true,
+                leadId: true,
+                type: true,
+                status: true,
+                scheduledAt: true,
+                completedAt: true,
+                assignedToUserId: true,
+                note: true,
+                outcome: true,
+                createdAt: true,
+                updatedAt: true,
+                lead: {
+                    select: {
+                        id: true,
+                        leadRef: true,
+                        name: true,
+                        email: true,
+                        phone: true,
+                        stage: true,
+                        serviceInterest: true,
+                    },
+                },
+                assignedTo: { select: { id: true, name: true, email: true } },
+            },
+            orderBy: [{ scheduledAt: sort }, { id: sort }],
+            skip: (page - 1) * limit,
+            take: limit,
+        }),
+        prisma.leadActivity.count({ where }),
+    ]);
+
+    return {
+        rows,
+        meta: {
+            page,
+            limit,
+            total,
+            totalPages: Math.max(1, Math.ceil(total / limit)),
+            timezone: timeZone,
+            businessDate: today,
+            scope: query.scope ?? (query.date || query.from || query.to ? "custom" : "today"),
+        },
+    };
+};
+
 const getActivities = async (leadId: string, user: IRequestUser) => {
     const adminId = await getAdminId(user);
     await ensureLead(prisma, adminId, leadId);
@@ -120,7 +291,7 @@ const createActivity = async (
 
     return prisma.$transaction(async (tx) => {
         await ensureLead(tx, adminId, leadId);
-        await ensureAssignableUser(tx, adminId, payload.assignedToUserId);
+        await ensureLeadActivityAssignee(tx, adminId, payload.assignedToUserId);
 
         const activityStatus = payload.status ?? "PENDING";
         const activity = await tx.leadActivity.create({
@@ -160,7 +331,7 @@ const updateActivity = async (
         if (!existing) throw new AppError(status.NOT_FOUND, "Lead activity not found");
 
         if (payload.assignedToUserId !== undefined) {
-            await ensureAssignableUser(tx, adminId, payload.assignedToUserId);
+            await ensureLeadActivityAssignee(tx, adminId, payload.assignedToUserId);
         }
 
         const nextStatus = payload.status ?? existing.status;
@@ -212,6 +383,7 @@ const deleteActivity = async (
 };
 
 export const leadActivityService = {
+    getFollowUps,
     getActivities,
     createActivity,
     updateActivity,

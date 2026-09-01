@@ -36,6 +36,7 @@ import { publicWebsiteRoutes } from "../modules/Website/publicWebsite.routes";
 import { checkSubscription } from "../middlewares/checkSubscription";
 import express from "express";
 import { telemetryRoutes } from "../modules/Telemetry/telemetry.routes";
+import { dataExportRoutes } from "../modules/DataExport/dataExport.routes";
 import { NODE_ENV } from "../config/ENV";
 
 const router = Router();
@@ -60,6 +61,7 @@ const openRoutes: { path: string; route: Router }[] = [
 // `/staff` is intentionally composed from two non-overlapping routers:
 // Staff owns profile/availability/admin CRUD and StaffLeave owns `/leave/*`.
 const gatedRoutes: { path: string; route: Router }[] = [
+    { path: "/admin/data-export", route: dataExportRoutes },
     { path: "/admin",             route: adminRoutes },
     { path: "/staff",             route: staffRoutes },
     { path: "/staff",             route: staffLeaveRoutes },

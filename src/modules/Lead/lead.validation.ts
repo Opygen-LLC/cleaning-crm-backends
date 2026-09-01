@@ -13,6 +13,11 @@ const createLeadSchema = z.object({
     notes: z.string().optional(),
     sourceRef: z.string().optional(),
     serviceCatalogId: z.string().uuid().optional(),
+    initialFollowUp: z.object({
+        scheduledAt: z.string().datetime({ message: "Invalid follow-up date" }),
+        assignedToUserId: z.string().min(1).optional(),
+        note: z.string().trim().max(5000, "Follow-up note cannot exceed 5000 characters").optional(),
+    }).strict().optional(),
 });
 
 const updateLeadSchema = z.object({

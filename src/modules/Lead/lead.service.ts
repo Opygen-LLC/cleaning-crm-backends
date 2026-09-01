@@ -11,6 +11,7 @@ import { LeadStage } from "../../generated/prisma/enums";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { allocateLeadRef } from "./leadRef.service";
 import { requireE164Phone } from "../../lib/validation/phone";
+import { ensureLeadActivityAssignee } from "./leadActivity.service";
 
 // ─── Resolve admin profile ────────────────────────────────────────────────────
 
@@ -201,7 +202,11 @@ const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
         const service = await resolveTenantService(tx, adminProfile.id, payload.serviceCatalogId);
         const leadRef = await allocateLeadRef(tx);
 
-        return tx.lead.create({
+        if (payload.initialFollowUp?.assignedToUserId) {
+            await ensureLeadActivityAssignee(tx, adminProfile.id, payload.initialFollowUp.assignedToUserId);
+        }
+
+        const createdLead = await tx.lead.create({
             data: {
                 leadRef,
                 name: payload.name.trim(),
@@ -216,6 +221,23 @@ const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
                 adminId: adminProfile.id,
             },
         });
+
+        if (payload.initialFollowUp) {
+            await tx.leadActivity.create({
+                data: {
+                    adminId: adminProfile.id,
+                    leadId: createdLead.id,
+                    type: "FOLLOW_UP",
+                    status: "PENDING",
+                    scheduledAt: new Date(payload.initialFollowUp.scheduledAt),
+                    assignedToUserId: payload.initialFollowUp.assignedToUserId ?? null,
+                    note: payload.initialFollowUp.note?.trim() || null,
+                    createdBy: user.id,
+                },
+            });
+        }
+
+        return createdLead;
     });
 
     return serializeLead(lead as Lead & Record<string, unknown>, adminProfile.businessName);

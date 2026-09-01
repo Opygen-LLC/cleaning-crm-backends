@@ -8,6 +8,11 @@ export interface CreateLeadPayload {
     notes?: string;
     sourceRef?: string;
     serviceCatalogId?: string;
+    initialFollowUp?: {
+        scheduledAt: string;
+        assignedToUserId?: string;
+        note?: string;
+    };
 }
 
 export interface UpdateLeadPayload {
