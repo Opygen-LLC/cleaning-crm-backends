@@ -85,6 +85,19 @@ if ! ( cd "$CLIENT_DIR" && \
 fi
 bash -lc "$E2E_FIXTURE_RESET_CMD"
 
+echo '[release] tenant-public Quote/Estimate browser regression'
+if ! ( cd "$CLIENT_DIR" && \
+  E2E_FRONTEND_URL="$E2E_FRONTEND_URL" \
+  E2E_ADMIN_EMAIL="$E2E_ADMIN_EMAIL" \
+  E2E_ADMIN_PASSWORD="$E2E_ADMIN_PASSWORD" \
+  E2E_BROWSER_BIN="${E2E_BROWSER_BIN:-chromium}" \
+  pnpm run test:e2e:phase3 ); then
+  echo '[release] tenant-public document regression failed; resetting staging fixture before aborting' >&2
+  bash -lc "$E2E_FIXTURE_RESET_CMD" || true
+  exit 1
+fi
+bash -lc "$E2E_FIXTURE_RESET_CMD"
+
 echo '[release] Phase 4 critical Admin/Staff browser matrix'
 if ! ( cd "$CLIENT_DIR" && \
   E2E_FRONTEND_URL="$E2E_FRONTEND_URL" \
@@ -156,6 +169,8 @@ health_json /readyz >/dev/null
 echo '[10/21] verify immutable release metadata at /version'
 VERSION_JSON="$(health_json /version)"
 node -e 'const x=JSON.parse(process.argv[1]); if(!x.version||!x.gitSha||!x.buildDate||x.gitSha==="unknown"||x.buildDate==="unknown") process.exit(1);' "$VERSION_JSON"
+echo '[10b/21] verify deployed backend exposes POST /api/v1/staff'
+( cd "$ROOT" && ROUTE_SMOKE_API_URL="${API_ORIGIN}/api/v1" pnpm run smoke:route-surface )
 
 echo '[11/21] direct backend login/session/refresh/logout smoke'
 ( cd "$ROOT" && AUTH_SMOKE_API_URL="${API_ORIGIN}/api/v1" AUTH_SMOKE_ORIGIN="$FRONTEND_ORIGIN" AUTH_SMOKE_EMAIL="$AUTH_SMOKE_EMAIL" AUTH_SMOKE_PASSWORD="$AUTH_SMOKE_PASSWORD" pnpm run smoke:auth )
@@ -173,6 +188,9 @@ echo '[14/21] production browser smoke: Notifications -> Website tabs -> public 
   E2E_ADMIN_PASSWORD="$AUTH_SMOKE_PASSWORD" \
   E2E_BROWSER_BIN="${E2E_BROWSER_BIN:-chromium}" \
   pnpm run test:e2e:phase1-smoke )
+
+echo '[14b/21] verify frontend BFF reaches the same staff route surface'
+( cd "$ROOT" && ROUTE_SMOKE_API_URL="${API_ORIGIN}/api/v1" ROUTE_SMOKE_FRONTEND_URL="$FRONTEND_ORIGIN" pnpm run smoke:route-surface )
 
 echo '[15/21] same-origin /backend-api login smoke'
 echo '[16/21] canonical /auth/session smoke'

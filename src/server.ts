@@ -44,6 +44,7 @@ import { AUTH_ERROR_CODES } from "./modules/Auth/auth.codes";
 import { getDatabasePoolSnapshot, probeDatabaseConnection } from "./lib/prisma/prisma";
 import { getEmailOutboxHealth } from "./lib/monitoring/emailOutboxHealth";
 import { getOperationalHealthSnapshot } from "./lib/monitoring/operationalHealth";
+import { isTenantPublicApiPath } from "./lib/security/tenantPublicApiPolicy";
 
 const app = express();
 
@@ -77,9 +78,10 @@ app.use(express.urlencoded({ extended: true, limit: "64kb" }));
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 // Authenticated CRM traffic is allowed only from the application origins below.
 // Public tenant websites are intentionally handled separately: they may call
-// only /api/v1/website/public/* and receive NON-credentialed CORS. This lets
-// free subdomains/custom domains submit booking/estimate/contact forms without
-// granting those origins browser access to authenticated CRM endpoints.
+// only the explicitly classified tenant-public API families and receive
+// NON-credentialed CORS. This lets free subdomains/custom domains submit forms
+// and respond to public quotes/estimates without granting browser access to
+// authenticated CRM endpoints.
 const allowedOrigins = getAuthenticatedOrigins();
 
 const authenticatedCors = cors({
@@ -97,19 +99,18 @@ const authenticatedCors = cors({
 // Tenant websites never need dashboard credentials. Keep the browser contract
 // deliberately narrower than authenticated CRM CORS: read + acquisition POSTs
 // only, no Authorization/Cookie headers and no credentialed requests.
-const publicWebsiteCors = cors({
+const tenantPublicApiCors = cors({
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: [
     "Content-Type", "Accept", "Origin", "Idempotency-Key",
-    "X-Form-Started-At", "X-Turnstile-Token",
+    "X-Form-Started-At", "X-Turnstile-Token", "X-Request-Id",
+    "X-Trace-Id", "Traceparent",
   ],
   exposedHeaders: ["X-Request-Id", "X-Trace-Id", "X-Response-Time", "Server-Timing", "X-Website-Resolver-Source", "X-Bootstrap-Schema-Version", "X-Release-Sha"],
   origin: true,
   credentials: false,
 });
 
-const isWebsitePublicApiPath = (pathname: string) =>
-  pathname === "/api/v1/website/public" || pathname.startsWith("/api/v1/website/public/");
 
 const isAllowedPublicWebsiteOrigin = async (origin: string): Promise<boolean> => {
   let url: URL;
@@ -149,8 +150,8 @@ app.use(async (req, res, next) => {
   if (!origin) return authenticatedCors(req, res, next); // server-to-server / curl
   if (allowedOrigins.includes(origin)) return authenticatedCors(req, res, next);
 
-  if (isWebsitePublicApiPath(req.path) && await isAllowedPublicWebsiteOrigin(origin)) {
-    return publicWebsiteCors(req, res, next);
+  if (isTenantPublicApiPath(req.path) && await isAllowedPublicWebsiteOrigin(origin)) {
+    return tenantPublicApiCors(req, res, next);
   }
 
   res.locals.authErrorCode = AUTH_ERROR_CODES.AUTH_ORIGIN_NOT_ALLOWED;
@@ -213,7 +214,7 @@ app.get("/", (_req: Request, res: Response) => {
   res.setHeader("Cache-Control", "no-store, max-age=0");
   return res.status(200).json({
     success: true,
-    service: "Cleaning CRM Backend API 01 SEP 5:54 PM",
+    service: "Cleaning CRM Backend API",
     status: "healthy",
     version: APP_VERSION,
     gitSha: GIT_SHA,

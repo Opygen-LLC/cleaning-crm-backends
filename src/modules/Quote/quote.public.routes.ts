@@ -6,6 +6,7 @@ import {
 } from "../../middlewares/validations/zodValidation.middleware";
 import { quoteValidation } from "./quote.validation";
 import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRateLimit, publicSensitiveNoStore } from "../../middlewares/publicApiSecurity";
+import { publicDocumentMutationOriginGuard } from "../../middlewares/publicWebsiteRequestSecurity";
 
 /**
  * Public quote routes are mounted outside the subscription gate in
@@ -30,6 +31,7 @@ router.post(
     publicSensitiveNoStore,
     publicMutationRateLimit,
     publicResourceMutationRateLimit,
+    publicDocumentMutationOriginGuard,
     zodValidate(quoteValidation.publicQuoteAction, ValidationProperty.BODY),
     quoteController.publicQuoteActionForWebsite,
 );

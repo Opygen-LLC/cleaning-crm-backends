@@ -67,7 +67,7 @@
     "data:audit:ci": "tsx src/scripts/phase1/dataAudit.ts --ci",
     "data:audit:report": "tsx src/scripts/phase1/dataAudit.ts --report-only",
     "db:auth-session:verify": "node scripts/verifyAuthSessionSchema.mjs",
-    "test:security": "vitest run src/middlewares/browserOriginGuard.test.ts src/lib/utils/resolveAdminId.tenantIsolation.test.ts src/modules/Auth/auth.controller.contract.test.ts",
+    "test:security": "vitest run src/middlewares/browserOriginGuard.test.ts src/middlewares/publicWebsiteRequestSecurity.test.ts src/lib/security/tenantPublicApiPolicy.test.ts src/lib/utils/resolveAdminId.tenantIsolation.test.ts src/modules/Auth/auth.controller.contract.test.ts",
     "smoke:auth": "node scripts/authPhase3Smoke.mjs",
     "smoke:same-origin-auth": "node scripts/release/sameOriginAuthSmoke.mjs",
     "test:fresh-db-auth": "bash scripts/release/freshDatabaseAuthTest.sh",
@@ -80,7 +80,8 @@
     "staff:reconcile:ci": "tsx src/scripts/phase1/reconcileStaffProfiles.ts --ci",
     "test:phase4:contracts": "vitest run src/contracts/phase4ApiShapeContract.test.ts src/contracts/phase4ReconciliationContract.test.ts src/lib/monitoring/queryBudgets.test.ts src/lib/monitoring/performanceMetrics.phase4.test.ts src/middlewares/privateResponseCache.test.ts",
     "perf:phase4:gate": "node scripts/phase4/performanceGate.mjs",
-    "check:phase4": "pnpm run test:phase4:contracts"
+    "check:phase4": "pnpm run test:phase4:contracts",
+    "smoke:route-surface": "node scripts/release/routeSurfaceSmoke.mjs"
   },
   "keywords": [],
   "author": "opygen",

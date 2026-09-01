@@ -4,6 +4,14 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
 
 describe("Phase 1 staff workflow contracts", () => {
+  it("keeps POST /api/v1/staff mounted in the production router", () => {
+    const index = read("src/routes/index.ts");
+    const staff = read("src/modules/Staff/staff.routes.ts");
+
+    expect(index).toContain('{ path: "/staff",             route: staffRoutes }');
+    expect(staff).toContain('router.post(\n    "/",\n    checkAuth(UserRole.ADMIN)');
+  });
+
   it("keeps the required staff route matrix role-gated", () => {
     const dashboard = read("src/modules/Dashboard/dashboard.routes.ts");
     const staff = read("src/modules/Staff/staff.routes.ts");

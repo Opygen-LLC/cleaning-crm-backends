@@ -64,6 +64,44 @@ export const publicWebsiteMutationOriginGuard = async (
   }
 };
 
+
+/**
+ * Canonical Quote/Estimate tenant-root actions carry an explicit websiteId.
+ * Bind the browser Origin to that exact website before the token service sees
+ * the mutation. The quote/estimate service then performs the independent
+ * token -> website ownership check, giving public document writes two tenant
+ * isolation boundaries.
+ */
+export const publicDocumentMutationOriginGuard = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+
+  const websiteId = String(req.params.websiteId ?? "").trim();
+  if (!websiteId) return fail(res, "PUBLIC_DOCUMENT_TENANT_INVALID", "Website not found", 404);
+
+  const host = originHost(req);
+  if (!host) {
+    if (NODE_ENV !== "production") return next();
+    return fail(res, "PUBLIC_DOCUMENT_ORIGIN_REQUIRED", "This request must come from the business website");
+  }
+  if (NODE_ENV !== "production" && LOCAL_HOSTS.has(host)) return next();
+
+  try {
+    const origin = await WebsiteHostResolverService.resolveHost(host);
+    if (origin.websiteId !== websiteId || origin.availability !== "live") {
+      return fail(res, "PUBLIC_DOCUMENT_ORIGIN_MISMATCH", "This request does not belong to this business website");
+    }
+    return next();
+  } catch {
+    return fail(res, "PUBLIC_DOCUMENT_ORIGIN_INVALID", "This request must come from the business website");
+  }
+};
+
 export const publicJsonOnly = (req: Request, res: Response, next: NextFunction) => {
   if (!req.is("application/json")) {
     return fail(res, "PUBLIC_JSON_REQUIRED", "Content-Type must be application/json", 415);

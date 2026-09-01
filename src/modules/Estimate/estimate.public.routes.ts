@@ -5,6 +5,7 @@ import {
     publicResourceMutationRateLimit,
     publicSensitiveNoStore,
 } from "../../middlewares/publicApiSecurity";
+import { publicDocumentMutationOriginGuard } from "../../middlewares/publicWebsiteRequestSecurity";
 import {
     ValidationProperty,
     zodValidate,
@@ -25,6 +26,7 @@ router.post(
     publicSensitiveNoStore,
     publicMutationRateLimit,
     publicResourceMutationRateLimit,
+    publicDocumentMutationOriginGuard,
     zodValidate(estimateValidation.publicEstimateAction, ValidationProperty.BODY),
     estimateController.publicEstimateActionForWebsite,
 );
