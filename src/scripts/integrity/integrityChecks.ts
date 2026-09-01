@@ -671,6 +671,96 @@ const checks: Check[] = [
       )
     `,
   },
+
+  // ── Phase 4 regression reconciliation ────────────────────────────────────
+  {
+    code: "STAFF_PROFILE_WITHOUT_USER",
+    severity: "P0", category: "auth", entity: "StaffProfile",
+    description: "StaffProfile references a missing user.",
+    sql: Prisma.sql`SELECT sp.id, sp."adminId", sp."userId" AS "relationId" FROM "StaffProfile" sp LEFT JOIN "user" u ON u.id=sp."userId" WHERE u.id IS NULL`,
+  },
+  {
+    code: "STAFF_SPECIALTY_NOT_IN_CATALOG",
+    severity: "P1", category: "tenant", entity: "StaffProfile",
+    description: "Staff specialty contains a name that does not exist in the owning tenant service catalog.",
+    sql: Prisma.sql`
+      SELECT sp.id, sp."adminId", specialty AS "invalidSpecialty"
+      FROM "StaffProfile" sp
+      CROSS JOIN LATERAL unnest(sp.specialty) AS specialty
+      LEFT JOIN "service_catalog" sc
+        ON sc."adminId"=sp."adminId" AND lower(btrim(sc."serviceName"))=lower(btrim(specialty))
+      WHERE sc.id IS NULL
+    `,
+  },
+  {
+    code: "ORPHAN_LEAD_ACTIVITY",
+    severity: "P0", category: "tenant", entity: "LeadActivity",
+    description: "LeadActivity references a missing lead or a lead owned by a different tenant.",
+    sql: Prisma.sql`
+      SELECT la.id, la."adminId", la."leadId" AS "relationId", l."adminId" AS "relatedAdminId"
+      FROM "lead_activity" la
+      LEFT JOIN "lead" l ON l.id=la."leadId"
+      WHERE l.id IS NULL OR l."adminId" <> la."adminId"
+    `,
+  },
+  {
+    code: "LEAD_ACTIVITY_ASSIGNEE_CROSS_TENANT",
+    severity: "P0", category: "tenant", entity: "LeadActivity",
+    description: "LeadActivity is assigned to an ADMIN/STAFF user outside the activity tenant or to a user without the required profile.",
+    sql: Prisma.sql`
+      SELECT la.id, la."adminId", la."assignedToUserId" AS "relationId",
+             COALESCE(sp."adminId", ap.id) AS "relatedAdminId", u.role::text AS role
+      FROM "lead_activity" la
+      LEFT JOIN "user" u ON u.id=la."assignedToUserId"
+      LEFT JOIN "StaffProfile" sp ON sp."userId"=u.id
+      LEFT JOIN "AdminProfile" ap ON ap."userId"=u.id
+      WHERE la."assignedToUserId" IS NOT NULL AND (
+        u.id IS NULL OR
+        (u.role::text='STAFF' AND (sp.id IS NULL OR sp."adminId" <> la."adminId")) OR
+        (u.role::text='ADMIN' AND (ap.id IS NULL OR ap.id <> la."adminId")) OR
+        u.role::text NOT IN ('STAFF','ADMIN')
+      )
+    `,
+  },
+  {
+    code: "ORPHAN_BOOKING_CLIENT",
+    severity: "P0", category: "tenant", entity: "Booking",
+    description: "Booking references a missing client.",
+    sql: Prisma.sql`SELECT b.id, b."adminId", b."clientId" AS "relationId" FROM "booking" b LEFT JOIN "client" c ON c.id=b."clientId" WHERE c.id IS NULL`,
+  },
+  {
+    code: "ORPHAN_BOOKING_SERVICE",
+    severity: "P1", category: "tenant", entity: "Booking",
+    description: "Booking has a serviceCatalogId that no longer resolves.",
+    sql: Prisma.sql`SELECT b.id, b."adminId", b."serviceCatalogId" AS "relationId" FROM "booking" b LEFT JOIN "service_catalog" sc ON sc.id=b."serviceCatalogId" WHERE b."serviceCatalogId" IS NOT NULL AND sc.id IS NULL`,
+  },
+  {
+    code: "DUPLICATE_LEAD_NORMALIZED_EMAIL",
+    severity: "P1", category: "tenant", entity: "Lead",
+    description: "Tenant contains leads whose emails differ only by case/whitespace; these should be reviewed before deterministic merge logic is applied.",
+    sql: Prisma.sql`
+      SELECT MIN(id::text) AS id, "adminId", lower(btrim(email)) AS "normalizedEmail", COUNT(*)::int AS count
+      FROM "lead"
+      GROUP BY "adminId", lower(btrim(email))
+      HAVING COUNT(*) > 1
+    `,
+  },
+  {
+    code: "NON_CANONICAL_REFERENCE_FORMAT",
+    severity: "P1", category: "tenant", entity: "Reference",
+    description: "A human-readable reference does not match the canonical allocator format and can be skipped by nextReference().",
+    sql: Prisma.sql`
+      SELECT id, "adminId", ref, kind FROM (
+        SELECT id, "adminId", "bookingRef" AS ref, 'booking' AS kind FROM "booking" WHERE "bookingRef" !~ '^#OP-BK-[0-9]+$'
+        UNION ALL SELECT id, "adminId", "jobRef", 'job' FROM "job" WHERE "jobRef" !~ '^#OP-JB-[0-9]+$'
+        UNION ALL SELECT id, "adminId", "invoiceRef", 'invoice' FROM "invoice" WHERE "invoiceRef" !~ '^#OP-INV-[0-9]+$'
+        UNION ALL SELECT id, "adminId", "quoteRef", 'quote' FROM "quote" WHERE "quoteRef" !~ '^#OP-QT-[0-9]+$'
+        UNION ALL SELECT id, "adminId", "estimateRef", 'estimate' FROM "estimate" WHERE "estimateRef" !~ '^#OP-EST-[0-9]+$'
+        UNION ALL SELECT id, "adminId", "paymentRef", 'payment' FROM "payment" WHERE "paymentRef" !~ '^#OP-PAY-[0-9]+$'
+        UNION ALL SELECT id, "adminId", "scheduleRef", 'recurring' FROM "recurring_schedule" WHERE "scheduleRef" !~ '^#RS-[0-9]+$'
+      ) refs
+    `,
+  },
 ];
 
 export async function runIntegrityChecks(): Promise<IntegrityFindingGroup[]> {

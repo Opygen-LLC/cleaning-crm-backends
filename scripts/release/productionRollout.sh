@@ -22,6 +22,8 @@ CLIENT_DIR="${CLIENT_DIR:?Set CLIENT_DIR to the Cleaning CRM frontend checkout}"
 : "${E2E_STAFF_EMAIL:?Set E2E_STAFF_EMAIL}"
 : "${E2E_STAFF_TEMP_PASSWORD:?Set E2E_STAFF_TEMP_PASSWORD}"
 : "${E2E_FIXTURE_RESET_CMD:?Set E2E_FIXTURE_RESET_CMD to restore staging admin/staff smoke fixtures}"
+: "${E2E_STAFF_MATRIX_JSON:?Set E2E_STAFF_MATRIX_JSON to the Phase 4 staging staff matrix fixtures}"
+: "${PERF_ADMIN_ID:?Set PERF_ADMIN_ID to the production tenant admin/profile id used by read-only EXPLAIN probes}"
 
 API_ORIGIN="${PRODUCTION_API_ORIGIN%/}"
 FRONTEND_ORIGIN="${PRODUCTION_FRONTEND_URL%/}"
@@ -83,6 +85,33 @@ if ! ( cd "$CLIENT_DIR" && \
 fi
 bash -lc "$E2E_FIXTURE_RESET_CMD"
 
+echo '[release] Phase 4 critical Admin/Staff browser matrix'
+if ! ( cd "$CLIENT_DIR" && \
+  E2E_FRONTEND_URL="$E2E_FRONTEND_URL" \
+  E2E_API_URL="$E2E_API_URL" \
+  E2E_ADMIN_EMAIL="$E2E_ADMIN_EMAIL" \
+  E2E_ADMIN_PASSWORD="$E2E_ADMIN_PASSWORD" \
+  E2E_STAFF_MATRIX_JSON="$E2E_STAFF_MATRIX_JSON" \
+  E2E_PHASE4_STRICT_MATRIX=true \
+  E2E_BROWSER_BIN="${E2E_BROWSER_BIN:-chromium}" \
+  pnpm run test:e2e:phase4 ); then
+  echo '[release] Phase 4 browser matrix failed; resetting staging fixture before aborting' >&2
+  bash -lc "$E2E_FIXTURE_RESET_CMD" || true
+  exit 1
+fi
+
+echo '[release] Phase 4 cold/warm/concurrent + large-tenant performance gate'
+( cd "$ROOT" && \
+  PERF_API_URL="$E2E_API_URL" \
+  PERF_ORIGIN="$E2E_FRONTEND_URL" \
+  PERF_EMAIL="$E2E_ADMIN_EMAIL" \
+  PERF_PASSWORD="$E2E_ADMIN_PASSWORD" \
+  PERF_REQUIRE_QUERY_HEADERS=true \
+  PERF_REQUIRE_LARGE_TENANT=true \
+  PERF_REPORT_PATH="${PHASE4_PERF_REPORT_PATH:-phase4-performance-report.json}" \
+  pnpm run perf:phase4:gate )
+bash -lc "$E2E_FIXTURE_RESET_CMD"
+
 echo '[1/21] create and verify production database backup'
 bash -lc "$PRODUCTION_BACKUP_CMD"
 
@@ -91,6 +120,9 @@ echo '[2/21] inspect migration status (read-only)'
 
 echo '[3/21] migration preflight (read-only)'
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:migrate:preflight )
+
+echo '[phase4] capture pre-migration hot-query EXPLAIN baseline (read-only, non-blocking threshold)'
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" PERF_ADMIN_ID="$PERF_ADMIN_ID" PERF_DB_ENFORCE=false PERF_EXPLAIN_REPORT_PATH="${PHASE4_EXPLAIN_BEFORE_PATH:-phase4-explain-before.json}" pnpm run perf:phase4:explain )
 
 echo '[4/21] deploy forward Prisma migrations'
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm prisma migrate deploy )
@@ -102,6 +134,9 @@ echo '[5/21] verify migration status, Phase 1 schema contract, drift and auth-se
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:critical-schema:verify )
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:auth-session:verify )
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:drift:check )
+
+echo '[phase4] enforce post-migration hot-query EXPLAIN budget and capture plan evidence'
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" PERF_ADMIN_ID="$PERF_ADMIN_ID" PERF_DB_ENFORCE=true PERF_EXPLAIN_REPORT_PATH="${PHASE4_EXPLAIN_AFTER_PATH:-phase4-explain-after.json}" pnpm run perf:phase4:explain )
 
 echo '[6/21] run report-only reconciliation and integrity gate'
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run data:audit:report )

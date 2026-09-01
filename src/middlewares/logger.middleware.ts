@@ -43,13 +43,18 @@ const logRequestResponse = (
   const requestTrace = getRequestTrace();
   const originalSend = res.send.bind(res);
   let durationMs = 0;
+  let responseBytes = 0;
   let routeLabel: string | null = null;
 
   res.send = ((body: unknown) => {
-    const serializationStarted = process.hrtime.bigint();
-    const handlerDurationMs = Number(serializationStarted - start) / 1_000_000;
-    recordTraceRequestPhases({ handlerDurationMs });
-    durationMs = handlerDurationMs;
+    const serializationSizingStarted = process.hrtime.bigint();
+    responseBytes = Buffer.isBuffer(body)
+      ? body.byteLength
+      : Buffer.byteLength(typeof body === "string" ? body : JSON.stringify(body ?? null));
+    const serializationSizingDurationMs = Number(process.hrtime.bigint() - serializationSizingStarted) / 1_000_000;
+    const handlerDurationMs = Number(serializationSizingStarted - start) / 1_000_000;
+    recordTraceRequestPhases({ handlerDurationMs, serializationDurationMs: serializationSizingDurationMs });
+    durationMs = handlerDurationMs + serializationSizingDurationMs;
     const rounded = round(durationMs);
     routeLabel = compactPath(req);
     if (!res.headersSent) {
@@ -83,10 +88,11 @@ const logRequestResponse = (
         [existingTimings, ...timings].filter(Boolean).join(", "),
       );
     }
+    const sendStarted = process.hrtime.bigint();
     const result = originalSend(body);
-    const serializationDurationMs = Number(process.hrtime.bigint() - serializationStarted) / 1_000_000;
-    recordTraceRequestPhases({ serializationDurationMs });
-    durationMs = handlerDurationMs + serializationDurationMs;
+    const sendSerializationDurationMs = Number(process.hrtime.bigint() - sendStarted) / 1_000_000;
+    recordTraceRequestPhases({ serializationDurationMs: sendSerializationDurationMs });
+    durationMs = handlerDurationMs + serializationSizingDurationMs + sendSerializationDurationMs;
     return result;
   }) as Response["send"];
 
@@ -119,7 +125,9 @@ const logRequestResponse = (
       authDurationMs: trace?.authDurationMs,
       cacheHits: trace?.responseCacheHits,
       cacheMisses: trace?.responseCacheMisses,
+      serializationDurationMs: trace?.serializationDurationMs,
       externalDurationMs: trace?.externalDurationMs,
+      responseBytes,
       market: geography.market,
       authErrorCode,
     });
@@ -229,6 +237,7 @@ const logRequestResponse = (
       handler_ms: round(trace?.handlerDurationMs ?? 0),
       serialization_ms: round(trace?.serializationDurationMs ?? 0),
       externalDurationMs: round(trace?.externalDurationMs ?? 0),
+      responseBytes,
       requestId,
       traceId,
       userHash: hashIdentity(userId),

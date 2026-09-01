@@ -361,6 +361,7 @@ const uploadReceipt = async (
   const updated = await prisma.payment.update({
     where: { id },
     data: { paymentProofUrl: cloudinaryResult.secure_url },
+    select: { id: true, paymentRef: true, updatedAt: true },
   });
 
   logActivity({

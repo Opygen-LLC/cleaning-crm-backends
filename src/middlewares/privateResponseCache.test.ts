@@ -78,6 +78,7 @@ describe("privateResponseCache resource generations", () => {
     redisStore.clear();
     redisSets.clear();
     vi.clearAllMocks();
+    redisMock.get.mockImplementation(async (key: string) => redisStore.get(key) ?? null);
   });
 
   it("serves the second GET from the same tenant/resource generation", async () => {
@@ -136,5 +137,20 @@ describe("privateResponseCache resource generations", () => {
     await flushAsyncCacheWrites();
     expect(redisMock.setex).not.toHaveBeenCalled();
     expect(redisMock.sadd).not.toHaveBeenCalled();
+  });
+
+  it("falls through to the application handler when Redis is unavailable", async () => {
+    redisMock.get.mockRejectedValue(new Error("ECONNREFUSED: Redis unavailable"));
+    const output = makeResponse();
+    const next: NextFunction = vi.fn(() => {
+      output.response.setHeader("Content-Type", "application/json");
+      output.response.send(JSON.stringify({ success: true, data: { fallback: true } }));
+    });
+
+    await expect(privateResponseCache(makeRequest(), output.response, next)).resolves.toBeUndefined();
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(output.headers.get("x-response-cache")).toBe("MISS");
+    expect(output.result.body).toContain('"fallback":true');
   });
 });

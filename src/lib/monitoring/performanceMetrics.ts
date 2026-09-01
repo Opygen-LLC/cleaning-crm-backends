@@ -10,14 +10,14 @@ const TARGET_MARKET_ORDER: TargetMarket[] = ["USA", "Canada", "UK", "Europe", "A
 
 type SampleBucket = { samples: number[]; count: number; errors: number; totalMs: number; maxMs: number; lastSeenAt: number };
 type RouteBucket = SampleBucket & {
-  dbSamples: number[]; redisSamples: number[]; authSamples: number[]; externalSamples: number[]; dbQueryCount: number;
-  statusCounts: Record<string, number>; redisHits: number; redisMisses: number; cacheHits: number; cacheMisses: number;
+  dbSamples: number[]; redisSamples: number[]; authSamples: number[]; serializationSamples: number[]; externalSamples: number[]; responseByteSamples: number[]; dbQueryCount: number;
+  statusCounts: Record<string, number>; redisHits: number; redisMisses: number; cacheHits: number; cacheMisses: number; totalResponseBytes: number;
 };
 type QueryBucket = SampleBucket & { fingerprint: string; sample: string };
 type RedisStats = { reads: number; hits: number; misses: number; errors: number; totalMs: number; samples: number[] };
 type RecentRequest = {
   at: number; method: string; route: string; statusCode: number; durationMs: number;
-  dbDurationMs: number; redisDurationMs: number; externalDurationMs: number;
+  dbDurationMs: number; redisDurationMs: number; serializationDurationMs: number; externalDurationMs: number; responseBytes: number;
   authErrorCode: string | null; market: TargetMarket | null;
 };
 
@@ -64,22 +64,22 @@ const pruneRecent = (now = Date.now()) => {
 export const recordRequestMetric = (input: {
   method: string; route: string; statusCode: number; durationMs: number; dbDurationMs?: number; dbQueryCount?: number;
   redisDurationMs?: number; redisHits?: number; redisMisses?: number; authDurationMs?: number; cacheHits?: number;
-  cacheMisses?: number; market?: TargetMarket; externalDurationMs?: number; authErrorCode?: string | null;
+  cacheMisses?: number; market?: TargetMarket; serializationDurationMs?: number; externalDurationMs?: number; responseBytes?: number; authErrorCode?: string | null;
 }): void => {
   const key = `${input.method.toUpperCase()} ${input.route}`;
   let bucket = routes.get(key);
   if (!bucket) {
     evictOldest(routes, MAX_ROUTE_BUCKETS);
-    bucket = { samples: [], count: 0, errors: 0, totalMs: 0, maxMs: 0, lastSeenAt: Date.now(), dbSamples: [], redisSamples: [], authSamples: [], externalSamples: [], dbQueryCount: 0, statusCounts: {}, redisHits: 0, redisMisses: 0, cacheHits: 0, cacheMisses: 0 };
+    bucket = { samples: [], count: 0, errors: 0, totalMs: 0, maxMs: 0, lastSeenAt: Date.now(), dbSamples: [], redisSamples: [], authSamples: [], serializationSamples: [], externalSamples: [], responseByteSamples: [], dbQueryCount: 0, statusCounts: {}, redisHits: 0, redisMisses: 0, cacheHits: 0, cacheMisses: 0, totalResponseBytes: 0 };
     routes.set(key, bucket);
   }
   bucket.count += 1;
   if (input.statusCode >= 500) bucket.errors += 1;
   bucket.totalMs += input.durationMs; bucket.maxMs = Math.max(bucket.maxMs, input.durationMs); bucket.lastSeenAt = Date.now();
   bucket.dbQueryCount += input.dbQueryCount ?? 0; bucket.redisHits += input.redisHits ?? 0; bucket.redisMisses += input.redisMisses ?? 0;
-  bucket.cacheHits += input.cacheHits ?? 0; bucket.cacheMisses += input.cacheMisses ?? 0;
+  bucket.cacheHits += input.cacheHits ?? 0; bucket.cacheMisses += input.cacheMisses ?? 0; bucket.totalResponseBytes += input.responseBytes ?? 0;
   bucket.statusCounts[String(input.statusCode)] = (bucket.statusCounts[String(input.statusCode)] ?? 0) + 1;
-  pushSample(bucket.samples, input.durationMs); pushSample(bucket.dbSamples, input.dbDurationMs ?? 0); pushSample(bucket.redisSamples, input.redisDurationMs ?? 0); pushSample(bucket.authSamples, input.authDurationMs ?? 0); pushSample(bucket.externalSamples, input.externalDurationMs ?? 0);
+  pushSample(bucket.samples, input.durationMs); pushSample(bucket.dbSamples, input.dbDurationMs ?? 0); pushSample(bucket.redisSamples, input.redisDurationMs ?? 0); pushSample(bucket.authSamples, input.authDurationMs ?? 0); pushSample(bucket.serializationSamples, input.serializationDurationMs ?? 0); pushSample(bucket.externalSamples, input.externalDurationMs ?? 0); pushSample(bucket.responseByteSamples, input.responseBytes ?? 0);
 
   if (input.market) {
     let marketBucket = marketRequests.get(input.market);
@@ -88,7 +88,7 @@ export const recordRequestMetric = (input: {
     marketBucket.totalMs += input.durationMs; marketBucket.maxMs = Math.max(marketBucket.maxMs, input.durationMs); marketBucket.lastSeenAt = Date.now(); pushSample(marketBucket.samples, input.durationMs);
   }
 
-  recentRequests.push({ at: Date.now(), method: input.method.toUpperCase(), route: input.route, statusCode: input.statusCode, durationMs: input.durationMs, dbDurationMs: input.dbDurationMs ?? 0, redisDurationMs: input.redisDurationMs ?? 0, externalDurationMs: input.externalDurationMs ?? 0, authErrorCode: input.authErrorCode ?? null, market: input.market ?? null });
+  recentRequests.push({ at: Date.now(), method: input.method.toUpperCase(), route: input.route, statusCode: input.statusCode, durationMs: input.durationMs, dbDurationMs: input.dbDurationMs ?? 0, redisDurationMs: input.redisDurationMs ?? 0, serializationDurationMs: input.serializationDurationMs ?? 0, externalDurationMs: input.externalDurationMs ?? 0, responseBytes: input.responseBytes ?? 0, authErrorCode: input.authErrorCode ?? null, market: input.market ?? null });
   pruneRecent();
 };
 
@@ -117,7 +117,7 @@ const getRecentWindowSnapshot = () => {
     windowMs: RECENT_WINDOW_MS,
     requestCount: count,
     p50Ms: percentile(rows.map((row) => row.durationMs), 50), p95Ms: percentile(rows.map((row) => row.durationMs), 95), p99Ms: percentile(rows.map((row) => row.durationMs), 99),
-    databaseP95Ms: percentile(rows.map((row) => row.dbDurationMs), 95), redisP95Ms: percentile(rows.map((row) => row.redisDurationMs), 95), externalP95Ms: percentile(rows.map((row) => row.externalDurationMs), 95),
+    databaseP95Ms: percentile(rows.map((row) => row.dbDurationMs), 95), redisP95Ms: percentile(rows.map((row) => row.redisDurationMs), 95), serializationP95Ms: percentile(rows.map((row) => row.serializationDurationMs), 95), externalP95Ms: percentile(rows.map((row) => row.externalDurationMs), 95), responseBytesP95: percentile(rows.map((row) => row.responseBytes), 95),
     error5xxRate: rate((row) => row.statusCode >= 500), badGatewayRate: rate((row) => row.statusCode === 502 || row.statusCode === 503), auth401Rate: rate((row) => row.statusCode === 401),
     refreshFailureRate: refreshRows.length ? percent(refreshRows.filter((row) => row.statusCode >= 400).length, refreshRows.length) : 0,
     otpFailureRate: otpRows.length ? percent(otpRows.filter((row) => row.statusCode >= 400).length, otpRows.length) : 0,
@@ -131,7 +131,7 @@ const getRecentWindowSnapshot = () => {
 export const getPerformanceSnapshot = () => {
   const routeMetrics = Array.from(routes.entries()).map(([route, bucket]) => {
     const cacheAttempts = bucket.cacheHits + bucket.cacheMisses; const redisAttempts = bucket.redisHits + bucket.redisMisses;
-    return { route, ...summarizeBucket(bucket), database: { ...summarizeSamples(bucket.dbSamples), queryCount: bucket.dbQueryCount }, redis: { ...summarizeSamples(bucket.redisSamples), hitRate: percent(bucket.redisHits, redisAttempts) }, auth: summarizeSamples(bucket.authSamples), external: summarizeSamples(bucket.externalSamples), statuses: bucket.statusCounts, responseCache: { hits: bucket.cacheHits, misses: bucket.cacheMisses, hitRate: percent(bucket.cacheHits, cacheAttempts) } };
+    return { route, ...summarizeBucket(bucket), database: { ...summarizeSamples(bucket.dbSamples), queryCount: bucket.dbQueryCount }, redis: { ...summarizeSamples(bucket.redisSamples), hitRate: percent(bucket.redisHits, redisAttempts) }, auth: summarizeSamples(bucket.authSamples), serialization: summarizeSamples(bucket.serializationSamples), external: summarizeSamples(bucket.externalSamples), responseBytes: { avgBytes: average(bucket.totalResponseBytes, bucket.count), p50Bytes: percentile(bucket.responseByteSamples, 50), p95Bytes: percentile(bucket.responseByteSamples, 95), p99Bytes: percentile(bucket.responseByteSamples, 99) }, statuses: bucket.statusCounts, responseCache: { hits: bucket.cacheHits, misses: bucket.cacheMisses, hitRate: percent(bucket.cacheHits, cacheAttempts) } };
   }).sort((a, b) => b.p95Ms - a.p95Ms || b.count - a.count);
   const queryMetrics = Array.from(queries.values()).map((bucket) => ({ fingerprint: bucket.fingerprint, sample: bucket.sample, ...summarizeBucket(bucket) })).sort((a, b) => b.p95Ms - a.p95Ms || b.count - a.count);
   const redisAttempts = redis.hits + redis.misses;

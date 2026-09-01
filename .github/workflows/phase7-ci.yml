@@ -90,6 +90,9 @@ jobs:
       - run: pnpm run check:release-infra
       - run: pnpm run test:security
       - run: pnpm run test:integration
+      - run: pnpm run check:phase4
+      - run: pnpm run db:reconcile
+      - run: PERF_ADMIN_ID=ci-empty-tenant PERF_DB_TARGET_MS=100 pnpm run perf:phase4:explain
       - run: pnpm run typecheck
       - run: pnpm run test
       - run: pnpm run build
