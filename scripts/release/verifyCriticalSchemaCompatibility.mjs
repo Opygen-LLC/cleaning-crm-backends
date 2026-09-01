@@ -12,6 +12,7 @@ const REQUIRED_MIGRATIONS = [
   "20260901021500_phase6_local_draft_seo_ga4",
   "20260901034000_phase1_notification_preference_reliability",
   "20260901052000_phase3_estimate_public_sharing",
+  "20260901124500_phase2_atomic_public_document_publication",
 ];
 
 // Explicit production contract for the models whose shape is required by
@@ -38,8 +39,8 @@ const REQUIRED_COLUMNS = {
     "googleAnalyticsMeasurementId",
   ],
   website_page: ["id", "websiteId", "slug", "seoKeywords", "socialImageUrl"],
-  quote: ["id", "adminId", "publicToken", "sentAt", "respondedAt", "responseNote"],
-  estimate: ["id", "adminId", "publicToken", "sentAt", "respondedAt", "responseNote"],
+  quote: ["id", "adminId", "publicToken", "publishedAt", "sentAt", "respondedAt", "responseNote"],
+  estimate: ["id", "adminId", "publicToken", "publishedAt", "sentAt", "respondedAt", "responseNote"],
   session: [
     "id",
     "userId",

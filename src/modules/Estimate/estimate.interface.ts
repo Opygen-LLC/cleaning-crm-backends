@@ -1,4 +1,5 @@
 import { EstimateStatus } from "../../generated/prisma/enums";
+import type { PublicDocumentDeliveryIntent } from "../Website/publicDocumentPublication.service";
 
 // ── Line Item Input ─────────────────────────────────────────────────────────
 
@@ -38,6 +39,7 @@ export interface IEstimateCreate {
     notes?: string;
     internalNotes?: string;
     terms?: string;
+    deliveryIntent?: PublicDocumentDeliveryIntent;
 }
 
 // ── Update ──────────────────────────────────────────────────────────────────

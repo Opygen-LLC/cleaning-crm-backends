@@ -43,6 +43,7 @@ const createEstimateSchema = z
         notes: z.string().optional(),
         internalNotes: z.string().optional(),
         terms: z.string().optional(),
+        deliveryIntent: z.enum(["DRAFT", "PUBLISH", "SEND"]).default("DRAFT"),
     })
     .strict()
     .superRefine((value, ctx) => {

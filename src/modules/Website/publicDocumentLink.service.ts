@@ -94,11 +94,11 @@ const resolveResourceTypeForWebsite = async (
 
   const [quote, estimate] = await Promise.all([
     prisma.quote.findFirst({
-      where: { publicToken: token, adminId, status: { not: QuoteStatus.DRAFT } },
+      where: { publicToken: token, adminId, status: { not: QuoteStatus.DRAFT }, publishedAt: { not: null } },
       select: { id: true },
     }),
     prisma.estimate.findFirst({
-      where: { publicToken: token, adminId, status: { not: EstimateStatus.DRAFT } },
+      where: { publicToken: token, adminId, status: { not: EstimateStatus.DRAFT }, publishedAt: { not: null } },
       select: { id: true },
     }),
   ]);

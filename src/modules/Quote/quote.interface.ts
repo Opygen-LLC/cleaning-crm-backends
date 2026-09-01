@@ -1,4 +1,5 @@
 import { QuoteStatus } from "../../generated/prisma/enums";
+import type { PublicDocumentDeliveryIntent } from "../Website/publicDocumentPublication.service";
 
 export interface IQuoteLineItemInput {
     description: string;
@@ -20,6 +21,7 @@ export interface IQuoteCreate {
     notes?: string;
     internalNotes?: string;
     templateId?: string;
+    deliveryIntent?: PublicDocumentDeliveryIntent;
 }
 
 export interface IQuoteUpdate {

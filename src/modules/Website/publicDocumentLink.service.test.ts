@@ -48,7 +48,7 @@ describe("PublicDocumentLinkService", () => {
     prismaMock.estimate.findFirst.mockResolvedValue({ id: "estimate-1" });
     await expect(PublicDocumentLinkService.resolveResourceTypeForWebsite(TOKEN, WEBSITE_ID)).resolves.toBe("estimate");
     expect(prismaMock.estimate.findFirst).toHaveBeenCalledWith({
-      where: { publicToken: TOKEN, adminId: "admin-a", status: { not: "DRAFT" } },
+      where: { publicToken: TOKEN, adminId: "admin-a", status: { not: "DRAFT" }, publishedAt: { not: null } },
       select: { id: true },
     });
   });

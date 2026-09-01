@@ -1,4 +1,5 @@
 import { FRONTEND_URL } from "../../config/ENV";
+import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../prisma/prisma";
 import { formatMoney } from "../utils/money";
 import { BusinessNotificationOutbox } from "../outbox/businessNotificationOutbox";
@@ -124,8 +125,13 @@ export const queueStaffAssignedNotifications = async (
   })));
 };
 
-export const queueQuoteSentNotification = async (quoteId: string, occurrence: string, quoteLink: string) => {
-  const quote = await prisma.quote.findUnique({
+export const queueQuoteSentNotificationTx = async (
+  db: Prisma.TransactionClient,
+  quoteId: string,
+  occurrence: string,
+  quoteLink: string,
+) => {
+  const quote = await db.quote.findUnique({
     where: { id: quoteId },
     select: {
       id: true, quoteRef: true, adminId: true, total: true, validUntil: true,
@@ -136,7 +142,7 @@ export const queueQuoteSentNotification = async (quoteId: string, occurrence: st
     },
   });
   if (!quote?.client.email) return { queued: false as const, deliveryId: null };
-  return BusinessNotificationOutbox.enqueue({
+  return BusinessNotificationOutbox.enqueueTx(db, {
     adminId: quote.adminId,
     eventKey: `quote-sent:${quote.id}:${occurrence}`,
     templateKey: "quote-sent",
@@ -154,8 +160,16 @@ export const queueQuoteSentNotification = async (quoteId: string, occurrence: st
   });
 };
 
-export const queueEstimateSentNotification = async (estimateId: string, occurrence: string, estimateLink: string) => {
-  const estimate = await prisma.estimate.findUnique({
+export const queueQuoteSentNotification = async (quoteId: string, occurrence: string, quoteLink: string) =>
+  prisma.$transaction((tx) => queueQuoteSentNotificationTx(tx, quoteId, occurrence, quoteLink));
+
+export const queueEstimateSentNotificationTx = async (
+  db: Prisma.TransactionClient,
+  estimateId: string,
+  occurrence: string,
+  estimateLink: string,
+) => {
+  const estimate = await db.estimate.findUnique({
     where: { id: estimateId },
     select: {
       id: true, estimateRef: true, adminId: true, total: true, validUntil: true,
@@ -166,7 +180,7 @@ export const queueEstimateSentNotification = async (estimateId: string, occurren
     },
   });
   if (!estimate?.client.email) return { queued: false as const, deliveryId: null };
-  return BusinessNotificationOutbox.enqueue({
+  return BusinessNotificationOutbox.enqueueTx(db, {
     adminId: estimate.adminId,
     eventKey: `estimate-sent:${estimate.id}:${occurrence}`,
     templateKey: "estimate-sent",
@@ -183,6 +197,9 @@ export const queueEstimateSentNotification = async (estimateId: string, occurren
     },
   });
 };
+
+export const queueEstimateSentNotification = async (estimateId: string, occurrence: string, estimateLink: string) =>
+  prisma.$transaction((tx) => queueEstimateSentNotificationTx(tx, estimateId, occurrence, estimateLink));
 
 export const queueInvoiceNotification = async (
   invoiceId: string,

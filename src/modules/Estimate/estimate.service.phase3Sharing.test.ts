@@ -7,6 +7,7 @@ const {
   publicDocumentLinkMock,
   queueEstimateSentNotificationMock,
   createNotificationMock,
+  publicationMock,
 } = vi.hoisted(() => {
   const txEstimateMock = { findFirst: vi.fn(), update: vi.fn() };
   return {
@@ -32,6 +33,7 @@ const {
     },
     queueEstimateSentNotificationMock: vi.fn(),
     createNotificationMock: vi.fn(),
+    publicationMock: { prepareCreation: vi.fn(), publishEstimate: vi.fn() },
   };
 });
 
@@ -59,9 +61,10 @@ vi.mock("../../lib/utils/serviceIdentity", () => ({
 }));
 vi.mock("../Website/publicDocumentLink.service", () => ({ PublicDocumentLinkService: publicDocumentLinkMock }));
 vi.mock("../../lib/notifications/businessNotificationEvents", () => ({
-  queueEstimateSentNotification: queueEstimateSentNotificationMock,
+  queueEstimateSentNotificationTx: queueEstimateSentNotificationMock,
 }));
 vi.mock("../../lib/utils/createNotification", () => ({ createNotification: createNotificationMock }));
+vi.mock("../Website/publicDocumentPublication.service", () => ({ PublicDocumentPublicationService: publicationMock }));
 
 import { estimateService } from "./estimate.service";
 
@@ -82,6 +85,7 @@ const publicEstimate = (status = "SENT", validUntil = future()) => ({
   total: 100,
   validUntil,
   notes: null,
+  publishedAt: new Date(),
   sentAt: new Date(),
   respondedAt: null,
   responseNote: null,
@@ -124,75 +128,53 @@ beforeEach(() => {
 });
 
 describe("Phase 3 estimate public sharing", () => {
-  it("activates a DRAFT estimate and returns the backend-owned tenant URL", async () => {
-    txEstimateMock.findFirst.mockResolvedValue({
-      id: "estimate-1",
-      status: "DRAFT",
-      publicToken: null,
-      sentAt: null,
-      validUntil: future(),
+  it("publishes a DRAFT estimate without stamping sentAt", async () => {
+    publicationMock.publishEstimate.mockResolvedValue({
+      id: "estimate-1", publicToken: TOKEN, publishedAt: new Date("2026-09-01T00:00:00.000Z"),
+      sentAt: null, shareUrl: `https://softriple-4.cleaningcrm.opygen.com/${TOKEN}`,
     });
-    txEstimateMock.update.mockImplementation(({ data }: { data: Record<string, unknown> }) => ({
-      id: "estimate-1",
-      estimateRef: "#OP-EST-1",
-      status: data.status,
-      publicToken: data.publicToken,
-      sentAt: data.sentAt,
+    prismaMock.estimate.findFirst.mockResolvedValue({
+      id: "estimate-1", estimateRef: "#OP-EST-1", status: "SENT", publicToken: TOKEN,
+      publishedAt: new Date("2026-09-01T00:00:00.000Z"), sentAt: null,
       client: { id: "client-1", name: "Client", email: "client@example.com", phone: "+15555550100" },
-      lineItems: [],
-      jobs: [],
-      serviceCatalog: null,
-    }));
+      lineItems: [], jobs: [], serviceCatalog: null,
+    });
 
     const result = await estimateService.shareEstimate("estimate-1", {
-      id: "user-1",
-      role: "ADMIN",
-      adminId: "admin-1",
+      id: "user-1", role: "ADMIN", adminId: "admin-1",
     } as never);
-
-    expect(publicDocumentLinkMock.resolveForAdmin).toHaveBeenCalledWith("admin-1");
-    expect(txEstimateMock.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ publicToken: TOKEN, status: "SENT", sentAt: expect.any(Date) }),
-    }));
+    expect(publicationMock.publishEstimate).toHaveBeenCalledWith({
+      id: "estimate-1", adminId: "admin-1", intent: "PUBLISH",
+    });
+    expect(result.sentAt).toBeNull();
     expect(result.shareUrl).toBe(`https://softriple-4.cleaningcrm.opygen.com/${TOKEN}`);
   });
 
-  it("passes the exact activated canonical URL to the estimate email outbox", async () => {
-    prismaMock.estimate.findFirst.mockResolvedValue({
-      id: "estimate-1",
-      status: "DRAFT",
-      client: { email: "client@example.com" },
-    });
-    txEstimateMock.findFirst.mockResolvedValue({
-      id: "estimate-1",
-      status: "DRAFT",
-      publicToken: TOKEN,
-      sentAt: null,
-      validUntil: future(),
-    });
-    txEstimateMock.update.mockReturnValue({
-      id: "estimate-1",
-      estimateRef: "#OP-EST-1",
-      status: "SENT",
-      publicToken: TOKEN,
-      sentAt: new Date("2026-09-01T00:00:00.000Z"),
-      client: { id: "client-1", name: "Client", email: "client@example.com", phone: "+15555550100" },
-      lineItems: [],
-      jobs: [],
-      serviceCatalog: null,
+  it("queues the estimate email inside the same publication transaction", async () => {
+    prismaMock.estimate.findFirst
+      .mockResolvedValueOnce({ id: "estimate-1", status: "DRAFT", client: { email: "client@example.com" } })
+      .mockResolvedValueOnce({
+        id: "estimate-1", estimateRef: "#OP-EST-1", status: "SENT", publicToken: TOKEN,
+        publishedAt: new Date("2026-09-01T00:00:00.000Z"), sentAt: new Date("2026-09-01T00:00:00.000Z"),
+        client: { id: "client-1", name: "Client", email: "client@example.com", phone: "+15555550100" },
+        lineItems: [], jobs: [], serviceCatalog: null,
+      });
+    publicationMock.publishEstimate.mockImplementation(async (input: { onPublishedTx?: (tx: unknown, value: unknown) => Promise<void> }) => {
+      const value = {
+        id: "estimate-1", publicToken: TOKEN, publishedAt: new Date("2026-09-01T00:00:00.000Z"),
+        sentAt: new Date("2026-09-01T00:00:00.000Z"),
+        shareUrl: `https://softriple-4.cleaningcrm.opygen.com/${TOKEN}`,
+      };
+      await input.onPublishedTx?.({ estimate: txEstimateMock }, value);
+      return value;
     });
     queueEstimateSentNotificationMock.mockResolvedValue({ queued: true });
 
     const result = await estimateService.sendEstimateEmail("estimate-1", {
-      id: "user-1",
-      role: "ADMIN",
-      adminId: "admin-1",
+      id: "user-1", role: "ADMIN", adminId: "admin-1",
     } as never);
-
     expect(queueEstimateSentNotificationMock).toHaveBeenCalledWith(
-      "estimate-1",
-      "2026-09-01T00:00:00.000Z",
-      result.shareUrl,
+      expect.anything(), "estimate-1", "2026-09-01T00:00:00.000Z", result.shareUrl,
     );
   });
 
@@ -205,7 +187,7 @@ describe("Phase 3 estimate public sharing", () => {
       code: "ESTIMATE_NOT_FOUND",
     });
     expect(prismaMock.estimate.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: { publicToken: TOKEN, adminId: "wrong-admin" },
+      where: { publicToken: TOKEN, publishedAt: { not: null }, adminId: "wrong-admin" },
     }));
   });
 

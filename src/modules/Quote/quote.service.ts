@@ -22,48 +22,11 @@ import { createNotification } from "../../lib/utils/createNotification";
 import { nextReference } from "../../lib/utils/referenceNumber";
 import { inferLegacyServiceType, resolveFlexibleServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
-import { queueQuoteSentNotification } from "../../lib/notifications/businessNotificationEvents";
+import { queueQuoteSentNotificationTx } from "../../lib/notifications/businessNotificationEvents";
 import { PublicDocumentLinkService } from "../Website/publicDocumentLink.service";
+import { PublicDocumentPublicationService } from "../Website/publicDocumentPublication.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const ensurePublicQuoteToken = async (
-    quoteId: string,
-    existingToken?: string | null,
-): Promise<string> => {
-    if (existingToken) return existingToken;
-
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-        const publicToken = await PublicDocumentLinkService.generateUniqueToken();
-        try {
-            const updated = await prisma.quote.updateMany({
-                where: { id: quoteId, publicToken: null },
-                data: { publicToken },
-            });
-            if (updated.count === 1) return publicToken;
-
-            const current = await prisma.quote.findUnique({
-                where: { id: quoteId },
-                select: { publicToken: true },
-            });
-            if (current?.publicToken) return current.publicToken;
-            throw new AppError(status.NOT_FOUND, "Quote not found");
-        } catch (error) {
-            const prismaCode =
-                typeof error === "object" && error !== null && "code" in error
-                    ? String((error as { code?: unknown }).code ?? "")
-                    : "";
-            if (prismaCode === "P2002") continue;
-            throw error;
-        }
-    }
-
-    throw new AppError(
-        status.INTERNAL_SERVER_ERROR,
-        "Could not create a secure quote link. Please try again.",
-        { code: "QUOTE_TOKEN_GENERATION_FAILED", retryable: true },
-    );
-};
 
 const isPublicUrlConfigurationError = (error: unknown): boolean =>
     error instanceof AppError &&
@@ -89,12 +52,19 @@ const resolveQuoteShareUrlIfAvailable = async (
     }
 };
 
-const withQuoteShareUrl = async <T extends { publicToken: string | null }>(
+const withQuoteShareUrl = async <T extends {
+    publicToken: string | null;
+    status: QuoteStatus;
+    publishedAt: Date | null;
+}>(
     adminId: string,
     quote: T,
 ): Promise<T & { shareUrl: string | null }> => ({
     ...quote,
-    shareUrl: await resolveQuoteShareUrlIfAvailable(adminId, quote.publicToken),
+    shareUrl:
+        quote.status === QuoteStatus.DRAFT || !quote.publishedAt
+            ? null
+            : await resolveQuoteShareUrlIfAvailable(adminId, quote.publicToken),
 });
 
 const resolveWebsiteAdminIdForPublicQuote = async (
@@ -215,6 +185,14 @@ const resolveOrCreateClient = async (
 const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
     const adminId = await getAdminId(user);
 
+    // Preflight publication before any client-side effects. A PUBLISH/SEND request must
+    // have a resolvable tenant website before we create or reuse CRM data.
+    const publication = await PublicDocumentPublicationService.prepareCreation({
+        adminId,
+        resourceType: "quote",
+        deliveryIntent: payload.deliveryIntent,
+    });
+
     const [resolvedClientId, serviceIdentity] = await Promise.all([
         resolveOrCreateClient(adminId, payload),
         resolveFlexibleServiceIdentity(adminId, {
@@ -224,14 +202,29 @@ const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
     ]);
 
     const { subtotal, tax, total } = computeTotals(payload.lineItems, payload.taxRate);
-    const publicToken = await PublicDocumentLinkService.generateUniqueToken();
 
     const quote = await prisma.$transaction(async (tx) => {
+        if (payload.deliveryIntent === "SEND") {
+            const client = await tx.client.findFirst({
+                where: { id: resolvedClientId, adminId },
+                select: { email: true },
+            });
+            if (!client?.email) {
+                throw new AppError(status.BAD_REQUEST, "Client has no email address on file", {
+                    code: "QUOTE_CLIENT_EMAIL_REQUIRED",
+                    retryable: false,
+                });
+            }
+        }
+
         const quoteRef = await nextReference(tx, "quote");
-        return tx.quote.create({
+        const created = await tx.quote.create({
             data: {
                 quoteRef,
-                publicToken,
+                publicToken: publication.publicToken,
+                status: publication.status,
+                publishedAt: publication.publishedAt,
+                sentAt: publication.sentAt,
                 adminId,
                 clientId: resolvedClientId,
                 serviceCatalogId: serviceIdentity.serviceCatalogId,
@@ -258,10 +251,21 @@ const createQuote = async (payload: IQuoteCreate, user: IRequestUser) => {
             },
             include: quoteInclude,
         });
+
+        if (payload.deliveryIntent === "SEND" && publication.sentAt && publication.shareUrl) {
+            await queueQuoteSentNotificationTx(
+                tx,
+                created.id,
+                publication.sentAt.toISOString(),
+                publication.shareUrl,
+            );
+        }
+
+        return created;
     });
 
     if (payload.templateId) await recordTemplateUsage(payload.templateId);
-    return withQuoteShareUrl(adminId, quote);
+    return { ...quote, shareUrl: publication.shareUrl };
 };
 
 const getAllQuotes = async (queryParams: IQueryParams, user: IRequestUser) => {
@@ -289,14 +293,6 @@ const getQuoteById = async (id: string, user: IRequestUser) => {
     });
 
     if (!quote) throw new AppError(status.NOT_FOUND, "Quote not found");
-
-    // Existing quotes created before Phase 5 do not have a token yet. Generate
-    // one lazily when an authenticated admin opens the detail page so the
-    // secure share link is immediately available without a weak DB backfill.
-    if (!quote.publicToken) {
-        const publicToken = await ensurePublicQuoteToken(quote.id);
-        return withQuoteShareUrl(adminId, { ...quote, publicToken });
-    }
 
     return withQuoteShareUrl(adminId, quote);
 };
@@ -398,6 +394,20 @@ const updateQuoteStatus = async (
 ) => {
     const adminId = await getAdminId(user);
 
+    // Legacy/status-only callers that set SENT now go through the same
+    // publication lifecycle as explicit Publish. This guarantees a token,
+    // publishedAt timestamp and canonical tenant URL before the state changes.
+    if (newStatus === QuoteStatus.SENT) {
+        const publication = await PublicDocumentPublicationService.publishQuote({
+            id,
+            adminId,
+            intent: "PUBLISH",
+        });
+        const updated = await prisma.quote.findFirst({ where: { id, adminId }, include: quoteInclude });
+        if (!updated) throw new AppError(status.NOT_FOUND, "Quote not found");
+        return { ...updated, shareUrl: publication.shareUrl };
+    }
+
     const existing = await prisma.quote.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Quote not found");
 
@@ -408,16 +418,9 @@ const updateQuoteStatus = async (
         );
     }
 
-    const data: Record<string, unknown> = { status: newStatus };
-
-    // Record sentAt timestamp when first sent
-    if (newStatus === QuoteStatus.SENT && !existing.sentAt) {
-        data.sentAt = new Date();
-    }
-
     const updated = await prisma.quote.update({
         where: { id },
-        data,
+        data: { status: newStatus },
         include: quoteInclude,
     });
     return withQuoteShareUrl(adminId, updated);
@@ -576,6 +579,7 @@ const publicQuoteSelect = {
     total: true,
     validUntil: true,
     notes: true,
+    publishedAt: true,
     sentAt: true,
     respondedAt: true,
     responseNote: true,
@@ -634,6 +638,7 @@ const getPublicQuote = async (publicToken: string, websiteId?: string) => {
     let quote = await prisma.quote.findFirst({
         where: {
             publicToken,
+            publishedAt: { not: null },
             ...(websiteAdminId ? { adminId: websiteAdminId } : {}),
         },
         select: publicQuoteSelect,
@@ -672,6 +677,7 @@ const publicQuoteAction = async (
     const quote = await prisma.quote.findFirst({
         where: {
             publicToken,
+            publishedAt: { not: null },
             ...(websiteAdminId ? { adminId: websiteAdminId } : {}),
         },
         select: {
@@ -787,104 +793,28 @@ const publicQuoteAction = async (
 
 // ─── Share lifecycle ──────────────────────────────────────────────────────────
 
-const activateQuoteShareForAdmin = async (
+const loadPublishedQuoteForAdmin = async (
     id: string,
     adminId: string,
-    options: { refreshSentAt?: boolean; requireSendable?: boolean } = {},
+    shareUrl: string,
 ) => {
-    // Resolve the public address before mutating quote state. If website/domain
-    // routing is unavailable, a DRAFT stays a DRAFT instead of becoming SENT
-    // with a client link that cannot open.
-    const publicUrl = await PublicDocumentLinkService.resolveForAdmin(adminId);
-
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-            const shared = await prisma.$transaction(async (tx) => {
-                const existing = await tx.quote.findFirst({
-                    where: { id, adminId },
-                    select: {
-                        id: true,
-                        status: true,
-                        publicToken: true,
-                        sentAt: true,
-                        validUntil: true,
-                    },
-                });
-                if (!existing) throw new AppError(status.NOT_FOUND, "Quote not found");
-
-                const now = new Date();
-                if (
-                    (existing.status === QuoteStatus.DRAFT || existing.status === QuoteStatus.SENT) &&
-                    now > existing.validUntil
-                ) {
-                    throw quoteExpiredError();
-                }
-                if (
-                    options.requireSendable === true &&
-                    (existing.status === QuoteStatus.ACCEPTED ||
-                        existing.status === QuoteStatus.DECLINED ||
-                        existing.status === QuoteStatus.EXPIRED)
-                ) {
-                    throw new AppError(
-                        status.BAD_REQUEST,
-                        `Cannot send a quote that is ${existing.status.toLowerCase()}`,
-                        { code: "QUOTE_NOT_SENDABLE", retryable: false },
-                    );
-                }
-
-                const publicToken = existing.publicToken ?? await PublicDocumentLinkService.generateUniqueToken();
-                const shouldSetSentAt =
-                    options.refreshSentAt === true ||
-                    existing.status === QuoteStatus.DRAFT ||
-                    !existing.sentAt;
-
-                return tx.quote.update({
-                    where: { id: existing.id },
-                    data: {
-                        ...(existing.publicToken ? {} : { publicToken }),
-                        ...(existing.status === QuoteStatus.DRAFT
-                            ? { status: QuoteStatus.SENT }
-                            : {}),
-                        ...(shouldSetSentAt ? { sentAt: now } : {}),
-                    },
-                    include: quoteInclude,
-                });
-            });
-
-            if (!shared.publicToken) {
-                throw new AppError(
-                    status.INTERNAL_SERVER_ERROR,
-                    "Could not create a secure quote link. Please try again.",
-                    { code: "QUOTE_TOKEN_GENERATION_FAILED", retryable: true },
-                );
-            }
-
-            return {
-                ...shared,
-                shareUrl: PublicDocumentLinkService.buildFromResolution(
-                    publicUrl,
-                    { resourceType: "quote", token: shared.publicToken },
-                ),
-            };
-        } catch (error) {
-            const prismaCode =
-                typeof error === "object" && error !== null && "code" in error
-                    ? String((error as { code?: unknown }).code ?? "")
-                    : "";
-            if (prismaCode === "P2002") continue;
-            throw error;
-        }
-    }
-
-    throw new AppError(
-        status.INTERNAL_SERVER_ERROR,
-        "Could not create a secure quote link. Please try again.",
-        { code: "QUOTE_TOKEN_GENERATION_FAILED", retryable: true },
-    );
+    const quote = await prisma.quote.findFirst({
+        where: { id, adminId },
+        include: quoteInclude,
+    });
+    if (!quote) throw new AppError(status.NOT_FOUND, "Quote not found");
+    return { ...quote, shareUrl };
 };
 
-const shareQuote = async (id: string, user: IRequestUser) =>
-    activateQuoteShareForAdmin(id, await getAdminId(user));
+const shareQuote = async (id: string, user: IRequestUser) => {
+    const adminId = await getAdminId(user);
+    const publication = await PublicDocumentPublicationService.publishQuote({
+        id,
+        adminId,
+        intent: "PUBLISH",
+    });
+    return loadPublishedQuoteForAdmin(id, adminId, publication.shareUrl);
+};
 
 // ─── Send quote email ─────────────────────────────────────────────────────────
 
@@ -893,45 +823,38 @@ const sendQuoteEmail = async (id: string, user: IRequestUser) => {
 
     const quote = await prisma.quote.findFirst({
         where: { id, adminId },
-        include: {
-            client: {
-                select: { id: true, name: true, email: true, phone: true },
-            },
-            admin: {
-                select: { businessName: true, businessEmail: true, currency: true },
-            },
-            lineItems: true,
-            serviceCatalog: { select: { serviceName: true } },
+        select: {
+            id: true,
+            status: true,
+            client: { select: { email: true } },
         },
     });
     if (!quote) throw new AppError(status.NOT_FOUND, "Quote not found");
-
     if (!quote.client.email) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "Client has no email address on file",
-        );
+        throw new AppError(status.BAD_REQUEST, "Client has no email address on file");
     }
 
-    if (
-        quote.status === QuoteStatus.ACCEPTED ||
-        quote.status === QuoteStatus.DECLINED ||
-        quote.status === QuoteStatus.EXPIRED
-    ) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            `Cannot send a quote that is ${quote.status.toLowerCase()}`,
-        );
-    }
-
-    const updated = await activateQuoteShareForAdmin(id, adminId, {
-        refreshSentAt: true,
-        requireSendable: true,
+    const publication = await PublicDocumentPublicationService.publishQuote({
+        id,
+        adminId,
+        intent: "SEND",
+        onPublishedTx: async (tx, published) => {
+            if (!published.sentAt) {
+                throw new AppError(status.INTERNAL_SERVER_ERROR, "Quote send timestamp was not created", {
+                    code: "QUOTE_SEND_INVARIANT_FAILED",
+                    retryable: true,
+                });
+            }
+            await queueQuoteSentNotificationTx(
+                tx,
+                id,
+                published.sentAt.toISOString(),
+                published.shareUrl,
+            );
+        },
     });
-    const occurrence = updated.sentAt?.toISOString() ?? new Date().toISOString();
 
-    await queueQuoteSentNotification(updated.id, occurrence, updated.shareUrl);
-    return updated;
+    return loadPublishedQuoteForAdmin(id, adminId, publication.shareUrl);
 };
 
 // ─── Quote Templates ──────────────────────────────────────────────────────────

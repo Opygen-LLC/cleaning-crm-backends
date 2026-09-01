@@ -7,6 +7,7 @@ const {
   createNotificationMock,
   queueQuoteSentNotificationMock,
   tenantPublicUrlMock,
+  publicationMock,
 } = vi.hoisted(() => {
   const transactionQuoteMock = {
     findFirst: vi.fn(),
@@ -35,6 +36,10 @@ const {
     getAdminIdMock: vi.fn(),
     createNotificationMock: vi.fn(),
     queueQuoteSentNotificationMock: vi.fn(),
+    publicationMock: {
+      prepareCreation: vi.fn(),
+      publishQuote: vi.fn(),
+    },
     tenantPublicUrlMock: {
       resolveForAdminId: vi.fn(),
       buildRootDocumentUrl: vi.fn(
@@ -80,10 +85,13 @@ vi.mock("../../lib/utils/serviceIdentity", () => ({
 }));
 vi.mock("../../lib/utils/checkPlanLimits", () => ({ assertWithinLimit: vi.fn() }));
 vi.mock("../../lib/notifications/businessNotificationEvents", () => ({
-  queueQuoteSentNotification: queueQuoteSentNotificationMock,
+  queueQuoteSentNotificationTx: queueQuoteSentNotificationMock,
 }));
 vi.mock("../Website/tenantPublicUrl.service", () => ({
   TenantPublicUrlService: tenantPublicUrlMock,
+}));
+vi.mock("../Website/publicDocumentPublication.service", () => ({
+  PublicDocumentPublicationService: publicationMock,
 }));
 
 import AppError from "../../errorHelper/AppError";
@@ -109,6 +117,7 @@ const publicQuote = (status: string, validUntil = NOW_FUTURE()) => ({
   total: 100,
   validUntil,
   notes: null,
+  publishedAt: new Date(),
   sentAt: new Date(),
   respondedAt: null,
   responseNote: null,
@@ -139,107 +148,67 @@ beforeEach(() => {
 });
 
 describe("Phase 2 quote sharing", () => {
-  it("activates a DRAFT quote atomically and returns the tenant-root URL", async () => {
-    transactionQuoteMock.findFirst.mockResolvedValue({
+  it("activates a DRAFT quote atomically and returns the tenant-root URL without marking it sent", async () => {
+    publicationMock.publishQuote.mockResolvedValue({
       id: "quote-1",
-      status: "DRAFT",
-      publicToken: null,
+      publicToken: TOKEN,
+      publishedAt: new Date("2026-09-01T00:00:00.000Z"),
       sentAt: null,
-      validUntil: NOW_FUTURE(),
+      shareUrl: `https://softriple-4.cleaningcrm.opygen.com/${TOKEN}`,
     });
-    transactionQuoteMock.update.mockImplementation(({ data }: { data: Record<string, unknown> }) => ({
-      id: "quote-1",
-      quoteRef: "#OP-QT-1",
-      status: data.status,
-      publicToken: data.publicToken,
-      sentAt: data.sentAt,
+    prismaMock.quote.findFirst.mockResolvedValue({
+      id: "quote-1", quoteRef: "#OP-QT-1", status: "SENT", publicToken: TOKEN,
+      publishedAt: new Date("2026-09-01T00:00:00.000Z"), sentAt: null,
       client: { id: "client-1", name: "Client", email: "client@example.com", phone: "+15555550100" },
-      lineItems: [],
-      bookings: [],
-      jobs: [],
-    }));
+      lineItems: [], bookings: [], jobs: [], serviceCatalog: null,
+    });
 
     const result = await quoteService.shareQuote("quote-1", {
-      id: "user-1",
-      role: "ADMIN",
-      adminId: "admin-1",
+      id: "user-1", role: "ADMIN", adminId: "admin-1",
     } as never);
 
-    expect(tenantPublicUrlMock.resolveForAdminId).toHaveBeenCalledWith("admin-1");
-    expect(transactionQuoteMock.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "quote-1", adminId: "admin-1" } }),
-    );
-    expect(transactionQuoteMock.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ status: "SENT", sentAt: expect.any(Date) }),
-      }),
-    );
-    expect(result.publicToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(result.shareUrl).toBe(
-      `https://softriple-4.cleaningcrm.opygen.com/${result.publicToken}`,
-    );
-    expect(result.shareUrl).not.toContain("//A");
+    expect(publicationMock.publishQuote).toHaveBeenCalledWith({
+      id: "quote-1", adminId: "admin-1", intent: "PUBLISH",
+    });
+    expect(result.sentAt).toBeNull();
+    expect(result.shareUrl).toBe(`https://softriple-4.cleaningcrm.opygen.com/${TOKEN}`);
   });
 
   it("fails closed before changing a DRAFT when no public website origin is available", async () => {
-    tenantPublicUrlMock.resolveForAdminId.mockRejectedValue(
-      new AppError(503, "Public origin unavailable", {
-        code: "WEBSITE_PUBLIC_ORIGIN_UNAVAILABLE",
-      }),
+    publicationMock.publishQuote.mockRejectedValue(
+      new AppError(503, "Public origin unavailable", { code: "WEBSITE_PUBLIC_ORIGIN_UNAVAILABLE" }),
     );
-
-    await expect(
-      quoteService.shareQuote("quote-1", {
-        id: "user-1",
-        role: "ADMIN",
-        adminId: "admin-1",
-      } as never),
-    ).rejects.toMatchObject({ code: "WEBSITE_PUBLIC_ORIGIN_UNAVAILABLE" });
-
-    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    await expect(quoteService.shareQuote("quote-1", {
+      id: "user-1", role: "ADMIN", adminId: "admin-1",
+    } as never)).rejects.toMatchObject({ code: "WEBSITE_PUBLIC_ORIGIN_UNAVAILABLE" });
   });
 
-
-  it("passes the exact activated canonical share URL into the email outbox", async () => {
-    prismaMock.quote.findFirst.mockResolvedValue({
-      id: "quote-1",
-      status: "DRAFT",
-      client: { id: "client-1", name: "Client", email: "client@example.com", phone: "+15555550100" },
-      admin: { businessName: "Softriple Cleaning", businessEmail: "hello@example.com", currency: "USD" },
-      lineItems: [],
-      serviceCatalog: null,
+  it("queues email inside the same publication transaction using the canonical URL", async () => {
+    prismaMock.quote.findFirst
+      .mockResolvedValueOnce({ id: "quote-1", status: "DRAFT", client: { email: "client@example.com" } })
+      .mockResolvedValueOnce({
+        id: "quote-1", quoteRef: "#OP-QT-1", status: "SENT", publicToken: TOKEN,
+        publishedAt: new Date("2026-09-01T00:00:00.000Z"), sentAt: new Date("2026-09-01T00:00:00.000Z"),
+        client: { id: "client-1", name: "Client", email: "client@example.com", phone: "+15555550100" },
+        lineItems: [], bookings: [], jobs: [], serviceCatalog: null,
+      });
+    publicationMock.publishQuote.mockImplementation(async (input: { onPublishedTx?: (tx: unknown, value: unknown) => Promise<void> }) => {
+      const value = {
+        id: "quote-1", publicToken: TOKEN, publishedAt: new Date("2026-09-01T00:00:00.000Z"),
+        sentAt: new Date("2026-09-01T00:00:00.000Z"),
+        shareUrl: `https://softriple-4.cleaningcrm.opygen.com/${TOKEN}`,
+      };
+      await input.onPublishedTx?.({ quote: transactionQuoteMock }, value);
+      return value;
     });
-    transactionQuoteMock.findFirst.mockResolvedValue({
-      id: "quote-1",
-      status: "DRAFT",
-      publicToken: TOKEN,
-      sentAt: null,
-      validUntil: NOW_FUTURE(),
-    });
-    transactionQuoteMock.update.mockImplementation(({ data }: { data: Record<string, unknown> }) => ({
-      id: "quote-1",
-      quoteRef: "#OP-QT-1",
-      status: data.status,
-      publicToken: TOKEN,
-      sentAt: data.sentAt,
-      client: { id: "client-1", name: "Client", email: "client@example.com", phone: "+15555550100" },
-      lineItems: [],
-      bookings: [],
-      jobs: [],
-    }));
     queueQuoteSentNotificationMock.mockResolvedValue({ queued: true, deliveryId: "delivery-1" });
 
     const result = await quoteService.sendQuoteEmail("quote-1", {
-      id: "user-1",
-      role: "ADMIN",
-      adminId: "admin-1",
+      id: "user-1", role: "ADMIN", adminId: "admin-1",
     } as never);
 
-    expect(result.shareUrl).toBe(`https://softriple-4.cleaningcrm.opygen.com/${TOKEN}`);
     expect(queueQuoteSentNotificationMock).toHaveBeenCalledWith(
-      "quote-1",
-      expect.any(String),
-      result.shareUrl,
+      expect.anything(), "quote-1", "2026-09-01T00:00:00.000Z", result.shareUrl,
     );
   });
 
@@ -254,7 +223,7 @@ describe("Phase 2 quote sharing", () => {
 
     expect(prismaMock.quote.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { publicToken: TOKEN, adminId: "wrong-admin" },
+        where: { publicToken: TOKEN, publishedAt: { not: null }, adminId: "wrong-admin" },
       }),
     );
   });

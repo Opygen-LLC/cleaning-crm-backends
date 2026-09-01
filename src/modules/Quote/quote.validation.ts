@@ -32,6 +32,7 @@ const createQuoteSchema = z.object({
     notes: z.string().optional(),
     internalNotes: z.string().optional(),
     templateId: z.string().uuid().optional(),
+    deliveryIntent: z.enum(["DRAFT", "PUBLISH", "SEND"]).default("DRAFT"),
 }).strict().superRefine((data, ctx) => {
     requireService(data, ctx);
     if (data.clientId) return;

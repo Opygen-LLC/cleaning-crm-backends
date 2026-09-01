@@ -26,7 +26,8 @@ import {
     resolveFlexibleServiceIdentity,
 } from "../../lib/utils/serviceIdentity";
 import { PublicDocumentLinkService } from "../Website/publicDocumentLink.service";
-import { queueEstimateSentNotification } from "../../lib/notifications/businessNotificationEvents";
+import { PublicDocumentPublicationService } from "../Website/publicDocumentPublication.service";
+import { queueEstimateSentNotificationTx } from "../../lib/notifications/businessNotificationEvents";
 import { createNotification } from "../../lib/utils/createNotification";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -68,12 +69,19 @@ const resolveEstimateShareUrlIfAvailable = async (
     }
 };
 
-const withEstimateShareUrl = async <T extends { publicToken: string | null }>(
+const withEstimateShareUrl = async <T extends {
+    publicToken: string | null;
+    status: EstimateStatus;
+    publishedAt: Date | null;
+}>(
     adminId: string,
     estimate: T,
 ): Promise<T & { shareUrl: string | null }> => ({
     ...estimate,
-    shareUrl: await resolveEstimateShareUrlIfAvailable(adminId, estimate.publicToken),
+    shareUrl:
+        estimate.status === EstimateStatus.DRAFT || !estimate.publishedAt
+            ? null
+            : await resolveEstimateShareUrlIfAvailable(adminId, estimate.publicToken),
 });
 
 const resolveWebsiteAdminIdForPublicEstimate = async (
@@ -209,6 +217,7 @@ const publicEstimateSelect = {
     total: true,
     validUntil: true,
     notes: true,
+    publishedAt: true,
     sentAt: true,
     respondedAt: true,
     responseNote: true,
@@ -256,40 +265,44 @@ const createEstimate = async (payload: IEstimateCreate, user: IRequestUser) => {
         });
     }
 
-    if (payload.newClient) {
-        // Keep the plan check outside the transaction so the transaction only
-        // contains the client + estimate write set. The email advisory lock
-        // below prevents duplicate new-client creation from double submits.
-        await assertWithinLimit(adminId, "client");
-    }
+    if (payload.newClient) await assertWithinLimit(adminId, "client");
 
-    const [serviceIdentity, totals] = await Promise.all([
+    const [serviceIdentity, totals, publication] = await Promise.all([
         resolveFlexibleServiceIdentity(adminId, {
             serviceCatalogId: payload.serviceCatalogId,
             serviceType: payload.serviceType,
         }),
-        Promise.resolve(
-            computeTotals(
-                payload.lineItems,
-                payload.discountType ?? "percent",
-                payload.discountValue ?? 0,
-            ),
-        ),
+        Promise.resolve(computeTotals(
+            payload.lineItems,
+            payload.discountType ?? "percent",
+            payload.discountValue ?? 0,
+        )),
+        PublicDocumentPublicationService.prepareCreation({
+            adminId,
+            resourceType: "estimate",
+            deliveryIntent: payload.deliveryIntent,
+        }),
     ]);
 
-    return prisma.$transaction(async (tx) => {
+    const estimate = await prisma.$transaction(async (tx) => {
         let clientId: string;
 
         if (payload.clientId) {
             const client = await tx.client.findFirst({
                 where: { id: payload.clientId, adminId },
-                select: { id: true },
+                select: { id: true, email: true },
             });
             if (!client) {
                 throw new AppError(status.NOT_FOUND, "Client not found", {
                     code: "CLIENT_NOT_FOUND",
                     retryable: false,
                     fieldErrors: { clientId: "Choose a client from this business." },
+                });
+            }
+            if (payload.deliveryIntent === "SEND" && !client.email) {
+                throw new AppError(status.BAD_REQUEST, "Client has no email address on file", {
+                    code: "ESTIMATE_CLIENT_EMAIL_REQUIRED",
+                    retryable: false,
                 });
             }
             clientId = client.id;
@@ -325,10 +338,7 @@ const createEstimate = async (payload: IEstimateCreate, user: IRequestUser) => {
                     city: newClient.city?.trim() ?? "",
                     zipcode: newClient.postcode?.trim() ?? "",
                     country: newClient.country?.trim() ?? "",
-                    servicePreference:
-                        serviceIdentity.serviceNameSnapshot ??
-                        serviceIdentity.serviceType ??
-                        "",
+                    servicePreference: serviceIdentity.serviceNameSnapshot ?? serviceIdentity.serviceType ?? "",
                 },
                 select: { id: true },
             });
@@ -336,9 +346,13 @@ const createEstimate = async (payload: IEstimateCreate, user: IRequestUser) => {
         }
 
         const estimateRef = await nextReference(tx, "estimate");
-        return tx.estimate.create({
+        const created = await tx.estimate.create({
             data: {
                 estimateRef,
+                publicToken: publication.publicToken,
+                status: publication.status,
+                publishedAt: publication.publishedAt,
+                sentAt: publication.sentAt,
                 adminId,
                 clientId,
                 serviceCatalogId: serviceIdentity.serviceCatalogId,
@@ -362,21 +376,31 @@ const createEstimate = async (payload: IEstimateCreate, user: IRequestUser) => {
                             description: item.description,
                             quantity: item.quantity,
                             unitPrice: item.unitPrice,
-                            total:
-                                Math.round(
-                                    item.quantity *
-                                        item.unitPrice *
-                                        (1 - (item.discountPercent ?? 0) / 100) *
-                                        (1 + (item.taxPercent ?? 20) / 100) *
-                                        100,
-                                ) / 100,
+                            total: Math.round(
+                                item.quantity * item.unitPrice *
+                                (1 - (item.discountPercent ?? 0) / 100) *
+                                (1 + (item.taxPercent ?? 20) / 100) * 100,
+                            ) / 100,
                         })),
                     },
                 },
             },
             include: estimateInclude,
         });
+
+        if (payload.deliveryIntent === "SEND" && publication.sentAt && publication.shareUrl) {
+            await queueEstimateSentNotificationTx(
+                tx,
+                created.id,
+                publication.sentAt.toISOString(),
+                publication.shareUrl,
+            );
+        }
+
+        return created;
     });
+
+    return { ...estimate, shareUrl: publication.shareUrl };
 };
 
 const getAllEstimates = async (
@@ -512,16 +536,18 @@ const updateEstimateStatus = async (
 ) => {
     const adminId = await getAdminId(user);
 
-    // Legacy callers that set SENT are routed through the canonical share
-    // lifecycle so a SENT estimate can never exist without a secure token and
-    // tenant-owned public URL. Email delivery remains an explicit operation.
     if (newStatus === EstimateStatus.SENT) {
-        return activateEstimateShareForAdmin(id, adminId);
+        const publication = await PublicDocumentPublicationService.publishEstimate({
+            id,
+            adminId,
+            intent: "PUBLISH",
+        });
+        const updated = await prisma.estimate.findFirst({ where: { id, adminId }, include: estimateInclude });
+        if (!updated) throw new AppError(status.NOT_FOUND, "Estimate not found");
+        return { ...updated, shareUrl: publication.shareUrl };
     }
 
-    const existing = await prisma.estimate.findFirst({
-        where: { id, adminId },
-    });
+    const existing = await prisma.estimate.findFirst({ where: { id, adminId } });
     if (!existing) throw new AppError(status.NOT_FOUND, "Estimate not found");
 
     if (!ALLOWED_TRANSITIONS[existing.status].includes(newStatus)) {
@@ -545,7 +571,6 @@ const updateEstimateStatus = async (
     return withEstimateShareUrl(adminId, updated);
 };
 
-
 // ─── Public client document + canonical share lifecycle ──────────────────────
 
 const getPublicEstimate = async (publicToken: string, websiteId?: string) => {
@@ -557,6 +582,7 @@ const getPublicEstimate = async (publicToken: string, websiteId?: string) => {
     const estimate = await prisma.estimate.findFirst({
         where: {
             publicToken,
+            publishedAt: { not: null },
             ...(websiteAdminId ? { adminId: websiteAdminId } : {}),
         },
         select: publicEstimateSelect,
@@ -588,6 +614,7 @@ const publicEstimateAction = async (
     const estimate = await prisma.estimate.findFirst({
         where: {
             publicToken,
+            publishedAt: { not: null },
             ...(websiteAdminId ? { adminId: websiteAdminId } : {}),
         },
         select: {
@@ -677,138 +704,61 @@ const publicEstimateAction = async (
     return getPublicEstimate(publicToken, websiteId);
 };
 
-const activateEstimateShareForAdmin = async (
+const loadPublishedEstimateForAdmin = async (
     id: string,
     adminId: string,
-    options: { refreshSentAt?: boolean; requireSendable?: boolean } = {},
+    shareUrl: string,
 ) => {
-    // Fail before changing status when website/domain routing cannot produce a
-    // client URL. This keeps DRAFT/SENT state consistent with actual reachability.
-    const publicUrl = await PublicDocumentLinkService.resolveForAdmin(adminId);
-
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-            const shared = await prisma.$transaction(async (tx) => {
-                const existing = await tx.estimate.findFirst({
-                    where: { id, adminId },
-                    select: {
-                        id: true,
-                        status: true,
-                        publicToken: true,
-                        sentAt: true,
-                        validUntil: true,
-                    },
-                });
-                if (!existing) throw new AppError(status.NOT_FOUND, "Estimate not found");
-
-                const now = new Date();
-                if (
-                    (existing.status === EstimateStatus.DRAFT || existing.status === EstimateStatus.SENT) &&
-                    now > existing.validUntil
-                ) {
-                    throw estimateExpiredError();
-                }
-                if (
-                    options.requireSendable === true &&
-                    (existing.status === EstimateStatus.APPROVED ||
-                        existing.status === EstimateStatus.REJECTED ||
-                        existing.status === EstimateStatus.CONVERTED)
-                ) {
-                    throw new AppError(
-                        status.BAD_REQUEST,
-                        `Cannot send an estimate that is ${existing.status.toLowerCase()}`,
-                        { code: "ESTIMATE_NOT_SENDABLE", retryable: false },
-                    );
-                }
-
-                const publicToken =
-                    existing.publicToken ?? await PublicDocumentLinkService.generateUniqueToken();
-                const shouldSetSentAt =
-                    options.refreshSentAt === true ||
-                    existing.status === EstimateStatus.DRAFT ||
-                    !existing.sentAt;
-
-                return tx.estimate.update({
-                    where: { id: existing.id },
-                    data: {
-                        ...(existing.publicToken ? {} : { publicToken }),
-                        ...(existing.status === EstimateStatus.DRAFT
-                            ? { status: EstimateStatus.SENT }
-                            : {}),
-                        ...(shouldSetSentAt ? { sentAt: now } : {}),
-                    },
-                    include: estimateInclude,
-                });
-            });
-
-            if (!shared.publicToken) {
-                throw new AppError(
-                    status.INTERNAL_SERVER_ERROR,
-                    "Could not create a secure estimate link. Please try again.",
-                    { code: "ESTIMATE_TOKEN_GENERATION_FAILED", retryable: true },
-                );
-            }
-
-            return {
-                ...shared,
-                shareUrl: PublicDocumentLinkService.buildFromResolution(publicUrl, {
-                    resourceType: "estimate",
-                    token: shared.publicToken,
-                }),
-            };
-        } catch (error) {
-            const prismaCode =
-                typeof error === "object" && error !== null && "code" in error
-                    ? String((error as { code?: unknown }).code ?? "")
-                    : "";
-            if (prismaCode === "P2002") continue;
-            throw error;
-        }
-    }
-
-    throw new AppError(
-        status.INTERNAL_SERVER_ERROR,
-        "Could not create a secure estimate link. Please try again.",
-        { code: "ESTIMATE_TOKEN_GENERATION_FAILED", retryable: true },
-    );
+    const estimate = await prisma.estimate.findFirst({
+        where: { id, adminId },
+        include: estimateInclude,
+    });
+    if (!estimate) throw new AppError(status.NOT_FOUND, "Estimate not found");
+    return { ...estimate, shareUrl };
 };
 
-const shareEstimate = async (id: string, user: IRequestUser) =>
-    activateEstimateShareForAdmin(id, await getAdminId(user));
+const shareEstimate = async (id: string, user: IRequestUser) => {
+    const adminId = await getAdminId(user);
+    const publication = await PublicDocumentPublicationService.publishEstimate({
+        id,
+        adminId,
+        intent: "PUBLISH",
+    });
+    return loadPublishedEstimateForAdmin(id, adminId, publication.shareUrl);
+};
 
 const sendEstimateEmail = async (id: string, user: IRequestUser) => {
     const adminId = await getAdminId(user);
     const estimate = await prisma.estimate.findFirst({
         where: { id, adminId },
-        select: {
-            id: true,
-            status: true,
-            client: { select: { email: true } },
-        },
+        select: { id: true, status: true, client: { select: { email: true } } },
     });
     if (!estimate) throw new AppError(status.NOT_FOUND, "Estimate not found");
     if (!estimate.client.email) {
         throw new AppError(status.BAD_REQUEST, "Client has no email address on file");
     }
-    if (
-        estimate.status === EstimateStatus.APPROVED ||
-        estimate.status === EstimateStatus.REJECTED ||
-        estimate.status === EstimateStatus.CONVERTED
-    ) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            `Cannot send an estimate that is ${estimate.status.toLowerCase()}`,
-            { code: "ESTIMATE_NOT_SENDABLE", retryable: false },
-        );
-    }
 
-    const updated = await activateEstimateShareForAdmin(id, adminId, {
-        refreshSentAt: true,
-        requireSendable: true,
+    const publication = await PublicDocumentPublicationService.publishEstimate({
+        id,
+        adminId,
+        intent: "SEND",
+        onPublishedTx: async (tx, published) => {
+            if (!published.sentAt) {
+                throw new AppError(status.INTERNAL_SERVER_ERROR, "Estimate send timestamp was not created", {
+                    code: "ESTIMATE_SEND_INVARIANT_FAILED",
+                    retryable: true,
+                });
+            }
+            await queueEstimateSentNotificationTx(
+                tx,
+                id,
+                published.sentAt.toISOString(),
+                published.shareUrl,
+            );
+        },
     });
-    const occurrence = updated.sentAt?.toISOString() ?? new Date().toISOString();
-    await queueEstimateSentNotification(updated.id, occurrence, updated.shareUrl);
-    return updated;
+
+    return loadPublishedEstimateForAdmin(id, adminId, publication.shareUrl);
 };
 
 const deleteEstimate = async (id: string, user: IRequestUser) => {

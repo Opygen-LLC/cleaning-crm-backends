@@ -18,6 +18,7 @@ model Quote {
   validUntil    DateTime
   notes         String?
   internalNotes String?
+  publishedAt   DateTime?
   sentAt        DateTime?
   respondedAt   DateTime?
   responseNote  String?         @db.Text
@@ -74,6 +75,7 @@ model Estimate {
   validUntil            DateTime
   notes                 String?
   internalNotes         String?
+  publishedAt           DateTime?
   sentAt                DateTime?
   respondedAt           DateTime?
   responseNote          String?            @db.Text
