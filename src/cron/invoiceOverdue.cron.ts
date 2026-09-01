@@ -1,5 +1,5 @@
 import cron from "node-cron";
-import { InvoiceStatus } from "../generated/prisma/enums";
+import { AccountStatus, InvoiceStatus, TenantLifecycleStatus } from "../generated/prisma/enums";
 import { prisma } from "../lib/prisma/prisma";
 import { queueInvoiceNotification } from "../lib/notifications/businessNotificationEvents";
 import { fail, log } from "./index.cron";
@@ -7,7 +7,7 @@ import { fail, log } from "./index.cron";
 export const runInvoiceOverdueJob = async () => {
     const now = new Date();
     const due = await prisma.invoice.findMany({
-        where: { status: InvoiceStatus.SENT, dueDate: { lt: now } },
+        where: { status: InvoiceStatus.SENT, dueDate: { lt: now }, admin: { lifecycleStatus: TenantLifecycleStatus.ACTIVE, user: { status: AccountStatus.ACTIVE } } },
         select: { id: true, dueDate: true },
         take: 1_000,
     });

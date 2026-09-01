@@ -15,6 +15,7 @@ import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { deriveWebsiteEntitlements, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
 import { ServiceStatus } from "../../generated/prisma/enums";
 import type { WebsiteLocalDraftInput } from "./website.interface";
+import { getFeatureOverrideMode, isOverrideActive } from "../SuperAdmin/tenantEntitlement.service";
 
 const WEBSITE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -62,6 +63,8 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
       admin: {
         select: {
           id: true,
+          lifecycleStatus: true,
+          entitlementOverride: { select: { features: true, expiresAt: true } },
           businessName: true,
           businessLogo: true,
           mobileNumber: true,
@@ -277,7 +280,9 @@ const projectWebsite = (
   const { website, reviewSummary } = source;
 
   if (options.mode === "public") {
-    if (website.status === "SUSPENDED" || website.admin.user.status !== "ACTIVE") {
+    const websiteOverrideDisabled = isOverrideActive(website.admin.entitlementOverride)
+      && getFeatureOverrideMode(website.admin.entitlementOverride?.features, "website") === "FORCE_DISABLED";
+    if (website.status === "SUSPENDED" || website.admin.user.status !== "ACTIVE" || website.admin.lifecycleStatus !== "ACTIVE" || websiteOverrideDisabled) {
       throw new AppError(status.SERVICE_UNAVAILABLE, "Website temporarily unavailable");
     }
     if (website.status !== "PUBLISHED") throw new AppError(status.NOT_FOUND, "Website not found");

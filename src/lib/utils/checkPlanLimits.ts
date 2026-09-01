@@ -1,6 +1,7 @@
 import { startOfMonth } from "date-fns";
 import AppError from "../../errorHelper/AppError";
 import { prisma } from "../prisma/prisma";
+import { TenantEntitlementService } from "../../modules/SuperAdmin/tenantEntitlement.service";
 
 type Resource = "staff" | "client" | "booking";
 
@@ -14,21 +15,14 @@ export async function assertWithinLimit(
     adminId: string,
     resource: Resource,
 ): Promise<void> {
-    const sub = await prisma.subscription.findFirst({
-        where: { adminId },
-        include: { plan: true },
-        orderBy: { createdAt: "desc" },
-    });
+    const limits = await TenantEntitlementService.getEffectiveResourceLimits(adminId);
 
-    // No subscription on file → no cap applied (free trial / superadmin created account)
-    if (!sub) return;
-
-    const cap: Record<Resource, number> = {
-        staff: (sub.plan.maxStaff ?? Infinity) + sub.extraStaff,
-        client: (sub.plan.maxClient ?? Infinity) + sub.extraClient,
-        booking:
-            (sub.plan.maxBookingsPerMonth ?? Infinity) +
-            sub.extraBookingsPerMonth,
+    // null means unlimited/unmetered. Overrides are already folded into these
+    // effective limits, including expiry fallback to the underlying plan.
+    const cap: Record<Resource, number | null> = {
+        staff: limits.staff,
+        client: limits.clients,
+        booking: limits.monthlyBookings,
     };
 
     const countFns: Record<Resource, () => Promise<number>> = {
@@ -45,7 +39,8 @@ export async function assertWithinLimit(
 
     const count = await countFns[resource]();
 
-    if (count >= cap[resource]) {
+    const resourceCap = cap[resource];
+    if (resourceCap !== null && count >= resourceCap) {
         throw new AppError(
             402,
             `Plan limit reached for ${resource}. Upgrade your plan to add more.`,

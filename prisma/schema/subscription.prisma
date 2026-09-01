@@ -103,6 +103,13 @@ model PendingPlanChange {
   reviewedAt      DateTime?
   rejectionReason String?
   expiresAt       DateTime
+  /// Administrative scheduled changes are approved immediately but applied at
+  /// the billing boundary by the scheduler.
+  applyAt           DateTime?
+  isAdministrative  Boolean  @default(false)
+  reason            String?
+  requestedByUserId String?
+  reviewedByUserId  String?
 
   subscriptionId String
   subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
@@ -121,5 +128,6 @@ model PendingPlanChange {
   @@index([subscriptionId, status, createdAt])
   @@index([status, expiresAt])
   @@index([status, createdAt])
+  @@index([status, applyAt])
   @@index([couponId, status])
 }

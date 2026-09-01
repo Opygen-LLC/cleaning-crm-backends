@@ -17,23 +17,26 @@ import { singleFlight } from "./singleFlight";
 export interface PlatformConfig {
     platformName: string;
     supportEmail: string;
-    maxAdminsPerTenant: number;
     maintenanceMode: boolean;
     registrationOpen: boolean;
     defaultTrialDays: number;
     defaultCurrency: string;
     defaultTimezone: string;
+    authentication: {
+        requireEmailOtpVerification: boolean;
+    };
+    emailTemplates?: unknown[];
 }
 
 export const DEFAULT_PLATFORM_CONFIG: PlatformConfig = {
     platformName: "CleanCRM",
     supportEmail: "support@cleancrm.io",
-    maxAdminsPerTenant: 5,
     maintenanceMode: false,
     registrationOpen: true,
     defaultTrialDays: 14,
     defaultCurrency: "GBP",
     defaultTimezone: "Europe/London",
+    authentication: { requireEmailOtpVerification: true },
 };
 
 export const PLATFORM_CONFIG_KEY = "platformConfig";
@@ -64,7 +67,15 @@ const readConfigFromDb = async (): Promise<PlatformConfig> => {
     if (!row) return DEFAULT_PLATFORM_CONFIG;
 
     try {
-        return { ...DEFAULT_PLATFORM_CONFIG, ...JSON.parse(String(row.value)) };
+        const parsed = JSON.parse(String(row.value)) as Partial<PlatformConfig>;
+        return {
+            ...DEFAULT_PLATFORM_CONFIG,
+            ...parsed,
+            authentication: {
+                ...DEFAULT_PLATFORM_CONFIG.authentication,
+                ...(parsed.authentication ?? {}),
+            },
+        };
     } catch {
         return DEFAULT_PLATFORM_CONFIG;
     }
@@ -100,7 +111,14 @@ export const updatePlatformConfig = async (
     patch: Partial<PlatformConfig>,
 ): Promise<PlatformConfig> => {
     const current = await getPlatformConfig();
-    const updated = { ...current, ...patch };
+    const updated: PlatformConfig = {
+        ...current,
+        ...patch,
+        authentication: {
+            ...current.authentication,
+            ...(patch.authentication ?? {}),
+        },
+    };
 
     await prisma.superAdminConfig.upsert({
         where: { key: PLATFORM_CONFIG_KEY },

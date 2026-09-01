@@ -9,6 +9,7 @@ import { normalizeSubscriptionPlanFeatures, type SubscriptionPlanFeature } from 
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import type { WebsiteTemplateDefinition } from "./templateRegistry";
+import { applyTenantFeatureOverrides, getTenantEntitlementOverride } from "../SuperAdmin/tenantEntitlement.service";
 
 export const MAX_WEBSITE_ANALYTICS_HISTORY_DAYS = 730 as const;
 
@@ -172,9 +173,28 @@ const getForAdminId = async (adminId: string): Promise<WebsiteEntitlements> => {
     }
   }
 
+  const override = await getTenantEntitlementOverride(adminId);
+  if (source?.subscriptionPlan && override?.active) {
+    source = {
+      ...source,
+      subscriptionPlan: {
+        ...source.subscriptionPlan,
+        features: applyTenantFeatureOverrides(
+          source.subscriptionPlan.features ?? [],
+          override.features,
+          true,
+        ),
+      },
+    };
+  }
+
   const entitlements = deriveWebsiteEntitlements(source);
+  const defaultTtl = ttlForKey(CacheTtl.entitlements, key);
+  const overrideTtl = override?.expiresAt
+    ? Math.max(1, Math.ceil((new Date(override.expiresAt).getTime() - Date.now()) / 1000))
+    : defaultTtl;
   void redis
-    .setex(key, ttlForKey(CacheTtl.entitlements, key), JSON.stringify(entitlements))
+    .setex(key, Math.min(defaultTtl, overrideTtl), JSON.stringify(entitlements))
     .catch(() => {});
   return entitlements;
 };

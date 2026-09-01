@@ -22,6 +22,7 @@ import {
 } from "../lib/utils/subscriptionPlanFeatures";
 import {
   getRuntimeAdminAccessContext,
+  getRuntimeTenantLifecycleStatus,
   invalidateRuntimeAdminAccessContext,
   invalidateRuntimeSubscriptionForAdmin,
   type RuntimeAdminAccessContext,
@@ -168,6 +169,14 @@ export const checkSubscription = async (
       entitlementSummary: accessContext.entitlementSummary,
     };
 
+
+    const tenantLifecycle = accessContext.adminId
+      ? await getRuntimeTenantLifecycleStatus(accessContext.adminId)
+      : null;
+    if (tenantLifecycle === "ARCHIVED")
+      throw new AppError(status.FORBIDDEN, "This business account has been archived.", { code: "TENANT_ARCHIVED", retryable: false });
+    if (tenantLifecycle === "SUSPENDED")
+      throw new AppError(status.FORBIDDEN, "This business account has been suspended. Please contact support.", { code: "ACCOUNT_SUSPENDED", retryable: false });
 
     if (userStatus === AccountStatus.SUSPENDED)
       throw new AppError(

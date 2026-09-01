@@ -1,5 +1,5 @@
 import cron from "node-cron";
-import { BookingStatus } from "../generated/prisma/enums";
+import { AccountStatus, BookingStatus, TenantLifecycleStatus } from "../generated/prisma/enums";
 import { prisma } from "../lib/prisma/prisma";
 import { queueBookingNotification } from "../lib/notifications/businessNotificationEvents";
 import { fail, log } from "./index.cron";
@@ -42,6 +42,7 @@ export const runBookingReminderJob = async (now = new Date()) => {
   const bookings = await prisma.booking.findMany({
     where: {
       status: BookingStatus.SCHEDULED,
+      admin: { lifecycleStatus: TenantLifecycleStatus.ACTIVE, user: { status: AccountStatus.ACTIVE } },
       scheduledDate: {
         gt: now,
         lte: new Date(now.getTime() + LOOKAHEAD_MS),

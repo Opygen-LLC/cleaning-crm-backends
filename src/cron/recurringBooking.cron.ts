@@ -1,5 +1,5 @@
 import cron from "node-cron";
-import { RecurringStatus, BookingStatus } from "../generated/prisma/enums";
+import { RecurringStatus, BookingStatus, TenantLifecycleStatus, AccountStatus } from "../generated/prisma/enums";
 import type { Prisma } from "../generated/prisma/client";
 import { prisma } from "../lib/prisma/prisma";
 import { advanceNextRunAt } from "../modules/RecurringBooking/recurringBooking.service";
@@ -49,6 +49,7 @@ export const runRecurringBookingEngine = async (
         where: {
             status:    RecurringStatus.ACTIVE,
             nextRunAt: { lte: now },
+            admin: { lifecycleStatus: TenantLifecycleStatus.ACTIVE, user: { status: AccountStatus.ACTIVE } },
         },
         include: {
             staffAssignments: { select: { staffId: true } },

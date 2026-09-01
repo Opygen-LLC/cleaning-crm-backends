@@ -18,6 +18,7 @@ import { log, fail } from "./index.cron";
 import { createNotification } from "../lib/utils/createNotification";
 import { NotificationType } from "../generated/prisma/enums";
 import { invalidateSubscriptionAccessCache } from "../middlewares/checkSubscription";
+import { applyDueAdministrativePlanChanges } from "../modules/SuperAdmin/tenantAdmin.service";
 
 const JOB_NAME = "subscriptionExpiry";
 
@@ -27,6 +28,8 @@ const JOB_NAME = "subscriptionExpiry";
 // cron.schedule(...) callback which swallows its own promise via .catch().
 export async function runSubscriptionExpiryJob(): Promise<void> {
     const now = new Date();
+    // Apply approved administrative downgrades whose billing-boundary time has arrived.
+    await applyDueAdministrativePlanChanges(now);
 
     // ── 1. Expire paid subscriptions whose billing period has ended ─────────────
     // BUGFIX: previously a blind updateMany(). Switched to findMany + updateMany
@@ -118,5 +121,11 @@ export function scheduleSubscriptionExpiryJob(): void {
         runSubscriptionExpiryJob().catch((err) => fail(JOB_NAME, err));
     });
 
-    log(`${JOB_NAME}: scheduled (daily at 00:05 UTC).`);
+    // Scheduled Super Admin plan changes need tighter billing-boundary precision
+    // than the daily expiry sweep. Hourly is sufficient and idempotent.
+    cron.schedule("7 * * * *", () => {
+        applyDueAdministrativePlanChanges(new Date()).catch((err) => fail("scheduledPlanChange", err));
+    });
+
+    log(`${JOB_NAME}: scheduled (daily at 00:05 UTC; scheduled plan changes hourly).`);
 }

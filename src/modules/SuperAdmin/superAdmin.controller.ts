@@ -8,6 +8,8 @@ import {
     ISubscriptionFilters,
 } from "./superAdmin.interface";
 import AppError from "../../errorHelper/AppError";
+import { writeSuperAdminAudit } from "./superAdminAudit.service";
+import { TenantAdminService } from "./tenantAdmin.service";
 
 // ─── Platform Stats ───────────────────────────────────────────────────────────
 
@@ -123,8 +125,9 @@ const getAdminAccountById = catchAsync(async (req, res) => {
 });
 
 const suspendAdminAccount = catchAsync(async (req, res) => {
-    const result = await superAdminService.suspendAdminAccount(
+    const result = await TenantAdminService.suspendTenant(
         req.params.adminId as string,
+        { actorUserId: req.user.id, reason: "Tenant suspended through the legacy Super Admin account endpoint." },
     );
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -135,8 +138,9 @@ const suspendAdminAccount = catchAsync(async (req, res) => {
 });
 
 const activateAdminAccount = catchAsync(async (req, res) => {
-    const result = await superAdminService.activateAdminAccount(
+    const result = await TenantAdminService.reactivateTenant(
         req.params.adminId as string,
+        { actorUserId: req.user.id, reason: "Tenant reactivated through the legacy Super Admin account endpoint." },
     );
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -372,7 +376,14 @@ const getPlatformConfig = catchAsync(async (_req, res) => {
 });
 
 const updatePlatformConfig = catchAsync(async (req, res) => {
-    const result = await superAdminService.updatePlatformConfig(req.body);
+    const { reason, ...patch } = req.body as { reason: string } & Record<string, unknown>;
+    const result = await superAdminService.updatePlatformConfig(patch as Parameters<typeof superAdminService.updatePlatformConfig>[0]);
+    await writeSuperAdminAudit({
+        actorUserId: req.user.id,
+        action: "PLATFORM_CONFIG_UPDATED",
+        reason,
+        metadata: { fields: Object.keys(patch) },
+    });
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,

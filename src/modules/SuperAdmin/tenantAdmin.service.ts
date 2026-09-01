@@ -1,0 +1,651 @@
+import status from "http-status";
+import { addDays, addMonths, addYears, startOfMonth } from "date-fns";
+import AppError from "../../errorHelper/AppError";
+import {
+  AccountStatus,
+  PendingPlanChangeStatus,
+  SubscriptionPlanInterval,
+  SubscriptionStatus,
+  TenantLifecycleStatus,
+  UserRole,
+} from "../../generated/prisma/enums";
+import { Prisma } from "../../generated/prisma/client";
+import { prisma } from "../../lib/prisma/prisma";
+import { revokeAllSessionsForUser } from "../Auth/sessionSecurity.service";
+import {
+  invalidateRuntimeAuth,
+  invalidateRuntimeSubscriptionForAdmin,
+  invalidateRuntimeTenantOwnerStatus,
+} from "../../lib/cache/authRuntimeCache";
+import { invalidateSubscriptionAccessCache } from "../../middlewares/checkSubscription";
+import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
+import { WebsiteHostResolverService } from "../Website/websiteHostResolver.service";
+import { deleteFileFromCloudinary } from "../../config/cloudinary";
+import { disconnectTenantSockets } from "../../config/socketio";
+import { writeSuperAdminAudit } from "./superAdminAudit.service";
+import { TenantEntitlementService } from "./tenantEntitlement.service";
+import { getPlatformConfig } from "../../lib/utils/platformConfig";
+
+const TENANT_REASON_MIN = 10;
+const HARD_DELETE_TEXT = "DELETE PERMANENTLY";
+
+type Db = Prisma.TransactionClient | typeof prisma;
+
+type TenantMutationContext = {
+  actorUserId: string;
+  reason: string;
+};
+
+const normalizedReason = (reason: string) => {
+  const value = String(reason ?? "").trim();
+  if (value.length < TENANT_REASON_MIN) {
+    throw new AppError(status.BAD_REQUEST, `reason must be at least ${TENANT_REASON_MIN} characters.`);
+  }
+  return value;
+};
+
+export const resolveTenant = async (identifier: string, db: Db = prisma) => {
+  const tenant = await db.adminProfile.findFirst({
+    where: { OR: [{ id: identifier }, { userId: identifier }] },
+    select: {
+      id: true,
+      userId: true,
+      businessName: true,
+      lifecycleStatus: true,
+      suspendedAt: true,
+      suspendedReason: true,
+      reactivatedAt: true,
+      preArchiveLifecycleStatus: true,
+      archivedAt: true,
+      archivedReason: true,
+      restoredAt: true,
+      restoredReason: true,
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          emailVerified: true,
+          status: true,
+          role: true,
+          image: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      },
+    },
+  });
+  if (!tenant) throw new AppError(status.NOT_FOUND, "Tenant not found.");
+  return tenant;
+};
+
+const invalidateTenantCaches = async (tenant: { id: string; userId: string }) => {
+  invalidateRuntimeAuth(tenant.userId);
+  invalidateRuntimeTenantOwnerStatus(tenant.id);
+  await Promise.all([
+    invalidateRuntimeSubscriptionForAdmin(tenant.id),
+    invalidateSubscriptionAccessCache(tenant.userId).catch(() => undefined),
+    WebsiteProjectionCacheService.invalidateAdminWebsite(tenant.id).catch(() => undefined),
+  ]);
+
+  const website = await prisma.businessWebsite.findUnique({
+    where: { adminId: tenant.id },
+    select: {
+      subdomain: true,
+      subdomainAliases: { select: { subdomain: true } },
+      domains: { select: { domain: true } },
+    },
+  }).catch(() => null);
+  if (website) {
+    await Promise.all([
+      WebsiteHostResolverService.invalidateSubdomains([
+        website.subdomain,
+        ...website.subdomainAliases.map((item) => item.subdomain),
+      ]).catch(() => undefined),
+      WebsiteHostResolverService.invalidateHosts(website.domains.map((item) => item.domain)).catch(() => undefined),
+    ]);
+  }
+};
+
+const tenantUserIds = async (adminId: string) => {
+  const tenant = await prisma.adminProfile.findUnique({
+    where: { id: adminId },
+    select: { userId: true, staff: { select: { userId: true } } },
+  });
+  if (!tenant) return [] as string[];
+  return [tenant.userId, ...tenant.staff.map((staff) => staff.userId)];
+};
+
+const revokeTenantSessions = async (adminId: string) => {
+  const ids = await tenantUserIds(adminId);
+  await Promise.all(ids.map((userId) => revokeAllSessionsForUser(userId)));
+  ids.forEach(invalidateRuntimeAuth);
+  await disconnectTenantSockets(adminId);
+};
+
+export const getTenants = async (query: Record<string, unknown>) => {
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+  const search = String(query.search ?? query.searchTerm ?? "").trim();
+  const lifecycle = query.lifecycleStatus ? String(query.lifecycleStatus) as TenantLifecycleStatus : undefined;
+  const where: Prisma.AdminProfileWhereInput = {
+    ...(lifecycle ? { lifecycleStatus: lifecycle } : {}),
+    ...(search
+      ? {
+          OR: [
+            { businessName: { contains: search, mode: "insensitive" } },
+            { businessEmail: { contains: search, mode: "insensitive" } },
+            { user: { name: { contains: search, mode: "insensitive" } } },
+            { user: { email: { contains: search, mode: "insensitive" } } },
+          ],
+        }
+      : {}),
+  };
+
+  const [total, rows] = await Promise.all([
+    prisma.adminProfile.count({ where }),
+    prisma.adminProfile.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        userId: true,
+        businessName: true,
+        businessEmail: true,
+        country: true,
+        lifecycleStatus: true,
+        suspendedAt: true,
+        archivedAt: true,
+        createdAt: true,
+        user: { select: { name: true, email: true, status: true, emailVerified: true } },
+        businessWebsite: { select: { status: true, subdomain: true, publishedAt: true } },
+        subscription: {
+          take: 1,
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            status: true,
+            isTrial: true,
+            trialEndsAt: true,
+            currentPeriodEnd: true,
+            subscriptionPlan: { select: { id: true, name: true } },
+            plan: { select: { id: true, interval: true, price: true } },
+          },
+        },
+        _count: { select: { staff: true, clients: true, serviceCatalogs: true, leads: true, bookings: true } },
+      },
+    }),
+  ]);
+
+  return {
+    data: rows.map((row) => ({ ...row, subscription: row.subscription[0] ?? null })),
+    meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
+};
+
+export const getTenantsHealth = async () => {
+  const [total, active, suspended, archived, pendingPlanChanges, unverifiedOwners, missingWebsite, missingSubscription] = await Promise.all([
+    prisma.adminProfile.count(),
+    prisma.adminProfile.count({ where: { lifecycleStatus: TenantLifecycleStatus.ACTIVE } }),
+    prisma.adminProfile.count({ where: { lifecycleStatus: TenantLifecycleStatus.SUSPENDED } }),
+    prisma.adminProfile.count({ where: { lifecycleStatus: TenantLifecycleStatus.ARCHIVED } }),
+    prisma.pendingPlanChange.count({ where: { status: { in: [PendingPlanChangeStatus.AWAITING_PAYMENT, PendingPlanChangeStatus.UNDER_REVIEW] } } }),
+    prisma.adminProfile.count({ where: { user: { emailVerified: false } } }),
+    prisma.adminProfile.count({ where: { businessWebsite: null } }),
+    prisma.adminProfile.count({ where: { subscription: { none: {} } } }),
+  ]);
+  return { total, active, suspended, archived, pendingPlanChanges, unverifiedOwners, missingWebsite, missingSubscription };
+};
+
+export const getTenant360 = async (identifier: string) => {
+  const resolved = await resolveTenant(identifier);
+  const monthStart = startOfMonth(new Date());
+  const [tenant, limits, entitlementOverride, currentMonthBookings, lastSession, recentActivity] = await Promise.all([
+    prisma.adminProfile.findUniqueOrThrow({
+      where: { id: resolved.id },
+      include: {
+        user: { select: { id: true, name: true, email: true, emailVerified: true, image: true, role: true, status: true, createdAt: true, updatedAt: true } },
+        staff: { select: { id: true, userId: true, status: true, manuallyInactive: true } },
+        serviceCatalogs: { select: { id: true, serviceName: true, status: true }, orderBy: { createdAt: "desc" }, take: 50 },
+        businessWebsite: {
+          select: {
+            id: true, status: true, subdomain: true, publishedAt: true, updatedAt: true,
+            domains: { select: { id: true, domain: true, status: true, isPrimary: true, tlsStatus: true } },
+          },
+        },
+        subscription: {
+          orderBy: { createdAt: "desc" }, take: 1,
+          include: {
+            subscriptionPlan: { select: { id: true, name: true, features: true, currency: true } },
+            plan: true,
+            pendingPlanChanges: { orderBy: { createdAt: "desc" }, take: 10, include: { targetPlan: { include: { subscriptionPlan: true } } } },
+            billingHistory: { orderBy: { createdAt: "desc" }, take: 10 },
+          },
+        },
+        _count: {
+          select: {
+            staff: true, clients: true, serviceCatalogs: true, leads: true, leadActivities: true,
+            jobs: true, bookings: true, recurringSchedules: true, quotes: true, estimates: true,
+            invoices: true, payment: true, expenses: true, notifications: true, websiteSubmissions: true,
+          },
+        },
+      },
+    }),
+    TenantEntitlementService.getEffectiveResourceLimits(resolved.id),
+    TenantEntitlementService.getTenantEntitlementOverride(resolved.id),
+    prisma.booking.count({ where: { adminId: resolved.id, createdAt: { gte: monthStart } } }),
+    prisma.session.findFirst({ where: { userId: resolved.userId }, orderBy: { updatedAt: "desc" }, select: { updatedAt: true, lastUsedAt: true, ipAddress: true } }),
+    prisma.activityLog.findMany({ where: { adminId: resolved.id }, orderBy: { createdAt: "desc" }, take: 20 }),
+  ]);
+
+  const subscription = tenant.subscription[0] ?? null;
+  return {
+    id: tenant.id,
+    ownerUserId: tenant.userId,
+    business: {
+      businessName: tenant.businessName,
+      businessLogo: tenant.businessLogo,
+      businessEmail: tenant.businessEmail,
+      businessType: tenant.businessType,
+      businessDescription: tenant.businessDescription,
+      mobileNumber: tenant.mobileNumber,
+      address: tenant.address,
+      city: tenant.city,
+      zipcode: tenant.zipcode,
+      country: tenant.country,
+      website: tenant.website,
+      currency: tenant.currency,
+      brandColor: tenant.brandColor,
+    },
+    owner: tenant.user,
+    lifecycle: {
+      status: tenant.lifecycleStatus,
+      suspendedAt: tenant.suspendedAt,
+      suspendedReason: tenant.suspendedReason,
+      reactivatedAt: tenant.reactivatedAt,
+      archivedAt: tenant.archivedAt,
+      archivedReason: tenant.archivedReason,
+      restoredAt: tenant.restoredAt,
+      restoredReason: tenant.restoredReason,
+    },
+    counts: tenant._count,
+    services: tenant.serviceCatalogs,
+    website: tenant.businessWebsite,
+    domains: tenant.businessWebsite?.domains ?? [],
+    subscription,
+    trial: subscription ? { isTrial: subscription.isTrial, trialEndsAt: subscription.trialEndsAt, status: subscription.status } : null,
+    billingStatus: subscription?.status ?? null,
+    pendingPlanChange: subscription?.pendingPlanChanges?.[0] ?? null,
+    usage: {
+      staff: tenant._count.staff,
+      clients: tenant._count.clients,
+      monthlyBookings: currentMonthBookings,
+    },
+    limits,
+    entitlementOverride,
+    recentActivity,
+    createdAt: tenant.createdAt,
+    lastLoginActivityAt: lastSession?.lastUsedAt ?? lastSession?.updatedAt ?? null,
+    accountStatus: tenant.user.status,
+    websitePublicationState: tenant.businessWebsite?.status ?? null,
+  };
+};
+
+export const updateTenantProfile = async (identifier: string, payload: Record<string, unknown>, context: TenantMutationContext) => {
+  const tenant = await resolveTenant(identifier);
+  const reason = normalizedReason(context.reason);
+  const allowed = ["businessName", "businessLogo", "address", "brandColor", "city", "mobileNumber", "zipcode", "country", "businessEmail", "businessType", "licenseNumber", "businessDescription", "businessHours", "website", "currency"] as const;
+  const data: Record<string, unknown> = {};
+  for (const key of allowed) if (Object.prototype.hasOwnProperty.call(payload, key)) data[key] = payload[key];
+  if (Object.keys(data).length === 0) throw new AppError(status.BAD_REQUEST, "No editable tenant profile fields were provided.");
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.adminProfile.update({ where: { id: tenant.id }, data: data as Prisma.AdminProfileUpdateInput });
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_PROFILE_UPDATED", reason, metadata: { fields: Object.keys(data) } }, tx);
+    return row;
+  });
+  await invalidateTenantCaches(tenant);
+  return updated;
+};
+
+export const updateTenantOwner = async (identifier: string, payload: { name?: string; email?: string; image?: string | null }, context: TenantMutationContext) => {
+  const tenant = await resolveTenant(identifier);
+  const reason = normalizedReason(context.reason);
+  if (!payload.name && !payload.email && payload.image === undefined) throw new AppError(status.BAD_REQUEST, "No editable owner fields were provided.");
+  try {
+    const updated = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.update({ where: { id: tenant.userId }, data: { ...(payload.name ? { name: payload.name.trim() } : {}), ...(payload.email ? { email: payload.email.trim().toLowerCase(), emailVerified: false } : {}), ...(payload.image !== undefined ? { image: payload.image } : {}) } });
+      await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_OWNER_UPDATED", reason, metadata: { fields: Object.keys(payload) } }, tx);
+      return user;
+    });
+    invalidateRuntimeAuth(tenant.userId);
+    return updated;
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new AppError(status.CONFLICT, "That email address is already in use.");
+    throw error;
+  }
+};
+
+const mutateLifecycle = async (identifier: string, target: TenantLifecycleStatus, context: TenantMutationContext) => {
+  const tenant = await resolveTenant(identifier);
+  const reason = normalizedReason(context.reason);
+  if (target === TenantLifecycleStatus.SUSPENDED && tenant.lifecycleStatus === TenantLifecycleStatus.ARCHIVED) {
+    throw new AppError(status.CONFLICT, "Archived tenants must be restored before they can be suspended.");
+  }
+  if (target === TenantLifecycleStatus.ACTIVE && tenant.lifecycleStatus === TenantLifecycleStatus.ARCHIVED) {
+    throw new AppError(status.CONFLICT, "Archived tenants must be restored before reactivation.");
+  }
+  const now = new Date();
+  const updated = await prisma.$transaction(async (tx) => {
+    const admin = await tx.adminProfile.update({
+      where: { id: tenant.id },
+      data: target === TenantLifecycleStatus.SUSPENDED
+        ? { lifecycleStatus: target, suspendedAt: now, suspendedReason: reason }
+        : { lifecycleStatus: target, reactivatedAt: now },
+    });
+    await tx.user.update({ where: { id: tenant.userId }, data: { status: target === TenantLifecycleStatus.ACTIVE ? AccountStatus.ACTIVE : AccountStatus.SUSPENDED } });
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: target === TenantLifecycleStatus.ACTIVE ? "TENANT_REACTIVATED" : "TENANT_SUSPENDED", reason }, tx);
+    return admin;
+  });
+  if (target !== TenantLifecycleStatus.ACTIVE) await revokeTenantSessions(tenant.id);
+  await invalidateTenantCaches(tenant);
+  return updated;
+};
+
+export const suspendTenant = (identifier: string, context: TenantMutationContext) => mutateLifecycle(identifier, TenantLifecycleStatus.SUSPENDED, context);
+export const reactivateTenant = (identifier: string, context: TenantMutationContext) => mutateLifecycle(identifier, TenantLifecycleStatus.ACTIVE, context);
+
+export const archiveTenant = async (identifier: string, context: TenantMutationContext) => {
+  const tenant = await resolveTenant(identifier);
+  const reason = normalizedReason(context.reason);
+  if (tenant.lifecycleStatus === TenantLifecycleStatus.ARCHIVED) return tenant;
+  const now = new Date();
+  const updated = await prisma.$transaction(async (tx) => {
+    const admin = await tx.adminProfile.update({ where: { id: tenant.id }, data: { lifecycleStatus: TenantLifecycleStatus.ARCHIVED, preArchiveLifecycleStatus: tenant.lifecycleStatus, archivedAt: now, archivedReason: reason } });
+    await tx.user.update({ where: { id: tenant.userId }, data: { status: AccountStatus.SUSPENDED } });
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_ARCHIVED", reason }, tx);
+    return admin;
+  });
+  await revokeTenantSessions(tenant.id);
+  await invalidateTenantCaches(tenant);
+  return updated;
+};
+
+export const restoreTenant = async (identifier: string, context: TenantMutationContext) => {
+  const tenant = await resolveTenant(identifier);
+  const reason = normalizedReason(context.reason);
+  if (tenant.lifecycleStatus !== TenantLifecycleStatus.ARCHIVED) throw new AppError(status.CONFLICT, "Tenant is not archived.");
+  const restoredStatus = tenant.preArchiveLifecycleStatus === TenantLifecycleStatus.SUSPENDED ? TenantLifecycleStatus.SUSPENDED : TenantLifecycleStatus.ACTIVE;
+  const updated = await prisma.$transaction(async (tx) => {
+    const admin = await tx.adminProfile.update({ where: { id: tenant.id }, data: { lifecycleStatus: restoredStatus, restoredAt: new Date(), restoredReason: reason, preArchiveLifecycleStatus: null } });
+    await tx.user.update({ where: { id: tenant.userId }, data: { status: restoredStatus === TenantLifecycleStatus.ACTIVE ? AccountStatus.ACTIVE : AccountStatus.SUSPENDED } });
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_RESTORED", reason, metadata: { restoredStatus } }, tx);
+    return admin;
+  });
+  await invalidateTenantCaches(tenant);
+  return updated;
+};
+
+export const getTenantDeletionPreview = async (identifier: string) => {
+  const tenant = await resolveTenant(identifier);
+  const website = await prisma.businessWebsite.findUnique({ where: { adminId: tenant.id }, select: { id: true } });
+  const subscriptionIds = (await prisma.subscription.findMany({ where: { adminId: tenant.id }, select: { id: true } })).map((row) => row.id);
+  const [users, staff, clients, leads, leadActivities, jobs, bookings, recurringBookings, services, quotes, estimates, invoices, payments, expenses, websiteRevisions, domains, assets, submissions, reviews, notifications, subscriptions, billingHistory, pendingPlanChanges, couponUsages] = await Promise.all([
+    prisma.user.count({ where: { OR: [{ id: tenant.userId }, { staff: { adminId: tenant.id } }] } }),
+    prisma.staffProfile.count({ where: { adminId: tenant.id } }), prisma.client.count({ where: { adminId: tenant.id } }), prisma.lead.count({ where: { adminId: tenant.id } }), prisma.leadActivity.count({ where: { adminId: tenant.id } }), prisma.job.count({ where: { adminId: tenant.id } }), prisma.booking.count({ where: { adminId: tenant.id } }), prisma.recurringSchedule.count({ where: { adminId: tenant.id } }), prisma.serviceCatalog.count({ where: { adminId: tenant.id } }), prisma.quote.count({ where: { adminId: tenant.id } }), prisma.estimate.count({ where: { adminId: tenant.id } }), prisma.invoice.count({ where: { adminId: tenant.id } }), prisma.payment.count({ where: { adminId: tenant.id } }), prisma.expense.count({ where: { adminId: tenant.id } }), website ? prisma.websiteRevision.count({ where: { websiteId: website.id } }) : 0, website ? prisma.websiteDomain.count({ where: { websiteId: website.id } }) : 0, website ? prisma.websiteAsset.count({ where: { websiteId: website.id } }) : 0, prisma.websiteSubmission.count({ where: { adminId: tenant.id } }), prisma.review.count({ where: { adminId: tenant.id } }), prisma.notification.count({ where: { adminId: tenant.id } }), prisma.subscription.count({ where: { adminId: tenant.id } }), subscriptionIds.length ? prisma.billingHistory.count({ where: { subscriptionId: { in: subscriptionIds } } }) : 0, subscriptionIds.length ? prisma.pendingPlanChange.count({ where: { subscriptionId: { in: subscriptionIds } } }) : 0, prisma.couponUsage.count({ where: { adminId: tenant.id } }),
+  ]);
+  return { tenant: { id: tenant.id, ownerUserId: tenant.userId, businessName: tenant.businessName, ownerEmail: tenant.user.email }, confirmationAdminId: tenant.id, confirmationText: HARD_DELETE_TEXT, counts: { users, staff, clients, leads, leadActivities, jobs, bookings, recurringBookings, services, quotes, estimates, invoices, payments, expenses, commissions: 0, website: website ? 1 : 0, websiteRevisions, domains, assets, submissions, reviews, notifications, subscriptions, billingHistory, pendingPlanChanges, couponUsages } };
+};
+
+const tenantCloudinaryUrls = async (adminId: string) => {
+  const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { logo: true, favicon: true, assets: { select: { url: true } } } });
+  const [attachments, payments, billing] = await Promise.all([
+    prisma.jobAttachment.findMany({ where: { adminId }, select: { fileUrl: true } }),
+    prisma.payment.findMany({ where: { adminId }, select: { invoiceUrl: true, paymentProofUrl: true } }),
+    prisma.billingHistory.findMany({ where: { subscription: { adminId } }, select: { invoiceUrl: true, paymentProofUrl: true } }),
+  ]);
+  const values = [website?.logo, website?.favicon, ...(website?.assets.map((x) => x.url) ?? []), ...attachments.map((x) => x.fileUrl), ...payments.flatMap((x) => [x.invoiceUrl, x.paymentProofUrl]), ...billing.flatMap((x) => [x.invoiceUrl, x.paymentProofUrl])];
+  return [...new Set(values.filter((url): url is string => Boolean(url && url.includes("cloudinary"))))];
+};
+
+export const hardDeleteTenant = async (identifier: string, input: { adminId: string; confirmationText: string }, actorUserId: string) => {
+  const tenant = await resolveTenant(identifier);
+  if (input.adminId !== tenant.id || input.confirmationText !== HARD_DELETE_TEXT) throw new AppError(status.BAD_REQUEST, "Permanent deletion confirmation did not match the tenant id and required text.");
+  if (actorUserId === tenant.userId) throw new AppError(status.BAD_REQUEST, "A Super Admin cannot permanently delete their own account through tenant deletion.");
+  const preview = await getTenantDeletionPreview(tenant.id);
+  const reason = `Permanent tenant deletion confirmed for ${tenant.id}.`;
+
+  // Disable the tenant first so no new writes race the deletion process.
+  await prisma.$transaction(async (tx) => {
+    await tx.adminProfile.update({ where: { id: tenant.id }, data: { lifecycleStatus: TenantLifecycleStatus.ARCHIVED, archivedAt: new Date(), archivedReason: reason } });
+    await tx.user.update({ where: { id: tenant.userId }, data: { status: AccountStatus.SUSPENDED } });
+    await writeSuperAdminAudit({ actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_HARD_DELETE_STARTED", reason, metadata: { counts: preview.counts } }, tx);
+  });
+  await revokeTenantSessions(tenant.id);
+  await invalidateTenantCaches(tenant);
+
+  const urls = await tenantCloudinaryUrls(tenant.id);
+  // External deletion is deliberately fail-closed: if storage cleanup fails,
+  // the disabled tenant remains recoverable instead of leaving orphaned assets.
+  for (const url of urls) await deleteFileFromCloudinary(url);
+
+  const staffUsers = await prisma.staffProfile.findMany({ where: { adminId: tenant.id }, select: { userId: true } });
+  await prisma.$transaction(async (tx) => {
+    await tx.couponUsage.deleteMany({ where: { adminId: tenant.id } });
+    if (staffUsers.length) await tx.user.deleteMany({ where: { id: { in: staffUsers.map((row) => row.userId) } } });
+    await tx.user.delete({ where: { id: tenant.userId } });
+  });
+
+  const remains = await prisma.adminProfile.count({ where: { id: tenant.id } });
+  if (remains !== 0) throw new AppError(status.INTERNAL_SERVER_ERROR, "Tenant deletion verification failed.");
+  await writeSuperAdminAudit({ actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_HARD_DELETED", reason, metadata: { counts: preview.counts, externalAssetsDeleted: urls.length } });
+  return { deleted: true, tenantId: tenant.id, externalAssetsDeleted: urls.length, counts: preview.counts };
+};
+
+const buildGlobalUserWhere = (query: Record<string, unknown>): Prisma.UserWhereInput => {
+  const search = String(query.search ?? "").trim();
+  const and: Prisma.UserWhereInput[] = [];
+  if (query.tenant) {
+    const tenant = String(query.tenant);
+    and.push({ OR: [{ admin: { id: tenant } }, { staff: { adminId: tenant } }] });
+  }
+  if (search) {
+    and.push({ OR: [{ name: { contains: search, mode: "insensitive" } }, { email: { contains: search, mode: "insensitive" } }] });
+  }
+  return {
+    ...(query.role ? { role: String(query.role) as UserRole } : {}),
+    ...(query.status ? { status: String(query.status) as AccountStatus } : {}),
+    ...(query.verified !== undefined ? { emailVerified: String(query.verified) === "true" } : {}),
+    ...(query.createdFrom || query.createdTo ? { createdAt: { ...(query.createdFrom ? { gte: new Date(String(query.createdFrom)) } : {}), ...(query.createdTo ? { lte: new Date(String(query.createdTo)) } : {}) } } : {}),
+    ...(and.length ? { AND: and } : {}),
+  };
+};
+
+const globalUserSelect = {
+  id: true, name: true, email: true, emailVerified: true, image: true, role: true, status: true, createdAt: true, updatedAt: true,
+  admin: { select: { id: true, businessName: true, lifecycleStatus: true } },
+  staff: { select: { id: true, adminId: true, staffRole: true, admin: { select: { businessName: true, lifecycleStatus: true } } } },
+} satisfies Prisma.UserSelect;
+
+export const getGlobalUsers = async (query: Record<string, unknown>) => {
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+  const where = buildGlobalUserWhere(query);
+  const [total, rows] = await Promise.all([
+    prisma.user.count({ where }),
+    prisma.user.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: "desc" }, select: globalUserSelect }),
+  ]);
+  return { data: rows, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+};
+
+export const getGlobalUsersSummary = async () => {
+  const [total, verified, pending, active, suspended, admins, staff, superAdmins] = await Promise.all([
+    prisma.user.count(), prisma.user.count({ where: { emailVerified: true } }), prisma.user.count({ where: { status: AccountStatus.PENDING } }), prisma.user.count({ where: { status: AccountStatus.ACTIVE } }), prisma.user.count({ where: { status: AccountStatus.SUSPENDED } }), prisma.user.count({ where: { role: UserRole.ADMIN } }), prisma.user.count({ where: { role: UserRole.STAFF } }), prisma.user.count({ where: { role: UserRole.SUPER_ADMIN } }),
+  ]);
+  return { total, verified, unverified: total - verified, pending, active, suspended, roles: { admins, staff, superAdmins } };
+};
+
+const csvCell = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+export const exportGlobalUsersCsv = async (query: Record<string, unknown>) => {
+  const where = buildGlobalUserWhere(query);
+  const total = await prisma.user.count({ where });
+  const EXPORT_LIMIT = 50_000;
+  if (total > EXPORT_LIMIT) {
+    throw new AppError(status.BAD_REQUEST, `The export matches ${total} users. Narrow the filters below ${EXPORT_LIMIT} rows before exporting.`);
+  }
+  const rows = await prisma.user.findMany({ where, orderBy: { createdAt: "desc" }, take: EXPORT_LIMIT, select: globalUserSelect });
+  const headers = ["id", "name", "email", "role", "status", "verified", "tenantId", "tenant", "createdAt"];
+  const values = rows.map((u) => [u.id, u.name, u.email, u.role, u.status, u.emailVerified, u.admin?.id ?? u.staff?.adminId ?? "", u.admin?.businessName ?? u.staff?.admin.businessName ?? "", u.createdAt.toISOString()]);
+  return [headers.map(csvCell).join(","), ...values.map((row) => row.map(csvCell).join(","))].join("\n");
+};
+
+export const updateGlobalUserStatus = async (userId: string, nextStatus: AccountStatus, context: TenantMutationContext) => {
+  const reason = normalizedReason(context.reason);
+  const target = await prisma.user.findUnique({ where: { id: userId }, include: { admin: { select: { id: true } }, staff: { select: { adminId: true } } } });
+  if (!target) throw new AppError(status.NOT_FOUND, "User not found.");
+  if (target.id === context.actorUserId && nextStatus !== AccountStatus.ACTIVE) throw new AppError(status.BAD_REQUEST, "You cannot suspend your own Super Admin account.");
+  if (target.role === UserRole.ADMIN && target.admin) {
+    return nextStatus === AccountStatus.ACTIVE ? reactivateTenant(target.admin.id, context) : suspendTenant(target.admin.id, context);
+  }
+  const updated = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.update({ where: { id: userId }, data: { status: nextStatus }, select: { id: true, name: true, email: true, role: true, status: true } });
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: target.staff?.adminId ?? null, targetUserId: userId, action: "USER_STATUS_UPDATED", reason, metadata: { from: target.status, to: nextStatus } }, tx);
+    return user;
+  });
+  if (nextStatus !== AccountStatus.ACTIVE) await revokeAllSessionsForUser(userId);
+  invalidateRuntimeAuth(userId);
+  return updated;
+};
+
+export const updateGlobalUserRole = async (userId: string, role: UserRole, context: TenantMutationContext) => {
+  const reason = normalizedReason(context.reason);
+  if (userId === context.actorUserId) throw new AppError(status.BAD_REQUEST, "You cannot change your own role.");
+  const target = await prisma.user.findUnique({ where: { id: userId }, include: { admin: { select: { id: true } }, staff: { select: { adminId: true } } } });
+  if (!target) throw new AppError(status.NOT_FOUND, "User not found.");
+  if ((target.admin || target.staff) && role !== target.role) throw new AppError(status.CONFLICT, "Role conversion for a tenant owner or staff profile requires a dedicated migration and is blocked to preserve data integrity.");
+  if (target.role === UserRole.SUPER_ADMIN && role !== UserRole.SUPER_ADMIN) {
+    const remaining = await prisma.user.count({ where: { role: UserRole.SUPER_ADMIN, id: { not: userId } } });
+    if (!remaining) throw new AppError(status.CONFLICT, "The final Super Admin cannot be demoted.");
+  }
+  const updated = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.update({ where: { id: userId }, data: { role }, select: { id: true, name: true, email: true, role: true, status: true } });
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: target.admin?.id ?? target.staff?.adminId ?? null, targetUserId: userId, action: "USER_ROLE_UPDATED", reason, metadata: { from: target.role, to: role } }, tx);
+    return user;
+  });
+  await revokeAllSessionsForUser(userId); invalidateRuntimeAuth(userId); return updated;
+};
+
+export const verifyGlobalUser = async (userId: string, context: TenantMutationContext) => {
+  const reason = normalizedReason(context.reason);
+  const target = await prisma.user.findUnique({ where: { id: userId }, include: { admin: { select: { id: true } }, staff: { select: { adminId: true } } } });
+  if (!target) throw new AppError(status.NOT_FOUND, "User not found.");
+  const updated = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.update({ where: { id: userId }, data: { emailVerified: true, ...(target.status === AccountStatus.PENDING ? { status: AccountStatus.ACTIVE } : {}) }, select: { id: true, name: true, email: true, emailVerified: true, status: true, role: true } });
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: target.admin?.id ?? target.staff?.adminId ?? null, targetUserId: userId, action: "USER_MANUALLY_VERIFIED", reason }, tx);
+    return user;
+  });
+  invalidateRuntimeAuth(userId); return updated;
+};
+
+export const getSubscriptionRequests = async (query: Record<string, unknown>) => {
+  const page = Math.max(1, Number(query.page) || 1); const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
+  const where: Prisma.PendingPlanChangeWhereInput = { ...(query.status ? { status: String(query.status) as PendingPlanChangeStatus } : {}), ...(query.tenant ? { subscription: { adminId: String(query.tenant) } } : {}) };
+  const [total, rows] = await Promise.all([
+    prisma.pendingPlanChange.count({ where }),
+    prisma.pendingPlanChange.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: "desc" }, include: { targetPlan: { include: { subscriptionPlan: true } }, coupon: true, billingHistory: { orderBy: { createdAt: "desc" }, take: 5 }, subscription: { include: { admin: { select: { id: true, businessName: true, user: { select: { name: true, email: true } } } }, plan: { include: { subscriptionPlan: true } } } } } }),
+  ]);
+  return { data: rows, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+};
+
+const latestSubscription = async (tenantId: string) => {
+  const sub = await prisma.subscription.findFirst({ where: { adminId: tenantId }, orderBy: { createdAt: "desc" }, include: { plan: { include: { subscriptionPlan: true } }, subscriptionPlan: true } });
+  if (!sub) throw new AppError(status.NOT_FOUND, "Tenant subscription not found.");
+  return sub;
+};
+
+export const changeTenantPlan = async (identifier: string, targetPlanId: string, context: TenantMutationContext) => {
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); const current = await latestSubscription(tenant.id);
+  const target = await prisma.plan.findUnique({ where: { id: targetPlanId }, include: { subscriptionPlan: true } });
+  if (!target || !target.subscriptionPlan.isActive) throw new AppError(status.NOT_FOUND, "Target plan is not available.");
+  const now = new Date(); const currentEnd = current.currentPeriodEnd && current.currentPeriodEnd > now ? current.currentPeriodEnd : (target.interval === SubscriptionPlanInterval.YEARLY ? addYears(now, 1) : addMonths(now, 1));
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.pendingPlanChange.updateMany({ where: { subscriptionId: current.id, isAdministrative: true, applyAt: { not: null }, status: PendingPlanChangeStatus.APPROVED }, data: { status: PendingPlanChangeStatus.CANCELLED, rejectionReason: "Superseded by immediate Super Admin plan override.", reviewedAt: now } });
+    const sub = await tx.subscription.update({ where: { id: current.id }, data: { planId: target.id, subscriptionPlanId: target.subscriptionPlanId, totalCost: target.price, status: SubscriptionStatus.ACTIVE, isTrial: false, trialEndsAt: null, currentPeriodStart: current.currentPeriodStart ?? now, currentPeriodEnd: currentEnd, cancelAtPeriodEnd: false, canceledAt: null } });
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_PLAN_OVERRIDDEN", reason, metadata: { fromPlanId: current.planId, toPlanId: target.id, noCharge: true } }, tx); return sub;
+  });
+  await invalidateTenantCaches(tenant); return updated;
+};
+
+const tierRank: Record<string, number> = { STARTER: 1, GROWTH: 2, PRO: 3, CUSTOM: 4 };
+export const scheduleTenantDowngrade = async (identifier: string, targetPlanId: string, context: TenantMutationContext) => {
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); const current = await latestSubscription(tenant.id);
+  if (!current.currentPeriodEnd) throw new AppError(status.CONFLICT, "A billing period end is required to schedule a downgrade.");
+  const target = await prisma.plan.findUnique({ where: { id: targetPlanId }, include: { subscriptionPlan: true } });
+  if (!target || tierRank[target.subscriptionPlan.name] >= tierRank[current.subscriptionPlan.name]) throw new AppError(status.BAD_REQUEST, "Scheduled plan changes must be a downgrade.");
+  const existing = await prisma.pendingPlanChange.findFirst({ where: { subscriptionId: current.id, isAdministrative: true, status: PendingPlanChangeStatus.APPROVED, applyAt: { not: null } } });
+  if (existing) throw new AppError(status.CONFLICT, "This tenant already has a scheduled plan change.");
+  const row = await prisma.$transaction(async (tx) => {
+    const created = await tx.pendingPlanChange.create({ data: { subscriptionId: current.id, targetPlanId: target.id, quotedAmount: target.price, currency: target.subscriptionPlan.currency, status: PendingPlanChangeStatus.APPROVED, submittedAt: new Date(), reviewedAt: new Date(), expiresAt: addDays(current.currentPeriodEnd!, 30), applyAt: current.currentPeriodEnd, isAdministrative: true, reason, requestedByUserId: context.actorUserId, reviewedByUserId: context.actorUserId } });
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_DOWNGRADE_SCHEDULED", reason, metadata: { targetPlanId, applyAt: current.currentPeriodEnd } }, tx); return created;
+  }); return row;
+};
+
+export const cancelScheduledTenantChange = async (identifier: string, context: TenantMutationContext) => {
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); const current = await latestSubscription(tenant.id);
+  const pending = await prisma.pendingPlanChange.findFirst({ where: { subscriptionId: current.id, isAdministrative: true, status: PendingPlanChangeStatus.APPROVED, applyAt: { not: null } }, orderBy: { createdAt: "desc" } });
+  if (!pending) throw new AppError(status.NOT_FOUND, "No scheduled administrative plan change exists.");
+  return prisma.$transaction(async (tx) => { const row = await tx.pendingPlanChange.update({ where: { id: pending.id }, data: { status: PendingPlanChangeStatus.CANCELLED, rejectionReason: reason, reviewedAt: new Date(), applyAt: null } }); await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_SCHEDULED_PLAN_CHANGE_CANCELLED", reason, metadata: { pendingPlanChangeId: pending.id } }, tx); return row; });
+};
+
+export const setTenantCancelAtPeriodEnd = async (identifier: string, cancelAtPeriodEnd: boolean, context: TenantMutationContext) => {
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); const current = await latestSubscription(tenant.id);
+  const row = await prisma.$transaction(async (tx) => { const sub = await tx.subscription.update({ where: { id: current.id }, data: { cancelAtPeriodEnd, canceledAt: cancelAtPeriodEnd ? new Date() : null } }); await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: cancelAtPeriodEnd ? "TENANT_CANCELLATION_SCHEDULED" : "TENANT_CANCELLATION_REMOVED", reason }, tx); return sub; });
+  await invalidateTenantCaches(tenant); return row;
+};
+
+export const manageTenantTrial = async (identifier: string, input: { action: "RESTART" | "EXTEND" | "SET_END" | "END"; days?: number; endAt?: string }, context: TenantMutationContext) => {
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); const current = await latestSubscription(tenant.id); const now = new Date();
+  let data: Prisma.SubscriptionUpdateInput;
+  if (input.action === "RESTART") { const days = input.days ?? (await getPlatformConfig()).defaultTrialDays; data = { isTrial: true, status: SubscriptionStatus.ACTIVE, trialEndsAt: addDays(now, days), currentPeriodStart: now, currentPeriodEnd: null, cancelAtPeriodEnd: false, canceledAt: null }; }
+  else if (input.action === "EXTEND") { const days = input.days ?? 0; if (days < 1 || days > 365) throw new AppError(status.BAD_REQUEST, "days must be between 1 and 365."); const base = current.trialEndsAt && current.trialEndsAt > now ? current.trialEndsAt : now; data = { isTrial: true, status: SubscriptionStatus.ACTIVE, trialEndsAt: addDays(base, days) }; }
+  else if (input.action === "SET_END") { if (!input.endAt) throw new AppError(status.BAD_REQUEST, "endAt is required."); const endAt = new Date(input.endAt); if (!Number.isFinite(endAt.getTime()) || endAt <= now) throw new AppError(status.BAD_REQUEST, "endAt must be a future date."); data = { isTrial: true, status: SubscriptionStatus.ACTIVE, trialEndsAt: endAt }; }
+  else data = { isTrial: true, status: SubscriptionStatus.EXPIRED, trialEndsAt: now };
+  const row = await prisma.$transaction(async (tx) => { const sub = await tx.subscription.update({ where: { id: current.id }, data }); await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: `TENANT_TRIAL_${input.action}`, reason, metadata: { days: input.days, endAt: input.endAt } }, tx); return sub; }); await invalidateTenantCaches(tenant); return row;
+};
+
+export const setTenantEntitlements = async (identifier: string, payload: Parameters<typeof TenantEntitlementService.setTenantEntitlementOverride>[2], actorUserId: string) => {
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(payload.reason);
+  const result = await prisma.$transaction(async (tx) => { const row = await TenantEntitlementService.setTenantEntitlementOverride(tenant.id, actorUserId, { ...payload, reason }, tx); await writeSuperAdminAudit({ actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_ENTITLEMENTS_OVERRIDDEN", reason, metadata: { resources: payload.resources, features: payload.features, expiresAt: payload.expiresAt } }, tx); return row; }); await invalidateTenantCaches(tenant); return result;
+};
+
+export const revokeTenantEntitlements = async (identifier: string, context: TenantMutationContext) => {
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason);
+  const result = await prisma.$transaction(async (tx) => { const row = await TenantEntitlementService.revokeTenantEntitlementOverride(tenant.id, tx); await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_ENTITLEMENTS_REVOKED", reason }, tx); return row; }); await invalidateTenantCaches(tenant); return result;
+};
+
+export const applyDueAdministrativePlanChanges = async (now = new Date()) => {
+  const due = await prisma.pendingPlanChange.findMany({ where: { isAdministrative: true, status: PendingPlanChangeStatus.APPROVED, applyAt: { lte: now } }, include: { targetPlan: true, subscription: { select: { id: true, adminId: true, admin: { select: { userId: true } } } } }, take: 100 });
+  let applied = 0;
+  for (const change of due) {
+    await prisma.$transaction(async (tx) => {
+      await tx.subscription.update({ where: { id: change.subscriptionId }, data: { planId: change.targetPlanId, subscriptionPlanId: change.targetPlan.subscriptionPlanId, totalCost: change.targetPlan.price, status: SubscriptionStatus.ACTIVE, isTrial: false, trialEndsAt: null, currentPeriodStart: now, currentPeriodEnd: change.targetPlan.interval === SubscriptionPlanInterval.YEARLY ? addYears(now, 1) : addMonths(now, 1) } });
+      await tx.pendingPlanChange.update({ where: { id: change.id }, data: { applyAt: null, reviewedAt: now } });
+      await writeSuperAdminAudit({ actorUserId: change.reviewedByUserId ?? null, tenantAdminId: change.subscription.adminId, action: "TENANT_SCHEDULED_PLAN_CHANGE_APPLIED", reason: change.reason ?? "Scheduled administrative plan change applied automatically.", metadata: { pendingPlanChangeId: change.id, targetPlanId: change.targetPlanId } }, tx);
+    });
+    await Promise.all([
+      invalidateRuntimeSubscriptionForAdmin(change.subscription.adminId),
+      invalidateSubscriptionAccessCache(change.subscription.admin.userId).catch(() => undefined),
+    ]);
+    applied += 1;
+  }
+  return { applied };
+};
+
+export const TenantAdminService = {
+  getTenants, getTenantsHealth, getTenant360, updateTenantProfile, updateTenantOwner,
+  suspendTenant, reactivateTenant, archiveTenant, restoreTenant, getTenantDeletionPreview, hardDeleteTenant,
+  getGlobalUsers, getGlobalUsersSummary, exportGlobalUsersCsv, updateGlobalUserStatus, updateGlobalUserRole, verifyGlobalUser,
+  getSubscriptionRequests, changeTenantPlan, scheduleTenantDowngrade, cancelScheduledTenantChange, setTenantCancelAtPeriodEnd, manageTenantTrial,
+  setTenantEntitlements, revokeTenantEntitlements, applyDueAdministrativePlanChanges,
+};

@@ -15,6 +15,7 @@ import { REFRESH_TOKEN_REUSE_GRACE_MS, REFRESH_TOKEN_SECRET } from "../../config
 import {
     AccountStatus,
     StaffStatus,
+    TenantLifecycleStatus,
     UserRole,
 } from "../../generated/prisma/enums";
 import { AccountProvisioningService } from "./accountProvisioning.service";
@@ -86,7 +87,11 @@ const assertAccountCanUseAuthenticatedApp = (user: {
     status: AccountStatus;
     role: UserRole;
     emailVerified: boolean;
-    staff?: { status: StaffStatus; manuallyInactive: boolean } | null;
+    staff?: {
+        status: StaffStatus;
+        manuallyInactive: boolean;
+        admin?: { lifecycleStatus: TenantLifecycleStatus; user: { status: AccountStatus } } | null;
+    } | null;
 }): void => {
     if (!user.emailVerified) {
         throw new AppError(
@@ -118,6 +123,15 @@ const assertAccountCanUseAuthenticatedApp = (user: {
             "This account is not active yet.",
             { code: AUTH_ERROR_CODES.ACCOUNT_NOT_ACTIVE, retryable: false },
         );
+    }
+
+    if (user.role === UserRole.STAFF && user.staff?.admin) {
+        if (user.staff.admin.lifecycleStatus === TenantLifecycleStatus.ARCHIVED) {
+            throw new AppError(status.FORBIDDEN, "Your business account has been archived.", { code: "TENANT_ARCHIVED", retryable: false });
+        }
+        if (user.staff.admin.lifecycleStatus === TenantLifecycleStatus.SUSPENDED || user.staff.admin.user.status === AccountStatus.SUSPENDED) {
+            throw new AppError(status.FORBIDDEN, "Your business account has been suspended. Please contact support.", { code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED, retryable: false });
+        }
     }
 
     if (
@@ -186,7 +200,7 @@ const register = async ({
     mobileNumber,
     businessType,
     licenseNumber,
-}: IRegisterUserPayload) => {
+}: IRegisterUserPayload, metadata: SessionRequestMetadata = {}) => {
     const platformConfig = await getPlatformConfig();
     if (!platformConfig.registrationOpen) {
         throw new AppError(
@@ -195,17 +209,29 @@ const register = async ({
         );
     }
 
-    return AccountProvisioningService.provisionRegisteredAdmin({
+    const verificationRequired = platformConfig.authentication?.requireEmailOtpVerification ?? true;
+    const provisioned = await AccountProvisioningService.provisionRegisteredAdmin({
         businessName,
         name,
         email,
         password,
         trialDays: platformConfig.defaultTrialDays,
+        requireEmailVerification: verificationRequired,
         // Optional 2-step wizard fields — undefined if not provided
         mobileNumber,
         businessType,
         licenseNumber,
     });
+
+    if (verificationRequired) {
+        return { ...provisioned, verificationRequired: true as const, authentication: null };
+    }
+
+    // Verification-disabled registrations still use the canonical Better Auth
+    // login path so the browser receives the same rotated refresh/session
+    // credentials as a normal login.
+    const authentication = await login({ email, password }, metadata);
+    return { ...provisioned, verificationRequired: false as const, authentication };
 };
 
 const login = async (
@@ -280,7 +306,7 @@ const login = async (
         const staff = signedInUser.role === UserRole.STAFF
             ? await prisma.staffProfile.findUnique({
                 where: { userId: signedInUser.id },
-                select: { status: true, manuallyInactive: true },
+                select: { status: true, manuallyInactive: true, admin: { select: { lifecycleStatus: true, user: { select: { status: true } } } } },
             })
             : null;
 

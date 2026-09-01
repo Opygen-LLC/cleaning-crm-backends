@@ -30,6 +30,17 @@ model AdminProfile {
   /// Legacy compatibility for the previous six-step onboarding flow. New
   /// clients do not write or read this field for setup/checklist progress.
   skippedSteps          String[]                @default([])
+
+  /// Platform lifecycle is tenant-scoped and independent from the owner User row.
+  lifecycleStatus        TenantLifecycleStatus   @default(ACTIVE)
+  suspendedAt            DateTime?
+  suspendedReason        String?
+  reactivatedAt          DateTime?
+  preArchiveLifecycleStatus TenantLifecycleStatus?
+  archivedAt             DateTime?
+  archivedReason         String?
+  restoredAt             DateTime?
+  restoredReason         String?
   user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   couponUsage           CouponUsage[]
   reviews               Review[]
@@ -69,6 +80,7 @@ model AdminProfile {
   bookingChangeRequests BookingChangeRequest[]
   businessWebsite       BusinessWebsite?
   websiteSubmissions    WebsiteSubmission[]
+  entitlementOverride   TenantEntitlementOverride?
 
   /// Ignored relations keep pre-migration tables represented without exposing
   /// them through Prisma Client or deleting historical data.

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { superAdminController } from "./superAdmin.controller";
+import { tenantAdminController } from "./tenantAdmin.controller";
 import { checkAuth } from "../../middlewares/checkAuth";
 import { UserRole } from "../../generated/prisma/enums";
 import {
@@ -15,6 +16,11 @@ import {
     updateSubscriptionPlanSchema,
     subscriptionListQuerySchema,
 } from "./superAdmin.validation";
+import {
+    tenantListQuerySchema, reasonSchema, tenantProfileSchema, tenantOwnerSchema, hardDeleteSchema,
+    globalUsersQuerySchema, userRoleSchema, userStatusSchema, verifyUserSchema, subscriptionRequestQuerySchema,
+    planChangeSchema, cancellationSchema, trialManagementSchema, entitlementSchema, platformConfigPatchSchema,
+} from "./tenantAdmin.validation";
 
 const router = Router();
 
@@ -49,6 +55,38 @@ router.get(
     isSuperAdmin,
     superAdminController.getActivityLogStats,
 );
+
+// ─── Canonical Tenant Administration (Phase 1 parity) ─────────────────────────
+router.get("/tenants", isSuperAdmin, zodValidate(tenantListQuerySchema, ValidationProperty.QUERY), tenantAdminController.getTenants);
+router.get("/tenants/health", isSuperAdmin, tenantAdminController.getTenantsHealth);
+router.get("/tenants/:adminId", isSuperAdmin, tenantAdminController.getTenant);
+router.patch("/tenants/:adminId/profile", isSuperAdmin, zodValidate(tenantProfileSchema, ValidationProperty.BODY), tenantAdminController.updateProfile);
+router.patch("/tenants/:adminId/owner", isSuperAdmin, zodValidate(tenantOwnerSchema, ValidationProperty.BODY), tenantAdminController.updateOwner);
+router.post("/tenants/:adminId/suspend", isSuperAdmin, zodValidate(reasonSchema, ValidationProperty.BODY), tenantAdminController.suspend);
+router.post("/tenants/:adminId/reactivate", isSuperAdmin, zodValidate(reasonSchema, ValidationProperty.BODY), tenantAdminController.reactivate);
+router.post("/tenants/:adminId/archive", isSuperAdmin, zodValidate(reasonSchema, ValidationProperty.BODY), tenantAdminController.archive);
+router.post("/tenants/:adminId/restore", isSuperAdmin, zodValidate(reasonSchema, ValidationProperty.BODY), tenantAdminController.restore);
+router.get("/tenants/:adminId/deletion-preview", isSuperAdmin, tenantAdminController.deletionPreview);
+router.post("/tenants/:adminId/hard-delete", isSuperAdmin, zodValidate(hardDeleteSchema, ValidationProperty.BODY), tenantAdminController.hardDelete);
+router.post("/tenants/:adminId/subscription/change-plan", isSuperAdmin, zodValidate(planChangeSchema, ValidationProperty.BODY), tenantAdminController.changePlan);
+router.post("/tenants/:adminId/subscription/schedule-downgrade", isSuperAdmin, zodValidate(planChangeSchema, ValidationProperty.BODY), tenantAdminController.scheduleDowngrade);
+router.post("/tenants/:adminId/subscription/cancel-scheduled-change", isSuperAdmin, zodValidate(reasonSchema, ValidationProperty.BODY), tenantAdminController.cancelScheduled);
+router.patch("/tenants/:adminId/subscription/cancellation", isSuperAdmin, zodValidate(cancellationSchema, ValidationProperty.BODY), tenantAdminController.cancellation);
+router.patch("/tenants/:adminId/subscription/trial", isSuperAdmin, zodValidate(trialManagementSchema, ValidationProperty.BODY), tenantAdminController.trial);
+router.get("/tenants/:adminId/entitlement-overrides", isSuperAdmin, tenantAdminController.getEntitlements);
+router.put("/tenants/:adminId/entitlement-overrides", isSuperAdmin, zodValidate(entitlementSchema, ValidationProperty.BODY), tenantAdminController.setEntitlements);
+router.delete("/tenants/:adminId/entitlement-overrides", isSuperAdmin, zodValidate(reasonSchema, ValidationProperty.BODY), tenantAdminController.revokeEntitlements);
+
+// ─── Global Users ─────────────────────────────────────────────────────────────
+router.get("/users", isSuperAdmin, zodValidate(globalUsersQuerySchema, ValidationProperty.QUERY), tenantAdminController.getUsers);
+router.get("/users/summary", isSuperAdmin, tenantAdminController.getUsersSummary);
+router.get("/users/export.csv", isSuperAdmin, zodValidate(globalUsersQuerySchema, ValidationProperty.QUERY), tenantAdminController.exportUsers);
+router.patch("/users/:id/role", isSuperAdmin, zodValidate(userRoleSchema, ValidationProperty.BODY), tenantAdminController.changeRole);
+router.patch("/users/:id/status", isSuperAdmin, zodValidate(userStatusSchema, ValidationProperty.BODY), tenantAdminController.changeStatus);
+router.patch("/users/:id/verify", isSuperAdmin, zodValidate(verifyUserSchema, ValidationProperty.BODY), tenantAdminController.verify);
+
+// ─── Subscription Request Queue ───────────────────────────────────────────────
+router.get("/subscription-requests", isSuperAdmin, zodValidate(subscriptionRequestQuerySchema, ValidationProperty.QUERY), tenantAdminController.subscriptionRequests);
 
 // ─── Admin Account Management ─────────────────────────────────────────────────
 // GET /api/v1/super-admin/admin-accounts
@@ -255,6 +293,7 @@ router.get(
 router.patch(
     "/platform-config",
     isSuperAdmin,
+    zodValidate(platformConfigPatchSchema, ValidationProperty.BODY),
     superAdminController.updatePlatformConfig,
 );
 

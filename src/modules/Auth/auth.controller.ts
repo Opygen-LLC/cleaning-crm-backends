@@ -17,12 +17,25 @@ const setAuthenticatedCookies = (
 };
 
 const register = catchAsync(async (req, res) => {
-    const result = await authService.register(req.body);
+    const result = await authService.register(req.body, {
+        ipAddress: req.ip,
+        userAgent: typeof req.get === "function" ? req.get("user-agent") : undefined,
+    });
+    const { authentication, ...safeResult } = result;
+    if (authentication) {
+        setAuthenticatedCookies(res, {
+            accessToken: authentication.accessToken,
+            refreshToken: authentication.refreshToken,
+            sessionToken: authentication.sessionToken,
+        });
+    }
     sendResponse(res, {
         httpStatusCode: httpStatus.CREATED,
         success: true,
-        message: "Account and website created. Verification email queued.",
-        data: result,
+        message: safeResult.verificationRequired
+            ? "Account and website created. Verification email queued."
+            : "Account and website created. You are signed in.",
+        data: { ...safeResult, sessionCreated: Boolean(authentication) },
     });
 });
 

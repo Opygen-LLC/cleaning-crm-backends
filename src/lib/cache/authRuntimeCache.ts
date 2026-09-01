@@ -5,6 +5,7 @@ import { prisma } from "../prisma/prisma";
 import { singleFlight } from "../utils/singleFlight";
 import { normalizeSubscriptionPlanFeatures, type SubscriptionPlanFeature } from "../utils/subscriptionPlanFeatures";
 import { CacheNamespaces, CacheTtl, ttlForKey } from "./cachePolicy";
+import { applyTenantFeatureOverrides, isOverrideActive } from "../../modules/SuperAdmin/tenantEntitlement.service";
 
 export interface RuntimeAdminSubscription {
   status: string;
@@ -73,6 +74,7 @@ export async function getRuntimeAdminAccessContext(userId: string): Promise<Runt
         admin: {
           select: {
             id: true,
+            entitlementOverride: { select: { features: true, expiresAt: true } },
             subscription: {
               orderBy: { createdAt: "desc" },
               take: 1,
@@ -91,7 +93,13 @@ export async function getRuntimeAdminAccessContext(userId: string): Promise<Runt
     });
 
     const latest = user?.admin?.subscription?.[0] ?? null;
-    const normalizedFeatures = normalizeSubscriptionPlanFeatures(latest?.subscriptionPlan?.features ?? []);
+    const entitlementOverride = user?.admin?.entitlementOverride ?? null;
+    const effectiveFeatures = applyTenantFeatureOverrides(
+      latest?.subscriptionPlan?.features ?? [],
+      entitlementOverride?.features ?? {},
+      isOverrideActive(entitlementOverride),
+    );
+    const normalizedFeatures = normalizeSubscriptionPlanFeatures(effectiveFeatures);
     const context: RuntimeAdminAccessContext = {
       role: UserRole.ADMIN,
       userStatus: user?.status ?? null,
@@ -105,14 +113,19 @@ export async function getRuntimeAdminAccessContext(userId: string): Promise<Runt
             trialEndsAt: latest.trialEndsAt?.toISOString() ?? null,
             currentPeriodEnd: latest.currentPeriodEnd?.toISOString() ?? null,
             cancelAtPeriodEnd: latest.cancelAtPeriodEnd,
-            features: latest.subscriptionPlan?.features ?? [],
+            features: effectiveFeatures,
           }
         : null,
       entitlementSummary: normalizedFeatures,
     };
 
+    const defaultContextTtl = ttlForKey(CacheTtl.authContext, key);
+    const overrideTtl = entitlementOverride?.expiresAt
+      ? Math.max(1, Math.ceil((entitlementOverride.expiresAt.getTime() - Date.now()) / 1000))
+      : defaultContextTtl;
+    const contextTtl = Math.min(defaultContextTtl, overrideTtl);
     const writes: Promise<unknown>[] = [
-      redis.setex(key, ttlForKey(CacheTtl.authContext, key), JSON.stringify(context)),
+      redis.setex(key, contextTtl, JSON.stringify(context)),
     ];
     if (context.adminId && context.subscription) {
       const subKey = subscriptionKey(context.adminId);
@@ -238,9 +251,26 @@ export async function getRuntimeTenantOwnerStatus(adminId: string): Promise<stri
   return ownerStatus;
 }
 
+
+export async function getRuntimeTenantLifecycleStatus(adminId: string): Promise<string | null> {
+  const redisKey = `auth:tenant-lifecycle:${adminId}`;
+  const shared = await redis.get(redisKey).catch(() => null);
+  if (shared) return shared;
+  const admin = await singleFlight(`tenant-lifecycle:${adminId}`, () =>
+    prisma.adminProfile.findUnique({ where: { id: adminId }, select: { lifecycleStatus: true } }),
+  );
+  const lifecycle = admin?.lifecycleStatus ?? null;
+  if (lifecycle) void redis.setex(redisKey, 60, lifecycle).catch(() => {});
+  return lifecycle;
+}
+
+export function invalidateRuntimeTenantLifecycleStatus(adminId: string | null | undefined): void {
+  if (!adminId) return;
+  void redis.del(`auth:tenant-lifecycle:${adminId}`).catch(() => {});
+}
 export function invalidateRuntimeTenantOwnerStatus(adminId: string | null | undefined): void {
   if (!adminId) return;
-  void redis.del(`auth:tenant-owner-status:${adminId}`).catch(() => {});
+  void redis.del(`auth:tenant-owner-status:${adminId}`, `auth:tenant-lifecycle:${adminId}`).catch(() => {});
 }
 
 const sessionValidityKey = (token: string) =>

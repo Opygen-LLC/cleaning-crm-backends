@@ -11,6 +11,12 @@ enum AccountStatus {
   DELETED
 }
 
+enum TenantLifecycleStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
 enum Currency {
   USD
   EUR

@@ -1,0 +1,36 @@
+model TenantEntitlementOverride {
+  id              String       @id @default(uuid())
+  adminId         String       @unique
+  resources       Json         @default("{}")
+  features        Json         @default("{}")
+  expiresAt       DateTime?
+  reason          String
+  createdByUserId String
+  updatedByUserId String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  admin           AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("tenant_entitlement_override")
+}
+
+model SuperAdminAuditLog {
+  id            String   @id @default(uuid())
+  actorUserId   String?
+  tenantAdminId String?
+  targetUserId  String?
+  action        String
+  reason        String
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  actor         User?    @relation("SuperAdminAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId, createdAt])
+  @@index([tenantAdminId, createdAt])
+  @@index([targetUserId, createdAt])
+  @@index([action, createdAt])
+  @@map("super_admin_audit_log")
+}

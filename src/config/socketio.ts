@@ -5,7 +5,7 @@ import { ACCESS_TOKEN_SECRET } from "./ENV";
 import { getAuthenticatedOrigins } from "./authSecurity";
 import { jwtUtils } from "../lib/utils/jwt";
 import logger from "../lib/logger";
-import { publishRealtimeEvent, startRealtimeSubscriber } from "../lib/realtime/realtimeBus";
+import { publishRealtimeEvent, publishTenantSocketDisconnect, startRealtimeSubscriber } from "../lib/realtime/realtimeBus";
 
 let io: SocketIOServer | undefined;
 
@@ -52,8 +52,14 @@ const authenticateSocket = async (socket: Socket): Promise<SocketAuthContext> =>
                 select: {
                     role: true,
                     status: true,
-                    admin: { select: { id: true } },
-                    staff: { select: { id: true } },
+                    admin: { select: { id: true, lifecycleStatus: true } },
+                    staff: {
+                        select: {
+                            id: true,
+                            adminId: true,
+                            admin: { select: { lifecycleStatus: true, user: { select: { status: true } } } },
+                        },
+                    },
                 },
             },
         },
@@ -63,16 +69,25 @@ const authenticateSocket = async (socket: Socket): Promise<SocketAuthContext> =>
         throw new Error("Session is invalid or inactive");
     }
 
+    const tenantLifecycle = session.user.admin?.lifecycleStatus ?? session.user.staff?.admin.lifecycleStatus;
+    const tenantOwnerStatus = session.user.staff?.admin.user.status;
+    if ((session.user.role === "ADMIN" || session.user.role === "STAFF") && tenantLifecycle !== "ACTIVE") {
+        throw new Error("Tenant is suspended or archived");
+    }
+    if (session.user.role === "STAFF" && tenantOwnerStatus !== "ACTIVE") {
+        throw new Error("Tenant owner is inactive");
+    }
+
     return {
         userId: session.userId,
         role: session.user.role,
-        adminId: session.user.admin?.id,
+        adminId: session.user.admin?.id ?? session.user.staff?.adminId,
         staffId: session.user.staff?.id,
     };
 };
 
 const joinCanonicalRooms = (socket: Socket, auth: SocketAuthContext) => {
-    if (auth.role === "ADMIN" && auth.adminId) socket.join(`admin:${auth.adminId}`);
+    if ((auth.role === "ADMIN" || auth.role === "STAFF") && auth.adminId) socket.join(`admin:${auth.adminId}`);
     if (auth.role === "STAFF" && auth.staffId) socket.join(`staff:${auth.staffId}`);
     if (auth.role === "SUPER_ADMIN") socket.join("super-admins");
 };
@@ -146,6 +161,11 @@ export const emitToAll = (event: string, payload: unknown): void => {
 export const emitToSuperAdmins = (event: string, payload: unknown): void => {
     localEmit("super-admins", undefined, event, payload);
     void publishRealtimeEvent({ scope: "super-admins" }, event, payload);
+};
+
+export const disconnectTenantSockets = async (adminId: string): Promise<void> => {
+    if (io) io.in(`admin:${adminId}`).disconnectSockets(true);
+    await publishTenantSocketDisconnect(adminId);
 };
 
 export default setUpSocketIO;

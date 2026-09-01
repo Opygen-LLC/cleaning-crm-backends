@@ -4,6 +4,7 @@ import redis from "../../config/redis";
 import logger from "../logger";
 
 const CHANNEL = "cleaning-crm:realtime:v1";
+const SYSTEM_DISCONNECT_EVENT = "__system:disconnect-tenant-sockets";
 const instanceId = randomUUID();
 
 type RealtimeTarget =
@@ -21,6 +22,10 @@ type RealtimeEnvelope = {
 
 const emitEnvelope = (io: SocketIOServer, message: RealtimeEnvelope) => {
     const { target, event, payload } = message;
+    if (event === SYSTEM_DISCONNECT_EVENT && target.scope === "admin") {
+        io.in(`admin:${target.id}`).disconnectSockets(true);
+        return;
+    }
     if (target.scope === "admin") io.to(`admin:${target.id}`).emit(event, payload);
     else if (target.scope === "staff") io.to(`staff:${target.id}`).emit(event, payload);
     else if (target.scope === "super-admins") io.to("super-admins").emit(event, payload);
@@ -95,6 +100,10 @@ export const startRealtimeSubscriber = (io: SocketIOServer) => {
     }
 
     return subscriber;
+};
+
+export const publishTenantSocketDisconnect = async (adminId: string): Promise<void> => {
+    await publishRealtimeEvent({ scope: "admin", id: adminId }, SYSTEM_DISCONNECT_EVENT, null);
 };
 
 export { instanceId as realtimeInstanceId };

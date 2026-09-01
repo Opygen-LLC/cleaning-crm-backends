@@ -25,6 +25,7 @@ export interface ProvisionRegisteredAdminInput {
   password: string;
   businessName: string;
   trialDays: number;
+  requireEmailVerification?: boolean;
   /** Optional fields collected in the 2-step registration wizard */
   mobileNumber?: string;
   businessType?: "residential" | "commercial" | "both";
@@ -171,9 +172,9 @@ const runProvisioningTransaction = async (
           id: input.userId,
           name: input.name.trim(),
           email: input.email,
-          emailVerified: false,
+          emailVerified: input.requireEmailVerification === false,
           role: UserRole.ADMIN,
-          status: AccountStatus.PENDING,
+          status: input.requireEmailVerification === false ? AccountStatus.ACTIVE : AccountStatus.PENDING,
           needPasswordChange: false,
           accounts: {
             create: {
@@ -233,13 +234,13 @@ const runProvisioningTransaction = async (
       // The durable outbox row commits with the account. Registration returns
       // as soon as PostgreSQL commits; the email worker generates/sends the
       // Better Auth OTP independently and retries SMTP failures with backoff.
-      await AuthEmailOutbox.enqueueEmailVerificationTx(
-        tx,
-        { userId: input.userId, email: input.email },
-        {
-          dedupeKey: `registration-email-verification:${input.userId}`,
-        },
-      );
+      if (input.requireEmailVerification !== false) {
+        await AuthEmailOutbox.enqueueEmailVerificationTx(
+          tx,
+          { userId: input.userId, email: input.email },
+          { dedupeKey: `registration-email-verification:${input.userId}` },
+        );
+      }
 
       return { user, admin, website, subscription };
     },

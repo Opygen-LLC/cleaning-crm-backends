@@ -9,6 +9,7 @@ import {
     getRuntimeSessionValidity,
     getRuntimeStaffAccessContext,
     getRuntimeTenantId,
+    getRuntimeTenantLifecycleStatus,
     getRuntimeTenantOwnerStatus,
     getRuntimeUserStatus,
 } from "../lib/cache/authRuntimeCache";
@@ -152,9 +153,19 @@ export const checkAuth =
                 );
             }
 
-            // Suspending a cleaning business must close the tenant, not just
-            // the owner's own token. Staff remain separate User rows, so also
-            // enforce the owning ADMIN account state for STAFF requests.
+            // Tenant lifecycle is authoritative for both owner and staff.
+            if ((role === UserRole.ADMIN || role === UserRole.STAFF) && adminId) {
+                const lifecycle = await getRuntimeTenantLifecycleStatus(adminId);
+                if (lifecycle === "ARCHIVED") {
+                    throw new AppError(status.FORBIDDEN, "This business account has been archived.", { code: "TENANT_ARCHIVED", retryable: false });
+                }
+                if (lifecycle === "SUSPENDED") {
+                    throw new AppError(status.FORBIDDEN, "This business account has been suspended. Please contact support.", { code: "ACCOUNT_SUSPENDED", retryable: false });
+                }
+            }
+
+            // Staff remain separate User rows, so also enforce the owning ADMIN
+            // User state as a compatibility guard during lifecycle migration.
             if (role === UserRole.STAFF && adminId) {
                 const ownerStatus = await getRuntimeTenantOwnerStatus(adminId);
                 if (ownerStatus === AccountStatus.SUSPENDED) {
