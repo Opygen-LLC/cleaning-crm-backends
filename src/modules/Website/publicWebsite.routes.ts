@@ -8,6 +8,8 @@ import {
   publicCalculationResourceRateLimit,
   publicContactMutationRateLimit,
   publicContactResourceRateLimit,
+  publicReviewMutationRateLimit,
+  publicReviewResourceRateLimit,
   publicTelemetryRateLimit,
   publicResourceTelemetryRateLimit,
 } from "../../middlewares/publicApiSecurity";
@@ -15,6 +17,8 @@ import { ValidationProperty, zodValidate } from "../../middlewares/validations/z
 import { bookingFormValidation } from "../BookingForm/bookingForm.validation";
 import { estimateFormValidation } from "../EstimateForm/estimateForm.validation";
 import { websiteController } from "./website.controller";
+import { reviewController } from "../Review/review.controller";
+import { reviewValidation } from "../Review/review.validation";
 import { websiteValidation } from "./website.validation";
 import { publicWebsiteSpamGuard } from "../../middlewares/publicSpamProtection";
 import {
@@ -22,6 +26,7 @@ import {
   publicJsonOnly,
   publicTelemetryBodyLimit,
   publicContactBodyLimit,
+  publicReviewBodyLimit,
   publicEstimateCalculationBodyLimit,
   publicFormSubmissionBodyLimit,
 } from "../../middlewares/publicWebsiteRequestSecurity";
@@ -112,6 +117,28 @@ router.post(
   publicWebsiteSpamGuard("website_contact"),
   zodValidate(websiteValidation.publicContact, ValidationProperty.BODY),
   websiteController.submitPublicWebsiteContact,
+);
+
+
+// Tenant website review submission. Company reviews live at /review and
+// service reviews at /:serviceSlug/review on the frontend; both post through
+// this already-secured website public API boundary.
+router.get(
+  "/:identifier/review-context",
+  publicReadRateLimit,
+  zodValidate(reviewValidation.reviewContextQuery, ValidationProperty.QUERY),
+  reviewController.getWebsiteReviewContext,
+);
+router.post(
+  "/:identifier/reviews",
+  publicReviewMutationRateLimit,
+  publicReviewResourceRateLimit,
+  publicJsonOnly,
+  publicReviewBodyLimit,
+  publicWebsiteMutationOriginGuard,
+  publicWebsiteSpamGuard("website_review"),
+  zodValidate(reviewValidation.submitWebsiteReview, ValidationProperty.BODY),
+  reviewController.submitWebsiteReview,
 );
 
 router.post(

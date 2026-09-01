@@ -16,6 +16,7 @@ import { CacheNamespaces, CacheTtl, ttlForKey } from "../../lib/cache/cachePolic
 import { invalidateBookingFormsForAdmin } from "../BookingForm/bookingForm.cache";
 import { ServiceStatus } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
+import { allocateServiceSlugTx } from "./serviceCatalog.slug";
 
 
 const toAddOnsJson = (addOns: IServiceCatalogCreate["addOns"] | IServiceCatalogUpdate["addOns"]): Prisma.InputJsonValue =>
@@ -88,12 +89,12 @@ export const syncServiceCatalogSelectionTx = async (
 
   const existing = await tx.serviceCatalog.findMany({
     where: { adminId },
-    select: { id: true, serviceName: true },
+    select: { id: true, serviceName: true, slug: true },
   });
-  const existingByName = new Map<string, { id: string; serviceName: string }>(
+  const existingByName = new Map<string, { id: string; serviceName: string; slug: string }>(
     existing.map((item) => [
       item.serviceName.toLocaleLowerCase("en-GB"),
-      { id: item.id, serviceName: item.serviceName },
+      { id: item.id, serviceName: item.serviceName, slug: item.slug },
     ]),
   );
 
@@ -111,9 +112,12 @@ export const syncServiceCatalogSelectionTx = async (
       legacyServiceType: payload.legacyServiceType,
       addOns: payload.addOns,
     };
-    result.push(current
-      ? await tx.serviceCatalog.update({ where: { id: current.id }, data })
-      : await tx.serviceCatalog.create({ data: { ...data, adminId } }));
+    if (current) {
+      result.push(await tx.serviceCatalog.update({ where: { id: current.id }, data }));
+    } else {
+      const slug = await allocateServiceSlugTx(tx, adminId, payload.serviceName);
+      result.push(await tx.serviceCatalog.create({ data: { ...data, adminId, slug } }));
+    }
   }
 
   // The onboarding command sends the complete selected set, so omitted active
@@ -144,13 +148,17 @@ const createServiceCatalog = async (
     ? inferLegacyServiceType(payload.serviceName)
     : payload.legacyServiceType;
 
-  const created = await prisma.serviceCatalog.create({
-    data: {
-      ...payload,
-      adminId,
-      legacyServiceType,
-      addOns: toAddOnsJson(payload.addOns),
-    },
+  const created = await prisma.$transaction(async (tx) => {
+    const slug = await allocateServiceSlugTx(tx, adminId, payload.serviceName);
+    return tx.serviceCatalog.create({
+      data: {
+        ...payload,
+        adminId,
+        slug,
+        legacyServiceType,
+        addOns: toAddOnsJson(payload.addOns),
+      },
+    });
   });
   await invalidateServiceCatalogReadModels(adminId);
   return normalizeServiceForApi(created);

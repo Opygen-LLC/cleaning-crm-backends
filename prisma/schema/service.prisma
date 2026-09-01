@@ -1,6 +1,7 @@
 model ServiceCatalog {
   id           String        @id @default(uuid())
   serviceName  String
+  slug         String
   description  String
   // Canonical price amount in the owning business's AdminProfile.currency.
   // The database column keeps its legacy name for a zero-downtime rollout.
@@ -33,12 +34,14 @@ model ServiceCatalog {
   checklistTemplates      ChecklistTemplate[]
   leads                    Lead[]
   websiteSubmissions       WebsiteSubmission[]
+  reviews                  Review[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
 
   @@unique([serviceName, adminId])
+  @@unique([adminId, slug])
   @@index([adminId, category, status])
   @@index([adminId, legacyServiceType])
   @@map("service_catalog")

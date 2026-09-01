@@ -154,6 +154,7 @@ echo '[phase4] enforce post-migration hot-query EXPLAIN budget and capture plan 
 echo '[6/21] run report-only reconciliation and integrity gate'
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run data:audit:report )
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run db:reconcile )
+( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run website-reviews:reconcile )
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run data:audit:ci )
 
 echo '[7/21] deploy backend application'

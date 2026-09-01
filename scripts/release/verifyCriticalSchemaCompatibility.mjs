@@ -13,6 +13,8 @@ const REQUIRED_MIGRATIONS = [
   "20260901034000_phase1_notification_preference_reliability",
   "20260901052000_phase3_estimate_public_sharing",
   "20260901124500_phase2_atomic_public_document_publication",
+  "20260901153000_phase3_unified_website_submissions",
+  "20260901193000_phase4_company_service_reviews",
 ];
 
 // Explicit production contract for the models whose shape is required by
@@ -41,6 +43,9 @@ const REQUIRED_COLUMNS = {
   website_page: ["id", "websiteId", "slug", "seoKeywords", "socialImageUrl"],
   quote: ["id", "adminId", "publicToken", "publishedAt", "sentAt", "respondedAt", "responseNote"],
   estimate: ["id", "adminId", "publicToken", "publishedAt", "sentAt", "respondedAt", "responseNote"],
+  service_catalog: ["id", "adminId", "serviceName", "slug"],
+  review: ["id", "adminId", "reviewTokenId", "jobId", "scope", "source", "serviceCatalogId", "serviceNameSnapshot", "websiteId"],
+  website_review_contact: ["id", "reviewId", "adminId", "websiteId", "email", "phone", "submissionKeyHash"],
   session: [
     "id",
     "userId",
@@ -64,6 +69,9 @@ const REQUIRED_COLUMNS = {
 const REQUIRED_INDEXES = [
   ["quote", "quote_publicToken_key"],
   ["estimate", "estimate_publicToken_key"],
+  ["service_catalog", "service_catalog_adminId_slug_key"],
+  ["review", "review_adminId_scope_source_createdAt_idx"],
+  ["website_review_contact", "website_review_contact_reviewId_key"],
 ];
 
 const client = new Client({ connectionString: process.env.DATABASE_URL });
@@ -125,7 +133,7 @@ try {
     process.exitCode = 1;
   } else {
     console.log(
-      "Critical Prisma/database schema compatibility passed for NotificationPreference, BusinessWebsite, WebsitePage, Quote, Estimate, Session and AdminProfile.",
+      "Critical Prisma/database schema compatibility passed for NotificationPreference, BusinessWebsite, WebsitePage, Quote, Estimate, ServiceCatalog, Review, WebsiteReviewContact, Session and AdminProfile.",
     );
   }
 } catch (error) {

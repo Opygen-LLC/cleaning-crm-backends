@@ -61,6 +61,7 @@ router.get(
     "/",
     isTenantAdmin,
     hasReviews,
+    zodValidate(reviewValidation.reviewFilters, ValidationProperty.QUERY),
     reviewController.getAllReviews,
 );
 

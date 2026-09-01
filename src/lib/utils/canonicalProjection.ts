@@ -37,6 +37,7 @@ export const projectPublicBusiness = (admin: {
 export const projectCanonicalService = (service: {
     id: string;
     serviceName: string;
+    slug?: string;
     description: string;
     basePrice: number;
     duration: string;
@@ -48,6 +49,7 @@ export const projectCanonicalService = (service: {
     id: service.id,
     serviceCatalogId: service.id,
     name: service.serviceName,
+    slug: service.slug ?? null,
     description: service.description,
     // Canonical price field for new consumers. Keep basePrice during the
     // compatibility window so existing clients do not break.

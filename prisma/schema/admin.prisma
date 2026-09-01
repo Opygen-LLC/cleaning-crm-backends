@@ -33,6 +33,7 @@ model AdminProfile {
   user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   couponUsage           CouponUsage[]
   reviews               Review[]
+  websiteReviewContacts  WebsiteReviewContact[]
   reviewTokens          ReviewToken[]
   staff                 StaffProfile[]
   subscription          Subscription[]

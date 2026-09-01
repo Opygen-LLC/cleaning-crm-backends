@@ -3,6 +3,7 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { reviewService } from "./review.service";
 import { IReviewFilters } from "./review.interface";
+import { websiteReviewService } from "./websiteReview.service";
 
 // ── Public endpoints ──────────────────────────────────────────────────────────
 
@@ -27,6 +28,36 @@ const submitPublicReview = catchAsync(async (req, res) => {
         httpStatusCode: httpStatus.CREATED,
         success: true,
         message: "Review submitted. Thank you!",
+        data: result,
+    });
+});
+
+
+const getWebsiteReviewContext = catchAsync(async (req, res) => {
+    const result = await websiteReviewService.getWebsiteReviewContext(
+        req.params.identifier as string,
+        typeof req.query.serviceSlug === "string" ? req.query.serviceSlug : undefined,
+    );
+    res.setHeader("Cache-Control", "no-store");
+    sendResponse(res, {
+        httpStatusCode: httpStatus.OK,
+        success: true,
+        message: "Review context retrieved.",
+        data: result,
+    });
+});
+
+const submitWebsiteReview = catchAsync(async (req, res) => {
+    const result = await websiteReviewService.submitWebsiteReview(
+        req.params.identifier as string,
+        req.body,
+        req.get("Idempotency-Key") ?? undefined,
+    );
+    res.setHeader("Cache-Control", "no-store");
+    sendResponse(res, {
+        httpStatusCode: httpStatus.CREATED,
+        success: true,
+        message: "Review submitted for moderation. Thank you!",
         data: result,
     });
 });
@@ -111,6 +142,8 @@ const resendReviewEmail = catchAsync(async (req, res) => {
 export const reviewController = {
     validateReviewToken,
     submitPublicReview,
+    getWebsiteReviewContext,
+    submitWebsiteReview,
     getAllReviews,
     getReviewById,
     updateReview,

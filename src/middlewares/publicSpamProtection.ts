@@ -8,7 +8,7 @@ const MIN_FORM_AGE_MS = 750;
 const MAX_FORM_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_TURNSTILE_TOKEN_LENGTH = 4096;
 
-type WebsiteSpamAction = "website_booking" | "website_estimate" | "website_contact";
+type WebsiteSpamAction = "website_booking" | "website_estimate" | "website_contact" | "website_review";
 
 const fail = (res: Response, message = "Invalid public submission") =>
   sendStructuredError(res, {

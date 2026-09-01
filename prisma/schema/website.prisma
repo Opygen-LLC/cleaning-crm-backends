@@ -74,6 +74,8 @@ model BusinessWebsite {
   bookingSubmissions        BookingFormSubmission[]     @relation("WebsiteAcquisitionBookingSubmission")
   estimateSubmissions       EstimateFormSubmission[]    @relation("WebsiteAcquisitionEstimateSubmission")
   submissions               WebsiteSubmission[]
+  websiteReviews             Review[]
+  reviewContacts             WebsiteReviewContact[]
 
   @@index([status])
   @@index([templateId, templateVersion])

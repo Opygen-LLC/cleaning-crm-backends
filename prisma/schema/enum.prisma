@@ -382,6 +382,18 @@ enum WebsiteSubmissionStatus {
   DISMISSED
 }
 
+enum ReviewScope {
+  COMPANY
+  SERVICE
+  JOB
+  STAFF
+}
+
+enum ReviewSource {
+  WEBSITE
+  JOB_TOKEN
+}
+
 enum EstimateSubmissionStatus {
   NEW
   QUOTED

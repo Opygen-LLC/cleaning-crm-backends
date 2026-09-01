@@ -92,6 +92,9 @@ const submitPublicReview = async (token: string, payload: ISubmitPublicReview) =
                     select: {
                         id: true,
                         adminId: true,
+                        serviceCatalogId: true,
+                        serviceNameSnapshot: true,
+                        serviceCatalog: { select: { serviceName: true } },
                         client: { select: { name: true } },
                         staffAssignments: { select: { staffId: true } },
                     },
@@ -121,12 +124,16 @@ const submitPublicReview = async (token: string, payload: ISubmitPublicReview) =
             reviewTokenId: reviewToken.id,
             jobId: reviewToken.job.id,
             adminId: reviewToken.adminId,
+            source: "JOB_TOKEN" as const,
+            serviceCatalogId: reviewToken.job.serviceCatalogId,
+            serviceNameSnapshot: reviewToken.job.serviceNameSnapshot ?? reviewToken.job.serviceCatalog?.serviceName ?? null,
             clientName: reviewToken.job.client.name,
         };
         await tx.review.createMany({
             data: [
                 {
                     ...common,
+                    scope: "JOB" as const,
                     staffId: null,
                     rating: payload.serviceRating,
                     comment: payload.serviceComment ?? "",
@@ -134,6 +141,7 @@ const submitPublicReview = async (token: string, payload: ISubmitPublicReview) =
                 },
                 ...payload.staffReviews.map((sr) => ({
                     ...common,
+                    scope: "STAFF" as const,
                     staffId: sr.staffId,
                     rating: sr.rating,
                     comment: sr.comment ?? "",
@@ -150,24 +158,33 @@ const getAllReviews = async (filters: IReviewFilters, user: IRequestUser) => {
     const adminId = await getAdminId(user);
     const {
         page = 1, limit = 10, searchTerm, status: filterStatus, rating,
-        staffId, jobId, dateFrom, dateTo,
+        staffId, jobId, dateFrom, dateTo, scope, source, serviceCatalogId,
     } = filters;
-    const where: any = {
-        adminId,
-        // A Review row and the job behind its capability token must agree on
-        // tenant ownership. This prevents corrupt historical relations from
-        // pulling another tenant's job/service data into an admin list.
-        reviewToken: { job: { adminId } },
+
+    const tenantRelationGuard = {
+        OR: [
+            { source: "JOB_TOKEN", reviewToken: { job: { adminId } } },
+            { source: "WEBSITE", website: { adminId } },
+        ],
     };
+    const and: any[] = [tenantRelationGuard];
+    const where: any = { adminId, AND: and };
     if (filterStatus) where.status = filterStatus;
     if (rating) where.rating = Number(rating);
-    if (staffId) where.staffId = staffId;
+    if (scope) where.scope = scope;
+    if (source) where.source = source;
+    if (serviceCatalogId) where.serviceCatalogId = serviceCatalogId;
+    if (staffId === "not-null") where.NOT = { staffId: null };
+    else if (staffId) where.staffId = staffId;
     if (jobId) where.jobId = jobId;
     if (searchTerm) {
-        where.OR = [
-            { clientName: { contains: searchTerm, mode: "insensitive" } },
-            { comment: { contains: searchTerm, mode: "insensitive" } },
-        ];
+        and.push({
+            OR: [
+                { clientName: { contains: searchTerm, mode: "insensitive" } },
+                { comment: { contains: searchTerm, mode: "insensitive" } },
+                { serviceNameSnapshot: { contains: searchTerm, mode: "insensitive" } },
+            ],
+        });
     }
     if (dateFrom || dateTo) {
         where.createdAt = {
@@ -176,37 +193,43 @@ const getAllReviews = async (filters: IReviewFilters, user: IRequestUser) => {
         };
     }
 
+    const include = {
+        reviewToken: {
+            include: {
+                job: {
+                    select: {
+                        jobRef: true,
+                        serviceType: true,
+                        serviceNameSnapshot: true,
+                        serviceCatalog: { select: { serviceName: true, slug: true } },
+                    },
+                },
+            },
+        },
+        serviceCatalog: { select: { id: true, serviceName: true, slug: true } },
+        website: { select: { id: true, subdomain: true } },
+        websiteContact: { select: { email: true, phone: true } },
+    } as const;
+
+    const statsWhere: any = { adminId, AND: [tenantRelationGuard] };
     const [total, reviews, allForAdmin] = await Promise.all([
         prisma.review.count({ where }),
         prisma.review.findMany({
             where,
-            orderBy: { createdAt: "desc" },
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
             skip: (Number(page) - 1) * Number(limit),
             take: Number(limit),
-            include: {
-                reviewToken: {
-                    include: {
-                        job: {
-                            select: {
-                                jobRef: true,
-                                serviceType: true,
-                                serviceNameSnapshot: true,
-                                serviceCatalog: { select: { serviceName: true } },
-                            },
-                        },
-                    },
-                },
-            },
+            include,
         }),
         prisma.review.findMany({
-            where: { adminId, reviewToken: { job: { adminId } } },
+            where: statsWhere,
             select: { rating: true, status: true, comment: true },
         }),
     ]);
 
     const published = allForAdmin.filter((r) => r.status === "published");
     const avgRating = published.length > 0
-        ? Math.round((published.reduce((s, r) => s + r.rating, 0) / published.length) * 10) / 10
+        ? Math.round((published.reduce((sum, review) => sum + review.rating, 0) / published.length) * 10) / 10
         : 0;
     return {
         data: reviews,
@@ -214,11 +237,11 @@ const getAllReviews = async (filters: IReviewFilters, user: IRequestUser) => {
         stats: {
             total: allForAdmin.length,
             submitted: published.length,
-            pending: allForAdmin.filter((r) => r.status === "pending").length,
-            flagged: allForAdmin.filter((r) => r.status === "flagged").length,
+            pending: allForAdmin.filter((review) => review.status === "pending").length,
+            flagged: allForAdmin.filter((review) => review.status === "flagged").length,
             averageRating: avgRating,
             responseRate: allForAdmin.length > 0
-                ? Math.round((allForAdmin.filter((r) => !!r.comment).length / allForAdmin.length) * 100)
+                ? Math.round((allForAdmin.filter((review) => Boolean(review.comment)).length / allForAdmin.length) * 100)
                 : 0,
         },
     };
@@ -227,7 +250,14 @@ const getAllReviews = async (filters: IReviewFilters, user: IRequestUser) => {
 const getReviewById = async (id: string, user: IRequestUser) => {
     const adminId = await getAdminId(user);
     const review = await prisma.review.findFirst({
-        where: { id, adminId, reviewToken: { job: { adminId } } },
+        where: {
+            id,
+            adminId,
+            OR: [
+                { source: "JOB_TOKEN", reviewToken: { job: { adminId } } },
+                { source: "WEBSITE", website: { adminId } },
+            ],
+        },
         include: {
             reviewToken: {
                 include: {
@@ -236,11 +266,14 @@ const getReviewById = async (id: string, user: IRequestUser) => {
                             jobRef: true,
                             serviceType: true,
                             serviceNameSnapshot: true,
-                            serviceCatalog: { select: { serviceName: true } },
+                            serviceCatalog: { select: { serviceName: true, slug: true } },
                         },
                     },
                 },
             },
+            serviceCatalog: { select: { id: true, serviceName: true, slug: true } },
+            website: { select: { id: true, subdomain: true } },
+            websiteContact: { select: { email: true, phone: true } },
         },
     });
     if (!review) throw new AppError(status.NOT_FOUND, "Review not found.");
@@ -277,7 +310,7 @@ const updateReview = async (id: string, payload: IUpdateReview, user: IRequestUs
 const getStaffReviewSummaries = async (user: IRequestUser) => {
     const adminId = await getAdminId(user);
     const staffReviews = await prisma.review.findMany({
-        where: { adminId, NOT: { staffId: null }, reviewToken: { job: { adminId } } },
+        where: { adminId, source: "JOB_TOKEN", scope: "STAFF", NOT: { staffId: null }, reviewToken: { job: { adminId } } },
         include: {
             reviewToken: {
                 include: {
@@ -300,7 +333,7 @@ const getStaffReviewSummaries = async (user: IRequestUser) => {
     for (const review of staffReviews) {
         const sid = review.staffId!;
         if (!map.has(sid)) {
-            const assignment = review.reviewToken.job.staffAssignments.find((a) => a.staffId === sid);
+            const assignment = review.reviewToken?.job.staffAssignments.find((a) => a.staffId === sid);
             map.set(sid, {
                 staffName: assignment?.staff.user.name ?? "Unknown Staff",
                 total: 0, sum: 0, ratingCounts: [0, 0, 0, 0, 0], comments: [],
@@ -350,8 +383,17 @@ const generateTokenForJob = async (jobId: string, user: IRequestUser, occurrence
 
 const resendReviewEmail = async (reviewId: string, user: IRequestUser) => {
     const adminId = await getAdminId(user);
-    const review = await prisma.review.findFirst({ where: { id: reviewId, adminId }, select: { jobId: true } });
+    const review = await prisma.review.findFirst({
+        where: { id: reviewId, adminId },
+        select: { jobId: true, source: true },
+    });
     if (!review) throw new AppError(status.NOT_FOUND, "Review not found.");
+    if (review.source !== "JOB_TOKEN" || !review.jobId) {
+        throw new AppError(status.BAD_REQUEST, "Website reviews do not have a review-request email to resend.", {
+            code: "REVIEW_RESEND_NOT_AVAILABLE",
+            retryable: false,
+        });
+    }
     return generateTokenForJob(review.jobId, user, `resend:${reviewId}:${Date.now()}`);
 };
 

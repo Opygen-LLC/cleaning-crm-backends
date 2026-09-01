@@ -9,6 +9,7 @@ import type { IRequestUser } from "../../types/requestUser.interface";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { statusAfterDraftMutation, WEBSITE_STATUS, type WebsiteLifecycleStatus } from "./websiteLifecycle";
 import { parsePublishedSnapshot } from "./websiteSnapshot";
+import { allocateServiceSlugTx } from "../ServiceCatalog/serviceCatalog.slug";
 
 export interface WebsiteBookingSetupPayload {
   enabled: boolean;
@@ -334,10 +335,13 @@ const ensureAtLeastOneBookableService = async (tx: Prisma.TransactionClient, adm
   // still gets a working booking route. If the owner already has services but
   // explicitly disabled online booking for all of them, respect that choice.
   if (activeServiceCount === 0) {
+    const serviceName = "Standard Cleaning";
+    const slug = await allocateServiceSlugTx(tx, adminId, serviceName);
     const created = await tx.serviceCatalog.create({
       data: {
         adminId,
-        serviceName: "Standard Cleaning",
+        serviceName,
+        slug,
         description: "Routine home cleaning for kitchens, bathrooms, bedrooms and living areas.",
         basePrice: 60,
         duration: "2h",

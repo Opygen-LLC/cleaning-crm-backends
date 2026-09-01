@@ -8,6 +8,9 @@ export interface IReviewFilters {
   jobId?: string;
   dateFrom?: string;
   dateTo?: string;
+  scope?: "COMPANY" | "SERVICE" | "JOB" | "STAFF";
+  source?: "WEBSITE" | "JOB_TOKEN";
+  serviceCatalogId?: string;
 }
 
 export interface ISubmitPublicReview {
@@ -26,4 +29,15 @@ export interface IUpdateReview {
   /** @deprecated Rolling-client compatibility; status is canonical. */
   isPublished?: boolean;
   adminReply?: string;
+}
+
+export interface ISubmitWebsiteReview {
+  scope: "COMPANY" | "SERVICE";
+  serviceSlug?: string;
+  reviewerName: string;
+  reviewerEmail: string;
+  reviewerPhone?: string;
+  rating: number;
+  comment: string;
+  companyWebsite?: string;
 }

@@ -135,5 +135,6 @@ export const requestBodyLimit = (maxBytes: number) => (
 
 export const publicTelemetryBodyLimit = requestBodyLimit(8 * 1024);
 export const publicContactBodyLimit = requestBodyLimit(12 * 1024);
+export const publicReviewBodyLimit = requestBodyLimit(12 * 1024);
 export const publicEstimateCalculationBodyLimit = requestBodyLimit(16 * 1024);
 export const publicFormSubmissionBodyLimit = requestBodyLimit(32 * 1024);

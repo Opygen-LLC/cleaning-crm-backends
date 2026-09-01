@@ -20,33 +20,67 @@ model ReviewToken {
 }
 
 // ── Review ────────────────────────────────────────────────────────────────────
-// One Review row per staff member per job. An overall "service review" has
-// staffId = null.
+// One canonical review model supports both legacy completed-job review tokens
+// and moderated reviews submitted from a tenant website. Website reviewer
+// contact details live in WebsiteReviewContact and are never part of the
+// public website projection.
 
 model Review {
-  id              String    @id @default(uuid())
-  reviewTokenId   String
-  jobId           String
-  adminId         String
-  staffId         String?                 // null = overall service review
-  clientName      String                  // snapshot at submission time
-  rating          Int                     // 1-5
-  comment         String    @default("")
-  sentiment       String    @default("neutral")  // positive | neutral | negative
-  status          String    @default("pending")  // pending | published | unpublished | flagged
-  isPublished     Boolean   @default(false)
-  tags            String[]  @default([])
-  adminReply      String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                  String        @id @default(uuid())
+  reviewTokenId       String?
+  jobId               String?
+  adminId             String
+  staffId             String?
+  scope               ReviewScope   @default(JOB)
+  source              ReviewSource  @default(JOB_TOKEN)
+  serviceCatalogId    String?
+  serviceNameSnapshot String?
+  websiteId           String?
+  clientName          String
+  rating              Int
+  comment             String        @default("")
+  sentiment           String        @default("neutral") // positive | neutral | negative
+  status              String        @default("pending") // pending | published | unpublished | flagged
+  isPublished         Boolean       @default(false)
+  tags                String[]      @default([])
+  adminReply          String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
 
-  reviewToken     ReviewToken   @relation(fields: [reviewTokenId], references: [id], onDelete: Cascade)
-  admin           AdminProfile  @relation(fields: [adminId],       references: [id], onDelete: Cascade)
+  reviewToken     ReviewToken?          @relation(fields: [reviewTokenId], references: [id], onDelete: SetNull)
+  admin           AdminProfile          @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  serviceCatalog  ServiceCatalog?       @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
+  website         BusinessWebsite?      @relation(fields: [websiteId], references: [id], onDelete: SetNull)
+  websiteContact  WebsiteReviewContact?
 
   @@index([adminId, status])
+  @@index([adminId, scope, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([adminId, source, createdAt(sort: Desc), id(sort: Desc)])
   @@index([adminId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([adminId, status, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([serviceCatalogId, createdAt(sort: Desc)])
+  @@index([websiteId, createdAt(sort: Desc)])
   @@index([staffId])
   @@index([jobId])
   @@map("review")
+}
+
+model WebsiteReviewContact {
+  id                String          @id @default(uuid())
+  reviewId          String          @unique
+  adminId           String
+  websiteId         String
+  email             String
+  phone             String?
+  submissionKeyHash String?         @unique
+  createdAt         DateTime        @default(now())
+
+  review             Review          @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  admin              AdminProfile    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  website            BusinessWebsite @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@index([adminId, createdAt(sort: Desc)])
+  @@index([websiteId, createdAt(sort: Desc)])
+  @@index([email])
+  @@map("website_review_contact")
 }

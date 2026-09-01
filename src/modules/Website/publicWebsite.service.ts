@@ -81,6 +81,7 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
             select: {
               id: true,
               serviceName: true,
+              slug: true,
               description: true,
               basePrice: true,
               duration: true,
@@ -541,6 +542,46 @@ const resolvePublicContactIntegration = async (identifier: string) => {
   };
 };
 
+
+const resolvePublicReviewIntegration = async (identifier: string, serviceSlug?: string | null) => {
+  const site = await getPublicWebsite(identifier);
+  const adminId = await requireProjectionAdminId(site.website.id);
+  const normalizedSlug = serviceSlug?.trim().toLowerCase() || null;
+
+  if (!normalizedSlug) {
+    return {
+      websiteId: site.website.id,
+      adminId,
+      businessName: site.business.name,
+      scope: "COMPANY" as const,
+      service: null,
+    };
+  }
+
+  const service = await prisma.serviceCatalog.findFirst({
+    where: {
+      adminId,
+      slug: normalizedSlug,
+      status: ServiceStatus.ACTIVE,
+    },
+    select: { id: true, slug: true, serviceName: true },
+  });
+  if (!service) {
+    throw new AppError(status.NOT_FOUND, "Service review page not found", {
+      code: "WEBSITE_REVIEW_SERVICE_NOT_FOUND",
+      retryable: false,
+    });
+  }
+
+  return {
+    websiteId: site.website.id,
+    adminId,
+    businessName: site.business.name,
+    scope: "SERVICE" as const,
+    service,
+  };
+};
+
 const getPreviewWebsite = async (user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
@@ -605,6 +646,7 @@ export const PublicWebsiteService = {
   resolvePublicBookingIntegration,
   resolvePublicEstimateIntegration,
   resolvePublicContactIntegration,
+  resolvePublicReviewIntegration,
   getPreviewWebsite,
   getLocalDraftPreviewWebsite,
   getRevisionPreviewWebsite,
