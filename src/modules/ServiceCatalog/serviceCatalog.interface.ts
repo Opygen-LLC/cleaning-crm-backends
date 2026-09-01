@@ -17,6 +17,11 @@ export interface IServiceCatalogCreate {
     legacyServiceType?: ServiceType | null;
 }
 
+export interface IServiceCatalogSync extends IServiceCatalogCreate {
+    /** Stable identity used by onboarding updates. Omit for genuinely new services. */
+    serviceCatalogId?: string;
+}
+
 export interface IServiceCatalogUpdate {
     serviceName?: string;
     description?: string;

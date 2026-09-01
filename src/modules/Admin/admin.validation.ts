@@ -90,6 +90,7 @@ const skipOnboardingStepSchema = z
 
 
 const onboardingServiceSchema = z.object({
+  serviceCatalogId: z.string().uuid().optional(),
   serviceName: z.string().trim().min(1).max(160),
   description: z.string().trim().min(1).max(2000),
   basePrice: z.number().finite().nonnegative().max(1_000_000),
@@ -119,12 +120,19 @@ const saveOnboardingServicesSchema = z.object({
   }).strict(),
 }).strict().superRefine((value, ctx) => {
   const names = new Set<string>();
+  const serviceIds = new Set<string>();
   value.services.forEach((service, index) => {
     const key = service.serviceName.toLocaleLowerCase("en-GB");
     if (names.has(key)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["services", index, "serviceName"], message: "Duplicate service name" });
     }
     names.add(key);
+    if (service.serviceCatalogId) {
+      if (serviceIds.has(service.serviceCatalogId)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["services", index, "serviceCatalogId"], message: "Duplicate service id" });
+      }
+      serviceIds.add(service.serviceCatalogId);
+    }
   });
   if (value.booking.enabled && !value.services.some((service) => service.onlineBookingEnabled)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["services"], message: "Enable online booking for at least one selected service" });

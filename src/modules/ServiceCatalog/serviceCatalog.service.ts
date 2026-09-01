@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma/prisma";
 import {
   IServiceCatalogCreate,
+  IServiceCatalogSync,
   IServiceCatalogUpdate,
   IServiceCatalogFilters,
 } from "./serviceCatalog.interface";
@@ -63,7 +64,7 @@ const normalizeServiceForApi = <T extends { category: string }>(service: T) => (
 export const syncServiceCatalogSelectionTx = async (
   tx: Prisma.TransactionClient,
   adminId: string,
-  payloads: IServiceCatalogCreate[],
+  payloads: IServiceCatalogSync[],
   options: { authoritativeSelection?: boolean } = {},
 ) => {
   const normalized = payloads.map((payload) => ({
@@ -79,28 +80,74 @@ export const syncServiceCatalogSelectionTx = async (
   }));
 
   const seen = new Set<string>();
+  const seenIds = new Set<string>();
   for (const item of normalized) {
     const key = item.serviceName.toLocaleLowerCase("en-GB");
     if (seen.has(key)) {
       throw new AppError(status.BAD_REQUEST, `Duplicate service in setup: ${item.serviceName}`);
     }
     seen.add(key);
+    if (item.serviceCatalogId) {
+      if (seenIds.has(item.serviceCatalogId)) {
+        throw new AppError(status.BAD_REQUEST, "The same service cannot appear more than once in setup", {
+          code: "DUPLICATE_SERVICE_CATALOG_ID",
+          retryable: false,
+          fieldErrors: { serviceCatalogId: "Choose each service only once." },
+        });
+      }
+      seenIds.add(item.serviceCatalogId);
+    }
   }
 
   const existing = await tx.serviceCatalog.findMany({
     where: { adminId },
     select: { id: true, serviceName: true, slug: true },
   });
-  const existingByName = new Map<string, { id: string; serviceName: string; slug: string }>(
+  type ExistingService = { id: string; serviceName: string; slug: string };
+  const existingById = new Map<string, ExistingService>(
+    existing.map((item) => [item.id, item]),
+  );
+  const existingByName = new Map<string, ExistingService>(
     existing.map((item) => [
       item.serviceName.toLocaleLowerCase("en-GB"),
-      { id: item.id, serviceName: item.serviceName, slug: item.slug },
+      item,
     ]),
   );
 
   const result = [];
   for (const payload of normalized) {
-    const current = existingByName.get(payload.serviceName.toLocaleLowerCase("en-GB"));
+    const targetNameKey = payload.serviceName.toLocaleLowerCase("en-GB");
+    let current: ExistingService | undefined;
+
+    if (payload.serviceCatalogId) {
+      current = existingById.get(payload.serviceCatalogId);
+      if (!current) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "Selected service is not available for this business", {
+          code: "SERVICE_CATALOG_ID_INVALID",
+          retryable: false,
+          fieldErrors: {
+            serviceCatalogId: "Choose a service from this business.",
+          },
+        });
+      }
+    } else {
+      // Backward compatibility for older onboarding clients. New clients always
+      // send serviceCatalogId for existing rows, so mutable names are no longer
+      // the primary identity for edits/renames.
+      current = existingByName.get(targetNameKey);
+    }
+
+    const nameOwner = existingByName.get(targetNameKey);
+    if (nameOwner && nameOwner.id !== current?.id) {
+      throw new AppError(status.CONFLICT, `A service named "${payload.serviceName}" already exists`, {
+        code: "SERVICE_NAME_CONFLICT",
+        retryable: false,
+        fieldErrors: {
+          serviceName: "Service names must be unique for this business.",
+        },
+      });
+    }
+
     const data = {
       serviceName: payload.serviceName,
       description: payload.description,
@@ -113,10 +160,23 @@ export const syncServiceCatalogSelectionTx = async (
       addOns: payload.addOns,
     };
     if (current) {
-      result.push(await tx.serviceCatalog.update({ where: { id: current.id }, data }));
+      const updated = await tx.serviceCatalog.update({ where: { id: current.id }, data });
+      result.push(updated);
+
+      // Keep the in-memory uniqueness view aligned for the remainder of this
+      // transaction. Slugs intentionally stay stable when a service is renamed,
+      // preserving existing public URLs and historical references.
+      existingByName.delete(current.serviceName.toLocaleLowerCase("en-GB"));
+      const nextCurrent = { ...current, serviceName: payload.serviceName };
+      existingByName.set(targetNameKey, nextCurrent);
+      existingById.set(current.id, nextCurrent);
     } else {
       const slug = await allocateServiceSlugTx(tx, adminId, payload.serviceName);
-      result.push(await tx.serviceCatalog.create({ data: { ...data, adminId, slug } }));
+      const created = await tx.serviceCatalog.create({ data: { ...data, adminId, slug } });
+      result.push(created);
+      const nextCurrent = { id: created.id, serviceName: created.serviceName, slug: created.slug };
+      existingByName.set(targetNameKey, nextCurrent);
+      existingById.set(created.id, nextCurrent);
     }
   }
 

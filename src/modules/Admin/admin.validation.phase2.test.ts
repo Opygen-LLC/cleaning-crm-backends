@@ -49,4 +49,32 @@ describe("Phase 2 atomic onboarding services request contract", () => {
     });
     expect(parsed.success).toBe(false);
   });
+
+
+  it("accepts a stable ServiceCatalog id for an existing onboarding service", () => {
+    const parsed = adminValidation.saveOnboardingServices.safeParse({
+      ...validPayload,
+      services: [{
+        ...validPayload.services[0],
+        serviceCatalogId: "11111111-1111-4111-8111-111111111111",
+      }],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects the same ServiceCatalog id more than once", () => {
+    const serviceCatalogId = "11111111-1111-4111-8111-111111111111";
+    const parsed = adminValidation.saveOnboardingServices.safeParse({
+      ...validPayload,
+      services: [
+        { ...validPayload.services[0], serviceCatalogId },
+        {
+          ...validPayload.services[0],
+          serviceCatalogId,
+          serviceName: "Second Service",
+        },
+      ],
+    });
+    expect(parsed.success).toBe(false);
+  });
 });

@@ -13,6 +13,7 @@ const createLeadSchema = z.object({
     notes: z.string().optional(),
     sourceRef: z.string().optional(),
     serviceCatalogId: z.string().uuid().optional(),
+    stage: z.enum(["NEW", "CONTACTED", "QUOTE_SENT", "WON", "LOST"]).optional().default("NEW"),
     initialFollowUp: z.object({
         scheduledAt: z.string().datetime({ message: "Invalid follow-up date" }),
         assignedToUserId: z.string().min(1).optional(),

@@ -8,6 +8,7 @@ export interface CreateLeadPayload {
     notes?: string;
     sourceRef?: string;
     serviceCatalogId?: string;
+    stage?: "NEW" | "CONTACTED" | "QUOTE_SENT" | "WON" | "LOST";
     initialFollowUp?: {
         scheduledAt: string;
         assignedToUserId?: string;

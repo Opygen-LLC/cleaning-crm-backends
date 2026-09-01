@@ -843,6 +843,7 @@ const onboardingServicesSignature = (payload: SaveOnboardingServicesPayload): st
   const canonical = {
     services: payload.services
       .map((service) => ({
+        serviceCatalogId: service.serviceCatalogId ?? null,
         serviceName: service.serviceName.trim(),
         description: service.description.trim(),
         basePrice: service.basePrice,

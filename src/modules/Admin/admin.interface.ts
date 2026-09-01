@@ -83,6 +83,7 @@ export interface OnboardingClientErrorPayload {
 
 export interface SaveOnboardingServicesPayload {
   services: Array<{
+    serviceCatalogId?: string;
     serviceName: string;
     description: string;
     basePrice: number;

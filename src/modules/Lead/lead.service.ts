@@ -206,6 +206,7 @@ const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
 
         const service = await resolveTenantService(tx, adminProfile.id, payload.serviceCatalogId);
         const leadRef = await allocateLeadRef(tx);
+        const initialStage = STAGE_MAP_TO_DB[payload.stage ?? "NEW"] ?? LeadStage.NEW;
 
         if (payload.initialFollowUp?.assignedToUserId) {
             await ensureLeadActivityAssignee(tx, adminProfile.id, payload.initialFollowUp.assignedToUserId);
@@ -224,6 +225,7 @@ const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
                 notes: payload.notes,
                 sourceRef: payload.sourceRef,
                 adminId: adminProfile.id,
+                stage: initialStage,
             },
         });
 
