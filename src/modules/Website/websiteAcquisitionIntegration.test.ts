@@ -219,8 +219,8 @@ describe("Phase 14 website acquisition integration", () => {
 
     expect(prismaMock.tx.lead.update).toHaveBeenCalledTimes(2);
     expect(prismaMock.tx.websiteSubmission.create).toHaveBeenCalledTimes(2);
-    expect(first.submissionRef).toBe("WS-FIRST");
-    expect(second.submissionRef).toBe("WS-SECOND");
+    expect((first as any).submissionRef).toBe("WS-FIRST");
+    expect((second as any).submissionRef).toBe("WS-SECOND");
   });
 
 });

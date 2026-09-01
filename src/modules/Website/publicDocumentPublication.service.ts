@@ -74,7 +74,7 @@ const ensureQuoteCanPublish = (existing: {
   publicToken: string | null;
   publishedAt: Date | null;
 }, intent: PublishIntent) => {
-  const terminal = [QuoteStatus.ACCEPTED, QuoteStatus.DECLINED, QuoteStatus.EXPIRED].includes(existing.status);
+  const terminal = ([QuoteStatus.ACCEPTED, QuoteStatus.DECLINED, QuoteStatus.EXPIRED] as QuoteStatus[]).includes(existing.status);
   if (terminal) {
     if (intent === "SEND") {
       throw new AppError(status.BAD_REQUEST, `Cannot send a quote that is ${existing.status.toLowerCase()}`, {
@@ -105,7 +105,7 @@ const ensureEstimateCanPublish = (existing: {
   publicToken: string | null;
   publishedAt: Date | null;
 }, intent: PublishIntent) => {
-  const terminal = [EstimateStatus.APPROVED, EstimateStatus.REJECTED, EstimateStatus.CONVERTED].includes(existing.status);
+  const terminal = ([EstimateStatus.APPROVED, EstimateStatus.REJECTED, EstimateStatus.CONVERTED] as EstimateStatus[]).includes(existing.status);
   if (terminal) {
     if (intent === "SEND") {
       throw new AppError(status.BAD_REQUEST, `Cannot send an estimate that is ${existing.status.toLowerCase()}`, {
@@ -184,7 +184,7 @@ const publishQuote = async (input: {
         if (!existing) throw new AppError(status.NOT_FOUND, "Quote not found");
         ensureQuoteCanPublish(existing, intent);
 
-        const isTerminal = [QuoteStatus.ACCEPTED, QuoteStatus.DECLINED, QuoteStatus.EXPIRED].includes(existing.status);
+        const isTerminal = ([QuoteStatus.ACCEPTED, QuoteStatus.DECLINED, QuoteStatus.EXPIRED] as QuoteStatus[]).includes(existing.status);
         const now = new Date();
         const publicToken = existing.publicToken ?? await PublicDocumentLinkService.generateUniqueToken();
         const row = isTerminal
@@ -245,7 +245,7 @@ const publishEstimate = async (input: {
         if (!existing) throw new AppError(status.NOT_FOUND, "Estimate not found");
         ensureEstimateCanPublish(existing, intent);
 
-        const isTerminal = [EstimateStatus.APPROVED, EstimateStatus.REJECTED, EstimateStatus.CONVERTED].includes(existing.status);
+        const isTerminal = ([EstimateStatus.APPROVED, EstimateStatus.REJECTED, EstimateStatus.CONVERTED] as EstimateStatus[]).includes(existing.status);
         const now = new Date();
         const publicToken = existing.publicToken ?? await PublicDocumentLinkService.generateUniqueToken();
         const row = isTerminal

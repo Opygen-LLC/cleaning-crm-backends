@@ -286,17 +286,17 @@ const listWebsiteSubmissions = async (query: WebsiteSubmissionListQuery, user: I
         ...(search ? { OR: where.OR } : {}),
       },
       _count: { _all: true },
-    }),
+    } as any),
   ]);
 
-  const counts = {
-    total: grouped.reduce((sum, row) => sum + row._count._all, 0),
+  const counts: Record<string, number> = {
+    total: (grouped as any[]).reduce((sum, row) => sum + (row._count?._all ?? 0), 0),
     NEW: 0,
     REVIEWED: 0,
     CONVERTED: 0,
     DISMISSED: 0,
   };
-  for (const row of grouped) counts[row.status] = row._count._all;
+  for (const row of (grouped as any[])) counts[row.status] = row._count?._all ?? 0;
 
   return {
     items,
