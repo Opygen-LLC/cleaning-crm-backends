@@ -25,7 +25,8 @@ export class QueryBuilder<
     private skip: number = 0;
     private sortBy: string = "createdAt";
     private sortOrder: "asc" | "desc" = "desc";
-    private selectFields: Record<string, boolean> | undefined;
+    private selectFields: Record<string, boolean | Record<string, unknown>> | undefined;
+    private explicitSelect = false;
     private cursorMode = false;
 
     constructor(
@@ -448,7 +449,7 @@ export class QueryBuilder<
     }
 
     fields(): this {
-        if (!this.queryParams) return this;
+        if (!this.queryParams || this.explicitSelect) return this;
         const fieldsParam = this.queryParams.fields;
         // /doctors?fields=id,name,user => select: { id: true, name: true, user: { select: { name: true } } }
 
@@ -472,6 +473,19 @@ export class QueryBuilder<
 
             delete this.query.include;
         }
+        return this;
+    }
+
+    /**
+     * Apply a server-owned Prisma projection. This is intentionally separate
+     * from the public `fields` query parameter: list endpoints should define
+     * the shape they expose instead of letting callers widen it accidentally.
+     */
+    select(selection: Record<string, unknown>): this {
+        this.explicitSelect = true;
+        this.selectFields = selection as Record<string, boolean | Record<string, unknown>>;
+        this.query.select = selection;
+        delete this.query.include;
         return this;
     }
 

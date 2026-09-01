@@ -35,6 +35,7 @@ export interface UpdateStaffPayload {
     // and distance calculations stay accurate. See updateStaffSchema in
     // staff.validation.ts, which must accept this same field.
     address?: string;
+    specialty?: string[];
 }
 
 export interface UpdateAvailabilityPayload {

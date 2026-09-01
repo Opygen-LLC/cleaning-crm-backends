@@ -728,39 +728,25 @@ const getStaffDashboard = async (userId: string) => {
   prevWeekEnd.setMilliseconds(-1);
   const upcomingEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-  const [
-    todaysAssignments,
-    upcomingAssignments,
-    recentAssignments,
-    completedTotalCount,
-    unreadCount,
-    weekReviewAgg,
-    leaveRecords,
-  ] = await Promise.all([
+  type StaffDashboardAggregateRow = {
+    completedTotal: bigint | number;
+    unreadCount: bigint | number;
+    weekRating: number | null;
+  };
+
+  const [windowAssignments, recentAssignments, aggregateRows, leaveRecords] = await Promise.all([
     prisma.jobStaffAssignment.findMany({
       where: {
         staffId,
         job: {
           adminId: staffProfile.adminId,
-          scheduledDate: { gte: todayStart, lte: todayEnd },
+          scheduledDate: { gte: todayStart, lte: upcomingEnd },
           status: { not: JobStatus.CANCELLED },
         },
       },
       select: staffDashboardJobSelect,
       orderBy: { job: { scheduledDate: "asc" } },
-    }),
-    prisma.jobStaffAssignment.findMany({
-      where: {
-        staffId,
-        job: {
-          adminId: staffProfile.adminId,
-          scheduledDate: { gt: todayEnd, lte: upcomingEnd },
-          status: { not: JobStatus.CANCELLED },
-        },
-      },
-      select: staffDashboardJobSelect,
-      orderBy: { job: { scheduledDate: "asc" } },
-      take: 10,
+      take: 40,
     }),
     prisma.jobStaffAssignment.findMany({
       where: {
@@ -777,23 +763,30 @@ const getStaffDashboard = async (userId: string) => {
         job: { select: { scheduledDate: true, status: true, updatedAt: true } },
       },
     }),
-    prisma.jobStaffAssignment.count({
-      where: {
-        staffId,
-        job: { adminId: staffProfile.adminId, status: JobStatus.COMPLETED },
-      },
-    }),
-    prisma.notification.count({
-      where: {
-        adminId: staffProfile.adminId,
-        isRead: false,
-        createdAt: { gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) },
-      },
-    }),
-    prisma.review.aggregate({
-      where: { staffId, createdAt: { gte: weekStart, lte: now } },
-      _avg: { rating: true },
-    }),
+    prisma.$queryRaw<StaffDashboardAggregateRow[]>`
+      SELECT
+        (
+          SELECT COUNT(*)::bigint
+          FROM "job_staff_assignment" jsa
+          JOIN "job" j ON j.id = jsa."jobId"
+          WHERE jsa."staffId" = ${staffId}
+            AND j."adminId" = ${staffProfile.adminId}
+            AND j.status = 'COMPLETED'
+        ) AS "completedTotal",
+        (
+          SELECT COUNT(*)::bigint
+          FROM "notification" n
+          WHERE n."adminId" = ${staffProfile.adminId}
+            AND n."isRead" = false
+            AND n."createdAt" >= ${new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)}
+        ) AS "unreadCount",
+        (
+          SELECT AVG(r.rating)::float8
+          FROM "review" r
+          WHERE r."staffId" = ${staffId}
+            AND r."createdAt" BETWEEN ${weekStart} AND ${now}
+        ) AS "weekRating"
+    `,
     prisma.staffLeave.findMany({
       where: {
         staffId,
@@ -804,6 +797,17 @@ const getStaffDashboard = async (userId: string) => {
       orderBy: { startDate: "asc" },
     }),
   ]);
+
+  const todaysAssignments = windowAssignments.filter((assignment) =>
+    assignment.job.scheduledDate >= todayStart && assignment.job.scheduledDate <= todayEnd,
+  );
+  const upcomingAssignments = windowAssignments
+    .filter((assignment) => assignment.job.scheduledDate > todayEnd)
+    .slice(0, 10);
+  const aggregate = aggregateRows[0];
+  const completedTotalCount = Number(aggregate?.completedTotal ?? 0);
+  const unreadCount = Number(aggregate?.unreadCount ?? 0);
+  const weekRating = Number(aggregate?.weekRating ?? 0);
 
   const inRange = (date: Date, from: Date, to: Date) => date >= from && date <= to;
   const weekJobsCount = recentAssignments.filter((a) =>
@@ -884,7 +888,7 @@ const getStaffDashboard = async (userId: string) => {
     upcomingJobs,
     weekEarnings: Math.round(weekEarnings * 100) / 100,
     weekCompleted: weekCompletedCount,
-    weekRating: Number((weekReviewAgg._avg.rating ?? 0).toFixed(1)),
+    weekRating: Number(weekRating.toFixed(1)),
     completedCount: completedTodayCount,
     unreadNotifications: unreadCount,
     activeLeave: activeLeave

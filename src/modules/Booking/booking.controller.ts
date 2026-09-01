@@ -82,14 +82,14 @@ const updateBookingStatus = catchAsync(async (req, res) => {
 });
 
 const deleteBooking = catchAsync(async (req, res) => {
-  await bookingService.deleteBooking(req.params.id as string, req.user);
+  const result = await bookingService.deleteBooking(req.params.id as string, req.user);
   await bumpCacheResourcesForUser(req.user, [CacheResource.bookings, CacheResource.dashboard, CacheResource.reports]);
 
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
     message: "Booking deleted successfully",
-    data: null,
+    data: result,
   });
 });
 

@@ -12,6 +12,8 @@ import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/adv
 import { allocateLeadRef } from "./leadRef.service";
 import { requireE164Phone } from "../../lib/validation/phone";
 import { ensureLeadActivityAssignee } from "./leadActivity.service";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { leadDetailSelect, leadListSelect, leadMutationSelect } from "./lead.projection";
 
 // ─── Resolve admin profile ────────────────────────────────────────────────────
 
@@ -151,13 +153,15 @@ function serializeLead(
     businessName?: string,
 ): Record<string, unknown> {
     const isWebsiteLead = Boolean(lead.sourceWebsiteId);
+    const projectedBusinessName =
+        ((lead as Record<string, any>).admin as { businessName?: string } | undefined)?.businessName ?? businessName;
     return {
         ...lead,
         stage: STAGE_MAP_TO_FE[String(lead.stage)] ?? lead.stage,
         estimatedMin: Number(lead.estimatedMin),
         estimatedMax: Number(lead.estimatedMax),
         source: isWebsiteLead ? "Website" : (lead.sourceRef ?? null),
-        sourceWebsiteName: isWebsiteLead ? businessName ?? null : null,
+        sourceWebsiteName: isWebsiteLead ? projectedBusinessName ?? null : null,
         sourcePage: isWebsiteLead ? "/contact" : null,
     };
 }
@@ -244,7 +248,7 @@ const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
 };
 
 const getLeads = async (query: IQueryParams, user: IRequestUser) => {
-    const adminProfile = await resolveAdminProfile(user);
+    const adminId = await getAdminId(user);
     const leadQuery = query as LeadQueryParams;
 
     const normalizedQuery: IQueryParams = { ...query };
@@ -271,57 +275,30 @@ const getLeads = async (query: IQueryParams, user: IRequestUser) => {
         .search()
         .filter()
         .where({
-            adminId: adminProfile.id,
+            adminId,
             ...buildLeadOperationalWhere(leadQuery),
         })
+        .select(leadListSelect)
         .paginate()
         .sort()
-        .include({
-            convertedClient: { select: { id: true, name: true, email: true } },
-            _count: { select: { activities: true } },
-        })
         .fields()
         .execute();
 
     return {
         ...result,
         data: result.data.map((lead) =>
-            serializeLead(lead as Lead & Record<string, unknown>, adminProfile.businessName),
+            serializeLead(lead as Lead & Record<string, unknown>),
         ),
     };
 };
 
 const getLeadById = async (id: string, user: IRequestUser) => {
-    const adminProfile = await resolveAdminProfile(user);
-
+    const adminId = await getAdminId(user);
     const lead = await prisma.lead.findUniqueOrThrow({
-        where: { id, adminId: adminProfile.id },
-        select: {
-            id: true,
-            leadRef: true,
-            name: true,
-            email: true,
-            phone: true,
-            serviceInterest: true,
-            estimatedMin: true,
-            estimatedMax: true,
-            stage: true,
-            notes: true,
-            sourceRef: true,
-            serviceCatalogId: true,
-            sourceWebsiteId: true,
-            convertedClientId: true,
-            convertedAt: true,
-            lastContactedAt: true,
-            convertedClient: { select: { id: true, name: true, email: true } },
-            _count: { select: { activities: true } },
-            adminId: true,
-            createdAt: true,
-            updatedAt: true,
-        },
+        where: { id, adminId },
+        select: leadDetailSelect,
     });
-
-    return serializeLead(lead as Lead & Record<string, unknown>, adminProfile.businessName);
+    return serializeLead(lead as Lead & Record<string, unknown>);
 };
 
 const updateLead = async (

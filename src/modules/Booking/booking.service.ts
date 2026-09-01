@@ -32,6 +32,7 @@ import type { Prisma } from "../../generated/prisma/client";
 import { nextReference } from "../../lib/utils/referenceNumber";
 import { observeBackgroundTask } from "../../lib/monitoring/observeBackgroundTask";
 import { queueBookingNotification } from "../../lib/notifications/businessNotificationEvents";
+import { bookingDetailSelect, bookingListSelect, bookingMutationSelect } from "./booking.projection";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -293,7 +294,13 @@ const createBooking = async (payload: IBookingCreate, user: IRequestUser) => {
   }).catch(() => {});
   invalidateAnalyticsCache(adminId);
 
-  return booking;
+  return {
+    id: booking.id,
+    bookingRef: booking.bookingRef,
+    status: booking.status,
+    scheduledDate: booking.scheduledDate,
+    updatedAt: booking.updatedAt,
+  };
 };
 
 /**
@@ -559,7 +566,7 @@ const getAllBookings = async (queryParams: IQueryParams, user: IRequestUser) => 
     .filter()
     .sort()
     .paginate()
-    .include(bookingInclude)
+    .select(bookingListSelect)
     .execute();
 };
 
@@ -568,7 +575,7 @@ const getBookingById = async (id: string, user: IRequestUser) => {
 
   const booking = await prisma.booking.findFirst({
     where: { id, adminId },
-    include: bookingDetailInclude,
+    select: bookingDetailSelect,
   });
 
   if (!booking) throw new AppError(status.NOT_FOUND, "Booking not found");
@@ -583,7 +590,7 @@ const updateBooking = async (
 ) => {
   const adminId = await getAdminId(user);
 
-  const existing = await prisma.booking.findFirst({ where: { id, adminId } });
+  const existing = await prisma.booking.findFirst({ where: { id, adminId }, select: { id: true, status: true } });
   if (!existing) throw new AppError(status.NOT_FOUND, "Booking not found");
 
   if (
@@ -613,7 +620,7 @@ const updateBooking = async (
   const updated = await prisma.booking.update({
     where: { id },
     data,
-    include: bookingInclude,
+    select: bookingMutationSelect,
   });
   invalidateAnalyticsCache(adminId);
   return updated;
@@ -664,7 +671,13 @@ const updateBookingStatus = async (
   }
   invalidateAnalyticsCache(adminId);
 
-  return updated;
+  return {
+    id: updated.id,
+    bookingRef: updated.bookingRef,
+    status: updated.status,
+    scheduledDate: updated.scheduledDate,
+    updatedAt: updated.updatedAt,
+  };
 };
 
 const deleteBooking = async (id: string, user: IRequestUser) => {
@@ -680,7 +693,7 @@ const deleteBooking = async (id: string, user: IRequestUser) => {
     );
   }
 
-  const deleted = await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     await tx.booking.delete({ where: { id } });
 
     // Roll back client booking count
@@ -690,7 +703,7 @@ const deleteBooking = async (id: string, user: IRequestUser) => {
     });
   });
   invalidateAnalyticsCache(adminId);
-  return deleted;
+  return { id, deleted: true as const };
 };
 
 // ─── Staff Assignment ─────────────────────────────────────────────────────────
@@ -747,7 +760,7 @@ const assignStaff = async (
 
     return tx.booking.findUnique({
       where: { id: bookingId },
-      include: bookingInclude,
+      select: bookingMutationSelect,
     });
   });
 };

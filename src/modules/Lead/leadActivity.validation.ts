@@ -44,6 +44,18 @@ const getFollowUpsQuerySchema = z.object({
     }
 });
 
+
+const getFollowUpCalendarQuerySchema = z.object({
+    from: dateKey,
+    to: dateKey,
+    assignedTo: z.string().trim().min(1).max(128).optional(),
+    status: z.enum(["PENDING", "COMPLETED", "CANCELLED", "ALL"]).optional(),
+}).strict().superRefine((value, ctx) => {
+    if (value.from > value.to) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "from must be on or before to", path: ["from"] });
+    }
+});
+
 const updateLeadActivitySchema = z
     .object({
         type: z.enum(leadActivityTypes).optional(),
@@ -62,6 +74,7 @@ export const leadActivityValidation = {
     create: createLeadActivitySchema,
     update: updateLeadActivitySchema,
     followUpsQuery: getFollowUpsQuerySchema,
+    followUpCalendarQuery: getFollowUpCalendarQuerySchema,
 };
 
 export type LeadActivityTypeInput = (typeof leadActivityTypes)[number];

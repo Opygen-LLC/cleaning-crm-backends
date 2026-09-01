@@ -36,6 +36,16 @@ const getClients = catchAsync(async (req, res) => {
     });
 });
 
+const getClientLookup = catchAsync(async (req, res) => {
+    const result = await clientService.getClientLookup(req.query as IQueryParams, req.user);
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Client lookup retrieved successfully",
+        data: result,
+    });
+});
+
 const getClientById = catchAsync(async (req, res) => {
     const { id } = req.params;
     const result = await clientService.getClientById(id as string, req.user);
@@ -126,6 +136,7 @@ const regeneratePortalToken = catchAsync(async (req, res) => {
 export const clientController = {
     createClient,
     getClients,
+    getClientLookup,
     getClientById,
     getClientBookingPrefill,
     updateClient,

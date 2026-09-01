@@ -139,73 +139,103 @@ const createPayment = async (payload: IPaymentCreate, user: IRequestUser) => {
   });
   invalidateAnalyticsCache(adminId);
 
-  return result;
+  return {
+    payment: {
+      id: result.payment.id,
+      paymentRef: result.payment.paymentRef,
+      updatedAt: result.payment.updatedAt,
+    },
+  };
 };
 
 // ─── Get All Payments — GET /payment ─────────────────────────────────────────
 
-const getAllPayments = async (filters: IPaymentFilters, user: IRequestUser) => {
-  const adminId = user.role === UserRole.SUPER_ADMIN
-    ? undefined
-    : await getAdminId(user);
-
+const buildPaymentWhere = async (filters: IPaymentFilters, user: IRequestUser): Promise<Prisma.PaymentWhereInput> => {
+  const adminId = user.role === UserRole.SUPER_ADMIN ? undefined : await getAdminId(user);
   const where: Prisma.PaymentWhereInput = {};
   if (adminId) where.adminId = adminId;
-
-  if (filters.method)   where.method = filters.method;
-  if (filters.status)   where.status = filters.status;
+  if (filters.method) where.method = filters.method;
+  if (filters.status) where.status = filters.status;
   if (filters.invoiceId) where.invoiceId = filters.invoiceId;
-
   if (filters.startDate || filters.endDate) {
     where.paidAt = {};
     if (filters.startDate) where.paidAt.gte = new Date(filters.startDate);
-    if (filters.endDate)   where.paidAt.lte = new Date(filters.endDate);
+    if (filters.endDate) where.paidAt.lte = new Date(filters.endDate);
   }
-
   if (filters.searchTerm) {
     where.OR = [
-      { paymentRef:  { contains: filters.searchTerm, mode: "insensitive" } },
-      { note:        { contains: filters.searchTerm, mode: "insensitive" } },
+      { paymentRef: { contains: filters.searchTerm, mode: "insensitive" } },
+      { note: { contains: filters.searchTerm, mode: "insensitive" } },
       { transactionId: { contains: filters.searchTerm, mode: "insensitive" } },
-      {
-        invoice: {
-          OR: [
-            { invoiceRef:  { contains: filters.searchTerm, mode: "insensitive" } },
-            { clientName:  { contains: filters.searchTerm, mode: "insensitive" } },
-          ],
-        },
-      },
+      { invoice: { OR: [
+        { invoiceRef: { contains: filters.searchTerm, mode: "insensitive" } },
+        { clientName: { contains: filters.searchTerm, mode: "insensitive" } },
+      ] } },
     ];
   }
+  return where;
+};
 
+const getAllPayments = async (filters: IPaymentFilters, user: IRequestUser) => {
+  const where = await buildPaymentWhere(filters, user);
   const safePage = Math.max(1, Number(filters.page) || 1);
   const safeLimit = Math.min(100, Math.max(1, Number(filters.limit) || 10));
   const skip = (safePage - 1) * safeLimit;
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const paidWhere = { ...where, status: PaymentStatus.PAID };
 
-  const [payments, total, paidAggregate, thisMonthAggregate, byMethodRows] = await Promise.all([
+  const [payments, total] = await Promise.all([
     prisma.payment.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       skip,
       take: safeLimit,
-      include: {
-        invoice: {
-          select: {
-            invoiceRef: true,
-            clientName: true,
-          },
-        },
+      select: {
+        id: true,
+        paymentRef: true,
+        amount: true,
+        method: true,
+        status: true,
+        paidAt: true,
+        createdAt: true,
+        note: true,
+        transactionId: true,
+        paymentProofUrl: true,
+        rejectionReason: true,
+        invoiceId: true,
+        invoice: { select: { invoiceRef: true, clientName: true } },
       },
     }),
     prisma.payment.count({ where }),
-    prisma.payment.aggregate({
-      where: paidWhere,
-      _sum: { amount: true },
-      _avg: { amount: true },
-    }),
+  ]);
+
+  return {
+    payments: payments.map((p) => ({
+      id: p.id,
+      paymentRef: p.paymentRef,
+      invoiceRef: p.invoice?.invoiceRef ?? null,
+      clientName: p.invoice?.clientName ?? null,
+      amount: Number(p.amount),
+      method: p.method,
+      status: p.status,
+      date: p.paidAt?.toISOString() ?? p.createdAt.toISOString(),
+      note: p.note,
+      transactionId: p.transactionId,
+      paymentProofUrl: p.paymentProofUrl,
+      rejectionReason: p.rejectionReason,
+      invoiceId: p.invoiceId,
+    })),
+    total,
+    meta: { page: safePage, limit: safeLimit, totalPages: Math.ceil(total / safeLimit) },
+  };
+};
+
+const getPaymentStats = async (filters: IPaymentFilters, user: IRequestUser) => {
+  const where = await buildPaymentWhere(filters, user);
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const paidWhere: Prisma.PaymentWhereInput = { ...where, status: PaymentStatus.PAID };
+
+  const [paidAggregate, thisMonthAggregate, byMethodRows] = await Promise.all([
+    prisma.payment.aggregate({ where: paidWhere, _sum: { amount: true }, _avg: { amount: true } }),
     prisma.payment.aggregate({
       where: { ...paidWhere, paidAt: { gte: startOfMonth } },
       _sum: { amount: true },
@@ -218,37 +248,15 @@ const getAllPayments = async (filters: IPaymentFilters, user: IRequestUser) => {
     }),
   ]);
 
-  const totalCollected = Number(paidAggregate._sum.amount ?? 0);
-  const thisMonth = Number(thisMonthAggregate._sum.amount ?? 0);
-  const avgPayment = Number(paidAggregate._avg.amount ?? 0);
-  const byMethod = byMethodRows.map((row) => ({
-    method: row.method,
-    amount: Number(row._sum.amount ?? 0),
-    count: row._count._all,
-  }));
-
   return {
-    payments: payments.map((p) => ({
-      id:             p.id,
-      paymentRef:     p.paymentRef,
-      invoiceRef:     p.invoice?.invoiceRef ?? null,
-      clientName:     p.invoice?.clientName ?? null,
-      amount:         Number(p.amount),
-      method:         p.method,
-      status:         p.status,
-      date:           p.paidAt?.toISOString() ?? p.createdAt.toISOString(),
-      note:           p.note,
-      transactionId:  p.transactionId,
-      paymentProofUrl: p.paymentProofUrl,
-      invoiceId:      p.invoiceId,
+    totalCollected: Number(paidAggregate._sum.amount ?? 0),
+    thisMonth: Number(thisMonthAggregate._sum.amount ?? 0),
+    avgPayment: Number(paidAggregate._avg.amount ?? 0),
+    byMethod: byMethodRows.map((row) => ({
+      method: row.method,
+      amount: Number(row._sum.amount ?? 0),
+      count: row._count._all,
     })),
-    total,
-    meta: {
-      page: safePage,
-      limit: safeLimit,
-      totalPages: Math.ceil(total / safeLimit),
-    },
-    stats: { totalCollected, thisMonth, avgPayment, byMethod },
   };
 };
 
@@ -280,7 +288,10 @@ const getPaymentById = async (id: string, user: IRequestUser) => {
 const updatePayment = async (id: string, payload: IPaymentUpdate, user: IRequestUser) => {
   const adminId = await getAdminId(user);
 
-  const existing = await prisma.payment.findFirst({ where: { id, adminId } });
+  const existing = await prisma.payment.findFirst({
+    where: { id, adminId },
+    select: { id: true, paymentRef: true },
+  });
   if (!existing) throw new AppError(status.NOT_FOUND, "Payment not found");
 
   const updated = await prisma.payment.update({
@@ -293,6 +304,7 @@ const updatePayment = async (id: string, payload: IPaymentUpdate, user: IRequest
       ...(payload.transactionId !== undefined && { transactionId: payload.transactionId }),
       ...(payload.paidAt      !== undefined && { paidAt: new Date(payload.paidAt) }),
     },
+    select: { id: true, paymentRef: true, status: true, updatedAt: true },
   });
 
   logActivity({
@@ -304,7 +316,7 @@ const updatePayment = async (id: string, payload: IPaymentUpdate, user: IRequest
   });
   invalidateAnalyticsCache(adminId);
 
-  return updated;
+  return { payment: updated };
 };
 
 // ─── Delete Payment — DELETE /payment/:id ────────────────────────────────────
@@ -326,7 +338,7 @@ const deletePayment = async (id: string, user: IRequestUser) => {
   });
   invalidateAnalyticsCache(adminId);
 
-  return { success: true };
+  return { id, deleted: true };
 };
 
 // ─── Upload Receipt — PATCH /payment/:id/receipt ─────────────────────────────
@@ -365,6 +377,7 @@ const uploadReceipt = async (
 export const paymentService = {
   createPayment,
   getAllPayments,
+  getPaymentStats,
   getPaymentById,
   updatePayment,
   deletePayment,

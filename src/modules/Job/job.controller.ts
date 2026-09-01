@@ -80,14 +80,14 @@ const updateJobStatus = catchAsync(async (req, res) => {
 });
 
 const deleteJob = catchAsync(async (req, res) => {
-    await jobService.deleteJob(req.params.id as string, req.user);
+    const result = await jobService.deleteJob(req.params.id as string, req.user);
     await bumpCacheResourcesForUser(req.user, [CacheResource.jobs, CacheResource.dashboard]);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
         message: "Job deleted successfully",
-        data: null,
+        data: result,
     });
 });
 

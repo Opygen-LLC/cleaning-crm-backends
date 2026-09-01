@@ -49,13 +49,13 @@ import { emitToAdmin, emitToStaff } from "../../config/socketio";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
 import { geocodeAddressSafely } from "../../lib/utils/geocoding";
-import redis from "../../config/redis";
 import logger from "../../lib/logger";
 import { sendPushToUsers } from "../Push/push.service";
 import { invalidateAnalyticsCache } from "../../lib/utils/invalidateAnalyticsCache";
 import { resolveServiceIdentity, serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import { nextReference } from "../../lib/utils/referenceNumber";
 import { queueReviewRequestNotification, queueStaffAssignedNotifications } from "../../lib/notifications/businessNotificationEvents";
+import { jobDetailSelect, jobListSelect, jobMutationSelect, staffJobSelect } from "./job.projection";
 
 /**
  * PERF FIX (Phase 5.2): geocoding calls an external HTTP API (Google/Mapbox)
@@ -121,12 +121,6 @@ const jobInclude = {
   },
   booking: { select: { id: true, bookingRef: true, status: true } },
   serviceCatalog: { select: { id: true, serviceName: true, basePrice: true, duration: true, category: true } },
-} as const;
-
-// Staff job list/detail surfaces need only the client contact projection.
-// Assignment graphs, booking data and service pricing remain admin-only payloads.
-const staffJobInclude = {
-  client: { select: { name: true, email: true, phone: true } },
 } as const;
 
 // Map JS getDay() → Prisma WeekDay enum
@@ -243,14 +237,20 @@ const createJob = async (payload: IJobCreate, user: IRequestUser) => {
         },
       }),
     },
-    include: jobInclude,
+    select: jobMutationSelect,
     });
   });
 
   geocodeJobAddressInBackground(job.id, adminId, payload.address);
   invalidateAnalyticsCache(adminId);
 
-  return job;
+  return {
+    id: job.id,
+    jobRef: job.jobRef,
+    status: job.status,
+    scheduledDate: job.scheduledDate,
+    updatedAt: job.updatedAt,
+  };
 };
 
 const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
@@ -294,7 +294,7 @@ const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
       .filter()
       .sort()
       .paginate()
-      .include(staffJobInclude)
+      .select(staffJobSelect)
       .execute();
   }
 
@@ -308,7 +308,7 @@ const getAllJobs = async (queryParams: IQueryParams, user: IRequestUser) => {
     .filter()
     .sort()
     .paginate()
-    .include(jobInclude)
+    .select(jobListSelect)
     .execute();
 };
 
@@ -328,7 +328,7 @@ const getJobById = async (id: string, user: IRequestUser) => {
         adminId: staffProfile.adminId,
         staffAssignments: { some: { staffId: staffProfile.id } },
       },
-      include: staffJobInclude,
+      select: staffJobSelect,
     });
     if (!job) {
       throw new AppError(status.NOT_FOUND, "Job not found or not assigned to you", {
@@ -342,7 +342,7 @@ const getJobById = async (id: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const job = await prisma.job.findFirst({
     where: { id, adminId },
-    include: jobInclude,
+    select: jobDetailSelect,
   });
   if (!job) throw new AppError(status.NOT_FOUND, "Job not found");
   return job;
@@ -390,7 +390,7 @@ const updateJob = async (
   const updated = await prisma.job.update({
     where: { id },
     data,
-    include: jobInclude,
+    select: jobMutationSelect,
   });
 
   if (addressChanged) {
@@ -568,25 +568,6 @@ const updateJobStatus = async (
     emitToStaff(assignment.staffId, "job:statusUpdated", socketPayload);
   }
 
-  // PERF FIX (audit #10): getStaffDashboard() caches under
-  // `dashboard:staff:{userId}` for 5 minutes, but nothing was invalidating
-  // that key when a job's status changed — staff saw stale statuses for up
-  // to 5 minutes after an admin (or another staff member) updated a job.
-  // Cache key is keyed by User id, not StaffProfile id, so resolve that
-  // first. Best-effort: never fail the status update over a cache miss.
-  try {
-    const affectedStaff = await prisma.staffProfile.findMany({
-      where: { id: { in: completedJob.staffAssignments.map((a) => a.staffId) } },
-      select: { userId: true },
-    });
-    await Promise.all(
-      affectedStaff.map((s) =>
-        redis.del(`dashboard:staff:${s.userId}`).catch(() => {}),
-      ),
-    );
-  } catch {
-    // best-effort cache invalidation only
-  }
 
   // ── Persist notification ─────────────────────────────────────────────────
   const statusLabel: Record<string, string> = {
@@ -632,12 +613,18 @@ const updateJobStatus = async (
     }
   }
 
-  return completedJob;
+  return {
+    id: completedJob.id,
+    jobRef: completedJob.jobRef,
+    status: completedJob.status,
+    scheduledDate: completedJob.scheduledDate,
+    updatedAt: completedJob.updatedAt,
+  };
 };
 
 const deleteJob = async (id: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const existing = await prisma.job.findFirst({ where: { id, adminId } });
+  const existing = await prisma.job.findFirst({ where: { id, adminId }, select: { id: true, status: true } });
   if (!existing) throw new AppError(status.NOT_FOUND, "Job not found");
 
   if (existing.status === JobStatus.IN_PROGRESS) {
@@ -646,9 +633,9 @@ const deleteJob = async (id: string, user: IRequestUser) => {
       "Cannot delete a job that is in progress",
     );
   }
-  const deleted = await prisma.job.delete({ where: { id } });
+  await prisma.job.delete({ where: { id } });
   invalidateAnalyticsCache(adminId);
-  return deleted;
+  return { id, deleted: true as const };
 };
 
 const convertBookingToJob = async (bookingId: string, user: IRequestUser) => {
@@ -702,7 +689,7 @@ const convertBookingToJob = async (bookingId: string, user: IRequestUser) => {
         },
       }),
     },
-    include: jobInclude,
+    select: jobMutationSelect,
     });
   });
 };
@@ -771,8 +758,12 @@ const assignStaff = async (
 
       if (payload.staffIds.length && updatedJob) {
         const staffList = await prisma.staffProfile.findMany({
-          where: { id: { in: payload.staffIds } },
-          include: { user: { select: { id: true, name: true, email: true } } },
+          where: { id: { in: payload.staffIds }, adminId },
+          select: {
+            id: true,
+            staffRole: true,
+            user: { select: { id: true, name: true, email: true } },
+          },
         });
         const client = await prisma.client.findUnique({
           where: { id: updatedJob.clientId },
@@ -821,7 +812,15 @@ const assignStaff = async (
 
         await queueStaffAssignedNotifications(updatedJob.id, payload.staffIds);
       }
-      return updatedJob;
+      return updatedJob
+        ? {
+            id: updatedJob.id,
+            jobRef: updatedJob.jobRef,
+            status: updatedJob.status,
+            scheduledDate: updatedJob.scheduledDate,
+            updatedAt: updatedJob.updatedAt,
+          }
+        : null;
     });
 };
 

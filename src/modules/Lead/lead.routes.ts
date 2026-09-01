@@ -40,6 +40,14 @@ router.get(
     leadActivityController.getFollowUps,
 );
 
+router.get(
+    "/follow-ups/calendar",
+    isAdmin,
+    hasLeadsPipeline,
+    zodValidate(leadActivityValidation.followUpCalendarQuery, ValidationProperty.QUERY),
+    leadActivityController.getFollowUpCalendar,
+);
+
 // Get single lead by id
 router.get("/:id", isAdmin, hasLeadsPipeline, leadController.getLeadById);
 

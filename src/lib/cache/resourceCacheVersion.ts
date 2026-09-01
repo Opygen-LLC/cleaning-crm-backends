@@ -6,6 +6,7 @@ import { recordCacheVersionInvalidation } from "../monitoring/operationalMetrics
 export const CacheResource = Object.freeze({
   clients: "clients",
   leads: "leads",
+  followUps: "followUps",
   bookings: "bookings",
   jobs: "jobs",
   staff: "staff",

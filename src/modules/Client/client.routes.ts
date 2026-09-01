@@ -52,6 +52,13 @@ router.post(
 
 // ── Admin routes ─────────────────────────────────────────────────────────────
 
+// Lightweight typeahead projection for selectors; never returns portal/security fields.
+router.get(
+    "/lookup",
+    checkAuth(UserRole.ADMIN),
+    clientController.getClientLookup,
+);
+
 // Lightweight projection used when starting a booking from an existing client.
 router.get(
     "/detail/:id/booking-prefill",

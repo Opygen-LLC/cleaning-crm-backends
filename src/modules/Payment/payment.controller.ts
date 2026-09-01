@@ -42,6 +42,24 @@ const getAllPayments = catchAsync(async (req, res) => {
   });
 });
 
+const getPaymentStats = catchAsync(async (req, res) => {
+  const filters: IPaymentFilters = {
+    searchTerm: req.query.searchTerm as string,
+    method: req.query.method as PaymentMethod,
+    status: req.query.status as PaymentStatus,
+    startDate: req.query.startDate as string,
+    endDate: req.query.endDate as string,
+    invoiceId: req.query.invoiceId as string,
+  };
+  const result = await paymentService.getPaymentStats(filters, req.user);
+  sendResponse(res, {
+    httpStatusCode: httpStatus.OK,
+    success: true,
+    message: "Payment statistics retrieved successfully",
+    data: result,
+  });
+});
+
 const getPaymentById = catchAsync(async (req, res) => {
   const result = await paymentService.getPaymentById(req.params.id as string, req.user);
 
@@ -107,6 +125,7 @@ const uploadReceipt = catchAsync(async (req, res) => {
 export const paymentController = {
   createPayment,
   getAllPayments,
+  getPaymentStats,
   getPaymentById,
   updatePayment,
   deletePayment,

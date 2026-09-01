@@ -89,6 +89,9 @@ router.post(
 /** GET /staff/ — admin lists all their staff members */
 router.get("/", checkAuth(UserRole.ADMIN), staffController.getMyStaff);
 
+/** GET /staff/lookup — lean assignee/typeahead projection */
+router.get("/lookup", checkAuth(UserRole.ADMIN), staffController.getStaffLookup);
+
 /** GET /staff/:id — admin fetches a single staff record */
 router.get("/:id", checkAuth(UserRole.ADMIN), staffController.getStaffById);
 

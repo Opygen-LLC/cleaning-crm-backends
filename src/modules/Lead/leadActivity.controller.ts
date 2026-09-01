@@ -18,6 +18,17 @@ const getFollowUps = catchAsync(async (req, res) => {
     });
 });
 
+const getFollowUpCalendar = catchAsync(async (req, res) => {
+    const result = await leadActivityService.getFollowUpCalendar(req.query, req.user);
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Follow-up calendar retrieved successfully",
+        data: result.rows,
+        meta: result.meta,
+    });
+});
+
 const getActivities = catchAsync(async (req, res) => {
     const result = await leadActivityService.getActivities(param(req.params.id), req.user);
     sendResponse(res, {
@@ -30,7 +41,7 @@ const getActivities = catchAsync(async (req, res) => {
 
 const createActivity = catchAsync(async (req, res) => {
     const result = await leadActivityService.createActivity(param(req.params.id), req.body, req.user);
-    await bumpCacheResourcesForUser(req.user, [CacheResource.leads, CacheResource.dashboard]);
+    await bumpCacheResourcesForUser(req.user, [CacheResource.leads, CacheResource.followUps, CacheResource.dashboard]);
     sendResponse(res, {
         httpStatusCode: status.CREATED,
         success: true,
@@ -46,7 +57,7 @@ const updateActivity = catchAsync(async (req, res) => {
         req.body,
         req.user,
     );
-    await bumpCacheResourcesForUser(req.user, [CacheResource.leads, CacheResource.dashboard]);
+    await bumpCacheResourcesForUser(req.user, [CacheResource.leads, CacheResource.followUps, CacheResource.dashboard]);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -61,7 +72,7 @@ const deleteActivity = catchAsync(async (req, res) => {
         param(req.params.activityId),
         req.user,
     );
-    await bumpCacheResourcesForUser(req.user, [CacheResource.leads, CacheResource.dashboard]);
+    await bumpCacheResourcesForUser(req.user, [CacheResource.leads, CacheResource.followUps, CacheResource.dashboard]);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -72,6 +83,7 @@ const deleteActivity = catchAsync(async (req, res) => {
 
 export const leadActivityController = {
     getFollowUps,
+    getFollowUpCalendar,
     getActivities,
     createActivity,
     updateActivity,

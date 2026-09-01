@@ -27,6 +27,7 @@ import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { revokeAllSessionsForUser } from "../Auth/sessionSecurity.service";
 import { invalidateRuntimeAuth } from "../../lib/cache/authRuntimeCache";
 import { normalizeOptionalE164Phone, requireE164Phone } from "../../lib/validation/phone";
+import { staffDetailSelect, staffListSelect, staffLookupSelect, staffMutationSelect } from "./staff.projection";
 
 /**
  * [Phase 2 — location-aware dispatch] Best-effort geocode of a staff
@@ -43,6 +44,17 @@ const geocodeStaffAddress = async (address: string | null | undefined) => {
         longitude: geo.longitude,
         geocodedAt: new Date(),
     };
+};
+
+const scheduleStaffGeocode = (staffId: string, address: string | null | undefined): void => {
+    if (!address) return;
+    waitUntil(
+        (async () => {
+            const geo = await geocodeStaffAddress(address);
+            if (Object.keys(geo).length === 0) return;
+            await prisma.staffProfile.update({ where: { id: staffId }, data: geo });
+        })().catch(() => undefined),
+    );
 };
 
 const validateStaffSpecialties = async (adminId: string, specialty: string[] | undefined) => {
@@ -139,11 +151,8 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser)
             : [];
 
     const StaffRole = staffRole.toUpperCase();
-    const geo = await geocodeStaffAddress(address);
 
-    let staffProfile: Prisma.StaffProfileGetPayload<{
-        include: { user: true; staffAvailability: true };
-    }>;
+    let staffProfile: Prisma.StaffProfileGetPayload<{ select: typeof staffMutationSelect }>;
 
     try {
         staffProfile = await prisma.$transaction(async (tx) => {
@@ -163,7 +172,6 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser)
                 staffRole: StaffRole,
                 mobileNumber: normalizedMobileNumber,
                 address,
-                ...geo,
                 hourlyRate,
                 startDate: new Date(startDate),
                 specialty: normalizedSpecialty,
@@ -174,7 +182,7 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser)
                     ? { create: availabilityData }
                     : undefined,
             },
-            include: { user: true, staffAvailability: true },
+            select: staffMutationSelect,
         });
         });
     } catch (provisioningError) {
@@ -192,14 +200,15 @@ const createStaff = async (payload: CreateStaffPayload, adminUser: IRequestUser)
             subject: "Staff Account Created",
             templateName: "staff-create",
             templateData: {
-                name: staffProfile.user.name,
-                email: staffProfile.user.email,
+                name,
+                email,
                 password,
                 loginUrl: `${process.env.FRONTEND_URL}/login`,
             },
         }),
     );
 
+    scheduleStaffGeocode(staffProfile.id, address);
     return staffProfile;
 };
 
@@ -253,13 +262,42 @@ const getMyStaff = async (query: IQueryParams, userReq: IRequestUser) => {
         .search()
         .filter()
         .where(extraWhere)
-        .include({ user: true, staffAvailability: true })
+        .select(staffListSelect)
         .paginate()
         .sort()
         .fields()
         .execute();
 };
 
+
+const getStaffLookup = async (query: IQueryParams, userReq: IRequestUser) => {
+    const adminId = await getAdminId(userReq);
+    const q = String(query.searchTerm ?? query.search ?? "").trim();
+    const requestedLimit = Number(query.limit ?? 20);
+    const limit = Math.min(30, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 20));
+    const statusParam = String(query.status ?? StaffStatus.ACTIVE).toUpperCase();
+
+    const where: Prisma.StaffProfileWhereInput = {
+        adminId,
+        ...(statusParam === "ALL" ? {} : { status: statusParam as StaffStatus }),
+        ...(q
+            ? {
+                  OR: [
+                      { user: { name: { contains: q, mode: "insensitive" } } },
+                      { user: { email: { contains: q, mode: "insensitive" } } },
+                      { staffRole: { contains: q, mode: "insensitive" } },
+                  ],
+              }
+            : {}),
+    };
+
+    return prisma.staffProfile.findMany({
+        where,
+        select: staffLookupSelect,
+        orderBy: [{ user: { name: "asc" } }, { id: "asc" }],
+        take: limit,
+    });
+};
 
 const getStaffById = async (id: string, userReq: IRequestUser) => {
     if (userReq.role !== UserRole.ADMIN)
@@ -269,7 +307,7 @@ const getStaffById = async (id: string, userReq: IRequestUser) => {
 
     return prisma.staffProfile.findUniqueOrThrow({
         where: { id, adminId },
-        include: { user: true, staffAvailability: true },
+        select: staffDetailSelect,
     });
 };
 
@@ -282,22 +320,23 @@ const updateStaff = async (
 
     const existing = await prisma.staffProfile.findUniqueOrThrow({
         where: { id, adminId },
+        select: { id: true, address: true },
     });
 
     const normalizedSpecialty = await validateStaffSpecialties(adminId, payload.specialty);
-    const geo =
-        payload.address !== undefined && payload.address !== existing.address
-            ? await geocodeStaffAddress(payload.address)
-            : {};
+    const addressChanged = payload.address !== undefined && payload.address !== existing.address;
 
-    return prisma.staffProfile.update({
+    const updated = await prisma.staffProfile.update({
         where: { id },
         data: {
             ...payload,
             ...(normalizedSpecialty !== undefined ? { specialty: normalizedSpecialty } : {}),
-            ...geo,
         },
+        select: staffMutationSelect,
     });
+
+    if (addressChanged) scheduleStaffGeocode(id, payload.address);
+    return updated;
 };
 
 const deleteStaff = async (id: string, adminUser: IRequestUser) => {
@@ -306,7 +345,8 @@ const deleteStaff = async (id: string, adminUser: IRequestUser) => {
     await prisma.staffProfile.findUniqueOrThrow({
         where: { id, adminId },
     });
-    return prisma.staffProfile.delete({ where: { id } });
+    const deleted = await prisma.staffProfile.delete({ where: { id }, select: { id: true } });
+    return { ...deleted, deleted: true };
 };
 
 /**
@@ -368,8 +408,8 @@ const resetStaffPassword = async (id: string, adminUser: IRequestUser) => {
             subject: "Your password has been reset",
             templateName: "staff-password-reset",
             templateData: {
-                name: staffProfile.user.name,
-                email: staffProfile.user.email,
+                name,
+                email,
                 password: newPassword,
                 loginUrl: `${process.env.FRONTEND_URL}/login`,
             },
@@ -411,10 +451,7 @@ const upsertAvailability = async (
 
     await prisma.$transaction(upserts);
 
-    return prisma.staffProfile.findUniqueOrThrow({
-        where: { id: staffId },
-        include: { user: true, staffAvailability: true },
-    });
+    return { id: staffId, updated: true };
 };
 
 const updateAvailability = async (
@@ -547,7 +584,7 @@ const updateMyProfile = async (
         emergencyMobileNumber?: string;
     },
 ) => {
-    const profile = await prisma.staffProfile.findFirst({ where: { userId } });
+    const profile = await prisma.staffProfile.findFirst({ where: { userId }, select: { id: true, address: true } });
     if (!profile)
         throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
 
@@ -567,25 +604,24 @@ const updateMyProfile = async (
             : {}),
     };
 
-    const geo =
-        profileFields.address !== undefined &&
-        profileFields.address !== profile.address
-            ? await geocodeStaffAddress(profileFields.address)
-            : {};
+    const addressChanged =
+        profileFields.address !== undefined && profileFields.address !== profile.address;
 
-    // Run user name update and profile update in parallel for speed
+    // Keep the user-facing mutation on the database hot path. External
+    // geocoding is best-effort and runs after the committed profile update.
     await Promise.all([
         name
             ? prisma.user.update({ where: { id: userId }, data: { name } })
             : Promise.resolve(),
-        Object.keys(profileFields).length > 0 || Object.keys(geo).length > 0
+        Object.keys(profileFields).length > 0
             ? prisma.staffProfile.update({
                   where: { id: profile.id },
-                  data: { ...profileFields, ...geo },
+                  data: profileFields,
               })
             : Promise.resolve(),
     ]);
 
+    if (addressChanged) scheduleStaffGeocode(profile.id, profileFields.address);
     return getMyProfile(userId);
 };
 
@@ -662,6 +698,7 @@ const updateMyAvailability = async (
 export const staffService = {
     createStaff,
     getMyStaff,
+    getStaffLookup,
     getStaffById,
     updateStaff,
     deleteStaff,

@@ -30,6 +30,16 @@ const getMyStaff = catchAsync(async (req, res) => {
     });
 });
 
+const getStaffLookup = catchAsync(async (req, res) => {
+    const result = await staffService.getStaffLookup(req.query as IQueryParams, req.user);
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Staff lookup retrieved successfully",
+        data: result,
+    });
+});
+
 const getStaffById = catchAsync(async (req, res) => {
     const result = await staffService.getStaffById(
         req.params.id as string,
@@ -179,6 +189,7 @@ const updateMyAvailability = catchAsync(async (req, res) => {
 export const staffController = {
     createStaff,
     getMyStaff,
+    getStaffLookup,
     getStaffById,
     updateStaff,
     deleteStaff,

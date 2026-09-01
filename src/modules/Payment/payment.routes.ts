@@ -27,6 +27,13 @@ router.get(
   paymentController.getAllPayments,
 );
 
+// GET /payment/stats — aggregate summary kept off the paginated list hot path
+router.get(
+  "/stats",
+  checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+  paymentController.getPaymentStats,
+);
+
 // GET /payment/:id — single payment
 router.get(
   "/:id",

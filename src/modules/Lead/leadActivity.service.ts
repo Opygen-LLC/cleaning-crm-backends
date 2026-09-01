@@ -173,6 +173,27 @@ const localMidnightToUtc = (dateKey: string, timeZone: string): Date => {
     return utc;
 };
 
+const followUpSelect = {
+    id: true,
+    leadId: true,
+    type: true,
+    status: true,
+    scheduledAt: true,
+    completedAt: true,
+    assignedToUserId: true,
+    note: true,
+    outcome: true,
+    createdAt: true,
+    updatedAt: true,
+    lead: {
+        select: {
+            id: true, leadRef: true, name: true, email: true, phone: true,
+            stage: true, serviceInterest: true,
+        },
+    },
+    assignedTo: { select: { id: true, name: true, email: true } },
+} satisfies Prisma.LeadActivitySelect;
+
 const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
     const adminId = await getAdminId(user);
     const admin = await prisma.adminProfile.findFirst({
@@ -218,37 +239,13 @@ const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
     }
 
     const page = Math.max(1, Number(query.page ?? 1) || 1);
-    const limit = Math.min(500, Math.max(1, Number(query.limit ?? 20) || 20));
+    const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20) || 20));
     const sort = query.sort === "desc" ? "desc" : "asc";
 
     const [rows, total] = await prisma.$transaction([
         prisma.leadActivity.findMany({
             where,
-            select: {
-                id: true,
-                leadId: true,
-                type: true,
-                status: true,
-                scheduledAt: true,
-                completedAt: true,
-                assignedToUserId: true,
-                note: true,
-                outcome: true,
-                createdAt: true,
-                updatedAt: true,
-                lead: {
-                    select: {
-                        id: true,
-                        leadRef: true,
-                        name: true,
-                        email: true,
-                        phone: true,
-                        stage: true,
-                        serviceInterest: true,
-                    },
-                },
-                assignedTo: { select: { id: true, name: true, email: true } },
-            },
+            select: followUpSelect,
             orderBy: [{ scheduledAt: sort }, { id: sort }],
             skip: (page - 1) * limit,
             take: limit,
@@ -267,6 +264,44 @@ const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
             businessDate: today,
             scope: query.scope ?? (query.date || query.from || query.to ? "custom" : "today"),
         },
+    };
+};
+
+const getFollowUpCalendar = async (query: Pick<FollowUpQuery, "from" | "to" | "assignedTo" | "status">, user: IRequestUser) => {
+    const adminId = await getAdminId(user);
+    const admin = await prisma.adminProfile.findFirst({
+        where: { id: adminId },
+        select: { businessHours: true },
+    });
+    if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+
+    const businessHours = admin.businessHours as { timezone?: unknown } | null;
+    const timeZone = validTimeZone(businessHours?.timezone);
+    const today = dateKeyInZone(new Date(), timeZone);
+    const where: Prisma.LeadActivityWhereInput = {
+        adminId,
+        type: "FOLLOW_UP",
+        scheduledAt: {
+            gte: localMidnightToUtc(query.from!, timeZone),
+            lt: localMidnightToUtc(addDaysToDateKey(query.to!, 1), timeZone),
+        },
+    };
+    const statusFilter = query.status ?? "PENDING";
+    if (statusFilter !== "ALL") where.status = statusFilter;
+    if (query.assignedTo) where.assignedToUserId = query.assignedTo === "me" ? user.id : query.assignedTo;
+
+    // Month/calendar reads are date-scoped and use the compact follow-up DTO.
+    // The hard cap protects a pathological tenant while avoiding a client-side `limit=500` fetch.
+    const rows = await prisma.leadActivity.findMany({
+        where,
+        select: followUpSelect,
+        orderBy: [{ scheduledAt: "asc" }, { id: "asc" }],
+        take: 1000,
+    });
+
+    return {
+        rows,
+        meta: { timezone: timeZone, businessDate: today, from: query.from!, to: query.to!, truncated: rows.length === 1000 },
     };
 };
 
@@ -384,6 +419,7 @@ const deleteActivity = async (
 
 export const leadActivityService = {
     getFollowUps,
+    getFollowUpCalendar,
     getActivities,
     createActivity,
     updateActivity,

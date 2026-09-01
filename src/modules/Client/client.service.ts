@@ -8,6 +8,7 @@ import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 import { IQueryParams } from "../../interface/query.interface";
 import { Client, Prisma } from "../../generated/prisma/client";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
+import { waitUntil } from "@vercel/functions";
 import {
     clientFilterableFields,
     clientSearchableFields,
@@ -19,6 +20,7 @@ import {
     buildAddressString,
     geocodeAddressSafely,
 } from "../../lib/utils/geocoding";
+import { clientDetailSelect, clientListSelect, clientLookupSelect, clientMutationSelect } from "./client.projection";
 
 /**
  * Geocodes the client's structured address into lat/lng. Never throws —
@@ -46,6 +48,16 @@ const geocodeClientAddress = async (address: {
     };
 };
 
+const scheduleClientGeocode = (clientId: string, address: Parameters<typeof geocodeClientAddress>[0]): void => {
+    waitUntil(
+        (async () => {
+            const geo = await geocodeClientAddress(address);
+            if (Object.keys(geo).length === 0) return;
+            await prisma.client.update({ where: { id: clientId }, data: geo });
+        })().catch(() => undefined),
+    );
+};
+
 const createClient = async (
     payload: createClientPayload,
     user: IRequestUser,
@@ -63,11 +75,7 @@ const createClient = async (
         zipcode: canonicalPostcode,
     };
 
-    // Best-effort geocode — never blocks client creation on a bad/unmatched
-    // address or a provider outage.
-    const geo = await geocodeClientAddress(dbAddress);
-
-    return await prisma.client.upsert({
+    const result = await prisma.client.upsert({
         where: {
             email_adminId: {
                 email,
@@ -78,7 +86,6 @@ const createClient = async (
             ...dbAddress,
             email,
             ...(servicePreference ? { servicePreference } : {}),
-            ...geo,
             adminId,
             notes: notes
                 ? {
@@ -91,7 +98,6 @@ const createClient = async (
         update: {
             ...dbAddress,
             ...(servicePreference ? { servicePreference } : {}),
-            ...geo,
             notes: notes
                 ? {
                       create: {
@@ -100,10 +106,11 @@ const createClient = async (
                   }
                 : undefined,
         },
-        include: {
-            notes: true,
-        },
+        select: clientMutationSelect,
     });
+
+    scheduleClientGeocode(result.id, dbAddress);
+    return result;
 };
 
 const getClients = async (query: IQueryParams, user: IRequestUser) => {
@@ -122,7 +129,7 @@ const getClients = async (query: IQueryParams, user: IRequestUser) => {
         .search()
         .filter()
         .where({ adminId })
-        .include({ notes: true })
+        .select(clientListSelect)
         .paginate()
         .sort()
         .fields()
@@ -139,34 +146,37 @@ const getClientById = async (id: string, user: IRequestUser) => {
 
     const client = await prisma.client.findUniqueOrThrow({
         where: { id, adminId },
-        include: {
-            notes: {
-                orderBy: { createdAt: "desc" },
-            },
-            bookings: {
-                orderBy: { scheduledDate: "desc" },
-                include: {
-                    // Live invoice data per booking — status, ref, and total —
-                    // so the admin profile view reflects real payment state
-                    // instead of just the booking record on its own.
-                    invoice: {
-                        select: {
-                            id: true,
-                            invoiceRef: true,
-                            status: true,
-                            total: true,
-                            dueDate: true,
-                            paidDate: true,
-                        },
-                    },
-                },
-            },
-        },
+        select: clientDetailSelect,
     });
 
-    // portalAccessToken is always included via the full select above.
-    // The admin frontend uses it to build the "Copy portal link" URL.
     return { ...client, postcode: client.zipcode ?? "" };
+};
+
+const getClientLookup = async (query: IQueryParams, user: IRequestUser) => {
+    const adminId = await getAdminId(user);
+    const q = String(query.searchTerm ?? query.search ?? "").trim();
+    const requestedLimit = Number(query.limit ?? 20);
+    const limit = Math.min(25, Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 20));
+
+    const rows = await prisma.client.findMany({
+        where: {
+            adminId,
+            ...(q
+                ? {
+                      OR: [
+                          { name: { contains: q, mode: "insensitive" } },
+                          { email: { contains: q, mode: "insensitive" } },
+                          { phone: { contains: q } },
+                      ],
+                  }
+                : {}),
+        },
+        select: clientLookupSelect,
+        orderBy: [{ name: "asc" }, { id: "asc" }],
+        take: limit,
+    });
+
+    return rows.map((client) => ({ ...client, postcode: client.zipcode ?? "" }));
 };
 
 const getClientBookingPrefill = async (id: string, user: IRequestUser) => {
@@ -217,15 +227,18 @@ const updateClient = async (
 
     const existing = await prisma.client.findUnique({
         where: { id, adminId },
+        select: {
+            id: true,
+            addressLine1: true,
+            addressLine2: true,
+            city: true,
+            zipcode: true,
+            country: true,
+        },
     });
 
-    if (!existing) {
-        throw new AppError(status.NOT_FOUND, "Client not found");
-    }
+    if (!existing) throw new AppError(status.NOT_FOUND, "Client not found");
 
-    // Only re-geocode when an address field actually changed — avoids an
-    // API call (and the tiny risk of it failing) on every unrelated edit,
-    // e.g. changing the phone number.
     const addressChanged =
         payload.addressLine1 !== undefined ||
         payload.addressLine2 !== undefined ||
@@ -234,17 +247,6 @@ const updateClient = async (
         payload.zipcode !== undefined ||
         payload.country !== undefined;
 
-    const geo = addressChanged
-        ? await geocodeClientAddress({
-              addressLine1: payload.addressLine1 ?? existing.addressLine1,
-              addressLine2:
-                  payload.addressLine2 ?? existing.addressLine2 ?? undefined,
-              city: payload.city ?? existing.city,
-              zipcode: payload.postcode ?? payload.zipcode ?? existing.zipcode,
-              country: payload.country ?? existing.country,
-          })
-        : {};
-
     const { postcode, zipcode, phone, ...restPayload } = payload;
     const updated = await prisma.client.update({
         where: { id },
@@ -252,11 +254,21 @@ const updateClient = async (
             ...restPayload,
             ...(phone !== undefined ? { phone: requireE164Phone(phone) } : {}),
             ...(postcode !== undefined || zipcode !== undefined ? { zipcode: postcode ?? zipcode } : {}),
-            ...geo,
         },
-        include: { notes: true },
+        select: clientMutationSelect,
     });
-    return { ...updated, postcode: updated.zipcode ?? "" };
+
+    if (addressChanged) {
+        scheduleClientGeocode(id, {
+            addressLine1: payload.addressLine1 ?? existing.addressLine1,
+            addressLine2: payload.addressLine2 ?? existing.addressLine2 ?? undefined,
+            city: payload.city ?? existing.city,
+            zipcode: payload.postcode ?? payload.zipcode ?? existing.zipcode,
+            country: payload.country ?? existing.country,
+        });
+    }
+
+    return updated;
 };
 
 const deleteClient = async (id: string, user: IRequestUser) => {
@@ -264,15 +276,15 @@ const deleteClient = async (id: string, user: IRequestUser) => {
 
     const existing = await prisma.client.findUnique({
         where: { id, adminId },
+        select: { id: true },
     });
 
     if (!existing) {
         throw new AppError(status.NOT_FOUND, "Client not found");
     }
 
-    return await prisma.client.delete({
-        where: { id },
-    });
+    const deleted = await prisma.client.delete({ where: { id }, select: { id: true } });
+    return { ...deleted, deleted: true };
 };
 
 // ─── Public portal ────────────────────────────────────────────────────────────
@@ -383,6 +395,7 @@ const regeneratePortalToken = async (id: string, user: IRequestUser) => {
 export const clientService = {
     createClient,
     getClients,
+    getClientLookup,
     getClientById,
     getClientBookingPrefill,
     updateClient,

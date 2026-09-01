@@ -13,6 +13,7 @@ import {
     getRuntimeUserStatus,
 } from "../lib/cache/authRuntimeCache";
 import { privateResponseCache } from "./privateResponseCache";
+import { enforcePrivateApiRateLimit } from "./privateApiRateLimit";
 import { recordTraceSpan } from "../lib/monitoring/requestTrace";
 import { AUTH_ERROR_CODES } from "../modules/Auth/auth.codes";
 
@@ -199,6 +200,7 @@ export const checkAuth =
                 adminId,
             };
 
+            await enforcePrivateApiRateLimit(req, res);
             await privateResponseCache(req, res, next);
         } catch (error) {
             next(error);
