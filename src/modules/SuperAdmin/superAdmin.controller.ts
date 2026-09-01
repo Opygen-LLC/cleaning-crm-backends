@@ -11,6 +11,20 @@ import AppError from "../../errorHelper/AppError";
 import { writeSuperAdminAudit } from "./superAdminAudit.service";
 import { TenantAdminService } from "./tenantAdmin.service";
 
+const auditMutation = async (
+    req: { user: { id: string }; body?: Record<string, unknown> },
+    action: string,
+    fallbackReason: string,
+    metadata?: Record<string, unknown>,
+    tenantAdminId?: string | null,
+) => writeSuperAdminAudit({
+    actorUserId: req.user.id,
+    tenantAdminId: tenantAdminId ?? null,
+    action,
+    reason: String(req.body?.reason ?? fallbackReason),
+    metadata,
+});
+
 // ─── Platform Stats ───────────────────────────────────────────────────────────
 
 const getPlatformStats = catchAsync(async (req, res) => {
@@ -127,7 +141,7 @@ const getAdminAccountById = catchAsync(async (req, res) => {
 const suspendAdminAccount = catchAsync(async (req, res) => {
     const result = await TenantAdminService.suspendTenant(
         req.params.adminId as string,
-        { actorUserId: req.user.id, reason: "Tenant suspended through the legacy Super Admin account endpoint." },
+        { actorUserId: req.user.id, reason: String(req.body.reason) },
     );
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -140,7 +154,7 @@ const suspendAdminAccount = catchAsync(async (req, res) => {
 const activateAdminAccount = catchAsync(async (req, res) => {
     const result = await TenantAdminService.reactivateTenant(
         req.params.adminId as string,
-        { actorUserId: req.user.id, reason: "Tenant reactivated through the legacy Super Admin account endpoint." },
+        { actorUserId: req.user.id, reason: String(req.body.reason) },
     );
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -152,6 +166,7 @@ const activateAdminAccount = catchAsync(async (req, res) => {
 
 const createAdminAccount = catchAsync(async (req, res) => {
     const result = await superAdminService.createAdminAccount(req.body);
+    await auditMutation(req, "ADMIN_ACCOUNT_CREATED", "Super Admin created a tenant administrator account.", { targetEmail: req.body.email });
     sendResponse(res, {
         httpStatusCode: status.CREATED,
         success: true,
@@ -186,6 +201,7 @@ const getSubscriptionPlanById = catchAsync(async (req, res) => {
 
 const createSubscriptionPlan = catchAsync(async (req, res) => {
     const result = await superAdminService.createSubscriptionPlan(req.body);
+    await auditMutation(req, "SUBSCRIPTION_PLAN_CREATED", "Super Admin created a subscription plan.", { planId: result.id });
     sendResponse(res, {
         httpStatusCode: status.CREATED,
         success: true,
@@ -199,6 +215,7 @@ const updateSubscriptionPlan = catchAsync(async (req, res) => {
         req.params.planId as string,
         req.body,
     );
+    await auditMutation(req, "SUBSCRIPTION_PLAN_UPDATED", "Super Admin updated a subscription plan.", { planId: req.params.planId });
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -212,6 +229,7 @@ const updatePricingTier = catchAsync(async (req, res) => {
         req.params.tierId as string,
         req.body,
     );
+    await auditMutation(req, "SUBSCRIPTION_PRICING_UPDATED", "Super Admin updated subscription pricing.", { tierId: req.params.tierId });
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -238,6 +256,7 @@ const toggleSubscriptionPlanStatus = catchAsync(async (req, res) => {
         req.params.planId as string,
         Boolean(isActive),
     );
+    await auditMutation(req, isActive ? "SUBSCRIPTION_PLAN_ACTIVATED" : "SUBSCRIPTION_PLAN_DEACTIVATED", `Super Admin ${isActive ? "activated" : "deactivated"} a subscription plan.`, { planId: req.params.planId });
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -294,6 +313,7 @@ const cancelSubscription = catchAsync(async (req, res) => {
     const result = await superAdminService.cancelSubscription(
         req.params.subscriptionId as string,
     );
+    await auditMutation(req, "SUBSCRIPTION_CANCELLED", "Subscription cancelled by Super Admin.", { subscriptionId: req.params.subscriptionId }, result.adminId);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -333,6 +353,7 @@ const refundBillingRecord = catchAsync(async (req, res) => {
     const result = await superAdminService.refundBillingRecord(
         req.params.id as string,
     );
+    await auditMutation(req, "BILLING_REFUNDED", "Billing record refunded by Super Admin.", { billingId: req.params.id });
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -357,6 +378,7 @@ const sendTrialNudge = catchAsync(async (req, res) => {
     const result = await superAdminService.sendTrialNudge(
         req.params.subscriptionId as string,
     );
+    await auditMutation(req, "TRIAL_NUDGE_SENT", "Trial reminder sent by Super Admin.", { subscriptionId: req.params.subscriptionId });
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -419,6 +441,7 @@ const grantManualPayment = catchAsync(async (req, res) => {
             periodMonths,
         },
     );
+    await auditMutation(req, "MANUAL_PAYMENT_GRANTED", note?.trim() || "Manual payment granted by Super Admin.", { subscriptionId, amount, method, transactionId, periodMonths }, (result as { adminId?: string }).adminId);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -432,6 +455,7 @@ const suspendSubscription = catchAsync(async (req, res) => {
     const result = await superAdminService.suspendSubscription(
         req.params.subscriptionId as string,
     );
+    await auditMutation(req, "SUBSCRIPTION_SUSPENDED", "Subscription suspended by Super Admin.", { subscriptionId: req.params.subscriptionId }, result.adminId);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -444,6 +468,7 @@ const reactivateSubscription = catchAsync(async (req, res) => {
     const result = await superAdminService.reactivateSubscription(
         req.params.subscriptionId as string,
     );
+    await auditMutation(req, "SUBSCRIPTION_REACTIVATED", "Subscription reactivated by Super Admin.", { subscriptionId: req.params.subscriptionId }, result.adminId);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -458,6 +483,7 @@ const extendTrial = catchAsync(async (req, res) => {
         req.params.subscriptionId as string,
         days,
     );
+    await auditMutation(req, "TRIAL_EXTENDED", "Trial extended by Super Admin.", { subscriptionId: req.params.subscriptionId, days }, result.adminId);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -497,6 +523,7 @@ const approvePaymentProof = catchAsync(async (req, res) => {
         periodMonths,
         note,
     });
+    await auditMutation(req, "PAYMENT_PROOF_APPROVED", note?.trim() || "Payment proof approved by Super Admin.", { billingId: id, periodMonths });
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -513,6 +540,7 @@ const rejectPaymentProof = catchAsync(async (req, res) => {
     const result = await superAdminService.rejectPaymentProof(id as string, {
         reason,
     });
+    await auditMutation(req, "PAYMENT_PROOF_REJECTED", String(reason), { billingId: id });
 
     sendResponse(res, {
         httpStatusCode: status.OK,

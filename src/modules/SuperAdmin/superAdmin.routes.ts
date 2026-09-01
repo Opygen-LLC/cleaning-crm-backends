@@ -116,6 +116,7 @@ router.get(
 router.patch(
     "/admin-accounts/:adminId/suspend",
     isSuperAdmin,
+    zodValidate(reasonSchema, ValidationProperty.BODY),
     superAdminController.suspendAdminAccount,
 );
 
@@ -123,6 +124,7 @@ router.patch(
 router.patch(
     "/admin-accounts/:adminId/activate",
     isSuperAdmin,
+    zodValidate(reasonSchema, ValidationProperty.BODY),
     superAdminController.activateAdminAccount,
 );
 
@@ -202,6 +204,7 @@ router.get(
 router.patch(
     "/subscriptions/:subscriptionId/cancel",
     isSuperAdmin,
+    zodValidate(reasonSchema, ValidationProperty.BODY),
     superAdminController.cancelSubscription,
 );
 
@@ -217,6 +220,7 @@ router.patch(
 router.patch(
     "/subscriptions/:subscriptionId/suspend",
     isSuperAdmin,
+    zodValidate(reasonSchema, ValidationProperty.BODY),
     superAdminController.suspendSubscription,
 );
 
@@ -224,6 +228,7 @@ router.patch(
 router.patch(
     "/subscriptions/:subscriptionId/reactivate",
     isSuperAdmin,
+    zodValidate(reasonSchema, ValidationProperty.BODY),
     superAdminController.reactivateSubscription,
 );
 
@@ -263,6 +268,7 @@ router.get(
 router.patch(
     "/billing-history/:id/refund",
     isSuperAdmin,
+    zodValidate(reasonSchema, ValidationProperty.BODY),
     superAdminController.refundBillingRecord,
 );
 
@@ -286,6 +292,7 @@ router.patch(
 router.patch(
     "/billing-history/:id/reject-proof",
     isSuperAdmin,
+    zodValidate(reasonSchema, ValidationProperty.BODY),
     superAdminController.rejectPaymentProof,
 );
 

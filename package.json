@@ -89,7 +89,12 @@
     "check:phase3-website-submissions": "node scripts/checkPhase3WebsiteSubmissions.mjs",
     "check:phase4-website-reviews": "node scripts/checkPhase4WebsiteReviews.mjs",
     "website-reviews:reconcile": "tsx src/scripts/phase4/reconcileWebsiteReviews.ts",
-    "website-reviews:reconcile:fix": "tsx src/scripts/phase4/reconcileWebsiteReviews.ts --fix"
+    "website-reviews:reconcile:fix": "tsx src/scripts/phase4/reconcileWebsiteReviews.ts --fix",
+    "data:audit:super-admin": "tsx src/scripts/phase4/superAdminDataAudit.ts --report-only",
+    "data:audit:super-admin:ci": "tsx src/scripts/phase4/superAdminDataAudit.ts --ci",
+    "test:phase4:super-admin": "vitest run src/contracts/phase4SuperAdminRegressionContract.test.ts src/contracts/phase4TenantIsolationContract.test.ts src/middlewares/checkAuth.superAdminRole.test.ts src/modules/ServiceCatalog/serviceCatalog.service.phase3.test.ts src/modules/Lead/lead.validation.phase3.test.ts src/modules/Lead/lead.service.phase3.test.ts",
+    "release:phase4": "pnpm run verify:phase4:production-gate && pnpm run generate && pnpm exec prisma validate && pnpm run typecheck && pnpm run test:phase4:super-admin && pnpm run data:audit:super-admin:ci && pnpm run build",
+    "verify:phase4:production-gate": "node scripts/phase4/verifyProductionGate.mjs"
   },
   "keywords": [],
   "author": "opygen",
