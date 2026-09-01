@@ -12,6 +12,8 @@ const {
     $queryRaw: vi.fn(),
     serviceCatalog: { findFirst: vi.fn() },
     lead: { findMany: vi.fn(), update: vi.fn(), create: vi.fn() },
+    bookingFormSubmission: { deleteMany: vi.fn() },
+    websiteSubmission: { create: vi.fn(), deleteMany: vi.fn() },
   };
   return {
     prismaMock: {
@@ -54,6 +56,7 @@ beforeEach(() => {
     adminId: "admin-1",
     formId: "estimate-form-1",
   });
+  prismaMock.tx.websiteSubmission.create.mockResolvedValue({ id: "ws-1", ref: "WS-TEST" });
   publicWebsiteMock.resolvePublicContactIntegration.mockResolvedValue({
     websiteId: "website-1",
     adminId: "admin-1",
@@ -96,7 +99,10 @@ describe("Phase 14 website acquisition integration", () => {
       WebsiteAcquisitionService.submitBooking("sparkle-cleaning", payload, "idem-booking-2"),
     ).rejects.toThrow("Booking capacity changed");
 
-    expect(prismaMock.bookingFormSubmission.deleteMany).toHaveBeenCalledWith({
+    expect(prismaMock.tx.websiteSubmission.deleteMany).toHaveBeenCalledWith({
+      where: { bookingFormSubmissionId: "submission-2" },
+    });
+    expect(prismaMock.tx.bookingFormSubmission.deleteMany).toHaveBeenCalledWith({
       where: { id: "submission-2", convertedBookingId: null },
     });
   });
@@ -121,7 +127,7 @@ describe("Phase 14 website acquisition integration", () => {
     prismaMock.tx.serviceCatalog.findFirst.mockResolvedValue({ id: "service-1", serviceName: "Deep Clean" });
     prismaMock.tx.lead.findMany.mockResolvedValue([]);
     prismaMock.tx.$queryRaw.mockResolvedValue([{ maxNumber: "41" }]);
-    prismaMock.tx.lead.create.mockResolvedValue({ leadRef: "LEAD-0042" });
+    prismaMock.tx.lead.create.mockResolvedValue({ id: "lead-42", leadRef: "LEAD-0042" });
 
     const result = await WebsiteAcquisitionService.submitContact("sparkle-cleaning", {
       name: "Jane Customer",
@@ -141,7 +147,18 @@ describe("Phase 14 website acquisition integration", () => {
         email: "jane@example.com",
       }),
     }));
-    expect(result.leadRef).toBe("LEAD-0042");
+    expect(prismaMock.tx.websiteSubmission.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        kind: "CONTACT",
+        adminId: "admin-1",
+        websiteId: "website-1",
+        leadId: "lead-42",
+        serviceCatalogId: "service-1",
+        email: "jane@example.com",
+        summary: "Please call me",
+      }),
+    }));
+    expect(result).toMatchObject({ leadRef: "LEAD-0042", submissionRef: "WS-TEST" });
   });
 
   it("merges a website enquiry by normalized phone when the email is new", async () => {
@@ -155,7 +172,7 @@ describe("Phase 14 website acquisition integration", () => {
       notes: null,
       createdAt: new Date("2026-01-01"),
     }]);
-    prismaMock.tx.lead.update.mockResolvedValue({ leadRef: "LEAD-0007" });
+    prismaMock.tx.lead.update.mockResolvedValue({ id: "lead-1", leadRef: "LEAD-0007" });
 
     const result = await WebsiteAcquisitionService.submitContact("sparkle-cleaning", {
       name: "Jane Customer",
@@ -176,7 +193,34 @@ describe("Phase 14 website acquisition integration", () => {
         sourceWebsiteId: "website-1",
       }),
     }));
-    expect(result).toMatchObject({ leadRef: "LEAD-0007", merged: true });
+    expect(prismaMock.tx.websiteSubmission.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ leadId: "lead-1", kind: "CONTACT", summary: "Please arrange a weekly cleaning visit." }),
+    }));
+    expect(result).toMatchObject({ leadRef: "LEAD-0007", submissionRef: "WS-TEST", merged: true });
+  });
+
+  it("preserves repeated contact events even when they merge into the same lead", async () => {
+    prismaMock.tx.serviceCatalog.findFirst.mockResolvedValue(null);
+    prismaMock.tx.lead.findMany.mockResolvedValue([{
+      id: "lead-1", email: "jane@example.com", phone: "+441234567890", sourceRef: "Website",
+      sourceWebsiteId: "website-1", notes: null, createdAt: new Date("2026-01-01"),
+    }]);
+    prismaMock.tx.lead.update.mockResolvedValue({ id: "lead-1", leadRef: "LEAD-0007" });
+    prismaMock.tx.websiteSubmission.create
+      .mockResolvedValueOnce({ id: "ws-1", ref: "WS-FIRST" })
+      .mockResolvedValueOnce({ id: "ws-2", ref: "WS-SECOND" });
+
+    const first = await WebsiteAcquisitionService.submitContact("sparkle-cleaning", {
+      name: "Jane Customer", email: "jane@example.com", phone: "+441234567890", message: "First website enquiry message.",
+    });
+    const second = await WebsiteAcquisitionService.submitContact("sparkle-cleaning", {
+      name: "Jane Customer", email: "jane@example.com", phone: "+441234567890", message: "Second website enquiry message.",
+    });
+
+    expect(prismaMock.tx.lead.update).toHaveBeenCalledTimes(2);
+    expect(prismaMock.tx.websiteSubmission.create).toHaveBeenCalledTimes(2);
+    expect(first.submissionRef).toBe("WS-FIRST");
+    expect(second.submissionRef).toBe("WS-SECOND");
   });
 
 });

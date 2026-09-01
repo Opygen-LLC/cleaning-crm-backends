@@ -18,6 +18,7 @@ import { randomBytes } from "crypto";
 import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/canonicalProjection";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { normalizePhoneToE164 } from "../../lib/utils/normalizePhone";
+import { ensureEstimateWebsiteSubmission, syncEstimateWebsiteSubmissionStatus } from "../Website/websiteSubmission.service";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -705,13 +706,17 @@ const updateSubmissionStatus = async (
     });
     if (!submission) throw new AppError(status.NOT_FOUND, "Submission not found");
 
-    return prisma.estimateFormSubmission.update({
-        where: { id: submissionId },
-        data:  { status: newStatus },
-        include: {
-            form: { select: { headline: true } },
-            serviceCatalog: { select: { id: true, serviceName: true, duration: true, basePrice: true } },
-        },
+    return prisma.$transaction(async (tx) => {
+        const updated = await tx.estimateFormSubmission.update({
+            where: { id: submissionId },
+            data:  { status: newStatus },
+            include: {
+                form: { select: { headline: true } },
+                serviceCatalog: { select: { id: true, serviceName: true, duration: true, basePrice: true } },
+            },
+        });
+        await syncEstimateWebsiteSubmissionStatus(tx, submissionId, newStatus);
+        return updated;
     });
 };
 
@@ -996,9 +1001,12 @@ const submitPublicEstimateFormFor = async (
             const idempotencyLockKey = `estimate-idempotency:${form.id}:${idempotencyKey}`;
             await acquireExtendedTextTransactionAdvisoryLock(tx, idempotencyLockKey);
             const existing = await tx.estimateFormSubmission.findFirst({ where: { formId: form.id, idempotencyKey } });
-            if (existing) return existing;
+            if (existing) {
+                await ensureEstimateWebsiteSubmission(tx, existing, form.adminId);
+                return existing;
+            }
         }
-        return tx.estimateFormSubmission.create({
+        const created = await tx.estimateFormSubmission.create({
             data: {
                 ref: generateSubmissionRef(), formId: form.id,
                 serviceCatalogId: canonicalService.serviceCatalogId,
@@ -1017,6 +1025,8 @@ const submitPublicEstimateFormFor = async (
                 pricingSnapshot: pricingSnapshot as unknown as Prisma.InputJsonValue,
             },
         });
+        await ensureEstimateWebsiteSubmission(tx, created, form.adminId);
+        return created;
     });
 
     return {

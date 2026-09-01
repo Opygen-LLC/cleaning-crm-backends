@@ -23,6 +23,8 @@ import { RELEASE_VERSION } from "../../config/ENV";
 import { recordProductReliabilitySignal } from "../../lib/monitoring/productReliabilityMetrics";
 import { WebsiteGoogleAnalyticsService } from "./websiteGoogleAnalytics.service";
 import { recordWebsitePublishAttempt, recordWebsitePublishResult } from "../../lib/monitoring/operationalMetrics";
+import { WebsiteSubmissionService } from "./websiteSubmission.service";
+import { WebsiteSubmissionKind, WebsiteSubmissionStatus } from "../../generated/prisma/enums";
 
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
@@ -366,6 +368,39 @@ const reportPublicWebsiteError = catchAsync(async (req, res) => {
   return sendResponse(res, { httpStatusCode: status.ACCEPTED, success: true, message: "Error report accepted", data: { accepted: true } });
 });
 
+const listWebsiteSubmissions = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  const page = Number(paramStr(req.query.page as string | string[] | undefined) || "1");
+  const limit = Number(paramStr(req.query.limit as string | string[] | undefined) || "20");
+  const kind = paramStr(req.query.kind as string | string[] | undefined) as WebsiteSubmissionKind | "";
+  const submissionStatus = paramStr(req.query.status as string | string[] | undefined) as WebsiteSubmissionStatus | "";
+  const search = paramStr(req.query.search as string | string[] | undefined) || undefined;
+  return ok(
+    res,
+    "Website submissions retrieved successfully",
+    await WebsiteSubmissionService.listWebsiteSubmissions({
+      page,
+      limit,
+      ...(kind ? { kind } : {}),
+      ...(submissionStatus ? { status: submissionStatus } : {}),
+      ...(search ? { search } : {}),
+    }, req.user),
+  );
+});
+
+const updateWebsiteSubmissionStatus = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return ok(
+    res,
+    "Website submission status updated successfully",
+    await WebsiteSubmissionService.updateWebsiteSubmissionStatus(
+      paramStr(req.params.submissionId),
+      req.body.status,
+      req.user,
+    ),
+  );
+});
+
 const getPublicWebsiteById = catchAsync(async (req, res) => {
   const data = await PublicWebsiteService.getPublicWebsiteById(paramStr(req.params.websiteId));
   // This endpoint is used by the Next.js server after the edge host resolver
@@ -436,6 +471,8 @@ export const websiteController = {
   submitPublicWebsiteEstimate,
   submitPublicWebsiteContact,
   reportPublicWebsiteError,
+  listWebsiteSubmissions,
+  updateWebsiteSubmissionStatus,
   getPublicWebsiteById,
   getPublicWebsite,
 };

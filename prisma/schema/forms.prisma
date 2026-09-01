@@ -106,6 +106,7 @@ model BookingFormSubmission {
   serviceCatalog ServiceCatalog?   @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
   convertedBooking Booking?         @relation("BookingFormSubmissionConversion", fields: [convertedBookingId], references: [id], onDelete: SetNull)
   sourceWebsite BusinessWebsite?    @relation("WebsiteAcquisitionBookingSubmission", fields: [sourceWebsiteId], references: [id], onDelete: SetNull)
+  websiteSubmission WebsiteSubmission?
 
   @@index([formId, status])
   @@index([serviceCatalogId])
@@ -220,6 +221,7 @@ model EstimateFormSubmission {
   form        EstimateForm             @relation(fields: [formId], references: [id], onDelete: Cascade)
   serviceCatalog ServiceCatalog?       @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
   sourceWebsite BusinessWebsite?        @relation("WebsiteAcquisitionEstimateSubmission", fields: [sourceWebsiteId], references: [id], onDelete: SetNull)
+  websiteSubmission WebsiteSubmission?
 
   @@index([formId, status])
   @@index([serviceCatalogId])

@@ -387,3 +387,32 @@ export const estimateSubmissionExportSelect = {
   formId: true,
   createdAt: true,
 } as const;
+
+export const websiteSubmissionExportSelect = {
+  id: true,
+  ref: true,
+  kind: true,
+  status: true,
+  websiteId: true,
+  serviceCatalogId: true,
+  serviceNameSnapshot: true,
+  name: true,
+  email: true,
+  phone: true,
+  summary: true,
+  leadId: true,
+  bookingFormSubmissionId: true,
+  estimateFormSubmissionId: true,
+  createdAt: true,
+  updatedAt: true,
+  website: { select: { subdomain: true } },
+  lead: { select: { leadRef: true } },
+  bookingFormSubmission: {
+    select: {
+      ref: true,
+      convertedBookingId: true,
+      convertedBooking: { select: { bookingRef: true } },
+    },
+  },
+  estimateFormSubmission: { select: { ref: true } },
+} as const;

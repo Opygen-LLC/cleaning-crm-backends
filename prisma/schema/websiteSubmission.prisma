@@ -1,0 +1,40 @@
+model WebsiteSubmission {
+  id                      String                  @id @default(uuid())
+  ref                     String                  @unique
+  kind                    WebsiteSubmissionKind
+  status                  WebsiteSubmissionStatus @default(NEW)
+
+  adminId                 String
+  websiteId               String
+  serviceCatalogId        String?
+  serviceNameSnapshot     String?
+
+  name                    String
+  email                   String
+  phone                   String?
+  summary                 String                  @db.Text
+
+  // CONTACT submissions may intentionally share one Lead after CRM dedupe.
+  leadId                  String?
+  // BOOKING / ESTIMATE envelopes are one-to-one with the native form record.
+  bookingFormSubmissionId String?                 @unique
+  estimateFormSubmissionId String?                @unique
+
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+
+  admin                   AdminProfile            @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  website                 BusinessWebsite         @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  serviceCatalog          ServiceCatalog?         @relation(fields: [serviceCatalogId], references: [id], onDelete: SetNull)
+  lead                    Lead?                   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  bookingFormSubmission   BookingFormSubmission?  @relation(fields: [bookingFormSubmissionId], references: [id], onDelete: SetNull)
+  estimateFormSubmission  EstimateFormSubmission? @relation(fields: [estimateFormSubmissionId], references: [id], onDelete: SetNull)
+
+  @@index([adminId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([adminId, kind, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([adminId, status, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([websiteId, createdAt(sort: Desc)])
+  @@index([serviceCatalogId, createdAt(sort: Desc)])
+  @@index([leadId, createdAt(sort: Desc)])
+  @@map("website_submission")
+}

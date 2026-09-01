@@ -22,6 +22,7 @@ import {
   quoteExportSelect,
   serviceExportSelect,
   staffExportSelect,
+  websiteSubmissionExportSelect,
 } from "./dataExport.projections";
 
 const CHUNK_SIZE = 500;
@@ -273,41 +274,40 @@ const loadSection = async (section: DataExportSection, adminId: string): Promise
       })) };
     }
     case "websiteSubmissions": {
-      const [bookingRows, estimateRows] = await Promise.all([
-        collectById((cursor, take) => prisma.bookingFormSubmission.findMany({
-          where: { form: { adminId } }, select: bookingSubmissionExportSelect, orderBy: { id: "asc" }, take,
-          ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-        })),
-        collectById((cursor, take) => prisma.estimateFormSubmission.findMany({
-          where: { form: { adminId } }, select: estimateSubmissionExportSelect, orderBy: { id: "asc" }, take,
-          ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-        })),
-      ]);
-      const rows: ExportRow[] = [
-        ...bookingRows.map((r) => ({
-          Type: "Booking", "Submission ID": r.id, Ref: r.ref, Status: r.status, "Form ID": r.formId,
-          "Source Website ID": r.sourceWebsiteId, Source: r.source, "Source Page": r.sourcePage,
-          "UTM Source": r.utmSource, "UTM Campaign": r.utmCampaign, "Service Catalog ID": r.serviceCatalogId,
-          "Legacy Service Type": r.serviceType, Service: r.serviceNameSnapshot, "Price Snapshot": decimal(r.priceSnapshot),
-          "Duration Snapshot": r.durationSnapshot, "Add-on IDs": r.addOnIds.join("; "), "Add-on Snapshot": json(r.addOnSnapshot),
-          "Total Snapshot": decimal(r.totalSnapshot), Name: r.name, Email: r.email, Phone: r.phone, Address: r.address,
-          "Requested Date": r.date, "Time Slot": r.timeSlot, "Property Type": r.propertyType,
-          Bedrooms: r.bedrooms, Bathrooms: r.bathrooms, Notes: r.notes, Answers: json(r.answers),
-          "Converted Booking ID": r.convertedBookingId, "Converted At": r.convertedAt, Submitted: r.createdAt,
-        })),
-        ...estimateRows.map((r) => ({
-          Type: "Estimate", "Submission ID": r.id, Ref: r.ref, Status: r.status, "Form ID": r.formId,
-          "Source Website ID": r.sourceWebsiteId, "Service Catalog ID": r.serviceCatalogId,
-          "Legacy Service Type": r.serviceType, Service: r.serviceNameSnapshot, "Price Snapshot": decimal(r.priceSnapshot),
-          "Duration Snapshot": r.durationSnapshot, "Add-on IDs": r.addOnIds.join("; "), "Pricing Snapshot": json(r.pricingSnapshot),
-          Name: r.name, Email: r.email, Phone: r.phone,
-          Postcode: r.postcode, City: r.city, Bedrooms: r.bedrooms, Bathrooms: r.bathrooms, Notes: r.notes,
-          Answers: json(r.answers), "Estimated Min": decimal(r.estimatedMin), "Estimated Max": decimal(r.estimatedMax),
+      const rows = await collectById((cursor, take) => prisma.websiteSubmission.findMany({
+        where: { adminId },
+        select: websiteSubmissionExportSelect,
+        orderBy: { id: "asc" },
+        take,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      }));
+      return {
+        name: "Website Submissions",
+        rows: rows.map((r) => ({
+          Type: r.kind,
+          "Submission ID": r.id,
+          Ref: r.ref,
+          Status: r.status,
+          "Website ID": r.websiteId,
+          Website: r.website.subdomain,
+          "Service Catalog ID": r.serviceCatalogId,
+          Service: r.serviceNameSnapshot,
+          Name: r.name,
+          Email: r.email,
+          Phone: r.phone,
+          Summary: r.summary,
+          "Lead ID": r.leadId,
+          "Lead Ref": r.lead?.leadRef ?? "",
+          "Booking Submission ID": r.bookingFormSubmissionId,
+          "Booking Submission Ref": r.bookingFormSubmission?.ref ?? "",
+          "Converted Booking ID": r.bookingFormSubmission?.convertedBookingId ?? "",
+          "Converted Booking Ref": r.bookingFormSubmission?.convertedBooking?.bookingRef ?? "",
+          "Estimate Submission ID": r.estimateFormSubmissionId,
+          "Estimate Submission Ref": r.estimateFormSubmission?.ref ?? "",
           Submitted: r.createdAt,
+          Updated: r.updatedAt,
         })),
-      ];
-      rows.sort((a, b) => new Date(String(a.Submitted)).getTime() - new Date(String(b.Submitted)).getTime());
-      return { name: "Website Submissions", rows };
+      };
     }
   }
 };

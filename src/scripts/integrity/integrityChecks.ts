@@ -466,6 +466,36 @@ const checks: Check[] = [
     sql: Prisma.sql`SELECT sub.id, f."adminId", w."adminId" AS "relatedAdminId", sub."sourceWebsiteId" AS "relationId" FROM "estimate_form_submission" sub JOIN "estimate_form" f ON f.id = sub."formId" JOIN "business_website" w ON w.id = sub."sourceWebsiteId" WHERE f."adminId" <> w."adminId"`,
   },
   {
+    code: "WEBSITE_SUBMISSION_WEBSITE_CROSS_TENANT",
+    severity: "P0", category: "tenant", entity: "WebsiteSubmission",
+    description: "Website submission owner does not match its source website owner.",
+    sql: Prisma.sql`SELECT ws.id, ws."adminId", w."adminId" AS "relatedAdminId", ws."websiteId" AS "relationId" FROM "website_submission" ws JOIN "business_website" w ON w.id = ws."websiteId" WHERE ws."adminId" <> w."adminId"`,
+  },
+  {
+    code: "WEBSITE_SUBMISSION_SERVICE_CROSS_TENANT",
+    severity: "P0", category: "tenant", entity: "WebsiteSubmission",
+    description: "Website submission references another tenant's service.",
+    sql: Prisma.sql`SELECT ws.id, ws."adminId", s."adminId" AS "relatedAdminId", ws."serviceCatalogId" AS "relationId" FROM "website_submission" ws JOIN "service_catalog" s ON s.id = ws."serviceCatalogId" WHERE ws."adminId" <> s."adminId"`,
+  },
+  {
+    code: "WEBSITE_SUBMISSION_LEAD_CROSS_TENANT",
+    severity: "P0", category: "tenant", entity: "WebsiteSubmission",
+    description: "Website submission references another tenant's lead.",
+    sql: Prisma.sql`SELECT ws.id, ws."adminId", l."adminId" AS "relatedAdminId", ws."leadId" AS "relationId" FROM "website_submission" ws JOIN "lead" l ON l.id = ws."leadId" WHERE ws."adminId" <> l."adminId"`,
+  },
+  {
+    code: "WEBSITE_SUBMISSION_BOOKING_CROSS_TENANT",
+    severity: "P0", category: "tenant", entity: "WebsiteSubmission",
+    description: "Website submission booking request belongs to another tenant.",
+    sql: Prisma.sql`SELECT ws.id, ws."adminId", f."adminId" AS "relatedAdminId", ws."bookingFormSubmissionId" AS "relationId" FROM "website_submission" ws JOIN "booking_form_submission" b ON b.id = ws."bookingFormSubmissionId" JOIN "booking_form" f ON f.id = b."formId" WHERE ws."adminId" <> f."adminId"`,
+  },
+  {
+    code: "WEBSITE_SUBMISSION_ESTIMATE_CROSS_TENANT",
+    severity: "P0", category: "tenant", entity: "WebsiteSubmission",
+    description: "Website submission estimate request belongs to another tenant.",
+    sql: Prisma.sql`SELECT ws.id, ws."adminId", f."adminId" AS "relatedAdminId", ws."estimateFormSubmissionId" AS "relationId" FROM "website_submission" ws JOIN "estimate_form_submission" e ON e.id = ws."estimateFormSubmissionId" JOIN "estimate_form" f ON f.id = e."formId" WHERE ws."adminId" <> f."adminId"`,
+  },
+  {
     code: "CHECKLIST_TEMPLATE_SERVICE_CROSS_TENANT",
     severity: "P0", category: "tenant", entity: "ChecklistTemplate",
     description: "Checklist template references another tenant's service.",

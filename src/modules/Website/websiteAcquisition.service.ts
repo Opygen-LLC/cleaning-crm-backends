@@ -9,6 +9,7 @@ import { bookingService } from "../Booking/booking.service";
 import { estimateFormService } from "../EstimateForm/estimateForm.service";
 import { allocateLeadRef } from "../Lead/leadRef.service";
 import { normalizePhoneToE164 } from "../../lib/utils/normalizePhone";
+import { createContactWebsiteSubmission } from "./websiteSubmission.service";
 
 export interface PublicWebsiteContactPayload {
   name: string;
@@ -69,8 +70,13 @@ const submitBooking = async (
     // consumes capacity if canonical Booking creation fails (for example a
     // plan limit or transient database failure). Converted rows are protected
     // by convertedBookingId and are never deleted here.
-    await prisma.bookingFormSubmission.deleteMany({
-      where: { id: submission.id, convertedBookingId: null },
+    await prisma.$transaction(async (tx) => {
+      await tx.websiteSubmission.deleteMany({
+        where: { bookingFormSubmissionId: submission.id },
+      });
+      await tx.bookingFormSubmission.deleteMany({
+        where: { id: submission.id, convertedBookingId: null },
+      });
     }).catch(() => undefined);
     throw cause;
   }
@@ -196,9 +202,20 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
             : {}),
           notes: appendBoundedNote(existing.notes, note),
         },
-        select: { leadRef: true },
+        select: { id: true, leadRef: true },
       });
-      return { accepted: true, leadRef: updated.leadRef, merged: true, _websiteId: integration.websiteId };
+      const websiteSubmission = await createContactWebsiteSubmission(tx, {
+        adminId: integration.adminId,
+        websiteId: integration.websiteId,
+        serviceCatalogId: service?.id ?? null,
+        serviceNameSnapshot: service?.serviceName ?? null,
+        name,
+        email,
+        phone,
+        message,
+        leadId: updated.id,
+      });
+      return { accepted: true, leadRef: updated.leadRef, submissionRef: websiteSubmission.ref, merged: true, _websiteId: integration.websiteId };
     }
 
     const leadRef = await allocateLeadRef(tx);
@@ -217,10 +234,21 @@ const submitContact = async (identifier: string, payload: PublicWebsiteContactPa
         sourceWebsiteId: integration.websiteId,
         adminId: integration.adminId,
       },
-      select: { leadRef: true },
+      select: { id: true, leadRef: true },
+    });
+    const websiteSubmission = await createContactWebsiteSubmission(tx, {
+      adminId: integration.adminId,
+      websiteId: integration.websiteId,
+      serviceCatalogId: service?.id ?? null,
+      serviceNameSnapshot: service?.serviceName ?? null,
+      name,
+      email,
+      phone,
+      message,
+      leadId: created.id,
     });
 
-    return { accepted: true, leadRef: created.leadRef, merged: false, _websiteId: integration.websiteId };
+    return { accepted: true, leadRef: created.leadRef, submissionRef: websiteSubmission.ref, merged: false, _websiteId: integration.websiteId };
   });
 };
 

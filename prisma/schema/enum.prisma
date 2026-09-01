@@ -369,6 +369,19 @@ enum FormSubmissionStatus {
   DECLINED
 }
 
+enum WebsiteSubmissionKind {
+  CONTACT
+  BOOKING
+  ESTIMATE
+}
+
+enum WebsiteSubmissionStatus {
+  NEW
+  REVIEWED
+  CONVERTED
+  DISMISSED
+}
+
 enum EstimateSubmissionStatus {
   NEW
   QUOTED

@@ -144,6 +144,18 @@ const configureWebsiteBooking = z.object({
   ctaLabel: z.string().trim().min(1).max(40).optional(),
 }).strict();
 
+const websiteSubmissionQuery = z.object({
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  kind: z.enum(["CONTACT", "BOOKING", "ESTIMATE"]).optional(),
+  status: z.enum(["NEW", "REVIEWED", "CONVERTED", "DISMISSED"]).optional(),
+  search: z.string().trim().max(160).optional(),
+}).strict();
+
+const websiteSubmissionStatus = z.object({
+  status: z.enum(["NEW", "REVIEWED", "DISMISSED"]),
+}).strict();
+
 const publicContact = z.object({
   name: z.string().trim().min(2, "Name must be at least 2 characters").max(120),
   email: z.string().trim().toLowerCase().email("Invalid email address").max(254),
@@ -172,4 +184,6 @@ export const websiteValidation = {
   configureWebsiteBooking,
   publicContact,
   publicClientError,
+  websiteSubmissionQuery,
+  websiteSubmissionStatus,
 };

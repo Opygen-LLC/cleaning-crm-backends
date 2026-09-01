@@ -25,6 +25,16 @@ router.get("/me", websiteController.getWebsite);
 router.get("/editor", zodValidate(websiteValidation.editorSurfaceQuery, ValidationProperty.QUERY), websiteController.getWebsiteEditor);
 router.get("/studio/overview", websiteController.getStudioOverview);
 router.get("/studio", websiteController.getStudio);
+router.get(
+  "/submissions",
+  zodValidate(websiteValidation.websiteSubmissionQuery, ValidationProperty.QUERY),
+  websiteController.listWebsiteSubmissions,
+);
+router.patch(
+  "/submissions/:submissionId/status",
+  zodValidate(websiteValidation.websiteSubmissionStatus, ValidationProperty.BODY),
+  websiteController.updateWebsiteSubmissionStatus,
+);
 router.get("/booking-setup", websiteController.getWebsiteBookingSetup);
 router.put(
   "/booking-setup",

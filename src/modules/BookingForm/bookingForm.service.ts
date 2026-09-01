@@ -13,6 +13,7 @@ import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache
 import { cacheBookingForm, getCachedBookingForm, invalidateBookingForm, invalidateBookingFormsForAdmin } from "./bookingForm.cache";
 import { buildBookingSubmissionAttribution } from "./bookingSubmissionAttribution";
 import { requireE164Phone } from "../../lib/validation/phone";
+import { ensureBookingWebsiteSubmission, syncBookingWebsiteSubmissionStatus } from "../Website/websiteSubmission.service";
 
 type PublicBookingAddOn = { id: string; name: string; price: number };
 
@@ -627,18 +628,24 @@ const updateSubmissionStatus = async (
                 );
             }
 
-            return tx.bookingFormSubmission.update({
+            const updated = await tx.bookingFormSubmission.update({
                 where: { id: submissionId },
                 data: { status: newStatus },
                 include: { form: { select: { headline: true } } },
             });
+            await syncBookingWebsiteSubmissionStatus(tx, submissionId, newStatus);
+            return updated;
         });
     }
 
-    return prisma.bookingFormSubmission.update({
-        where: { id: submissionId },
-        data:  { status: newStatus },
-        include: { form: { select: { headline: true } } },
+    return prisma.$transaction(async (tx) => {
+        const updated = await tx.bookingFormSubmission.update({
+            where: { id: submissionId },
+            data:  { status: newStatus },
+            include: { form: { select: { headline: true } } },
+        });
+        await syncBookingWebsiteSubmissionStatus(tx, submissionId, newStatus);
+        return updated;
     });
 };
 
@@ -1016,7 +1023,10 @@ const submitPublicBookingFormBySelector = async (
             const existing = await tx.bookingFormSubmission.findFirst({
                 where: { formId: form.id, idempotencyKey },
             });
-            if (existing) return existing;
+            if (existing) {
+                await ensureBookingWebsiteSubmission(tx, existing, form.adminId);
+                return existing;
+            }
         }
 
         await acquireExtendedTextTransactionAdvisoryLock(tx, slotLockKey);
@@ -1061,7 +1071,7 @@ const submitPublicBookingFormBySelector = async (
             );
         }
 
-        return tx.bookingFormSubmission.create({
+        const created = await tx.bookingFormSubmission.create({
             data: {
                 ref: generateSubmissionRef(),
                 formId: form.id,
@@ -1090,6 +1100,8 @@ const submitPublicBookingFormBySelector = async (
                 answers: customAnswers as Prisma.InputJsonValue,
             },
         });
+        await ensureBookingWebsiteSubmission(tx, created, form.adminId);
+        return created;
     });
 };
 

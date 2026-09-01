@@ -13,6 +13,7 @@ import { allocateLeadRef } from "./leadRef.service";
 import { requireE164Phone } from "../../lib/validation/phone";
 import { ensureLeadActivityAssignee } from "./leadActivity.service";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { syncLeadWebsiteSubmissionsConverted } from "../Website/websiteSubmission.service";
 import { leadDetailSelect, leadListSelect, leadMutationSelect } from "./lead.projection";
 
 // ─── Resolve admin profile ────────────────────────────────────────────────────
@@ -484,6 +485,7 @@ const convertLeadToClient = async (id: string, user: IRequestUser) => {
                 convertedAt,
             },
         });
+        await syncLeadWebsiteSubmissionsConverted(tx, lead.id);
 
         await tx.leadActivity.create({
             data: {

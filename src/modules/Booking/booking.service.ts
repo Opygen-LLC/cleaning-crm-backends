@@ -21,6 +21,7 @@ import {
 import { IRequestUser } from "../../types/requestUser.interface";
 import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
 import { requireE164Phone } from "../../lib/validation/phone";
+import { syncBookingWebsiteSubmissionStatus } from "../Website/websiteSubmission.service";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
@@ -487,6 +488,7 @@ const convertBookingFormSubmissionForAdmin = async (
         durationSnapshot: submission.durationSnapshot ?? catalog?.duration ?? null,
       },
     });
+    await syncBookingWebsiteSubmissionStatus(tx, submission.id, FormSubmissionStatus.CONVERTED);
 
     return { booking, alreadyConverted: false };
   });
