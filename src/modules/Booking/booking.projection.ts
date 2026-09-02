@@ -17,7 +17,14 @@ export const bookingListSelect = {
   quoteId: true,
   createdAt: true,
   client: {
-    select: { id: true, name: true, email: true, phone: true, latitude: true, longitude: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      latitude: true,
+      longitude: true,
+    },
   },
   staffAssignments: {
     select: {
@@ -33,6 +40,14 @@ export const bookingListSelect = {
   job: { select: { id: true, jobRef: true, status: true } },
   quote: { select: { id: true, quoteRef: true } },
   serviceCatalog: { select: { id: true, serviceName: true } },
+  sourceBookingFormSubmission: {
+    select: {
+      id: true,
+      ref: true,
+      source: true,
+      sourcePage: true,
+    },
+  },
 } satisfies Prisma.BookingSelect;
 
 export const bookingDetailSelect = {

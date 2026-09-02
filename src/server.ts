@@ -41,7 +41,10 @@ import { getAuthenticatedOrigins } from "./config/authSecurity";
 import { browserOriginGuard } from "./middlewares/browserOriginGuard";
 import { getRedisCircuitSnapshot } from "./config/redis";
 import { AUTH_ERROR_CODES } from "./modules/Auth/auth.codes";
-import { getDatabasePoolSnapshot, probeDatabaseConnection } from "./lib/prisma/prisma";
+import {
+  getDatabasePoolSnapshot,
+  probeDatabaseConnection,
+} from "./lib/prisma/prisma";
 import { getEmailOutboxHealth } from "./lib/monitoring/emailOutboxHealth";
 import { getOperationalHealthSnapshot } from "./lib/monitoring/operationalHealth";
 import { isTenantPublicApiPath } from "./lib/security/tenantPublicApiPolicy";
@@ -54,12 +57,10 @@ const app = express();
 // proxy, which sets X-Forwarded-For; trust exactly one hop there so
 // express-rate-limit can resolve the real client IP without emitting its
 // ERR_ERL_UNEXPECTED_X_FORWARDED_FOR validation error.
-const effectiveTrustProxyHops = TRUST_PROXY_HOPS > 0
-  ? TRUST_PROXY_HOPS
-  : NODE_ENV !== "production"
-    ? 1
-    : 0;
-if (effectiveTrustProxyHops > 0) app.set("trust proxy", effectiveTrustProxyHops);
+const effectiveTrustProxyHops =
+  TRUST_PROXY_HOPS > 0 ? TRUST_PROXY_HOPS : NODE_ENV !== "production" ? 1 : 0;
+if (effectiveTrustProxyHops > 0)
+  app.set("trust proxy", effectiveTrustProxyHops);
 
 // Assign a correlation ID before any parser/CORS/router work so even early
 // failures can be traced from the browser to server logs.
@@ -87,11 +88,29 @@ const allowedOrigins = getAuthenticatedOrigins();
 const authenticatedCors = cors({
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: [
-    "Content-Type", "Authorization", "Cookie", "X-Requested-With", "Accept",
-    "Origin", "Idempotency-Key", "X-Form-Started-At", "X-Turnstile-Token",
-    "X-Request-Id", "X-Trace-Id", "Traceparent", "X-CSRF-Protection",
+    "Content-Type",
+    "Authorization",
+    "Cookie",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+    "Idempotency-Key",
+    "X-Form-Started-At",
+    "X-Turnstile-Token",
+    "X-Request-Id",
+    "X-Trace-Id",
+    "Traceparent",
+    "X-CSRF-Protection",
   ],
-  exposedHeaders: ["Content-Disposition", "X-Request-Id", "X-Trace-Id", "X-Response-Time", "Server-Timing", "X-Bootstrap-Schema-Version", "X-Release-Sha"],
+  exposedHeaders: [
+    "Content-Disposition",
+    "X-Request-Id",
+    "X-Trace-Id",
+    "X-Response-Time",
+    "Server-Timing",
+    "X-Bootstrap-Schema-Version",
+    "X-Release-Sha",
+  ],
   origin: true,
   credentials: true,
 });
@@ -102,17 +121,32 @@ const authenticatedCors = cors({
 const tenantPublicApiCors = cors({
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: [
-    "Content-Type", "Accept", "Origin", "Idempotency-Key",
-    "X-Form-Started-At", "X-Turnstile-Token", "X-Request-Id",
-    "X-Trace-Id", "Traceparent",
+    "Content-Type",
+    "Accept",
+    "Origin",
+    "Idempotency-Key",
+    "X-Form-Started-At",
+    "X-Turnstile-Token",
+    "X-Request-Id",
+    "X-Trace-Id",
+    "Traceparent",
   ],
-  exposedHeaders: ["X-Request-Id", "X-Trace-Id", "X-Response-Time", "Server-Timing", "X-Website-Resolver-Source", "X-Bootstrap-Schema-Version", "X-Release-Sha"],
+  exposedHeaders: [
+    "X-Request-Id",
+    "X-Trace-Id",
+    "X-Response-Time",
+    "Server-Timing",
+    "X-Website-Resolver-Source",
+    "X-Bootstrap-Schema-Version",
+    "X-Release-Sha",
+  ],
   origin: true,
   credentials: false,
 });
 
-
-const isAllowedPublicWebsiteOrigin = async (origin: string): Promise<boolean> => {
+const isAllowedPublicWebsiteOrigin = async (
+  origin: string,
+): Promise<boolean> => {
   let url: URL;
   try {
     url = new URL(origin);
@@ -121,7 +155,9 @@ const isAllowedPublicWebsiteOrigin = async (origin: string): Promise<boolean> =>
   }
 
   const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
-  const secureProtocol = url.protocol === "https:" || (NODE_ENV !== "production" && url.protocol === "http:");
+  const secureProtocol =
+    url.protocol === "https:" ||
+    (NODE_ENV !== "production" && url.protocol === "http:");
   if (!secureProtocol || !hostname) return false;
 
   // Free platform subdomains are controlled by this deployment. Require exactly
@@ -150,7 +186,10 @@ app.use(async (req, res, next) => {
   if (!origin) return authenticatedCors(req, res, next); // server-to-server / curl
   if (allowedOrigins.includes(origin)) return authenticatedCors(req, res, next);
 
-  if (isTenantPublicApiPath(req.path) && await isAllowedPublicWebsiteOrigin(origin)) {
+  if (
+    isTenantPublicApiPath(req.path) &&
+    (await isAllowedPublicWebsiteOrigin(origin))
+  ) {
     return tenantPublicApiCors(req, res, next);
   }
 
@@ -163,7 +202,10 @@ app.use(async (req, res, next) => {
     retryable: false,
     errorSources: [],
     fieldErrors: {},
-    requestId: typeof res.locals.requestId === "string" ? res.locals.requestId : undefined,
+    requestId:
+      typeof res.locals.requestId === "string"
+        ? res.locals.requestId
+        : undefined,
   });
 });
 
@@ -190,7 +232,9 @@ const dependencyHealth = async () => {
       try {
         const redis = (await import("./config/redis")).default;
         redisOk = (await redis.ping()) === "PONG";
-      } finally { redisLatencyMs = safeDurationMs(started); }
+      } finally {
+        redisLatencyMs = safeDurationMs(started);
+      }
     })().catch(() => {}),
   ]);
 
@@ -200,21 +244,30 @@ const dependencyHealth = async () => {
   };
 };
 
-if (NODE_ENV === "production" && (!PERFORMANCE_METRICS_TOKEN || PERFORMANCE_METRICS_TOKEN.length < 32)) {
-  throw new Error("PERFORMANCE_METRICS_TOKEN must be configured with at least 32 characters in production");
+if (
+  NODE_ENV === "production" &&
+  (!PERFORMANCE_METRICS_TOKEN || PERFORMANCE_METRICS_TOKEN.length < 32)
+) {
+  throw new Error(
+    "PERFORMANCE_METRICS_TOKEN must be configured with at least 32 characters in production",
+  );
 }
 
 const monitoringTokenAllowed = (req: Request): boolean => {
   if (NODE_ENV !== "production") return true;
-  const supplied = req.get("x-monitoring-token") || req.get("authorization")?.replace(/^Bearer\s+/i, "");
-  return Boolean(PERFORMANCE_METRICS_TOKEN && supplied === PERFORMANCE_METRICS_TOKEN);
+  const supplied =
+    req.get("x-monitoring-token") ||
+    req.get("authorization")?.replace(/^Bearer\s+/i, "");
+  return Boolean(
+    PERFORMANCE_METRICS_TOKEN && supplied === PERFORMANCE_METRICS_TOKEN,
+  );
 };
 
 app.get("/", (_req: Request, res: Response) => {
   res.setHeader("Cache-Control", "no-store, max-age=0");
   return res.status(200).json({
     success: true,
-    service: "Cleaning CRM Backend API 01 SEP 10:38 PM",
+    service: "Cleaning CRM Backend API 03 SEP 12:02 AM",
     status: "healthy",
     version: APP_VERSION,
     gitSha: GIT_SHA,
@@ -229,7 +282,9 @@ app.get("/livez", (_req: Request, res: Response) => {
 app.get("/readyz", async (_req: Request, res: Response) => {
   const checks = await dependencyHealth();
   const infrastructure = getInfrastructureAlignment();
-  const ready = checks.database.ok && (!infrastructure.enforcementEnabled || infrastructure.aligned);
+  const ready =
+    checks.database.ok &&
+    (!infrastructure.enforcementEnabled || infrastructure.aligned);
   const degraded = ready && !checks.redis.ok;
   return res.status(ready ? 200 : 503).json({
     success: ready,
@@ -240,15 +295,22 @@ app.get("/readyz", async (_req: Request, res: Response) => {
 app.get("/health", async (_req: Request, res: Response) => {
   const checks = await dependencyHealth();
   const infrastructure = getInfrastructureAlignment();
-  const ready = checks.database.ok && (!infrastructure.enforcementEnabled || infrastructure.aligned);
-  return res.status(ready ? 200 : 503).json({ success: ready, status: ready ? "ok" : "not-ready" });
+  const ready =
+    checks.database.ok &&
+    (!infrastructure.enforcementEnabled || infrastructure.aligned);
+  return res
+    .status(ready ? 200 : 503)
+    .json({ success: ready, status: ready ? "ok" : "not-ready" });
 });
 
 app.get("/health/details", async (req: Request, res: Response) => {
-  if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
+  if (!monitoringTokenAllowed(req))
+    return res.status(404).json({ success: false, message: "Not found" });
   const checks = await dependencyHealth();
   const infrastructure = getInfrastructureAlignment();
-  const ready = checks.database.ok && (!infrastructure.enforcementEnabled || infrastructure.aligned);
+  const ready =
+    checks.database.ok &&
+    (!infrastructure.enforcementEnabled || infrastructure.aligned);
   return res.status(ready ? 200 : 503).json({
     success: ready,
     status: ready ? (checks.redis.ok ? "ok" : "degraded") : "not-ready",
@@ -261,7 +323,8 @@ app.get("/health/details", async (req: Request, res: Response) => {
 });
 
 app.get("/health/performance", (req: Request, res: Response) => {
-  if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
+  if (!monitoringTokenAllowed(req))
+    return res.status(404).json({ success: false, message: "Not found" });
   return res.status(200).json({
     success: true,
     data: {
@@ -274,28 +337,38 @@ app.get("/health/performance", (req: Request, res: Response) => {
 });
 
 app.get("/health/alerts", (req: Request, res: Response) => {
-  if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
+  if (!monitoringTokenAllowed(req))
+    return res.status(404).json({ success: false, message: "Not found" });
   const data = getMonitoringAlerts();
   res.setHeader("Cache-Control", "private, no-store");
-  return res.status(data.healthy ? 200 : 503).json({ success: data.healthy, data });
+  return res
+    .status(data.healthy ? 200 : 503)
+    .json({ success: data.healthy, data });
 });
 
 app.get("/health/email-outbox", async (req: Request, res: Response) => {
-  if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
+  if (!monitoringTokenAllowed(req))
+    return res.status(404).json({ success: false, message: "Not found" });
   const data = await getEmailOutboxHealth();
   res.setHeader("Cache-Control", "private, no-store");
-  return res.status(data.healthy ? 200 : 503).json({ success: data.healthy, data });
+  return res
+    .status(data.healthy ? 200 : 503)
+    .json({ success: data.healthy, data });
 });
 
 app.get("/health/operations", async (req: Request, res: Response) => {
-  if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
+  if (!monitoringTokenAllowed(req))
+    return res.status(404).json({ success: false, message: "Not found" });
   const data = await getOperationalHealthSnapshot();
   res.setHeader("Cache-Control", "private, no-store");
-  return res.status(data.healthy ? 200 : 503).json({ success: data.healthy, data });
+  return res
+    .status(data.healthy ? 200 : 503)
+    .json({ success: data.healthy, data });
 });
 
 app.get("/health/website-routing", async (req: Request, res: Response) => {
-  if (!monitoringTokenAllowed(req)) return res.status(404).json({ success: false, message: "Not found" });
+  if (!monitoringTokenAllowed(req))
+    return res.status(404).json({ success: false, message: "Not found" });
   const data = await inspectWebsiteWildcardInfrastructure();
   return res.status(data.ok ? 200 : 503).json({
     success: data.ok,
@@ -313,7 +386,6 @@ app.get("/version", (_req: Request, res: Response) => {
     buildDate: BUILD_DATE,
   });
 });
-
 
 app.use("/api/v1", browserOriginGuard, maintenanceModeGate, routes);
 
