@@ -3,6 +3,19 @@ import { optionalE164PhoneSchema } from "../../lib/validation/phone";
 
 const phone = optionalE164PhoneSchema();
 
+const stageEnum = z.enum([
+  "NEW",
+  "CONTACTED",
+  "QUOTE_SENT",
+  "WON",
+  "LOST",
+  "New",
+  "Contacted",
+  "Quote Sent",
+  "Won",
+  "Lost",
+]);
+
 const createLeadSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email address"),
@@ -11,12 +24,10 @@ const createLeadSchema = z.object({
   estimatedMin: z.number().min(0).optional().default(0),
   estimatedMax: z.number().min(0).optional().default(0),
   notes: z.string().optional(),
+  source: z.string().optional(),
   sourceRef: z.string().optional(),
   serviceCatalogId: z.string().uuid().optional(),
-  stage: z
-    .enum(["NEW", "CONTACTED", "QUOTE_SENT", "WON", "LOST"])
-    .optional()
-    .default("NEW"),
+  stage: stageEnum.optional().default("NEW"),
   initialFollowUp: z
     .object({
       scheduledAt: z.string().datetime({ message: "Invalid follow-up date" }),
@@ -39,23 +50,14 @@ const updateLeadSchema = z.object({
   estimatedMin: z.number().min(0).optional(),
   estimatedMax: z.number().min(0).optional(),
   notes: z.string().optional(),
+  source: z.string().optional(),
   sourceRef: z.string().optional(),
   serviceCatalogId: z.string().uuid().optional(),
+  stage: stageEnum.optional(),
 });
 
 const updateLeadStageSchema = z.object({
-  stage: z.enum([
-    "NEW",
-    "CONTACTED",
-    "QUOTE_SENT",
-    "WON",
-    "LOST",
-    "New",
-    "Contacted",
-    "Quote Sent",
-    "Won",
-    "Lost",
-  ]),
+  stage: stageEnum,
 });
 
 export const leadValidation = {

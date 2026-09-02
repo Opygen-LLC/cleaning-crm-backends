@@ -373,10 +373,20 @@ const updateLead = async (
     adminProfile.id,
     payload.serviceCatalogId,
   );
-  const { serviceCatalogId: _serviceCatalogId, ...payloadWithoutCatalogId } =
-    payload;
+  const {
+    serviceCatalogId: _serviceCatalogId,
+    source,
+    stage,
+    ...payloadWithoutCatalogId
+  } = payload;
   const updateData: Prisma.LeadUpdateInput = {
     ...payloadWithoutCatalogId,
+    ...((payload.sourceRef ?? source)
+      ? { sourceRef: payload.sourceRef ?? source }
+      : {}),
+    ...(stage
+      ? { stage: STAGE_MAP_TO_DB[String(stage)] ?? LeadStage.NEW }
+      : {}),
     ...(payload.email !== undefined
       ? { email: payload.email.trim().toLowerCase() }
       : {}),

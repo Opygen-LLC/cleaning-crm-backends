@@ -24,6 +24,8 @@ export interface UpdateLeadPayload {
   estimatedMin?: number;
   estimatedMax?: number;
   notes?: string;
+  source?: string;
   sourceRef?: string;
   serviceCatalogId?: string;
+  stage?: string;
 }
