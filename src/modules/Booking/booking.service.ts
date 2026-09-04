@@ -685,7 +685,10 @@ const updateBookingStatus = async (
 const deleteBooking = async (id: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
 
-  const existing = await prisma.booking.findFirst({ where: { id, adminId } });
+  const existing = await prisma.booking.findFirst({
+    where: { id, adminId },
+    select: { id: true, status: true, clientId: true },
+  });
   if (!existing) throw new AppError(status.NOT_FOUND, "Booking not found");
 
   if (existing.status === BookingStatus.IN_PROGRESS) {
@@ -696,7 +699,7 @@ const deleteBooking = async (id: string, user: IRequestUser) => {
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.booking.delete({ where: { id } });
+    await tx.booking.delete({ where: { id }, select: { id: true } });
 
     // Roll back client booking count
     await tx.client.update({

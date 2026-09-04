@@ -22,7 +22,10 @@ const { prismaMock, txMock, hostResolverMock, projectionCacheMock } = vi.hoisted
       $transaction: vi.fn(async (callback: (transaction: WebsiteTransactionMock) => unknown) => callback(tx)),
     },
     hostResolverMock: { invalidateSubdomains: vi.fn(), invalidateHosts: vi.fn() },
-    projectionCacheMock: { invalidateWebsite: vi.fn() },
+    projectionCacheMock: {
+      invalidateWebsite: vi.fn(),
+      invalidateStudioAdmin: vi.fn(),
+    },
   };
 });
 

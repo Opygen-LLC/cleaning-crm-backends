@@ -54,6 +54,7 @@ model Review {
   websiteContact  WebsiteReviewContact?
 
   @@index([adminId, status])
+  @@index([adminId, status, staffId])
   @@index([adminId, scope, createdAt(sort: Desc), id(sort: Desc)])
   @@index([adminId, source, createdAt(sort: Desc), id(sort: Desc)])
   @@index([adminId, createdAt(sort: Desc), id(sort: Desc)])

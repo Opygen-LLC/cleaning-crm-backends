@@ -1,6 +1,7 @@
 import { rateLimit } from "express-rate-limit";
 import type { NextFunction, Request, Response } from "express";
 import { RedisRateLimitStore } from "../lib/rateLimit/redisRateLimitStore";
+import { extractCompositeRateLimitKey } from "../lib/rateLimit/deviceIdentifier";
 
 const WINDOW_MS = 15 * 60 * 1000;
 
@@ -14,6 +15,7 @@ const base = {
     windowMs: WINDOW_MS,
     standardHeaders: "draft-8" as const,
     legacyHeaders: false,
+    keyGenerator: (req: Request) => extractCompositeRateLimitKey(req, "public"),
 };
 
 const store = (prefix: string) => new RedisRateLimitStore({

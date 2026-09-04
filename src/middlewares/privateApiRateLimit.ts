@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import AppError from "../errorHelper/AppError";
 import { RedisRateLimitStore } from "../lib/rateLimit/redisRateLimitStore";
+import { extractClientIp, extractDeviceIdentifier } from "../lib/rateLimit/deviceIdentifier";
 
 const SECOND = 1_000;
 const MINUTE = 60 * SECOND;
@@ -12,8 +13,10 @@ interface LimitPolicy {
   limit: number;
   windowMs: number;
   store: RedisRateLimitStore;
+  deviceStore: RedisRateLimitStore;
   ipStore: RedisRateLimitStore;
   ipMultiplier: number;
+  deviceMultiplier: number;
 }
 
 const makePolicy = (
@@ -21,12 +24,15 @@ const makePolicy = (
   limit: number,
   windowMs: number,
   ipMultiplier = 4,
+  deviceMultiplier = 2,
 ): LimitPolicy => ({
   limit,
   windowMs,
   store: new RedisRateLimitStore({ prefix: name, windowMs }),
+  deviceStore: new RedisRateLimitStore({ prefix: `${name}:device`, windowMs }),
   ipStore: new RedisRateLimitStore({ prefix: `${name}:ip`, windowMs }),
   ipMultiplier,
+  deviceMultiplier,
 });
 
 /**
@@ -37,9 +43,9 @@ const makePolicy = (
  * store's bounded local fallback keeps protection active during Redis outages.
  */
 const POLICIES: Record<PrivateLimitClass, LimitPolicy> = {
-  "private-read": makePolicy("private-read", 600, MINUTE, 5),
-  "private-write": makePolicy("private-write", 180, MINUTE, 5),
-  "report-export": makePolicy("report-export", 30, FIFTEEN_MINUTES, 4),
+  "private-read": makePolicy("private-read", 600, MINUTE, 6, 2),
+  "private-write": makePolicy("private-write", 180, MINUTE, 6, 2),
+  "report-export": makePolicy("report-export", 30, FIFTEEN_MINUTES, 4, 2),
 };
 
 const classifyRequest = (req: Request): PrivateLimitClass => {
@@ -71,10 +77,10 @@ const setRateHeaders = (
 };
 
 /**
- * Apply a tenant+user limiter after checkAuth has resolved req.user. A second,
- * looser hashed-IP counter prevents one source from fanning out over many
- * accounts. Raw tenant/user/IP values never appear in Redis keys because
- * RedisRateLimitStore hashes every limiter key before storage.
+ * Apply a tenant+user limiter after checkAuth has resolved req.user.
+ * Additional device and hashed-IP counters prevent one client or network
+ * from fanning out over many accounts or rotating IPs. Raw values never appear
+ * in Redis keys because RedisRateLimitStore hashes every limiter key before storage.
  */
 export async function enforcePrivateApiRateLimit(req: Request, res: Response): Promise<void> {
   const user = req.user;
@@ -97,7 +103,21 @@ export async function enforcePrivateApiRateLimit(req: Request, res: Response): P
     });
   }
 
-  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  // Device-level limiter (protects against IP rotation from the same device)
+  const deviceId = extractDeviceIdentifier(req);
+  const deviceLimit = Math.ceil(policy.limit * policy.deviceMultiplier);
+  const deviceCounter = await policy.deviceStore.increment(`device:${deviceId}`);
+  if (deviceCounter.totalHits > deviceLimit) {
+    const retryAfter = secondsUntil(deviceCounter.resetTime);
+    res.setHeader("Retry-After", String(retryAfter));
+    throw new AppError(429, "Too many requests from this device. Please retry shortly.", {
+      code: "PRIVATE_RATE_LIMITED",
+      retryable: true,
+    });
+  }
+
+  // Network IP limiter (wide multiplier prevents office NAT false positives)
+  const ip = extractClientIp(req);
   const ipLimit = policy.limit * policy.ipMultiplier;
   const ipCounter = await policy.ipStore.increment(`ip:${ip}`);
   if (ipCounter.totalHits > ipLimit) {

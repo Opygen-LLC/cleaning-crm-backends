@@ -120,6 +120,7 @@ export const resolveOrganizationIdByOwnerUserId = async (ownerUserId: string, db
 const invalidateTenantCaches = async (tenant: { id: string; userId: string }) => {
   invalidateRuntimeAuth(tenant.userId);
   invalidateRuntimeTenantOwnerStatus(tenant.id);
+  Organization360Service.invalidateOrganization360Cache(tenant.id);
   await Promise.all([
     invalidateRuntimeSubscriptionForAdmin(tenant.id),
     invalidateSubscriptionAccessCache(tenant.userId).catch(() => undefined),

@@ -264,6 +264,7 @@ const updateInvoiceStatus = async (
 const deleteInvoice = async (id: string, user: IRequestUser) => {
     const invoice = await prisma.invoice.findFirst({
         where: await invoiceTenantWhere(id, user),
+        select: { id: true, adminId: true, invoiceRef: true },
     });
 
     if (!invoice) {
@@ -272,6 +273,7 @@ const deleteInvoice = async (id: string, user: IRequestUser) => {
 
     const deleted = await prisma.invoice.delete({
         where: { id },
+        select: { id: true },
     });
 
     logActivity({

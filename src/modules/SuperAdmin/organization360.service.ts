@@ -19,6 +19,7 @@ import { FEATURE_CATALOG, FEATURE_KEYS, type FeatureKey } from "../Entitlement/f
 import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
 import { TenantEntitlementService } from "./tenantEntitlement.service";
 import { writeSuperAdminAudit } from "./superAdminAudit.service";
+import redis from "../../config/redis";
 
 const DAY_MS = 86_400_000;
 const DEFAULT_PAGE_SIZE = 20;
@@ -240,6 +241,16 @@ const featureBreakdown = (access: Awaited<ReturnType<typeof TenantAccessResolver
   }));
 
 export const getOrganization360 = async (organizationId: string) => {
+  const cacheKey = `super-admin:org-360:${organizationId}`;
+  const cached = await redis.get(cacheKey).catch(() => null);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch {
+      // rebuild on error
+    }
+  }
+
   const identity = await organizationOrThrow(organizationId);
   const monthStart = new Date();
   monthStart.setUTCDate(1);
@@ -465,7 +476,7 @@ export const getOrganization360 = async (organizationId: string) => {
       ? "ATTENTION"
       : "HEALTHY";
 
-  return {
+  const result = {
     overview: {
       organizationId: tenant.id,
       ownerUserId: tenant.userId,
@@ -628,6 +639,14 @@ export const getOrganization360 = async (organizationId: string) => {
       checkedAt: new Date(),
     },
   };
+
+  void redis.setex(cacheKey, 30, JSON.stringify(result)).catch(() => {});
+  return result;
+};
+
+export const invalidateOrganization360Cache = (organizationId: string): void => {
+  if (!organizationId) return;
+  void redis.del(`super-admin:org-360:${organizationId}`).catch(() => {});
 };
 
 export const getOrganizationTeam = async (organizationId: string, query: ListQuery) => {
@@ -786,6 +805,7 @@ export const revokeAllOrganizationSessions = async (organizationId: string, cont
 
 export const Organization360Service = {
   getOrganization360,
+  invalidateOrganization360Cache,
   getOrganizationTeam,
   getOrganizationAudit,
   getOrganizationBilling,

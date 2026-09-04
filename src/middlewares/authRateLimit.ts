@@ -3,6 +3,7 @@ import { rateLimit } from "express-rate-limit";
 import { AUTH_ERROR_CODES } from "../modules/Auth/auth.codes";
 import { sendStructuredError } from "../shared/sendStructuredError";
 import { RedisRateLimitStore } from "../lib/rateLimit/redisRateLimitStore";
+import { extractCompositeRateLimitKey } from "../lib/rateLimit/deviceIdentifier";
 
 const rateLimitHandler = (message: string) => (req: Request, res: Response) =>
     sendStructuredError(res, {
@@ -18,6 +19,7 @@ const baseOptions = {
     standardHeaders: "draft-8" as const,
     legacyHeaders: false,
     skipSuccessfulRequests: false,
+    keyGenerator: (req: Request) => extractCompositeRateLimitKey(req, "auth"),
 };
 
 export const registrationRateLimit = rateLimit({

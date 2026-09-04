@@ -83,13 +83,18 @@ prisma.$on("query", (e: { query: string; params: string; duration: number }) => 
         table: summary.table,
     });
 
-    if (e.duration > SLOW_QUERY_THRESHOLD_MS) {
+    const trace = getRequestTrace();
+    const requestId = trace?.requestId ?? "background";
+    const isBackground = requestId === "background";
+    const threshold = isBackground
+        ? Math.max(SLOW_QUERY_THRESHOLD_MS, 1500)
+        : SLOW_QUERY_THRESHOLD_MS;
+
+    if (e.duration > threshold) {
         // Query parameters are never logged: they can contain emails, tokens,
         // customer data or payment metadata. Local operators get a concise
         // operation/table summary; production keeps a structured event for
         // Google Cloud Logging. Full SQL is opt-in only for local debugging.
-        const trace = getRequestTrace();
-        const requestId = trace?.requestId ?? "background";
         const durationMs = Math.round(e.duration * 10) / 10;
         if (NODE_ENV === "production") {
             logger.warn("slow_database_query", {
@@ -100,15 +105,11 @@ prisma.$on("query", (e: { query: string; params: string; duration: number }) => 
                 requestId,
             });
         } else {
-            const isBackground = requestId === "background";
-            const threshold = isBackground ? Math.max(SLOW_QUERY_THRESHOLD_MS, 1500) : Math.max(SLOW_QUERY_THRESHOLD_MS, 800);
-            if (e.duration > threshold || LOG_SQL_DETAILS) {
-                const reqLabel = isBackground ? "background" : requestId.slice(0, 8);
-                logger.warn(
-                    `Slow database query — ${durationMs}ms · ${summary.operation} ${summary.table} · request ${reqLabel}`,
-                );
-                if (LOG_SQL_DETAILS) logger.debug(summary.normalized.slice(0, 1_500));
-            }
+            const reqLabel = isBackground ? "background" : requestId.slice(0, 8);
+            logger.warn(
+                `Slow database query — ${durationMs}ms · ${summary.operation} ${summary.table} · request ${reqLabel}`,
+            );
+            if (LOG_SQL_DETAILS) logger.debug(summary.normalized.slice(0, 1_500));
         }
     }
 });

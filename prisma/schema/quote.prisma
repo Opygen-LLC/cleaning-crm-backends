@@ -34,6 +34,8 @@ model Quote {
   lineItems     QuoteLineItem[]
 
   @@index([adminId, status])
+  @@index([adminId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([adminId, status, createdAt(sort: Desc), id(sort: Desc)])
   @@index([clientId])
   @@index([serviceCatalogId])
   @@map("quote")
@@ -92,6 +94,8 @@ model Estimate {
   jobs                  Job[]
 
   @@index([adminId, status])
+  @@index([adminId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([adminId, status, createdAt(sort: Desc), id(sort: Desc)])
   @@index([clientId])
   @@index([serviceCatalogId])
   @@map("estimate")

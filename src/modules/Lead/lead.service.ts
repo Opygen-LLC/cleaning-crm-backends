@@ -453,7 +453,10 @@ const updateLeadStage = async (
 const deleteLead = async (id: string, user: IRequestUser) => {
   const adminProfile = await resolveAdminProfile(user);
 
-  const existing = await prisma.lead.findUnique({ where: { id } });
+  const existing = await prisma.lead.findUnique({
+    where: { id },
+    select: { id: true, adminId: true, convertedClientId: true },
+  });
 
   if (!existing) {
     throw new AppError(status.NOT_FOUND, "Lead not found");
@@ -477,7 +480,7 @@ const deleteLead = async (id: string, user: IRequestUser) => {
     );
   }
 
-  return prisma.lead.delete({ where: { id } });
+  return prisma.lead.delete({ where: { id }, select: { id: true } });
 };
 
 // ─── Convert Won lead to client ───────────────────────────────────────────────

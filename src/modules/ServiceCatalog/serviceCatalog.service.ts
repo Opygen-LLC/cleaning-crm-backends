@@ -293,11 +293,17 @@ const updateServiceCatalog = async (
 
 const deleteServiceCatalog = async (id: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const service = await prisma.serviceCatalog.findFirst({ where: { id, adminId } });
+  const service = await prisma.serviceCatalog.findFirst({
+    where: { id, adminId },
+    select: { id: true },
+  });
   if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
-  const deleted = await prisma.serviceCatalog.delete({ where: { id } });
+  const deleted = await prisma.serviceCatalog.delete({
+    where: { id },
+    select: { id: true },
+  });
   await invalidateServiceCatalogReadModels(adminId);
-  return normalizeServiceForApi(deleted);
+  return { id: deleted.id };
 };
 
 export const serviceCatalogService = {

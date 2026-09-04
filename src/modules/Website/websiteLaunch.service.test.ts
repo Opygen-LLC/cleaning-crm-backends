@@ -121,7 +121,10 @@ const {
       invalidateSubdomains: vi.fn(async () => undefined),
       invalidateHosts: vi.fn(async () => undefined),
     },
-    projectionCacheMock: { invalidateWebsite: vi.fn(async () => undefined) },
+    projectionCacheMock: {
+      invalidateWebsite: vi.fn(async () => undefined),
+      invalidateStudioAdmin: vi.fn(async () => undefined),
+    },
     publicWebsiteMock: { getPublicWebsiteById: vi.fn(async () => ({ website: { subdomain: "bio-cleaning" } })) },
     bookingProvisioningMock: {
       ensureAttachedForLaunchTx: vi.fn(async (transaction: any) => {

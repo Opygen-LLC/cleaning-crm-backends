@@ -20,7 +20,7 @@ const numberEnv = (name: string, fallback: number): number => {
 export const DB_POOL_MAX: number = Math.min(50, Math.max(1, Math.trunc(numberEnv("DB_POOL_MAX", 10))));
 export const DB_POOL_MIN: number = Math.min(
     DB_POOL_MAX,
-    Math.max(0, Math.trunc(numberEnv("DB_POOL_MIN", 0))),
+    Math.max(0, Math.trunc(numberEnv("DB_POOL_MIN", 1))),
 );
 export const DB_POOL_IDLE_TIMEOUT_MS: number = Math.min(30 * 60_000, Math.max(5_000, Math.trunc(numberEnv("DB_POOL_IDLE_TIMEOUT_MS", 60_000))));
 // Fail a new TCP/TLS database connection before the Next.js BFF's upstream

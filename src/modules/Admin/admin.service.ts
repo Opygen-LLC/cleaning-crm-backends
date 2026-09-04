@@ -25,6 +25,7 @@ import { recordClientReliabilitySignals, recordProductReliabilitySignal } from "
 import { AccountStatus, ServiceStatus, SubscriptionStatus } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { businessHoursSchema, normalizeBusinessHours, type BusinessHours } from "./businessHours";
+import { bumpCacheResourceVersions, CacheResource } from "../../lib/cache/resourceCacheVersion";
 import type {
   GettingStartedStepKey,
   LegacySkippableOnboardingStepKey,
@@ -798,6 +799,12 @@ const buildOnboardingMutationResult = async (
   const [onboarding, website] = await Promise.all([
     getOnboardingStatus(userId),
     WebsiteService.getWebsiteForAdmin(adminId),
+  ]);
+
+  void bumpCacheResourceVersions(adminId, [
+    CacheResource.onboarding,
+    CacheResource.dashboard,
+    CacheResource.profile,
   ]);
 
   return {

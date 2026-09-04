@@ -3,6 +3,8 @@ import logger from "../logger";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { recordCacheVersionInvalidation } from "../monitoring/operationalMetrics";
 
+import { BoundedTtlCache } from "./boundedTtlCache";
+
 export const CacheResource = Object.freeze({
   clients: "clients",
   leads: "leads",
@@ -17,12 +19,21 @@ export const CacheResource = Object.freeze({
   invoices: "invoices",
   payments: "payments",
   services: "services",
+  onboarding: "onboarding",
+  website: "website",
+  quotes: "quotes",
+  estimates: "estimates",
+  forms: "forms",
+  superAdmin: "superAdmin",
 } as const);
 
 export type CacheResourceName = (typeof CacheResource)[keyof typeof CacheResource];
 
 const versionKey = (tenantId: string, resource: CacheResourceName) =>
   `tenant:${tenantId}:${resource}:version`;
+
+const localVersionCache = new BoundedTtlCache<number>({ maxEntries: 10_000 });
+const LOCAL_VERSION_TTL_MS = 2_000;
 
 export const cacheTenantIdForUser = (user: Pick<IRequestUser, "id" | "adminId">): string =>
   user.adminId ?? user.id;
@@ -32,10 +43,16 @@ export async function getCacheResourceVersion(
   resource: CacheResourceName,
 ): Promise<number> {
   if (!tenantId) return 0;
+  const localKey = `${tenantId}:${resource}`;
+  const cachedLocal = localVersionCache.get(localKey);
+  if (cachedLocal !== undefined) return cachedLocal;
+
   try {
     const raw = await redis.get(versionKey(tenantId, resource));
     const parsed = raw ? Number(raw) : 0;
-    return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+    const version = Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+    localVersionCache.set(localKey, version, LOCAL_VERSION_TTL_MS);
+    return version;
   } catch {
     // Redis is an acceleration layer. Returning version 0 makes the response
     // cache fall back to its normal miss path when Redis itself is unavailable.
@@ -50,6 +67,10 @@ export async function bumpCacheResourceVersions(
   if (!tenantId || resources.length === 0) return;
 
   const unique = [...new Set(resources)];
+  for (const resource of unique) {
+    localVersionCache.delete(`${tenantId}:${resource}`);
+  }
+
   try {
     await Promise.all(unique.map((resource) => redis.incr(versionKey(tenantId, resource))));
     recordCacheVersionInvalidation(unique, true);

@@ -9,16 +9,20 @@ const mocks = vi.hoisted(() => ({
   heartbeat: vi.fn(),
 }));
 
-vi.mock("../config/ENV", () => ({
-  NEXT_REVALIDATE_SECRET: "test-secret",
-  NEXT_REVALIDATE_TIMEOUT_MS: 1000,
-  NEXT_REVALIDATE_URL: "https://frontend.invalid/revalidate",
-  NODE_ENV: "test",
-  OUTBOX_LOCK_TIMEOUT_MS: 30_000,
-  OUTBOX_WORKER_BATCH_SIZE: 10,
-  OUTBOX_WORKER_ENABLED: false,
-  OUTBOX_WORKER_POLL_MS: 1_000,
-}));
+vi.mock("../config/ENV", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../config/ENV")>();
+  return {
+    ...actual,
+    NEXT_REVALIDATE_SECRET: "test-secret",
+    NEXT_REVALIDATE_TIMEOUT_MS: 1000,
+    NEXT_REVALIDATE_URL: "https://frontend.invalid/revalidate",
+    NODE_ENV: "test",
+    OUTBOX_LOCK_TIMEOUT_MS: 30_000,
+    OUTBOX_WORKER_BATCH_SIZE: 10,
+    OUTBOX_WORKER_ENABLED: false,
+    OUTBOX_WORKER_POLL_MS: 1_000,
+  };
+});
 vi.mock("../lib/prisma/prisma", () => ({
   prisma: {
     $queryRaw: mocks.queryRaw,
@@ -33,7 +37,7 @@ vi.mock("../lib/monitoring/emailOutboxHealth", () => ({
   recordEmailOutboxSuccessfulDelivery: mocks.successfulDelivery,
   recordEmailOutboxWorkerHeartbeat: mocks.heartbeat,
 }));
-vi.mock("../lib/logger", () => ({ default: { info: vi.fn(), error: vi.fn() } }));
+vi.mock("../lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
 
 import { processEmailOutboxOnce } from "./emailOutbox.worker";
 

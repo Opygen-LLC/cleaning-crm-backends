@@ -429,7 +429,10 @@ const updateQuoteStatus = async (
 const deleteQuote = async (id: string, user: IRequestUser) => {
     const adminId = await getAdminId(user);
 
-    const existing = await prisma.quote.findFirst({ where: { id, adminId } });
+    const existing = await prisma.quote.findFirst({
+        where: { id, adminId },
+        select: { id: true, status: true },
+    });
     if (!existing) throw new AppError(status.NOT_FOUND, "Quote not found");
 
     // Prevent deletion of accepted quotes that may already have bookings
@@ -441,7 +444,8 @@ const deleteQuote = async (id: string, user: IRequestUser) => {
     }
 
     // Cascade delete (line items, etc.) is handled by Prisma onDelete: Cascade
-    await prisma.quote.delete({ where: { id } });
+    await prisma.quote.delete({ where: { id }, select: { id: true } });
+    return { id };
 };
 
 // ─── Convert accepted quote → booking ────────────────────────────────────────

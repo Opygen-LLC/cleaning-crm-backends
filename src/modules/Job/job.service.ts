@@ -633,7 +633,7 @@ const deleteJob = async (id: string, user: IRequestUser) => {
       "Cannot delete a job that is in progress",
     );
   }
-  await prisma.job.delete({ where: { id } });
+  await prisma.job.delete({ where: { id }, select: { id: true } });
   invalidateAnalyticsCache(adminId);
   return { id, deleted: true as const };
 };

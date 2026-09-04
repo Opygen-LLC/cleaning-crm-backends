@@ -766,6 +766,7 @@ const deleteEstimate = async (id: string, user: IRequestUser) => {
 
     const existing = await prisma.estimate.findFirst({
         where: { id, adminId },
+        select: { id: true, status: true },
     });
     if (!existing) throw new AppError(status.NOT_FOUND, "Estimate not found");
 
@@ -776,7 +777,8 @@ const deleteEstimate = async (id: string, user: IRequestUser) => {
         );
     }
 
-    await prisma.estimate.delete({ where: { id } });
+    await prisma.estimate.delete({ where: { id }, select: { id: true } });
+    return { id };
 };
 
 // ─── Convert APPROVED estimate → Booking ─────────────────────────────────────

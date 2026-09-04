@@ -26,6 +26,7 @@ const userIndexKey = (userId: string) => `http-response-user-index:${userId}`;
 const resourceForRequest = (req: Request): CacheResourceName | null => {
   const path = req.originalUrl.toLowerCase();
   if (path.includes("/dashboard")) return CacheResource.dashboard;
+  if (path.includes("/admin/onboarding-status") || path.includes("/onboarding")) return CacheResource.onboarding;
   if (path.includes("/client")) return CacheResource.clients;
   if (path.includes("/lead/follow-ups")) return CacheResource.followUps;
   if (path.includes("/lead")) return CacheResource.leads;
@@ -36,6 +37,9 @@ const resourceForRequest = (req: Request): CacheResourceName | null => {
   if (path.includes("/payment")) return CacheResource.payments;
   if (path.includes("/notification")) return CacheResource.notifications;
   if (path.includes("/report")) return CacheResource.reports;
+  if (path.includes("/website")) return CacheResource.website;
+  if (path.includes("/quote")) return CacheResource.quotes;
+  if (path.includes("/estimate")) return CacheResource.estimates;
   if (path.includes("/admin/profile") || path.includes("/user/me")) return CacheResource.profile;
   if (path.includes("/service")) return CacheResource.services;
   return null;
@@ -69,10 +73,14 @@ const ttlForResource = (resource: CacheResourceName | null): number => {
     case CacheResource.dashboard:
     case CacheResource.invoices:
     case CacheResource.payments:
+    case CacheResource.quotes:
+    case CacheResource.estimates:
       return 45;
     case CacheResource.profile:
+    case CacheResource.onboarding:
       return 10 * 60;
     case CacheResource.services:
+    case CacheResource.website:
       return 5 * 60;
     case CacheResource.reports:
       return 15 * 60;

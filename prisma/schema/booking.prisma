@@ -32,6 +32,7 @@ model Booking {
   sourceBookingFormSubmission BookingFormSubmission? @relation("BookingFormSubmissionConversion")
 
   @@index([adminId, status])
+  @@index([adminId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([adminId, status, createdAt(sort: Desc)])
   @@index([adminId, scheduledDate(sort: Desc), id(sort: Desc)])
   @@index([adminId, status, scheduledDate(sort: Desc), id(sort: Desc)])
