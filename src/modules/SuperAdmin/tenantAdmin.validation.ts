@@ -11,8 +11,15 @@ export const tenantListQuerySchema = z.object({
   subscriptionKind: z.enum(["TRIAL", "PAID"]).optional(),
   plan: z.enum(["STARTER", "GROWTH", "PRO", "CUSTOM"]).optional(),
   subscriptionStatus: z.enum(["ACTIVE", "PENDING_PAYMENT", "SUSPENDED", "EXPIRED", "CANCELLED"]).optional(),
-  websiteStatus: z.enum(["PUBLISHED", "UNPUBLISHED"]).optional(),
+  websiteStatus: z.enum(["PUBLISHED", "UNPUBLISHED", "NONE", "DOMAIN_PROBLEM"]).optional(),
+  country: z.string().trim().min(2).max(80).optional(),
+  createdFrom: z.string().datetime().optional(),
+  createdTo: z.string().datetime().optional(),
   page: z.string().regex(/^\d+$/).optional(), limit: z.string().regex(/^\d+$/).optional(),
+}).superRefine((value, ctx) => {
+  if (value.createdFrom && value.createdTo && new Date(value.createdFrom) > new Date(value.createdTo)) {
+    ctx.addIssue({ code: "custom", path: ["createdTo"], message: "createdTo must be on or after createdFrom." });
+  }
 });
 export const reasonSchema = z.object({ reason });
 

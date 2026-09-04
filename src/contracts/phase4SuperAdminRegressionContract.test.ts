@@ -8,6 +8,7 @@ import {
   tenantActivityQuerySchema,
   tenantAuditQuerySchema,
   tenantBillingQuerySchema,
+  tenantListQuerySchema,
   tenantOwnerSchema,
   tenantProfileSchema,
   tenantSessionsQuerySchema,
@@ -123,6 +124,26 @@ describe("Phase 4 Super Admin regression contract", () => {
     expect(service).toContain('action: "TENANT_SESSIONS_REVOKED"');
     expect(service).toContain("revokeAllSessionsForUser");
     expect(service).toContain("disconnectTenantSockets(identity.id)");
+  });
+
+  it("validates canonical organization-list filters used by the Super Admin UI", () => {
+    const parsed = tenantListQuerySchema.parse({
+      search: "CleanPro",
+      lifecycleStatus: "ACTIVE",
+      subscriptionKind: "PAID",
+      plan: "GROWTH",
+      subscriptionStatus: "ACTIVE",
+      websiteStatus: "DOMAIN_PROBLEM",
+      country: "United States",
+      createdFrom: "2026-01-01T00:00:00.000Z",
+      createdTo: "2026-12-31T23:59:59.999Z",
+      page: "2",
+      limit: "50",
+    });
+    expect(parsed).toMatchObject({ plan: "GROWTH", websiteStatus: "DOMAIN_PROBLEM", subscriptionKind: "PAID" });
+    expect(() => tenantListQuerySchema.parse({ plan: "UNKNOWN" })).toThrow();
+    expect(() => tenantListQuerySchema.parse({ websiteStatus: "BROKEN" })).toThrow();
+    expect(() => tenantListQuerySchema.parse({ createdFrom: "2026-12-31T00:00:00.000Z", createdTo: "2026-01-01T00:00:00.000Z" })).toThrow();
   });
 
   it("validates Organization 360 lazy-list filters and keeps session revocation reason protected", () => {

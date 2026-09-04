@@ -3,6 +3,7 @@ import { addDays, addMonths, addYears } from "date-fns";
 import AppError from "../../errorHelper/AppError";
 import {
   AccountStatus,
+  Country,
   PendingPlanChangeStatus,
   SubscriptionName,
   SubscriptionPlanInterval,
@@ -144,6 +145,17 @@ export const getTenants = async (query: Record<string, unknown>) => {
   const planName = query.plan ? String(query.plan) : undefined;
   const subscriptionStatus = query.subscriptionStatus ? String(query.subscriptionStatus) as SubscriptionStatus : undefined;
   const websiteStatus = query.websiteStatus ? String(query.websiteStatus) : undefined;
+  const countryInput = query.country ? String(query.country).trim() : "";
+  const country = countryInput
+    ? Object.values(Country).find((value) =>
+        value === countryInput.toUpperCase() ||
+        value.replace(/_/g, " ").toLowerCase() === countryInput.replace(/[_-]+/g, " ").toLowerCase(),
+      )
+    : undefined;
+  if (countryInput && !country) throw new AppError(status.BAD_REQUEST, `Unknown country filter: ${countryInput}.`);
+  const createdFrom = query.createdFrom ? new Date(String(query.createdFrom)) : undefined;
+  const createdTo = query.createdTo ? new Date(String(query.createdTo)) : undefined;
+
   const subscriptionFilter: Prisma.SubscriptionWhereInput = {
     ...(subscriptionKind === "TRIAL" ? { isTrial: true } : {}),
     ...(subscriptionKind === "PAID" ? { isTrial: false } : {}),
@@ -152,8 +164,30 @@ export const getTenants = async (query: Record<string, unknown>) => {
   };
   const hasSubscriptionFilter = Object.keys(subscriptionFilter).length > 0;
   const predicates: Prisma.AdminProfileWhereInput[] = [];
+
   if (websiteStatus === "PUBLISHED") predicates.push({ businessWebsite: { is: { status: "PUBLISHED" } } });
-  if (websiteStatus === "UNPUBLISHED") predicates.push({ OR: [{ businessWebsite: null }, { businessWebsite: { is: { status: { not: "PUBLISHED" } } } }] });
+  if (websiteStatus === "UNPUBLISHED") predicates.push({ businessWebsite: { is: { status: { not: "PUBLISHED" } } } });
+  if (websiteStatus === "NONE") predicates.push({ businessWebsite: null });
+  if (websiteStatus === "DOMAIN_PROBLEM") {
+    predicates.push({
+      businessWebsite: {
+        is: {
+          domains: {
+            some: {
+              isPrimary: true,
+              OR: [
+                { status: "FAILED" },
+                { ownershipVerified: false },
+                { routingVerified: false },
+                { tlsStatus: { notIn: ["READY", "EXTERNAL"] } },
+              ],
+            },
+          },
+        },
+      },
+    });
+  }
+
   if (search) {
     predicates.push({
       OR: [
@@ -164,8 +198,16 @@ export const getTenants = async (query: Record<string, unknown>) => {
       ],
     });
   }
+
   const where: Prisma.AdminProfileWhereInput = {
     ...(lifecycle ? { lifecycleStatus: lifecycle } : {}),
+    ...(country ? { country } : {}),
+    ...(createdFrom || createdTo ? {
+      createdAt: {
+        ...(createdFrom ? { gte: createdFrom } : {}),
+        ...(createdTo ? { lte: createdTo } : {}),
+      },
+    } : {}),
     ...(hasSubscriptionFilter ? { subscription: { some: subscriptionFilter } } : {}),
     ...(predicates.length ? { AND: predicates } : {}),
   };
@@ -188,7 +230,25 @@ export const getTenants = async (query: Record<string, unknown>) => {
         archivedAt: true,
         createdAt: true,
         user: { select: { name: true, email: true, status: true, emailVerified: true } },
-        businessWebsite: { select: { status: true, subdomain: true, publishedAt: true } },
+        businessWebsite: {
+          select: {
+            status: true,
+            subdomain: true,
+            publishedAt: true,
+            domains: {
+              where: { isPrimary: true },
+              take: 1,
+              select: {
+                domain: true,
+                status: true,
+                ownershipVerified: true,
+                routingVerified: true,
+                tlsStatus: true,
+                failureReason: true,
+              },
+            },
+          },
+        },
         subscription: {
           take: 1,
           orderBy: { createdAt: "desc" },
@@ -207,8 +267,39 @@ export const getTenants = async (query: Record<string, unknown>) => {
     }),
   ]);
 
+  const now = new Date();
   return {
-    data: rows.map((row) => ({ ...row, subscription: row.subscription[0] ?? null })),
+    data: rows.map((row) => {
+      const subscription = row.subscription[0] ?? null;
+      const primaryDomain = row.businessWebsite?.domains[0] ?? null;
+      const domainProblem = Boolean(primaryDomain && (
+        primaryDomain.status === "FAILED" ||
+        !primaryDomain.ownershipVerified ||
+        !primaryDomain.routingVerified ||
+        !["READY", "EXTERNAL"].includes(primaryDomain.tlsStatus)
+      ));
+      const healthIssues: string[] = [];
+      if (!row.user.emailVerified) healthIssues.push("UNVERIFIED_OWNER");
+      if (!subscription) healthIssues.push("NO_SUBSCRIPTION");
+      if (subscription?.isTrial && subscription.trialEndsAt && subscription.trialEndsAt <= now) healthIssues.push("EXPIRED_TRIAL");
+      if (subscription?.status === SubscriptionStatus.PENDING_PAYMENT) healthIssues.push("PAYMENT_PENDING");
+      if (row.lifecycleStatus === TenantLifecycleStatus.SUSPENDED) healthIssues.push("SUSPENDED");
+      if (!row.businessWebsite) healthIssues.push("NO_WEBSITE");
+      if (domainProblem) healthIssues.push("DOMAIN_PROBLEM");
+
+      return {
+        ...row,
+        businessWebsite: row.businessWebsite ? {
+          status: row.businessWebsite.status,
+          subdomain: row.businessWebsite.subdomain,
+          publishedAt: row.businessWebsite.publishedAt,
+          primaryDomain,
+          domainProblem,
+        } : null,
+        subscription,
+        healthIssues,
+      };
+    }),
     meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
   };
 };
