@@ -19,6 +19,8 @@ import { createNotification } from "../lib/utils/createNotification";
 import { NotificationType } from "../generated/prisma/enums";
 import { invalidateSubscriptionAccessCache } from "../middlewares/checkSubscription";
 import { applyDueAdministrativePlanChanges } from "../modules/SuperAdmin/tenantAdmin.service";
+import { TenantAccessResolver } from "../modules/Entitlement/tenantAccessResolver.service";
+import { WebsiteProjectionCacheService } from "../modules/Website/websiteProjectionCache.service";
 
 const JOB_NAME = "subscriptionExpiry";
 
@@ -64,7 +66,11 @@ export async function runSubscriptionExpiryJob(): Promise<void> {
                     "Your billing period has ended and your subscription has expired. Renew to restore access.",
                 relatedId: id,
             }).catch(() => {});
-            await invalidateSubscriptionAccessCache(admin.userId);
+            await Promise.all([
+                invalidateSubscriptionAccessCache(admin.userId),
+                TenantAccessResolver.invalidate(adminId),
+                WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
+            ]).catch(() => {});
         }
     }
 
@@ -93,7 +99,11 @@ export async function runSubscriptionExpiryJob(): Promise<void> {
                     "Your free trial has ended. Upgrade to a paid plan to keep using the platform.",
                 relatedId: id,
             }).catch(() => {});
-            await invalidateSubscriptionAccessCache(admin.userId);
+            await Promise.all([
+                invalidateSubscriptionAccessCache(admin.userId),
+                TenantAccessResolver.invalidate(adminId),
+                WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
+            ]).catch(() => {});
         }
     }
 

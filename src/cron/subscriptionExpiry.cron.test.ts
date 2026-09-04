@@ -26,6 +26,9 @@ vi.mock("../lib/prisma/prisma", () => ({
             findMany: vi.fn(),
             updateMany: vi.fn(),
         },
+        pendingPlanChange: {
+            findMany: vi.fn().mockResolvedValue([]),
+        },
     },
 }));
 
@@ -35,6 +38,18 @@ vi.mock("../lib/utils/createNotification", () => ({
 
 vi.mock("../middlewares/checkSubscription", () => ({
     invalidateSubscriptionAccessCache: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../modules/Entitlement/tenantAccessResolver.service", () => ({
+    TenantAccessResolver: {
+        invalidate: vi.fn().mockResolvedValue(undefined),
+    },
+}));
+
+vi.mock("../modules/Website/websiteProjectionCache.service", () => ({
+    WebsiteProjectionCacheService: {
+        invalidateAdminWebsite: vi.fn().mockResolvedValue(undefined),
+    },
 }));
 
 // node-cron isn't exercised by runSubscriptionExpiryJob itself, but the module

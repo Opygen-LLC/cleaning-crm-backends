@@ -335,8 +335,14 @@ export async function resolveTenantAccess(organizationId: string): Promise<Tenan
   };
 
   let ttl = ttlForKey(CacheTtl.tenantAccess, key);
-  if (tenant.entitlementOverride?.expiresAt && tenant.entitlementOverride.expiresAt > new Date()) {
-    ttl = Math.min(ttl, Math.max(1, Math.ceil((tenant.entitlementOverride.expiresAt.getTime() - Date.now()) / 1000)));
+  const nowMs = Date.now();
+  if (tenant.entitlementOverride?.expiresAt && tenant.entitlementOverride.expiresAt.getTime() > nowMs) {
+    ttl = Math.min(ttl, Math.max(1, Math.ceil((tenant.entitlementOverride.expiresAt.getTime() - nowMs) / 1000)));
+  }
+  if (subscription?.isTrial && subscription.trialEndsAt && subscription.trialEndsAt.getTime() > nowMs) {
+    ttl = Math.min(ttl, Math.max(1, Math.ceil((subscription.trialEndsAt.getTime() - nowMs) / 1000)));
+  } else if (!subscription?.isTrial && subscription?.currentPeriodEnd && subscription.currentPeriodEnd.getTime() > nowMs) {
+    ttl = Math.min(ttl, Math.max(1, Math.ceil((subscription.currentPeriodEnd.getTime() - nowMs) / 1000)));
   }
   await redis.setex(key, ttl, JSON.stringify(resolution)).catch(() => {});
   return resolution;

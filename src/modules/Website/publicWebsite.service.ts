@@ -465,6 +465,20 @@ const projectWebsite = (
 
 const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: string | null = null) => {
   if (!WEBSITE_ID_PATTERN.test(websiteId)) throw new AppError(status.NOT_FOUND, "Website not found");
+  const adminId = await WebsiteProjectionCacheService.getAdminIdForWebsite(websiteId);
+  if (!adminId) throw new AppError(status.NOT_FOUND, "Website not found");
+
+  const access = await TenantAccessResolver.resolve(adminId);
+  if (!access.access.publicWebsiteAllowed) {
+    if (access.website.deniedReason === "WEBSITE_UNPUBLISHED") {
+      throw new AppError(status.NOT_FOUND, "Website not found");
+    }
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Website temporarily unavailable", {
+      code: access.website.deniedReason,
+      retryable: false,
+    });
+  }
+
   type PublicProjection = ReturnType<typeof projectWebsite>;
   const canonical = await WebsiteProjectionCacheService.getOrLoad<PublicProjection>(
     websiteId,

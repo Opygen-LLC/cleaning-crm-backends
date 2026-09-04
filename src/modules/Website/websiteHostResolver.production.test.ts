@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { redisMock, prismaMock } = vi.hoisted(() => ({
+const { redisMock, prismaMock, tenantAccessMock } = vi.hoisted(() => ({
   redisMock: {
     get: vi.fn(),
     set: vi.fn(),
@@ -12,9 +12,15 @@ const { redisMock, prismaMock } = vi.hoisted(() => ({
     websiteSubdomainAlias: { findUnique: vi.fn() },
     websiteDomain: { findFirst: vi.fn() },
   },
+  tenantAccessMock: {
+    resolve: vi.fn(),
+  },
 }));
 
 vi.mock("../../config/redis", () => ({ default: redisMock }));
+vi.mock("../Entitlement/tenantAccessResolver.service", () => ({
+  TenantAccessResolver: tenantAccessMock,
+}));
 vi.mock("../../config/ENV", () => ({
   WEBSITE_BASE_DOMAIN: "sites.example.com",
   WEBSITE_CUSTOM_DOMAINS_ENABLED: true,
@@ -28,6 +34,67 @@ vi.mock("../../lib/prisma/prisma", () => ({ prisma: prismaMock }));
 
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 
+const defaultAccess = (overrides: Record<string, any> = {}) => ({
+  organizationId: "org-1",
+  ownerUserId: "user-1",
+  platform: {
+    status: "ACTIVE",
+    suspendedAt: null,
+    archivedAt: null,
+    deletionStartedAt: null,
+    deletionLastAttemptAt: null,
+    deletionLastError: null,
+    reason: null,
+  },
+  subscription: {
+    id: "sub-1",
+    status: "ACTIVE",
+    isTrial: false,
+    trialEndsAt: null,
+    currentPeriodStart: new Date().toISOString(),
+    currentPeriodEnd: new Date(Date.now() + 86400000).toISOString(),
+    cancelAtPeriodEnd: false,
+  },
+  website: {
+    status: "PUBLISHED",
+    published: true,
+    publicAccessAllowed: true,
+    deniedReason: "ACTIVE",
+    ...(overrides.website ?? {}),
+  },
+  access: {
+    dashboardAllowed: true,
+    publicWebsiteAllowed: true,
+    publicWritesAllowed: true,
+    backgroundJobsAllowed: true,
+    recoveryAllowed: true,
+    deniedReason: "ACTIVE",
+    ...(overrides.access ?? {}),
+  },
+  plan: {
+    id: "plan-1",
+    name: "PRO",
+    pricingId: "price-1",
+    features: [],
+    ...(overrides.plan ?? {}),
+  },
+  baseEntitlements: {},
+  paidExtras: { staff: 0, clients: 0, monthlyBookings: 0, storageMb: 0 },
+  tenantOverrides: { active: false, expiresAt: null, reason: null, features: {}, resources: {} },
+  effectiveEntitlements: {
+    custom_domain: true,
+    remove_branding: true,
+    seo_tools: true,
+    ...(overrides.effectiveEntitlements ?? {}),
+  },
+  resourceLimits: {
+    base: {},
+    afterPaidExtras: {},
+    effective: {},
+  },
+  ...overrides,
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   redisMock.get.mockResolvedValue(null);
@@ -37,6 +104,7 @@ beforeEach(() => {
   prismaMock.businessWebsite.findUnique.mockResolvedValue(null);
   prismaMock.websiteSubdomainAlias.findUnique.mockResolvedValue(null);
   prismaMock.websiteDomain.findFirst.mockResolvedValue(null);
+  tenantAccessMock.resolve.mockImplementation(async () => defaultAccess());
 });
 
 describe("production tenant host routing", () => {
@@ -103,6 +171,11 @@ describe("production tenant host routing", () => {
   });
 
   it("keeps verified domains beyond the downgraded plan limit stored but unroutable", async () => {
+    tenantAccessMock.resolve.mockImplementation(async () =>
+      defaultAccess({
+        plan: { id: "plan-growth", name: "GROWTH", pricingId: "price-growth", features: [] },
+      })
+    );
     prismaMock.websiteDomain.findFirst.mockResolvedValue({
       id: "domain-extra",
       websiteId: "website-1",
@@ -283,6 +356,19 @@ describe("production tenant host routing", () => {
   });
 
   it("marks draft websites unpublished so the edge can fail closed before rendering", async () => {
+    tenantAccessMock.resolve.mockResolvedValueOnce(
+      defaultAccess({
+        website: { status: "DRAFT", published: false, publicAccessAllowed: false, deniedReason: "WEBSITE_UNPUBLISHED" },
+        access: {
+          dashboardAllowed: true,
+          publicWebsiteAllowed: false,
+          publicWritesAllowed: false,
+          backgroundJobsAllowed: true,
+          recoveryAllowed: true,
+          deniedReason: "WEBSITE_UNPUBLISHED",
+        },
+      })
+    );
     prismaMock.businessWebsite.findUnique.mockResolvedValue({
       id: "website-draft",
       subdomain: "draft-cleaner",
@@ -296,6 +382,19 @@ describe("production tenant host routing", () => {
   });
 
   it("marks suspended tenant accounts unavailable at the routing layer", async () => {
+    tenantAccessMock.resolve.mockResolvedValueOnce(
+      defaultAccess({
+        access: {
+          dashboardAllowed: false,
+          publicWebsiteAllowed: false,
+          publicWritesAllowed: false,
+          backgroundJobsAllowed: false,
+          recoveryAllowed: false,
+          deniedReason: "TENANT_SUSPENDED",
+        },
+        website: { status: "PUBLISHED", published: true, publicAccessAllowed: false, deniedReason: "TENANT_SUSPENDED" },
+      })
+    );
     prismaMock.businessWebsite.findUnique.mockResolvedValue({
       id: "website-suspended",
       subdomain: "paused-cleaner",
