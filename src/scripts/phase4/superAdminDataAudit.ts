@@ -264,8 +264,8 @@ const runAudit = async (): Promise<AuditFinding[]> => prisma.$transaction(async 
       WHERE session."expiresAt" > NOW()
         AND (
           account."status" = 'SUSPENDED'
-          OR owned_tenant."lifecycleStatus" IN ('SUSPENDED', 'ARCHIVED')
-          OR staff_tenant."lifecycleStatus" IN ('SUSPENDED', 'ARCHIVED')
+          OR owned_tenant."lifecycleStatus" IN ('SUSPENDED', 'ARCHIVED', 'PENDING_DELETION')
+          OR staff_tenant."lifecycleStatus" IN ('SUSPENDED', 'ARCHIVED', 'PENDING_DELETION')
         )
     `,
     Prisma.sql`
@@ -281,8 +281,8 @@ const runAudit = async (): Promise<AuditFinding[]> => prisma.$transaction(async 
       WHERE session."expiresAt" > NOW()
         AND (
           account."status" = 'SUSPENDED'
-          OR owned_tenant."lifecycleStatus" IN ('SUSPENDED', 'ARCHIVED')
-          OR staff_tenant."lifecycleStatus" IN ('SUSPENDED', 'ARCHIVED')
+          OR owned_tenant."lifecycleStatus" IN ('SUSPENDED', 'ARCHIVED', 'PENDING_DELETION')
+          OR staff_tenant."lifecycleStatus" IN ('SUSPENDED', 'ARCHIVED', 'PENDING_DELETION')
         )
       ORDER BY session."expiresAt" DESC
       LIMIT ${SAMPLE_LIMIT}

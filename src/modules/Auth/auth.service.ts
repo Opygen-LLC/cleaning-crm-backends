@@ -87,6 +87,7 @@ const assertAccountCanUseAuthenticatedApp = (user: {
     status: AccountStatus;
     role: UserRole;
     emailVerified: boolean;
+    admin?: { lifecycleStatus: TenantLifecycleStatus } | null;
     staff?: {
         status: StaffStatus;
         manuallyInactive: boolean;
@@ -125,7 +126,22 @@ const assertAccountCanUseAuthenticatedApp = (user: {
         );
     }
 
+    if (user.role === UserRole.ADMIN && user.admin) {
+        if (String(user.admin.lifecycleStatus) === "PENDING_DELETION") {
+            throw new AppError(status.FORBIDDEN, "This organization is pending permanent deletion and is locked.", { code: "TENANT_PENDING_DELETION", retryable: false });
+        }
+        if (user.admin.lifecycleStatus === TenantLifecycleStatus.ARCHIVED) {
+            throw new AppError(status.FORBIDDEN, "Your business account has been archived.", { code: "TENANT_ARCHIVED", retryable: false });
+        }
+        if (user.admin.lifecycleStatus === TenantLifecycleStatus.SUSPENDED) {
+            throw new AppError(status.FORBIDDEN, "Your business account has been suspended. Please contact support.", { code: AUTH_ERROR_CODES.ACCOUNT_SUSPENDED, retryable: false });
+        }
+    }
+
     if (user.role === UserRole.STAFF && user.staff?.admin) {
+        if (String(user.staff.admin.lifecycleStatus) === "PENDING_DELETION") {
+            throw new AppError(status.FORBIDDEN, "Your business account is pending permanent deletion.", { code: "TENANT_PENDING_DELETION", retryable: false });
+        }
         if (user.staff.admin.lifecycleStatus === TenantLifecycleStatus.ARCHIVED) {
             throw new AppError(status.FORBIDDEN, "Your business account has been archived.", { code: "TENANT_ARCHIVED", retryable: false });
         }
@@ -303,17 +319,23 @@ const login = async (
             );
         }
 
-        const staff = signedInUser.role === UserRole.STAFF
-            ? await prisma.staffProfile.findUnique({
-                where: { userId: signedInUser.id },
-                select: { status: true, manuallyInactive: true, admin: { select: { lifecycleStatus: true, user: { select: { status: true } } } } },
-            })
-            : null;
+        const [admin, staff] = await Promise.all([
+            signedInUser.role === UserRole.ADMIN
+                ? prisma.adminProfile.findUnique({ where: { userId: signedInUser.id }, select: { lifecycleStatus: true } })
+                : Promise.resolve(null),
+            signedInUser.role === UserRole.STAFF
+                ? prisma.staffProfile.findUnique({
+                    where: { userId: signedInUser.id },
+                    select: { status: true, manuallyInactive: true, admin: { select: { lifecycleStatus: true, user: { select: { status: true } } } } },
+                })
+                : Promise.resolve(null),
+        ]);
 
         assertAccountCanUseAuthenticatedApp({
             status: signedInUser.status,
             role: signedInUser.role,
             emailVerified: signedInUser.emailVerified,
+            admin,
             staff,
         });
         logAuthLoginStage("AUTH_ACCOUNT_VALIDATED");

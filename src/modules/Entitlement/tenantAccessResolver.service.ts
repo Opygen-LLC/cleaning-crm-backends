@@ -22,6 +22,7 @@ export type TenantAccessDeniedReason =
   | "ACTIVE"
   | "TENANT_SUSPENDED"
   | "TENANT_ARCHIVED"
+  | "TENANT_PENDING_DELETION"
   | "OWNER_ACCOUNT_PENDING"
   | "OWNER_ACCOUNT_SUSPENDED"
   | "OWNER_ACCOUNT_DELETED"
@@ -40,6 +41,9 @@ export interface TenantAccessResolution {
     status: string;
     suspendedAt: string | null;
     archivedAt: string | null;
+    deletionStartedAt: string | null;
+    deletionLastAttemptAt: string | null;
+    deletionLastError: string | null;
     reason: string | null;
   };
   subscription: {
@@ -97,6 +101,13 @@ const accessCacheKey = (organizationId: string) => CacheNamespaces.tenantAccess(
 
 const iso = (date: Date | null | undefined) => date?.toISOString() ?? null;
 
+/** Pure feature override rule used by the resolver and regression matrix. */
+export const applyFeatureOverride = (baseIncluded: boolean, mode: FeatureOverrideMode = "INHERIT"): boolean => {
+  if (mode === "FORCE_ENABLED") return true;
+  if (mode === "FORCE_DISABLED") return false;
+  return baseIncluded;
+};
+
 export const evaluateTenantAccess = (input: {
   lifecycleStatus: string;
   ownerStatus: string;
@@ -109,7 +120,8 @@ export const evaluateTenantAccess = (input: {
   const now = input.now ?? new Date();
   let deniedReason: TenantAccessDeniedReason = "ACTIVE";
 
-  if (input.lifecycleStatus === "ARCHIVED") deniedReason = "TENANT_ARCHIVED";
+  if (input.lifecycleStatus === "PENDING_DELETION") deniedReason = "TENANT_PENDING_DELETION";
+  else if (input.lifecycleStatus === "ARCHIVED") deniedReason = "TENANT_ARCHIVED";
   else if (input.lifecycleStatus === "SUSPENDED") deniedReason = "TENANT_SUSPENDED";
   else if (input.ownerStatus === "DELETED") deniedReason = "OWNER_ACCOUNT_DELETED";
   else if (input.ownerStatus === "SUSPENDED") deniedReason = "OWNER_ACCOUNT_SUSPENDED";
@@ -122,7 +134,7 @@ export const evaluateTenantAccess = (input: {
   else if (!input.isTrial && input.currentPeriodEnd && input.currentPeriodEnd < now) deniedReason = "SUBSCRIPTION_EXPIRED";
 
   const dashboardAllowed = deniedReason === "ACTIVE";
-  const recoveryAllowed = !["TENANT_ARCHIVED", "TENANT_SUSPENDED", "OWNER_ACCOUNT_DELETED", "OWNER_ACCOUNT_SUSPENDED"].includes(deniedReason);
+  const recoveryAllowed = !["TENANT_ARCHIVED", "TENANT_PENDING_DELETION", "TENANT_SUSPENDED", "OWNER_ACCOUNT_DELETED", "OWNER_ACCOUNT_SUSPENDED"].includes(deniedReason);
   return { deniedReason, dashboardAllowed, recoveryAllowed };
 };
 
@@ -160,8 +172,7 @@ function buildFeatureState(
     if (Object.prototype.hasOwnProperty.call(effective, key)) return effective[key];
     if (stack.has(key)) return false;
     const mode = overrides[key] ?? "INHERIT";
-    if (mode === "FORCE_ENABLED") return (effective[key] = true);
-    if (mode === "FORCE_DISABLED") return (effective[key] = false);
+    if (mode !== "INHERIT") return (effective[key] = applyFeatureOverride(base[key], mode));
     if (explicit.has(key)) return (effective[key] = base[key]);
     const parent = featureParent(key);
     if (parent) {
@@ -196,6 +207,10 @@ export async function resolveTenantAccess(organizationId: string): Promise<Tenan
       suspendedReason: true,
       archivedAt: true,
       archivedReason: true,
+      deletionStartedAt: true,
+      deletionLastAttemptAt: true,
+      deletionLastError: true,
+      deletionReason: true,
       user: { select: { status: true } },
       businessWebsite: { select: { status: true } },
       entitlementOverride: { select: { resources: true, features: true, expiresAt: true, reason: true } },
@@ -272,7 +287,10 @@ export async function resolveTenantAccess(organizationId: string): Promise<Tenan
       status: tenant.lifecycleStatus,
       suspendedAt: iso(tenant.suspendedAt),
       archivedAt: iso(tenant.archivedAt),
-      reason: tenant.archivedReason ?? tenant.suspendedReason ?? null,
+      deletionStartedAt: iso(tenant.deletionStartedAt),
+      deletionLastAttemptAt: iso(tenant.deletionLastAttemptAt),
+      deletionLastError: tenant.deletionLastError ?? null,
+      reason: tenant.deletionReason ?? tenant.archivedReason ?? tenant.suspendedReason ?? null,
     },
     subscription: {
       id: subscription?.id ?? null,

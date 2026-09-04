@@ -24,13 +24,19 @@ model SuperAdminAuditLog {
   action        String
   reason        String
   metadata      Json?
+  before        Json?
+  after         Json?
+  requestId     String?
+  ipAddress     String?
+  userAgent     String?
   createdAt     DateTime @default(now())
 
-  actor         User?    @relation("SuperAdminAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  actor         User?    @relation("SuperAdminAuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
 
   @@index([actorUserId, createdAt])
   @@index([tenantAdminId, createdAt])
   @@index([targetUserId, createdAt])
   @@index([action, createdAt])
+  @@index([requestId])
   @@map("super_admin_audit_log")
 }

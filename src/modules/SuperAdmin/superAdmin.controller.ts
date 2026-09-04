@@ -12,7 +12,7 @@ import { writeSuperAdminAudit } from "./superAdminAudit.service";
 import { TenantAdminService } from "./tenantAdmin.service";
 
 const auditMutation = async (
-    req: { user: { id: string }; body?: Record<string, unknown> },
+    req: { user: { id: string }; body?: Record<string, unknown>; ip?: string; get?: (name: string) => string | undefined },
     action: string,
     fallbackReason: string,
     metadata?: Record<string, unknown>,
@@ -23,6 +23,8 @@ const auditMutation = async (
     action,
     reason: String(req.body?.reason ?? fallbackReason),
     metadata,
+    ipAddress: req.ip ?? null,
+    userAgent: req.get?.("user-agent") ?? null,
 });
 
 // ─── Platform Stats ───────────────────────────────────────────────────────────
@@ -410,6 +412,8 @@ const updatePlatformConfig = catchAsync(async (req, res) => {
         action: "PLATFORM_CONFIG_UPDATED",
         reason,
         metadata: { fields: Object.keys(patch) },
+        ipAddress: req.ip ?? null,
+        userAgent: req.get("user-agent") ?? null,
     });
     sendResponse(res, {
         httpStatusCode: status.OK,

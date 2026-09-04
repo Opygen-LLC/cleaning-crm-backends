@@ -187,6 +187,9 @@ export const checkAuth =
             // Tenant lifecycle is authoritative for both owner and staff.
             if ((role === UserRole.ADMIN || role === UserRole.STAFF) && adminId) {
                 const lifecycle = await getRuntimeTenantLifecycleStatus(adminId);
+                if (lifecycle === "PENDING_DELETION") {
+                    throw new AppError(status.FORBIDDEN, "This organization is pending permanent deletion and is locked.", { code: "TENANT_PENDING_DELETION", retryable: false });
+                }
                 if (lifecycle === "ARCHIVED") {
                     throw new AppError(status.FORBIDDEN, "This business account has been archived.", { code: "TENANT_ARCHIVED", retryable: false });
                 }

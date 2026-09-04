@@ -271,6 +271,11 @@ export const getOrganization360 = async (organizationId: string) => {
         archivedReason: true,
         restoredAt: true,
         restoredReason: true,
+        deletionStartedAt: true,
+        deletionReason: true,
+        deletionAttemptCount: true,
+        deletionLastAttemptAt: true,
+        deletionLastError: true,
         user: {
           select: {
             id: true,
@@ -444,6 +449,7 @@ export const getOrganization360 = async (organizationId: string) => {
 
   const healthIssues: Array<{ code: string; severity: "INFO" | "WARNING" | "ERROR"; message: string; details?: unknown }> = [];
   if (access.access.deniedReason !== "ACTIVE") healthIssues.push({ code: access.access.deniedReason, severity: "ERROR", message: "Organization workspace access is blocked by the canonical tenant access policy." });
+  if (tenant.lifecycleStatus === "PENDING_DELETION") healthIssues.push({ code: "PENDING_DELETION", severity: "ERROR", message: tenant.deletionLastError ? `Permanent deletion is pending retry: ${tenant.deletionLastError}` : "Permanent deletion is currently in progress or awaiting retry." });
   if (!tenant.user.emailVerified) healthIssues.push({ code: "OWNER_EMAIL_UNVERIFIED", severity: "WARNING", message: "Organization owner email is not verified." });
   if (!subscription) healthIssues.push({ code: "SUBSCRIPTION_MISSING", severity: "ERROR", message: "Organization has no subscription record." });
   if (!tenant.businessWebsite) healthIssues.push({ code: "WEBSITE_MISSING", severity: "WARNING", message: "Organization does not have a provisioned website." });
@@ -477,6 +483,15 @@ export const getOrganization360 = async (organizationId: string) => {
       updatedAt: tenant.updatedAt,
       accountAgeDays: accountAgeDays(tenant.createdAt),
       lifecycleStatus: tenant.lifecycleStatus,
+      deletion: {
+        pending: tenant.lifecycleStatus === "PENDING_DELETION",
+        startedAt: tenant.deletionStartedAt,
+        reason: tenant.deletionReason,
+        attemptCount: tenant.deletionAttemptCount,
+        lastAttemptAt: tenant.deletionLastAttemptAt,
+        lastError: tenant.deletionLastError,
+        retryable: tenant.lifecycleStatus === "PENDING_DELETION",
+      },
       ownerAccountStatus: tenant.user.status,
       ownerVerified: tenant.user.emailVerified,
       currentPlan: subscription?.subscriptionPlan.name ?? null,
@@ -719,9 +734,9 @@ export const getOrganizationSessions = async (organizationId: string, query: Lis
   return { data: mapSessions(rows), meta: paginationMeta(page, limit, total), persistedSessionHistorySupportsRevokedState: false };
 };
 
-export const revokeOwnerOrganizationSessions = async (organizationId: string, actorUserId: string, reason: string) => {
+export const revokeOwnerOrganizationSessions = async (organizationId: string, context: { actorUserId: string; reason: string; ipAddress?: string | null; userAgent?: string | null }) => {
   const identity = await organizationOrThrow(organizationId);
-  const normalizedReason = String(reason ?? "").trim();
+  const normalizedReason = String(context.reason ?? "").trim();
   if (normalizedReason.length < 10) {
     throw new AppError(status.BAD_REQUEST, "reason must be at least 10 characters.", { code: "REASON_REQUIRED", retryable: false });
   }
@@ -729,19 +744,23 @@ export const revokeOwnerOrganizationSessions = async (organizationId: string, ac
   invalidateRuntimeAuth(identity.userId);
   await disconnectUserSockets(identity.userId);
   await writeSuperAdminAudit({
-    actorUserId,
+    actorUserId: context.actorUserId,
     tenantAdminId: identity.id,
     targetUserId: identity.userId,
     action: "TENANT_OWNER_SESSIONS_REVOKED",
     reason: normalizedReason,
     metadata: { revokedCount },
+    before: { activeSessionRevocationRequested: false },
+    after: { activeSessionRevocationRequested: true, revokedCount },
+    ipAddress: context.ipAddress ?? null,
+    userAgent: context.userAgent ?? null,
   });
   return { organizationId: identity.id, ownerUserId: identity.userId, revokedCount, affectedUsers: 1, revokedAt: new Date() };
 };
 
-export const revokeAllOrganizationSessions = async (organizationId: string, actorUserId: string, reason: string) => {
+export const revokeAllOrganizationSessions = async (organizationId: string, context: { actorUserId: string; reason: string; ipAddress?: string | null; userAgent?: string | null }) => {
   const identity = await organizationOrThrow(organizationId);
-  const normalizedReason = String(reason ?? "").trim();
+  const normalizedReason = String(context.reason ?? "").trim();
   if (normalizedReason.length < 10) {
     throw new AppError(status.BAD_REQUEST, "reason must be at least 10 characters.", { code: "REASON_REQUIRED", retryable: false });
   }
@@ -751,12 +770,16 @@ export const revokeAllOrganizationSessions = async (organizationId: string, acto
   await disconnectTenantSockets(identity.id);
   const revokedCount = counts.reduce((sum, count) => sum + count, 0);
   await writeSuperAdminAudit({
-    actorUserId,
+    actorUserId: context.actorUserId,
     tenantAdminId: identity.id,
     targetUserId: identity.userId,
     action: "TENANT_SESSIONS_REVOKED",
     reason: normalizedReason,
     metadata: { revokedCount, affectedUsers: userIds.length },
+    before: { activeSessionRevocationRequested: false },
+    after: { activeSessionRevocationRequested: true, revokedCount, affectedUsers: userIds.length },
+    ipAddress: context.ipAddress ?? null,
+    userAgent: context.userAgent ?? null,
   });
   return { organizationId: identity.id, revokedCount, affectedUsers: userIds.length, revokedAt: new Date() };
 };

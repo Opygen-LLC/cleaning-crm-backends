@@ -39,6 +39,24 @@ type Db = Prisma.TransactionClient | typeof prisma;
 type TenantMutationContext = {
   actorUserId: string;
   reason: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+};
+
+const PENDING_DELETION = "PENDING_DELETION" as TenantLifecycleStatus;
+
+const auditHttpContext = (context: Pick<TenantMutationContext, "ipAddress" | "userAgent">) => ({
+  ipAddress: context.ipAddress ?? null,
+  userAgent: context.userAgent ?? null,
+});
+
+const assertTenantMutable = (tenant: { lifecycleStatus: TenantLifecycleStatus }) => {
+  if (tenant.lifecycleStatus === PENDING_DELETION) {
+    throw new AppError(status.CONFLICT, "This organization is pending permanent deletion. Retry or complete deletion before making other changes.", {
+      code: "TENANT_PENDING_DELETION",
+      retryable: false,
+    });
+  }
 };
 
 const normalizedReason = (reason: string) => {
@@ -65,6 +83,11 @@ export const resolveTenant = async (organizationId: string, db: Db = prisma) => 
       archivedReason: true,
       restoredAt: true,
       restoredReason: true,
+      deletionStartedAt: true,
+      deletionReason: true,
+      deletionAttemptCount: true,
+      deletionLastAttemptAt: true,
+      deletionLastError: true,
       user: {
         select: {
           id: true,
@@ -284,6 +307,7 @@ export const getTenants = async (query: Record<string, unknown>) => {
       if (subscription?.isTrial && subscription.trialEndsAt && subscription.trialEndsAt <= now) healthIssues.push("EXPIRED_TRIAL");
       if (subscription?.status === SubscriptionStatus.PENDING_PAYMENT) healthIssues.push("PAYMENT_PENDING");
       if (row.lifecycleStatus === TenantLifecycleStatus.SUSPENDED) healthIssues.push("SUSPENDED");
+      if (row.lifecycleStatus === PENDING_DELETION) healthIssues.push("PENDING_DELETION");
       if (!row.businessWebsite) healthIssues.push("NO_WEBSITE");
       if (domainProblem) healthIssues.push("DOMAIN_PROBLEM");
 
@@ -305,17 +329,18 @@ export const getTenants = async (query: Record<string, unknown>) => {
 };
 
 export const getTenantsHealth = async () => {
-  const [total, active, suspended, archived, pendingPlanChanges, unverifiedOwners, missingWebsite, missingSubscription] = await Promise.all([
+  const [total, active, suspended, archived, pendingDeletion, pendingPlanChanges, unverifiedOwners, missingWebsite, missingSubscription] = await Promise.all([
     prisma.adminProfile.count(),
     prisma.adminProfile.count({ where: { lifecycleStatus: TenantLifecycleStatus.ACTIVE } }),
     prisma.adminProfile.count({ where: { lifecycleStatus: TenantLifecycleStatus.SUSPENDED } }),
     prisma.adminProfile.count({ where: { lifecycleStatus: TenantLifecycleStatus.ARCHIVED } }),
+    prisma.adminProfile.count({ where: { lifecycleStatus: PENDING_DELETION } }),
     prisma.pendingPlanChange.count({ where: { status: { in: [PendingPlanChangeStatus.AWAITING_PAYMENT, PendingPlanChangeStatus.UNDER_REVIEW] } } }),
     prisma.adminProfile.count({ where: { user: { emailVerified: false } } }),
     prisma.adminProfile.count({ where: { businessWebsite: null } }),
     prisma.adminProfile.count({ where: { subscription: { none: {} } } }),
   ]);
-  return { total, active, suspended, archived, pendingPlanChanges, unverifiedOwners, missingWebsite, missingSubscription };
+  return { total, active, suspended, archived, pendingDeletion, pendingPlanChanges, unverifiedOwners, missingWebsite, missingSubscription };
 };
 
 export const getTenant360 = async (organizationId: string) =>
@@ -332,13 +357,17 @@ export const revokeAllTenantSessions = Organization360Service.revokeAllOrganizat
 export const updateTenantProfile = async (identifier: string, payload: Record<string, unknown>, context: TenantMutationContext) => {
   const tenant = await resolveTenant(identifier);
   const reason = normalizedReason(context.reason);
+  assertTenantMutable(tenant);
   const allowed = ["businessName", "businessLogo", "address", "brandColor", "city", "mobileNumber", "zipcode", "country", "businessEmail", "businessType", "licenseNumber", "businessDescription", "businessHours", "website", "currency"] as const;
   const data: Record<string, unknown> = {};
   for (const key of allowed) if (Object.prototype.hasOwnProperty.call(payload, key)) data[key] = payload[key];
   if (Object.keys(data).length === 0) throw new AppError(status.BAD_REQUEST, "No editable tenant profile fields were provided.");
+  const currentProfile = await prisma.adminProfile.findUniqueOrThrow({ where: { id: tenant.id } });
+  const before = Object.fromEntries(Object.keys(data).map((key) => [key, (currentProfile as unknown as Record<string, unknown>)[key]]));
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.adminProfile.update({ where: { id: tenant.id }, data: data as Prisma.AdminProfileUpdateInput });
-    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_PROFILE_UPDATED", reason, metadata: { fields: Object.keys(data) } }, tx);
+    const after = Object.fromEntries(Object.keys(data).map((key) => [key, (row as unknown as Record<string, unknown>)[key]]));
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_PROFILE_UPDATED", reason, metadata: { fields: Object.keys(data) }, before, after, ...auditHttpContext(context) }, tx);
     return row;
   });
   await invalidateTenantCaches(tenant);
@@ -348,11 +377,12 @@ export const updateTenantProfile = async (identifier: string, payload: Record<st
 export const updateTenantOwner = async (identifier: string, payload: { name?: string; email?: string; image?: string | null }, context: TenantMutationContext) => {
   const tenant = await resolveTenant(identifier);
   const reason = normalizedReason(context.reason);
+  assertTenantMutable(tenant);
   if (!payload.name && !payload.email && payload.image === undefined) throw new AppError(status.BAD_REQUEST, "No editable owner fields were provided.");
   try {
     const updated = await prisma.$transaction(async (tx) => {
       const user = await tx.user.update({ where: { id: tenant.userId }, data: { ...(payload.name ? { name: payload.name.trim() } : {}), ...(payload.email ? { email: payload.email.trim().toLowerCase(), emailVerified: false } : {}), ...(payload.image !== undefined ? { image: payload.image } : {}) } });
-      await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_OWNER_UPDATED", reason, metadata: { fields: Object.keys(payload) } }, tx);
+      await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_OWNER_UPDATED", reason, metadata: { fields: Object.keys(payload) }, before: { name: tenant.user.name, email: tenant.user.email, image: tenant.user.image, emailVerified: tenant.user.emailVerified }, after: { name: user.name, email: user.email, image: user.image, emailVerified: user.emailVerified }, ...auditHttpContext(context) }, tx);
       return user;
     });
     invalidateRuntimeAuth(tenant.userId);
@@ -366,6 +396,7 @@ export const updateTenantOwner = async (identifier: string, payload: { name?: st
 const mutateLifecycle = async (identifier: string, target: TenantLifecycleStatus, context: TenantMutationContext) => {
   const tenant = await resolveTenant(identifier);
   const reason = normalizedReason(context.reason);
+  assertTenantMutable(tenant);
   if (target === TenantLifecycleStatus.SUSPENDED && tenant.lifecycleStatus === TenantLifecycleStatus.ARCHIVED) {
     throw new AppError(status.CONFLICT, "Archived tenants must be restored before they can be suspended.");
   }
@@ -381,7 +412,7 @@ const mutateLifecycle = async (identifier: string, target: TenantLifecycleStatus
         : { lifecycleStatus: target, reactivatedAt: now },
     });
     await tx.user.update({ where: { id: tenant.userId }, data: { status: target === TenantLifecycleStatus.ACTIVE ? AccountStatus.ACTIVE : AccountStatus.SUSPENDED } });
-    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: target === TenantLifecycleStatus.ACTIVE ? "TENANT_REACTIVATED" : "TENANT_SUSPENDED", reason }, tx);
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: target === TenantLifecycleStatus.ACTIVE ? "TENANT_REACTIVATED" : "TENANT_SUSPENDED", reason, before: { lifecycleStatus: tenant.lifecycleStatus, ownerStatus: tenant.user.status }, after: { lifecycleStatus: target, ownerStatus: target === TenantLifecycleStatus.ACTIVE ? AccountStatus.ACTIVE : AccountStatus.SUSPENDED }, ...auditHttpContext(context) }, tx);
     return admin;
   });
   if (target !== TenantLifecycleStatus.ACTIVE) await revokeTenantSessions(tenant.id);
@@ -395,12 +426,13 @@ export const reactivateTenant = (identifier: string, context: TenantMutationCont
 export const archiveTenant = async (identifier: string, context: TenantMutationContext) => {
   const tenant = await resolveTenant(identifier);
   const reason = normalizedReason(context.reason);
+  assertTenantMutable(tenant);
   if (tenant.lifecycleStatus === TenantLifecycleStatus.ARCHIVED) return tenant;
   const now = new Date();
   const updated = await prisma.$transaction(async (tx) => {
     const admin = await tx.adminProfile.update({ where: { id: tenant.id }, data: { lifecycleStatus: TenantLifecycleStatus.ARCHIVED, preArchiveLifecycleStatus: tenant.lifecycleStatus, archivedAt: now, archivedReason: reason } });
     await tx.user.update({ where: { id: tenant.userId }, data: { status: AccountStatus.SUSPENDED } });
-    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_ARCHIVED", reason }, tx);
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_ARCHIVED", reason, before: { lifecycleStatus: tenant.lifecycleStatus }, after: { lifecycleStatus: TenantLifecycleStatus.ARCHIVED }, ...auditHttpContext(context) }, tx);
     return admin;
   });
   await revokeTenantSessions(tenant.id);
@@ -411,12 +443,13 @@ export const archiveTenant = async (identifier: string, context: TenantMutationC
 export const restoreTenant = async (identifier: string, context: TenantMutationContext) => {
   const tenant = await resolveTenant(identifier);
   const reason = normalizedReason(context.reason);
+  assertTenantMutable(tenant);
   if (tenant.lifecycleStatus !== TenantLifecycleStatus.ARCHIVED) throw new AppError(status.CONFLICT, "Tenant is not archived.");
   const restoredStatus = tenant.preArchiveLifecycleStatus === TenantLifecycleStatus.SUSPENDED ? TenantLifecycleStatus.SUSPENDED : TenantLifecycleStatus.ACTIVE;
   const updated = await prisma.$transaction(async (tx) => {
     const admin = await tx.adminProfile.update({ where: { id: tenant.id }, data: { lifecycleStatus: restoredStatus, restoredAt: new Date(), restoredReason: reason, preArchiveLifecycleStatus: null } });
     await tx.user.update({ where: { id: tenant.userId }, data: { status: restoredStatus === TenantLifecycleStatus.ACTIVE ? AccountStatus.ACTIVE : AccountStatus.SUSPENDED } });
-    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_RESTORED", reason, metadata: { restoredStatus } }, tx);
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_RESTORED", reason, metadata: { restoredStatus }, before: { lifecycleStatus: TenantLifecycleStatus.ARCHIVED }, after: { lifecycleStatus: restoredStatus }, ...auditHttpContext(context) }, tx);
     return admin;
   });
   await invalidateTenantCaches(tenant);
@@ -431,7 +464,7 @@ export const getTenantDeletionPreview = async (identifier: string) => {
     prisma.user.count({ where: { OR: [{ id: tenant.userId }, { staff: { adminId: tenant.id } }] } }),
     prisma.staffProfile.count({ where: { adminId: tenant.id } }), prisma.client.count({ where: { adminId: tenant.id } }), prisma.lead.count({ where: { adminId: tenant.id } }), prisma.leadActivity.count({ where: { adminId: tenant.id } }), prisma.job.count({ where: { adminId: tenant.id } }), prisma.booking.count({ where: { adminId: tenant.id } }), prisma.recurringSchedule.count({ where: { adminId: tenant.id } }), prisma.serviceCatalog.count({ where: { adminId: tenant.id } }), prisma.quote.count({ where: { adminId: tenant.id } }), prisma.estimate.count({ where: { adminId: tenant.id } }), prisma.invoice.count({ where: { adminId: tenant.id } }), prisma.payment.count({ where: { adminId: tenant.id } }), prisma.expense.count({ where: { adminId: tenant.id } }), website ? prisma.websiteRevision.count({ where: { websiteId: website.id } }) : 0, website ? prisma.websiteDomain.count({ where: { websiteId: website.id } }) : 0, website ? prisma.websiteAsset.count({ where: { websiteId: website.id } }) : 0, prisma.websiteSubmission.count({ where: { adminId: tenant.id } }), prisma.review.count({ where: { adminId: tenant.id } }), prisma.notification.count({ where: { adminId: tenant.id } }), prisma.subscription.count({ where: { adminId: tenant.id } }), subscriptionIds.length ? prisma.billingHistory.count({ where: { subscriptionId: { in: subscriptionIds } } }) : 0, subscriptionIds.length ? prisma.pendingPlanChange.count({ where: { subscriptionId: { in: subscriptionIds } } }) : 0, prisma.couponUsage.count({ where: { adminId: tenant.id } }),
   ]);
-  return { tenant: { id: tenant.id, ownerUserId: tenant.userId, businessName: tenant.businessName, ownerEmail: tenant.user.email }, confirmationAdminId: tenant.id, confirmationText: HARD_DELETE_TEXT, counts: { users, staff, clients, leads, leadActivities, jobs, bookings, recurringBookings, services, quotes, estimates, invoices, payments, expenses, commissions: 0, website: website ? 1 : 0, websiteRevisions, domains, assets, submissions, reviews, notifications, subscriptions, billingHistory, pendingPlanChanges, couponUsages } };
+  return { tenant: { id: tenant.id, ownerUserId: tenant.userId, businessName: tenant.businessName, ownerEmail: tenant.user.email, lifecycleStatus: tenant.lifecycleStatus }, confirmationAdminId: tenant.id, confirmationText: HARD_DELETE_TEXT, retryable: tenant.lifecycleStatus === PENDING_DELETION, deletion: { startedAt: tenant.deletionStartedAt, attemptCount: tenant.deletionAttemptCount, lastAttemptAt: tenant.deletionLastAttemptAt, lastError: tenant.deletionLastError }, counts: { users, staff, clients, leads, leadActivities, jobs, bookings, recurringBookings, services, quotes, estimates, invoices, payments, expenses, commissions: 0, website: website ? 1 : 0, websiteRevisions, domains, assets, submissions, reviews, notifications, subscriptions, billingHistory, pendingPlanChanges, couponUsages } };
 };
 
 const tenantCloudinaryUrls = async (adminId: string) => {
@@ -445,38 +478,158 @@ const tenantCloudinaryUrls = async (adminId: string) => {
   return [...new Set(values.filter((url): url is string => Boolean(url && url.includes("cloudinary"))))];
 };
 
-export const hardDeleteTenant = async (identifier: string, input: { adminId: string; confirmationText: string; reason: string }, actorUserId: string) => {
+export const hardDeleteTenant = async (
+  identifier: string,
+  input: { adminId: string; confirmationText: string; reason: string },
+  context: TenantMutationContext,
+) => {
   const tenant = await resolveTenant(identifier);
-  if (input.adminId !== tenant.id || input.confirmationText !== HARD_DELETE_TEXT) throw new AppError(status.BAD_REQUEST, "Permanent deletion confirmation did not match the tenant id and required text.");
-  if (actorUserId === tenant.userId) throw new AppError(status.BAD_REQUEST, "A Super Admin cannot permanently delete their own account through tenant deletion.");
-  const preview = await getTenantDeletionPreview(tenant.id);
+  if (input.adminId !== tenant.id || input.confirmationText !== HARD_DELETE_TEXT) {
+    throw new AppError(status.BAD_REQUEST, "Permanent deletion confirmation did not match the organization id and required text.");
+  }
+  if (context.actorUserId === tenant.userId) {
+    throw new AppError(status.BAD_REQUEST, "A Super Admin cannot permanently delete their own account through organization deletion.");
+  }
   const reason = normalizedReason(input.reason);
+  const preview = await getTenantDeletionPreview(tenant.id);
+  const retry = tenant.lifecycleStatus === PENDING_DELETION;
+  const now = new Date();
 
-  // Disable the tenant first so no new writes race the deletion process.
+  // Mark PENDING_DELETION before touching sessions, caches, storage or tenant
+  // rows. The conditional claim prevents two initial delete requests from
+  // purging the same organization concurrently. A retry is allowed after a
+  // recorded failure, or after a stale in-progress attempt (5 minutes).
   await prisma.$transaction(async (tx) => {
-    await tx.adminProfile.update({ where: { id: tenant.id }, data: { lifecycleStatus: TenantLifecycleStatus.ARCHIVED, archivedAt: new Date(), archivedReason: reason } });
+    const before = {
+      lifecycleStatus: tenant.lifecycleStatus,
+      deletionAttemptCount: tenant.deletionAttemptCount,
+      deletionLastError: tenant.deletionLastError,
+    };
+
+    if (!retry) {
+      const claim = await tx.adminProfile.updateMany({
+        where: { id: tenant.id, lifecycleStatus: { not: PENDING_DELETION } },
+        data: {
+          lifecycleStatus: PENDING_DELETION,
+          deletionStartedAt: tenant.deletionStartedAt ?? now,
+          deletionReason: reason,
+          deletionAttemptCount: { increment: 1 },
+          deletionLastAttemptAt: now,
+          deletionLastError: null,
+        },
+      });
+      if (claim.count !== 1) {
+        throw new AppError(status.CONFLICT, "Permanent deletion is already in progress. Refresh the deletion preview before retrying.", {
+          code: "TENANT_DELETE_ALREADY_IN_PROGRESS",
+          retryable: true,
+        });
+      }
+    } else {
+      const lastAttemptAt = tenant.deletionLastAttemptAt?.getTime() ?? 0;
+      const stale = !lastAttemptAt || now.getTime() - lastAttemptAt >= 5 * 60 * 1000;
+      if (!tenant.deletionLastError && !stale) {
+        throw new AppError(status.CONFLICT, "Permanent deletion is already in progress. Retry after the current attempt finishes or becomes stale.", {
+          code: "TENANT_DELETE_ALREADY_IN_PROGRESS",
+          retryable: true,
+        });
+      }
+      await tx.adminProfile.update({
+        where: { id: tenant.id },
+        data: {
+          lifecycleStatus: PENDING_DELETION,
+          deletionStartedAt: tenant.deletionStartedAt ?? now,
+          deletionReason: reason,
+          deletionAttemptCount: { increment: 1 },
+          deletionLastAttemptAt: now,
+          deletionLastError: null,
+        },
+      });
+    }
+
+    const updated = await tx.adminProfile.findUniqueOrThrow({
+      where: { id: tenant.id },
+      select: { lifecycleStatus: true, deletionAttemptCount: true, deletionStartedAt: true, deletionLastAttemptAt: true },
+    });
     await tx.user.update({ where: { id: tenant.userId }, data: { status: AccountStatus.SUSPENDED } });
-    await writeSuperAdminAudit({ actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_HARD_DELETE_STARTED", reason, metadata: { counts: preview.counts } }, tx);
+    await writeSuperAdminAudit({
+      actorUserId: context.actorUserId,
+      tenantAdminId: tenant.id,
+      targetUserId: tenant.userId,
+      action: retry ? "TENANT_HARD_DELETE_RETRIED" : "TENANT_HARD_DELETE_STARTED",
+      reason,
+      metadata: { counts: preview.counts, attempt: updated.deletionAttemptCount },
+      before,
+      after: updated,
+      ...auditHttpContext(context),
+    }, tx);
   });
+
   await revokeTenantSessions(tenant.id);
   await invalidateTenantCaches(tenant);
 
+  const recordFailure = async (stage: "EXTERNAL_ASSETS" | "DATABASE" | "VERIFICATION", error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    const safeMessage = message.slice(0, 1000);
+    await prisma.adminProfile.update({
+      where: { id: tenant.id },
+      data: { lifecycleStatus: PENDING_DELETION, deletionLastError: `${stage}: ${safeMessage}`, deletionLastAttemptAt: new Date() },
+    }).catch(() => undefined);
+    await writeSuperAdminAudit({
+      actorUserId: context.actorUserId,
+      tenantAdminId: tenant.id,
+      targetUserId: tenant.userId,
+      action: "TENANT_HARD_DELETE_FAILED",
+      reason,
+      metadata: { stage, error: safeMessage },
+      after: { lifecycleStatus: PENDING_DELETION, deletionLastError: `${stage}: ${safeMessage}` },
+      ...auditHttpContext(context),
+    }).catch(() => undefined);
+  };
+
   const urls = await tenantCloudinaryUrls(tenant.id);
-  // External deletion is deliberately fail-closed: if storage cleanup fails,
-  // the disabled tenant remains recoverable instead of leaving orphaned assets.
-  for (const url of urls) await deleteFileFromCloudinary(url);
+  const cleanup = await Promise.allSettled(urls.map((url) => deleteFileFromCloudinary(url)));
+  const failedAssets = cleanup
+    .map((result, index) => ({ result, url: urls[index] }))
+    .filter((entry): entry is { result: PromiseRejectedResult; url: string } => entry.result.status === "rejected");
+  if (failedAssets.length) {
+    const error = new AppError(status.BAD_GATEWAY, `External asset cleanup failed for ${failedAssets.length} file(s). The organization remains pending deletion and can be retried.`, { code: "TENANT_DELETE_EXTERNAL_CLEANUP_FAILED", retryable: true });
+    await recordFailure("EXTERNAL_ASSETS", error);
+    throw error;
+  }
 
   const staffUsers = await prisma.staffProfile.findMany({ where: { adminId: tenant.id }, select: { userId: true } });
-  await prisma.$transaction(async (tx) => {
-    await tx.couponUsage.deleteMany({ where: { adminId: tenant.id } });
-    if (staffUsers.length) await tx.user.deleteMany({ where: { id: { in: staffUsers.map((row) => row.userId) } } });
-    await tx.user.delete({ where: { id: tenant.userId } });
-  });
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.couponUsage.deleteMany({ where: { adminId: tenant.id } });
+      if (staffUsers.length) await tx.user.deleteMany({ where: { id: { in: staffUsers.map((row) => row.userId) } } });
+      await tx.user.delete({ where: { id: tenant.userId } });
+      // Keep the success audit in the same database transaction as the tenant
+      // purge. If the immutable audit write fails, the tenant deletion rolls
+      // back and remains PENDING_DELETION for an explicit retry.
+      await writeSuperAdminAudit({
+        actorUserId: context.actorUserId,
+        tenantAdminId: tenant.id,
+        targetUserId: tenant.userId,
+        action: "TENANT_HARD_DELETED",
+        reason,
+        metadata: { counts: preview.counts, externalAssetsDeleted: urls.length, retry },
+        before: { lifecycleStatus: PENDING_DELETION },
+        after: { lifecycleStatus: "DELETED" },
+        ...auditHttpContext(context),
+      }, tx);
+    });
+  } catch (error) {
+    await recordFailure("DATABASE", error);
+    throw new AppError(status.INTERNAL_SERVER_ERROR, "Database cleanup failed. The organization remains pending deletion and can be retried.", { code: "TENANT_DELETE_DATABASE_FAILED", retryable: true });
+  }
 
   const remains = await prisma.adminProfile.count({ where: { id: tenant.id } });
-  if (remains !== 0) throw new AppError(status.INTERNAL_SERVER_ERROR, "Tenant deletion verification failed.");
-  await writeSuperAdminAudit({ actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_HARD_DELETED", reason, metadata: { counts: preview.counts, externalAssetsDeleted: urls.length } });
-  return { deleted: true, tenantId: tenant.id, externalAssetsDeleted: urls.length, counts: preview.counts };
+  if (remains !== 0) {
+    const error = new AppError(status.INTERNAL_SERVER_ERROR, "Organization deletion verification failed. Retry permanent deletion.", { code: "TENANT_DELETE_VERIFICATION_FAILED", retryable: true });
+    await recordFailure("VERIFICATION", error);
+    throw error;
+  }
+  return { deleted: true, tenantId: tenant.id, externalAssetsDeleted: urls.length, counts: preview.counts, retried: retry };
 };
 
 const buildGlobalUserWhere = (query: Record<string, unknown>): Prisma.UserWhereInput => {
@@ -540,13 +693,14 @@ export const updateGlobalUserStatus = async (userId: string, nextStatus: Account
   const reason = normalizedReason(context.reason);
   const target = await prisma.user.findUnique({ where: { id: userId }, include: { admin: { select: { id: true } }, staff: { select: { adminId: true } } } });
   if (!target) throw new AppError(status.NOT_FOUND, "User not found.");
+  if (target.admin?.id) { const tenant = await resolveTenant(target.admin.id); assertTenantMutable(tenant); }
   if (target.id === context.actorUserId && nextStatus !== AccountStatus.ACTIVE) throw new AppError(status.BAD_REQUEST, "You cannot suspend your own Super Admin account.");
   if (target.role === UserRole.ADMIN && target.admin) {
     return nextStatus === AccountStatus.ACTIVE ? reactivateTenant(target.admin.id, context) : suspendTenant(target.admin.id, context);
   }
   const updated = await prisma.$transaction(async (tx) => {
     const user = await tx.user.update({ where: { id: userId }, data: { status: nextStatus }, select: { id: true, name: true, email: true, role: true, status: true } });
-    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: target.staff?.adminId ?? null, targetUserId: userId, action: "USER_STATUS_UPDATED", reason, metadata: { from: target.status, to: nextStatus } }, tx);
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: target.staff?.adminId ?? null, targetUserId: userId, action: "USER_STATUS_UPDATED", reason, metadata: { from: target.status, to: nextStatus }, before: { status: target.status }, after: { status: nextStatus }, ...auditHttpContext(context) }, tx);
     return user;
   });
   if (nextStatus !== AccountStatus.ACTIVE) await revokeAllSessionsForUser(userId);
@@ -566,7 +720,7 @@ export const updateGlobalUserRole = async (userId: string, role: UserRole, conte
   }
   const updated = await prisma.$transaction(async (tx) => {
     const user = await tx.user.update({ where: { id: userId }, data: { role }, select: { id: true, name: true, email: true, role: true, status: true } });
-    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: target.admin?.id ?? target.staff?.adminId ?? null, targetUserId: userId, action: "USER_ROLE_UPDATED", reason, metadata: { from: target.role, to: role } }, tx);
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: target.admin?.id ?? target.staff?.adminId ?? null, targetUserId: userId, action: "USER_ROLE_UPDATED", reason, metadata: { from: target.role, to: role }, before: { role: target.role }, after: { role }, ...auditHttpContext(context) }, tx);
     return user;
   });
   await revokeAllSessionsForUser(userId); invalidateRuntimeAuth(userId); return updated;
@@ -576,9 +730,10 @@ export const verifyGlobalUser = async (userId: string, context: TenantMutationCo
   const reason = normalizedReason(context.reason);
   const target = await prisma.user.findUnique({ where: { id: userId }, include: { admin: { select: { id: true } }, staff: { select: { adminId: true } } } });
   if (!target) throw new AppError(status.NOT_FOUND, "User not found.");
+  if (target.admin?.id) { const tenant = await resolveTenant(target.admin.id); assertTenantMutable(tenant); }
   const updated = await prisma.$transaction(async (tx) => {
     const user = await tx.user.update({ where: { id: userId }, data: { emailVerified: true, ...(target.status === AccountStatus.PENDING ? { status: AccountStatus.ACTIVE } : {}) }, select: { id: true, name: true, email: true, emailVerified: true, status: true, role: true } });
-    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: target.admin?.id ?? target.staff?.adminId ?? null, targetUserId: userId, action: "USER_MANUALLY_VERIFIED", reason }, tx);
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: target.admin?.id ?? target.staff?.adminId ?? null, targetUserId: userId, action: "USER_MANUALLY_VERIFIED", reason, before: { emailVerified: target.emailVerified, status: target.status }, after: { emailVerified: user.emailVerified, status: user.status }, ...auditHttpContext(context) }, tx);
     return user;
   });
   invalidateRuntimeAuth(userId); return updated;
@@ -643,13 +798,14 @@ export const approveSubscriptionRequest = async (requestId: string, context: Ten
     },
   });
   if (!request) throw new AppError(status.NOT_FOUND, "Subscription request not found.");
+  assertTenantMutable(await resolveTenant(request.subscription.adminId));
   if (request.status !== PendingPlanChangeStatus.UNDER_REVIEW) throw new AppError(status.CONFLICT, "Only requests under review can be approved.");
   const billing = request.billingHistory[0];
   if (!billing) throw new AppError(status.BAD_REQUEST, "This request has no pending payment proof to approve.");
   const result = await superAdminService.approvePaymentProof(billing.id, { note: `Approved by Super Admin: ${reason}` });
   await writeSuperAdminAudit({
     actorUserId: context.actorUserId, tenantAdminId: request.subscription.adminId, targetUserId: request.subscription.admin.userId,
-    action: "SUBSCRIPTION_REQUEST_APPROVED", reason, metadata: { requestId, billingId: billing.id },
+    action: "SUBSCRIPTION_REQUEST_APPROVED", reason, metadata: { requestId, billingId: billing.id }, before: { status: request.status }, after: { status: PendingPlanChangeStatus.APPROVED }, ...auditHttpContext(context),
   });
   return result;
 };
@@ -664,13 +820,14 @@ export const rejectSubscriptionRequest = async (requestId: string, context: Tena
     },
   });
   if (!request) throw new AppError(status.NOT_FOUND, "Subscription request not found.");
+  assertTenantMutable(await resolveTenant(request.subscription.adminId));
   if (request.status !== PendingPlanChangeStatus.UNDER_REVIEW) throw new AppError(status.CONFLICT, "Only requests under review can be rejected.");
   const billing = request.billingHistory[0];
   if (!billing) throw new AppError(status.BAD_REQUEST, "This request has no pending payment proof to reject.");
   const result = await superAdminService.rejectPaymentProof(billing.id, { reason });
   await writeSuperAdminAudit({
     actorUserId: context.actorUserId, tenantAdminId: request.subscription.adminId, targetUserId: request.subscription.admin.userId,
-    action: "SUBSCRIPTION_REQUEST_REJECTED", reason, metadata: { requestId, billingId: billing.id },
+    action: "SUBSCRIPTION_REQUEST_REJECTED", reason, metadata: { requestId, billingId: billing.id }, before: { status: request.status }, after: { status: PendingPlanChangeStatus.REJECTED }, ...auditHttpContext(context),
   });
   return result;
 };
@@ -692,21 +849,21 @@ const latestSubscription = async (tenantId: string) => {
 };
 
 export const changeTenantPlan = async (identifier: string, targetPlanId: string, context: TenantMutationContext) => {
-  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); const current = await latestSubscription(tenant.id);
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); assertTenantMutable(tenant); const current = await latestSubscription(tenant.id);
   const target = await prisma.plan.findUnique({ where: { id: targetPlanId }, include: { subscriptionPlan: true } });
   if (!target || !target.subscriptionPlan.isActive) throw new AppError(status.NOT_FOUND, "Target plan is not available.");
   const now = new Date(); const currentEnd = current.currentPeriodEnd && current.currentPeriodEnd > now ? current.currentPeriodEnd : (target.interval === SubscriptionPlanInterval.YEARLY ? addYears(now, 1) : addMonths(now, 1));
   const updated = await prisma.$transaction(async (tx) => {
     await tx.pendingPlanChange.updateMany({ where: { subscriptionId: current.id, isAdministrative: true, applyAt: { not: null }, status: PendingPlanChangeStatus.APPROVED }, data: { status: PendingPlanChangeStatus.CANCELLED, rejectionReason: "Superseded by immediate Super Admin plan override.", reviewedAt: now } });
     const sub = await tx.subscription.update({ where: { id: current.id }, data: { planId: target.id, subscriptionPlanId: target.subscriptionPlanId, status: SubscriptionStatus.ACTIVE, isTrial: false, trialEndsAt: null, currentPeriodStart: current.currentPeriodStart ?? now, currentPeriodEnd: currentEnd, cancelAtPeriodEnd: false, canceledAt: null } });
-    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_PLAN_OVERRIDDEN", reason, metadata: { fromPlanId: current.planId, toPlanId: target.id, noCharge: true } }, tx); return sub;
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_PLAN_OVERRIDDEN", reason, metadata: { noCharge: true }, before: { planId: current.planId, subscriptionPlanId: current.subscriptionPlanId }, after: { planId: target.id, subscriptionPlanId: target.subscriptionPlanId }, ...auditHttpContext(context) }, tx); return sub;
   });
   await invalidateTenantCaches(tenant); return updated;
 };
 
 const tierRank: Record<string, number> = { STARTER: 1, GROWTH: 2, PRO: 3, CUSTOM: 4 };
 export const scheduleTenantDowngrade = async (identifier: string, targetPlanId: string, context: TenantMutationContext) => {
-  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); const current = await latestSubscription(tenant.id);
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); assertTenantMutable(tenant); const current = await latestSubscription(tenant.id);
   if (!current.currentPeriodEnd) throw new AppError(status.CONFLICT, "A billing period end is required to schedule a downgrade.");
   const target = await prisma.plan.findUnique({ where: { id: targetPlanId }, include: { subscriptionPlan: true } });
   if (!target || tierRank[target.subscriptionPlan.name] >= tierRank[current.subscriptionPlan.name]) throw new AppError(status.BAD_REQUEST, "Scheduled plan changes must be a downgrade.");
@@ -714,25 +871,25 @@ export const scheduleTenantDowngrade = async (identifier: string, targetPlanId: 
   if (existing) throw new AppError(status.CONFLICT, "This tenant already has a scheduled plan change.");
   const row = await prisma.$transaction(async (tx) => {
     const created = await tx.pendingPlanChange.create({ data: { subscriptionId: current.id, targetPlanId: target.id, quotedAmount: 0, currency: target.subscriptionPlan.currency, status: PendingPlanChangeStatus.APPROVED, submittedAt: new Date(), reviewedAt: new Date(), expiresAt: addDays(current.currentPeriodEnd!, 30), applyAt: current.currentPeriodEnd, isAdministrative: true, reason, requestedByUserId: context.actorUserId, reviewedByUserId: context.actorUserId } });
-    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_DOWNGRADE_SCHEDULED", reason, metadata: { targetPlanId, applyAt: current.currentPeriodEnd, noCharge: true } }, tx); return created;
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_DOWNGRADE_SCHEDULED", reason, metadata: { targetPlanId, applyAt: current.currentPeriodEnd, noCharge: true }, before: { scheduled: false }, after: { scheduled: true, targetPlanId, applyAt: current.currentPeriodEnd }, ...auditHttpContext(context) }, tx); return created;
   }); return row;
 };
 
 export const cancelScheduledTenantChange = async (identifier: string, context: TenantMutationContext) => {
-  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); const current = await latestSubscription(tenant.id);
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); assertTenantMutable(tenant); const current = await latestSubscription(tenant.id);
   const pending = await prisma.pendingPlanChange.findFirst({ where: { subscriptionId: current.id, isAdministrative: true, status: PendingPlanChangeStatus.APPROVED, applyAt: { not: null } }, orderBy: { createdAt: "desc" } });
   if (!pending) throw new AppError(status.NOT_FOUND, "No scheduled administrative plan change exists.");
-  return prisma.$transaction(async (tx) => { const row = await tx.pendingPlanChange.update({ where: { id: pending.id }, data: { status: PendingPlanChangeStatus.CANCELLED, rejectionReason: reason, reviewedAt: new Date(), applyAt: null } }); await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_SCHEDULED_PLAN_CHANGE_CANCELLED", reason, metadata: { pendingPlanChangeId: pending.id } }, tx); return row; });
+  return prisma.$transaction(async (tx) => { const row = await tx.pendingPlanChange.update({ where: { id: pending.id }, data: { status: PendingPlanChangeStatus.CANCELLED, rejectionReason: reason, reviewedAt: new Date(), applyAt: null } }); await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_SCHEDULED_PLAN_CHANGE_CANCELLED", reason, metadata: { pendingPlanChangeId: pending.id }, before: { status: pending.status, applyAt: pending.applyAt }, after: { status: PendingPlanChangeStatus.CANCELLED, applyAt: null }, ...auditHttpContext(context) }, tx); return row; });
 };
 
 export const setTenantCancelAtPeriodEnd = async (identifier: string, cancelAtPeriodEnd: boolean, context: TenantMutationContext) => {
-  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); const current = await latestSubscription(tenant.id);
-  const row = await prisma.$transaction(async (tx) => { const sub = await tx.subscription.update({ where: { id: current.id }, data: { cancelAtPeriodEnd, canceledAt: cancelAtPeriodEnd ? new Date() : null } }); await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: cancelAtPeriodEnd ? "TENANT_CANCELLATION_SCHEDULED" : "TENANT_CANCELLATION_REMOVED", reason }, tx); return sub; });
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); assertTenantMutable(tenant); const current = await latestSubscription(tenant.id);
+  const row = await prisma.$transaction(async (tx) => { const sub = await tx.subscription.update({ where: { id: current.id }, data: { cancelAtPeriodEnd, canceledAt: cancelAtPeriodEnd ? new Date() : null } }); await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: cancelAtPeriodEnd ? "TENANT_CANCELLATION_SCHEDULED" : "TENANT_CANCELLATION_REMOVED", reason, before: { cancelAtPeriodEnd: current.cancelAtPeriodEnd }, after: { cancelAtPeriodEnd }, ...auditHttpContext(context) }, tx); return sub; });
   await invalidateTenantCaches(tenant); return row;
 };
 
 export const manageTenantTrial = async (identifier: string, input: { action: "RESTART" | "EXTEND" | "SET_END" | "END"; days?: number; endAt?: string }, context: TenantMutationContext) => {
-  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); const current = await latestSubscription(tenant.id); const now = new Date();
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); assertTenantMutable(tenant); const current = await latestSubscription(tenant.id); const now = new Date();
   let data: Prisma.SubscriptionUpdateInput;
   if (input.action === "RESTART") { const days = input.days ?? (await getPlatformConfig()).defaultTrialDays; data = { isTrial: true, status: SubscriptionStatus.ACTIVE, trialEndsAt: addDays(now, days), currentPeriodStart: now, currentPeriodEnd: null, cancelAtPeriodEnd: false, canceledAt: null }; }
   else if (input.action === "EXTEND") { const days = input.days ?? 0; if (days < 1 || days > 365) throw new AppError(status.BAD_REQUEST, "days must be between 1 and 365."); const base = current.trialEndsAt && current.trialEndsAt > now ? current.trialEndsAt : now; data = { isTrial: true, status: SubscriptionStatus.ACTIVE, trialEndsAt: addDays(base, days) }; }
@@ -746,12 +903,10 @@ export const manageTenantTrial = async (identifier: string, input: { action: "RE
       targetUserId: tenant.userId,
       action: `TENANT_TRIAL_${input.action}`,
       reason,
-      metadata: {
-        days: input.days ?? null,
-        requestedEndAt: input.endAt ?? null,
-        before: { isTrial: current.isTrial, status: current.status, trialEndsAt: current.trialEndsAt?.toISOString() ?? null },
-        after: { isTrial: sub.isTrial, status: sub.status, trialEndsAt: sub.trialEndsAt?.toISOString() ?? null },
-      },
+      metadata: { days: input.days ?? null, requestedEndAt: input.endAt ?? null },
+      before: { isTrial: current.isTrial, status: current.status, trialEndsAt: current.trialEndsAt?.toISOString() ?? null },
+      after: { isTrial: sub.isTrial, status: sub.status, trialEndsAt: sub.trialEndsAt?.toISOString() ?? null },
+      ...auditHttpContext(context),
     }, tx);
     return sub;
   });
@@ -759,14 +914,16 @@ export const manageTenantTrial = async (identifier: string, input: { action: "RE
   return row;
 };
 
-export const setTenantEntitlements = async (identifier: string, payload: Parameters<typeof TenantEntitlementService.setTenantEntitlementOverride>[2], actorUserId: string) => {
-  const tenant = await resolveTenant(identifier); const reason = normalizedReason(payload.reason);
-  const result = await prisma.$transaction(async (tx) => { const row = await TenantEntitlementService.setTenantEntitlementOverride(tenant.id, actorUserId, { ...payload, reason }, tx); await writeSuperAdminAudit({ actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_ENTITLEMENTS_OVERRIDDEN", reason, metadata: { resources: payload.resources, features: payload.features, expiresAt: payload.expiresAt } }, tx); return row; }); await invalidateTenantCaches(tenant); return result;
+export const setTenantEntitlements = async (identifier: string, payload: Parameters<typeof TenantEntitlementService.setTenantEntitlementOverride>[2], context: TenantMutationContext) => {
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(payload.reason); assertTenantMutable(tenant);
+  const before = await TenantEntitlementService.getTenantEntitlementOverride(tenant.id);
+  const result = await prisma.$transaction(async (tx) => { const row = await TenantEntitlementService.setTenantEntitlementOverride(tenant.id, context.actorUserId, { ...payload, reason }, tx); await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_ENTITLEMENTS_OVERRIDDEN", reason, metadata: { resources: payload.resources, features: payload.features, expiresAt: payload.expiresAt }, before, after: row, ...auditHttpContext(context) }, tx); return row; }); await invalidateTenantCaches(tenant); return result;
 };
 
 export const revokeTenantEntitlements = async (identifier: string, context: TenantMutationContext) => {
-  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason);
-  const result = await prisma.$transaction(async (tx) => { const row = await TenantEntitlementService.revokeTenantEntitlementOverride(tenant.id, tx); await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_ENTITLEMENTS_REVOKED", reason }, tx); return row; }); await invalidateTenantCaches(tenant); return result;
+  const tenant = await resolveTenant(identifier); const reason = normalizedReason(context.reason); assertTenantMutable(tenant);
+  const before = await TenantEntitlementService.getTenantEntitlementOverride(tenant.id);
+  const result = await prisma.$transaction(async (tx) => { const row = await TenantEntitlementService.revokeTenantEntitlementOverride(tenant.id, tx); await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_ENTITLEMENTS_REVOKED", reason, before, after: null, ...auditHttpContext(context) }, tx); return row; }); await invalidateTenantCaches(tenant); return result;
 };
 
 export const applyDueAdministrativePlanChanges = async (now = new Date()) => {

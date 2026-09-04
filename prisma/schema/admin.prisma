@@ -41,6 +41,13 @@ model AdminProfile {
   archivedReason         String?
   restoredAt             DateTime?
   restoredReason         String?
+  /// Permanent-deletion workflow state. PENDING_DELETION blocks tenant access
+  /// while keeping enough state to retry failed external/database cleanup safely.
+  deletionStartedAt      DateTime?
+  deletionReason         String?
+  deletionAttemptCount   Int                     @default(0)
+  deletionLastAttemptAt  DateTime?
+  deletionLastError      String?
   user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   couponUsage           CouponUsage[]
   reviews               Review[]
@@ -89,6 +96,7 @@ model AdminProfile {
   legacyPaymentGatewayConfig LegacyPaymentGatewayConfig?   @relation("LegacyPaymentGatewayConfigAdmin") @ignore
 
   @@index([createdAt])
+  @@index([lifecycleStatus, createdAt])
 }
 
 model WorkLocation {

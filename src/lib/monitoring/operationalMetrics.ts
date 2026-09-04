@@ -1,4 +1,4 @@
-export type OperationalMetricOutcome = "success" | "retry" | "failed" | "dead";
+export type OperationalMetricOutcome = "success" | "retry" | "failed" | "dead" | "skipped";
 
 const cacheInvalidations = new Map<string, number>();
 const cacheInvalidationFailures = new Map<string, number>();

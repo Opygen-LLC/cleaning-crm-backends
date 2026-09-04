@@ -171,7 +171,11 @@ export const startSupportMode = async (input: {
     targetUserId: tenant.user.id,
     action: "TENANT_SUPPORT_MODE_STARTED",
     reason,
-    metadata: { sessionId: id, readOnly: true, expiresAt: expiresAt.toISOString(), durationMinutes: ttl / 60, ipAddress: input.ipAddress ?? null, userAgent: input.userAgent ?? null },
+    metadata: { sessionId: id, readOnly: true, expiresAt: expiresAt.toISOString(), durationMinutes: ttl / 60 },
+    before: { supportMode: null },
+    after: { sessionId: id, organizationId: tenant.id, readOnly: true, expiresAt: expiresAt.toISOString() },
+    ipAddress: input.ipAddress ?? null,
+    userAgent: input.userAgent ?? null,
   });
   return { token, session: { ...session, targetRole: UserRole.ADMIN } };
 };
@@ -202,7 +206,11 @@ export const endSupportMode = async (token: string, supportAdminId: string, meta
     targetUserId: session.targetUserId,
     action: "TENANT_SUPPORT_MODE_ENDED",
     reason: "Read-only support mode ended by Super Admin.",
-    metadata: { sessionId: session.id, readOnly: true, ipAddress: metadata?.ipAddress ?? null, userAgent: metadata?.userAgent ?? null },
+    metadata: { sessionId: session.id, readOnly: true },
+    before: { sessionId: session.id, organizationId: session.organizationId, readOnly: true },
+    after: { supportMode: null },
+    ipAddress: metadata?.ipAddress ?? null,
+    userAgent: metadata?.userAgent ?? null,
   });
   return { ended: true, organizationId: session.organizationId };
 };

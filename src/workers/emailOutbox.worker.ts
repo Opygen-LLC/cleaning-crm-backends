@@ -26,6 +26,7 @@ import {
   BUSINESS_NOTIFICATION_REGISTRY,
   isBusinessNotificationTemplateKey,
 } from "../lib/notifications/businessNotificationRegistry";
+import { TenantAccessResolver } from "../modules/Entitlement/tenantAccessResolver.service";
 import {
   recordEmailOutboxSuccessfulDelivery,
   recordEmailOutboxWorkerHeartbeat,
@@ -201,6 +202,22 @@ const deliverBusinessNotification = async (deliveryId: string, attempt: number) 
   if (!delivery || delivery.status === "SENT") return "skipped" as const;
   if (!isBusinessNotificationTemplateKey(delivery.templateKey)) {
     throw new Error(`Unsupported business notification template: ${delivery.templateKey}`);
+  }
+
+  const access = await TenantAccessResolver.resolve(delivery.adminId);
+  if (!access.access.backgroundJobsAllowed) {
+    const now = new Date();
+    await prisma.notificationDelivery.update({
+      where: { id: delivery.id },
+      data: {
+        status: "CANCELLED",
+        attempts: attempt,
+        processedAt: now,
+        lastError: `Tenant delivery blocked: ${access.access.deniedReason}`,
+      },
+    });
+    recordNotificationDelivery(delivery.templateKey, "skipped");
+    return "skipped" as const;
   }
 
   const definition = BUSINESS_NOTIFICATION_REGISTRY[delivery.templateKey];

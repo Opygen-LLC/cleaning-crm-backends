@@ -32,6 +32,8 @@ function getAccessToken(req: Request): string | undefined {
 
 function accessError(reason: TenantAccessDeniedReason): AppError {
   switch (reason) {
+    case "TENANT_PENDING_DELETION":
+      return new AppError(status.FORBIDDEN, "This organization is pending permanent deletion and is locked.", { code: reason, retryable: false });
     case "TENANT_ARCHIVED":
       return new AppError(status.FORBIDDEN, "This business account has been archived.", { code: reason, retryable: false });
     case "TENANT_SUSPENDED":

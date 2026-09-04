@@ -15,6 +15,7 @@ enum TenantLifecycleStatus {
   ACTIVE
   SUSPENDED
   ARCHIVED
+  PENDING_DELETION
 }
 
 enum Currency {
