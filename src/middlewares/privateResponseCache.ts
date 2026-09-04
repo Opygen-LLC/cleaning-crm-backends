@@ -51,6 +51,7 @@ const isCacheableRequest = (req: Request): boolean =>
   !req.headers.range &&
   !req.originalUrl.includes("/auth/") &&
   !req.originalUrl.includes("/session") &&
+  !req.originalUrl.includes("/subscription/me") &&
   !req.originalUrl.includes("/pdf") &&
   !req.originalUrl.includes("/export") &&
   !isLiveAvailabilityRequest(req);

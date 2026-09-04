@@ -113,7 +113,8 @@ export const checkSubscription = async (
     let { userId, role } = verified.data as { userId: string; role: string };
     const actualUserId = userId;
     const actualRole = role;
-    const controlPlaneRequest = req.originalUrl.includes("/super-admin/") || req.originalUrl.endsWith("/super-admin");
+    const requestPath = req.originalUrl ?? req.url ?? "";
+    const controlPlaneRequest = requestPath.includes("/super-admin/") || requestPath.endsWith("/super-admin");
     if (actualRole === UserRole.SUPER_ADMIN && !controlPlaneRequest) {
       const supportMode = req.supportMode ?? await SupportModeService.fromRequest(req, actualUserId);
       if (supportMode) {
@@ -179,7 +180,8 @@ export function checkFeature(feature: FeatureKey | string) {
       if (!verified.success) return next();
 
       let { userId, role } = verified.data as { userId: string; role: string };
-      if (role === UserRole.SUPER_ADMIN && !req.originalUrl.includes("/super-admin/")) {
+      const featureRequestPath = req.originalUrl ?? req.url ?? "";
+      if (role === UserRole.SUPER_ADMIN && !featureRequestPath.includes("/super-admin/")) {
         const supportMode = req.supportMode ?? await SupportModeService.fromRequest(req, userId);
         if (supportMode) {
           req.supportMode = supportMode;

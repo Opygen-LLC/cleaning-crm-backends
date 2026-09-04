@@ -4,6 +4,9 @@ import { sendResponse } from "../../shared/sendResponse";
 import { subscriptionService } from "./subscription.service";
 
 const getMySubscription = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
   const result = await subscriptionService.getMySubscription(req.user);
   sendResponse(res, {
     httpStatusCode: status.OK,

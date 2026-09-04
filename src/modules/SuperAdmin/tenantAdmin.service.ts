@@ -10,6 +10,7 @@ import {
   SubscriptionStatus,
   TenantLifecycleStatus,
   UserRole,
+  NotificationType,
 } from "../../generated/prisma/enums";
 import { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
@@ -20,6 +21,8 @@ import {
   invalidateRuntimeTenantOwnerStatus,
 } from "../../lib/cache/authRuntimeCache";
 import { invalidateSubscriptionAccessCache } from "../../middlewares/checkSubscription";
+import { invalidatePrivateResponseCacheForUser } from "../../middlewares/privateResponseCache";
+import { createNotification } from "../../lib/utils/createNotification";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { WebsiteHostResolverService } from "../Website/websiteHostResolver.service";
 import { deleteFileFromCloudinary } from "../../config/cloudinary";
@@ -120,8 +123,16 @@ const invalidateTenantCaches = async (tenant: { id: string; userId: string }) =>
   await Promise.all([
     invalidateRuntimeSubscriptionForAdmin(tenant.id),
     invalidateSubscriptionAccessCache(tenant.userId).catch(() => undefined),
+    invalidatePrivateResponseCacheForUser(tenant.userId).catch(() => undefined),
     WebsiteProjectionCacheService.invalidateAdminWebsite(tenant.id).catch(() => undefined),
     TenantAccessResolver.invalidate(tenant.id).catch(() => undefined),
+    createNotification({
+      adminId: tenant.id,
+      type: NotificationType.SUBSCRIPTION,
+      title: "Subscription entitlements updated",
+      message: "Your subscription entitlements and features have been updated by administration.",
+      relatedId: tenant.id,
+    }).catch(() => undefined),
   ]);
 
   const website = await prisma.businessWebsite.findUnique({
