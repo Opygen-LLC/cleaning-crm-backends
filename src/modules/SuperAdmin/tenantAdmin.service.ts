@@ -1,5 +1,5 @@
 import status from "http-status";
-import { addDays, addMonths, addYears, startOfMonth } from "date-fns";
+import { addDays, addMonths, addYears } from "date-fns";
 import AppError from "../../errorHelper/AppError";
 import {
   AccountStatus,
@@ -28,6 +28,7 @@ import { TenantEntitlementService } from "./tenantEntitlement.service";
 import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
 import { getPlatformConfig } from "../../lib/utils/platformConfig";
 import { superAdminService } from "./superAdmin.service";
+import { Organization360Service } from "./organization360.service";
 
 const TENANT_REASON_MIN = 10;
 const HARD_DELETE_TEXT = "DELETE PERMANENTLY";
@@ -226,101 +227,15 @@ export const getTenantsHealth = async () => {
   return { total, active, suspended, archived, pendingPlanChanges, unverifiedOwners, missingWebsite, missingSubscription };
 };
 
-export const getTenant360 = async (identifier: string) => {
-  const resolved = await resolveTenant(identifier);
-  const monthStart = startOfMonth(new Date());
-  const [tenant, accessResolution, entitlementOverride, currentMonthBookings, lastSession, recentActivity] = await Promise.all([
-    prisma.adminProfile.findUniqueOrThrow({
-      where: { id: resolved.id },
-      include: {
-        user: { select: { id: true, name: true, email: true, emailVerified: true, image: true, role: true, status: true, createdAt: true, updatedAt: true } },
-        staff: { select: { id: true, userId: true, staffRole: true, status: true, manuallyInactive: true, user: { select: { name: true, email: true, status: true } } }, orderBy: { createdAt: "desc" }, take: 50 },
-        serviceCatalogs: { select: { id: true, serviceName: true, status: true }, orderBy: { createdAt: "desc" }, take: 50 },
-        businessWebsite: {
-          select: {
-            id: true, status: true, subdomain: true, publishedAt: true, updatedAt: true,
-            domains: { select: { id: true, domain: true, status: true, isPrimary: true, tlsStatus: true } },
-          },
-        },
-        subscription: {
-          orderBy: { createdAt: "desc" }, take: 1,
-          include: {
-            subscriptionPlan: { select: { id: true, name: true, features: true, currency: true } },
-            plan: true,
-            pendingPlanChanges: { orderBy: { createdAt: "desc" }, take: 10, include: { targetPlan: { include: { subscriptionPlan: true } } } },
-            billingHistory: { orderBy: { createdAt: "desc" }, take: 10 },
-          },
-        },
-        _count: {
-          select: {
-            staff: true, clients: true, serviceCatalogs: true, leads: true, leadActivities: true,
-            jobs: true, bookings: true, recurringSchedules: true, quotes: true, estimates: true,
-            invoices: true, payment: true, expenses: true, notifications: true, websiteSubmissions: true,
-          },
-        },
-      },
-    }),
-    TenantAccessResolver.resolve(resolved.id),
-    TenantEntitlementService.getTenantEntitlementOverride(resolved.id),
-    prisma.booking.count({ where: { adminId: resolved.id, createdAt: { gte: monthStart } } }),
-    prisma.session.findFirst({ where: { userId: resolved.userId }, orderBy: { updatedAt: "desc" }, select: { updatedAt: true, lastUsedAt: true, ipAddress: true } }),
-    prisma.activityLog.findMany({ where: { adminId: resolved.id }, orderBy: { createdAt: "desc" }, take: 20 }),
-  ]);
+export const getTenant360 = async (organizationId: string) =>
+  Organization360Service.getOrganization360(organizationId);
 
-  const subscription = tenant.subscription[0] ?? null;
-  return {
-    id: tenant.id,
-    ownerUserId: tenant.userId,
-    business: {
-      businessName: tenant.businessName,
-      businessLogo: tenant.businessLogo,
-      businessEmail: tenant.businessEmail,
-      businessType: tenant.businessType,
-      businessDescription: tenant.businessDescription,
-      mobileNumber: tenant.mobileNumber,
-      address: tenant.address,
-      city: tenant.city,
-      zipcode: tenant.zipcode,
-      country: tenant.country,
-      website: tenant.website,
-      currency: tenant.currency,
-      brandColor: tenant.brandColor,
-    },
-    owner: tenant.user,
-    lifecycle: {
-      status: tenant.lifecycleStatus,
-      suspendedAt: tenant.suspendedAt,
-      suspendedReason: tenant.suspendedReason,
-      reactivatedAt: tenant.reactivatedAt,
-      archivedAt: tenant.archivedAt,
-      archivedReason: tenant.archivedReason,
-      restoredAt: tenant.restoredAt,
-      restoredReason: tenant.restoredReason,
-    },
-    counts: tenant._count,
-    team: tenant.staff,
-    services: tenant.serviceCatalogs,
-    website: tenant.businessWebsite,
-    domains: tenant.businessWebsite?.domains ?? [],
-    subscription,
-    trial: subscription ? { isTrial: subscription.isTrial, trialEndsAt: subscription.trialEndsAt, status: subscription.status } : null,
-    billingStatus: subscription?.status ?? null,
-    pendingPlanChange: subscription?.pendingPlanChanges?.[0] ?? null,
-    usage: {
-      staff: tenant._count.staff,
-      clients: tenant._count.clients,
-      monthlyBookings: currentMonthBookings,
-    },
-    limits: accessResolution.resourceLimits.effective,
-    effectiveAccess: accessResolution,
-    entitlementOverride,
-    recentActivity,
-    createdAt: tenant.createdAt,
-    lastLoginActivityAt: lastSession?.lastUsedAt ?? lastSession?.updatedAt ?? null,
-    accountStatus: tenant.user.status,
-    websitePublicationState: tenant.businessWebsite?.status ?? null,
-  };
-};
+export const getTenantTeam = Organization360Service.getOrganizationTeam;
+export const getTenantAudit = Organization360Service.getOrganizationAudit;
+export const getTenantBilling = Organization360Service.getOrganizationBilling;
+export const getTenantActivity = Organization360Service.getOrganizationActivity;
+export const getTenantSessions = Organization360Service.getOrganizationSessions;
+export const revokeAllTenantSessions = Organization360Service.revokeAllOrganizationSessions;
 
 export const updateTenantProfile = async (identifier: string, payload: Record<string, unknown>, context: TenantMutationContext) => {
   const tenant = await resolveTenant(identifier);
@@ -763,7 +678,7 @@ export const applyDueAdministrativePlanChanges = async (now = new Date()) => {
 };
 
 export const TenantAdminService = {
-  resolveTenant, resolveOrganizationIdByOwnerUserId, getTenants, getTenantsHealth, getTenant360, updateTenantProfile, updateTenantOwner,
+  resolveTenant, resolveOrganizationIdByOwnerUserId, getTenants, getTenantsHealth, getTenant360, getTenantTeam, getTenantAudit, getTenantBilling, getTenantActivity, getTenantSessions, revokeAllTenantSessions, updateTenantProfile, updateTenantOwner,
   suspendTenant, reactivateTenant, archiveTenant, restoreTenant, getTenantDeletionPreview, hardDeleteTenant,
   getGlobalUsers, getGlobalUsersSummary, exportGlobalUsersCsv, updateGlobalUserStatus, updateGlobalUserRole, verifyGlobalUser,
   getSuperAdminAuditLogs, getSuperAdminAuditStats, getSubscriptionRequests, approveSubscriptionRequest, rejectSubscriptionRequest, changeTenantPlan, scheduleTenantDowngrade, cancelScheduledTenantChange, setTenantCancelAtPeriodEnd, manageTenantTrial,

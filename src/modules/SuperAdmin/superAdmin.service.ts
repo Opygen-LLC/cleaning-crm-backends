@@ -1760,7 +1760,7 @@ const sendTrialNudge = async (subscriptionId: string) => {
         },
     });
 
-    return { sent: true, to: adminEmail, daysLeft };
+    return { sent: true, to: adminEmail, daysLeft, adminId: sub.adminId };
 };
 
 /**
@@ -2257,7 +2257,7 @@ const rejectPaymentProof = async (
         adminId: record.subscription.adminId,
     });
 
-    return updatedBilling;
+    return { ...updatedBilling, adminId: record.subscription.adminId };
 };
 
 export const superAdminService = {

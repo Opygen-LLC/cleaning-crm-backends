@@ -358,7 +358,7 @@ const refundBillingRecord = catchAsync(async (req, res) => {
     const result = await superAdminService.refundBillingRecord(
         req.params.id as string,
     );
-    await auditMutation(req, "BILLING_REFUNDED", "Billing record refunded by Super Admin.", { billingId: req.params.id });
+    await auditMutation(req, "BILLING_REFUNDED", "Billing record refunded by Super Admin.", { billingId: req.params.id }, (result as { subscription?: { adminId?: string } }).subscription?.adminId ?? null);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -383,7 +383,7 @@ const sendTrialNudge = catchAsync(async (req, res) => {
     const result = await superAdminService.sendTrialNudge(
         req.params.subscriptionId as string,
     );
-    await auditMutation(req, "TRIAL_NUDGE_SENT", "Trial reminder sent by Super Admin.", { subscriptionId: req.params.subscriptionId });
+    await auditMutation(req, "TRIAL_NUDGE_SENT", "Trial reminder sent by Super Admin.", { subscriptionId: req.params.subscriptionId }, result.adminId);
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,
@@ -528,7 +528,7 @@ const approvePaymentProof = catchAsync(async (req, res) => {
         periodMonths,
         note,
     });
-    await auditMutation(req, "PAYMENT_PROOF_APPROVED", note?.trim() || "Payment proof approved by Super Admin.", { billingId: id, periodMonths });
+    await auditMutation(req, "PAYMENT_PROOF_APPROVED", note?.trim() || "Payment proof approved by Super Admin.", { billingId: id, periodMonths }, (result as { subscription?: { adminId?: string } }).subscription?.adminId ?? null);
 
     sendResponse(res, {
         httpStatusCode: status.OK,
@@ -545,7 +545,7 @@ const rejectPaymentProof = catchAsync(async (req, res) => {
     const result = await superAdminService.rejectPaymentProof(id as string, {
         reason,
     });
-    await auditMutation(req, "PAYMENT_PROOF_REJECTED", String(reason), { billingId: id });
+    await auditMutation(req, "PAYMENT_PROOF_REJECTED", String(reason), { billingId: id }, (result as { adminId?: string }).adminId ?? null);
 
     sendResponse(res, {
         httpStatusCode: status.OK,

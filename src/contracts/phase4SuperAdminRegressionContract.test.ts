@@ -5,8 +5,13 @@ import {
   hardDeleteSchema,
   platformConfigPatchSchema,
   reasonSchema,
+  tenantActivityQuerySchema,
+  tenantAuditQuerySchema,
+  tenantBillingQuerySchema,
   tenantOwnerSchema,
   tenantProfileSchema,
+  tenantSessionsQuerySchema,
+  tenantTeamQuerySchema,
   trialManagementSchema,
   userRoleSchema,
   userStatusSchema,
@@ -23,6 +28,12 @@ describe("Phase 4 Super Admin regression contract", () => {
     const required = [
       'router.get("/tenants", isSuperAdmin',
       'router.get("/tenants/:adminId", isSuperAdmin',
+      'router.get("/tenants/:adminId/team", isSuperAdmin',
+      'router.get("/tenants/:adminId/audit", isSuperAdmin',
+      'router.get("/tenants/:adminId/billing", isSuperAdmin',
+      'router.get("/tenants/:adminId/activity", isSuperAdmin',
+      'router.get("/tenants/:adminId/sessions", isSuperAdmin',
+      'router.post("/tenants/:adminId/sessions/revoke-all", isSuperAdmin',
       'router.post("/tenants/:adminId/suspend", isSuperAdmin',
       'router.post("/tenants/:adminId/reactivate", isSuperAdmin',
       'router.post("/tenants/:adminId/archive", isSuperAdmin',
@@ -84,6 +95,44 @@ describe("Phase 4 Super Admin regression contract", () => {
     ];
     for (const action of actions) expect(service).toContain(`action: "${action}"`);
     expect(service).toContain("action: `TENANT_TRIAL_${input.action}`");
+  });
+
+  it("keeps Organization 360 summary lightweight and exposes paginated lazy detail endpoints", () => {
+    const service = read("src/modules/SuperAdmin/organization360.service.ts");
+    for (const section of [
+      "overview",
+      "effectiveAccess",
+      "ownerAndTeam",
+      "subscriptionAndEntitlements",
+      "billing",
+      "cleaningOperations",
+      "websiteAndDomain",
+      "securityAndSessions",
+      "audit",
+      "usage",
+      "health",
+    ]) expect(service).toContain(`${section}:`);
+
+    expect(service).toContain("const PREVIEW_SIZE = 5");
+    expect(service).toContain("TenantAccessResolver.resolve(identity.id)");
+    expect(service).toContain("getOrganizationTeam");
+    expect(service).toContain("getOrganizationAudit");
+    expect(service).toContain("getOrganizationBilling");
+    expect(service).toContain("getOrganizationActivity");
+    expect(service).toContain("getOrganizationSessions");
+    expect(service).toContain('action: "TENANT_SESSIONS_REVOKED"');
+    expect(service).toContain("revokeAllSessionsForUser");
+    expect(service).toContain("disconnectTenantSockets(identity.id)");
+  });
+
+  it("validates Organization 360 lazy-list filters and keeps session revocation reason protected", () => {
+    expect(() => tenantTeamQuerySchema.parse({ page: "1", limit: "20", status: "ACTIVE" })).not.toThrow();
+    expect(() => tenantAuditQuerySchema.parse({ category: "BILLING_INTERVENTIONS" })).not.toThrow();
+    expect(() => tenantBillingQuerySchema.parse({ status: "PAID" })).not.toThrow();
+    expect(() => tenantActivityQuerySchema.parse({ search: "plan", action: "UPDATED" })).not.toThrow();
+    expect(() => tenantSessionsQuerySchema.parse({ activeOnly: "true" })).not.toThrow();
+    expect(() => tenantSessionsQuerySchema.parse({ activeOnly: "yes" })).toThrow();
+    expect(() => reasonSchema.parse({ reason: "short" })).toThrow();
   });
 
   it("keeps the read-only data audit incapable of automatic reconciliation", () => {

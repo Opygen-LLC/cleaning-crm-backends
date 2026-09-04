@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AccountStatus, PendingPlanChangeStatus, TenantLifecycleStatus, UserRole } from "../../generated/prisma/enums";
+import { AccountStatus, PaymentStatus, PendingPlanChangeStatus, StaffStatus, TenantLifecycleStatus, UserRole } from "../../generated/prisma/enums";
 import { FEATURE_KEYS, LEGACY_OVERRIDE_KEY_MAP, isFeatureKey } from "../Entitlement/featureCatalog";
 
 const reason = z.string().trim().min(10).max(1000);
@@ -15,6 +15,16 @@ export const tenantListQuerySchema = z.object({
   page: z.string().regex(/^\d+$/).optional(), limit: z.string().regex(/^\d+$/).optional(),
 });
 export const reasonSchema = z.object({ reason });
+
+const tenantLazyPagination = {
+  page: z.string().regex(/^\d+$/).optional(),
+  limit: z.string().regex(/^\d+$/).optional(),
+};
+export const tenantTeamQuerySchema = z.object({ ...tenantLazyPagination, search: z.string().trim().max(120).optional(), status: z.nativeEnum(StaffStatus).optional() });
+export const tenantAuditQuerySchema = z.object({ ...tenantLazyPagination, search: z.string().trim().max(120).optional(), category: z.enum(["LIFECYCLE", "PLAN_CHANGES", "TRIAL_CHANGES", "ENTITLEMENT_OVERRIDES", "OWNER_CHANGES", "MANUAL_VERIFICATION", "BILLING_INTERVENTIONS", "SECURITY", "PERMANENT_DELETION"]).optional() });
+export const tenantBillingQuerySchema = z.object({ ...tenantLazyPagination, status: z.nativeEnum(PaymentStatus).optional() });
+export const tenantActivityQuerySchema = z.object({ ...tenantLazyPagination, search: z.string().trim().max(120).optional(), action: z.string().trim().max(120).optional(), entityType: z.string().trim().max(120).optional() });
+export const tenantSessionsQuerySchema = z.object({ ...tenantLazyPagination, activeOnly: z.enum(["true", "false"]).optional() });
 export const tenantProfileSchema = z.object({
   reason,
   businessName: z.string().trim().min(2).max(120).optional(), businessLogo: nullableString,

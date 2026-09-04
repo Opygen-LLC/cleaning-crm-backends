@@ -17,7 +17,7 @@ import {
     subscriptionListQuerySchema,
 } from "./superAdmin.validation";
 import {
-    tenantListQuerySchema, reasonSchema, tenantProfileSchema, tenantOwnerSchema, hardDeleteSchema,
+    tenantListQuerySchema, tenantTeamQuerySchema, tenantAuditQuerySchema, tenantBillingQuerySchema, tenantActivityQuerySchema, tenantSessionsQuerySchema, reasonSchema, tenantProfileSchema, tenantOwnerSchema, hardDeleteSchema,
     globalUsersQuerySchema, userRoleSchema, userStatusSchema, verifyUserSchema, subscriptionRequestQuerySchema,
     superAdminAuditQuerySchema,
     planChangeSchema, cancellationSchema, trialManagementSchema, entitlementSchema, platformConfigPatchSchema, subscriptionRequestReviewSchema,
@@ -60,6 +60,12 @@ router.get(
 // ─── Canonical Tenant Administration (Phase 1 parity) ─────────────────────────
 router.get("/tenants", isSuperAdmin, zodValidate(tenantListQuerySchema, ValidationProperty.QUERY), tenantAdminController.getTenants);
 router.get("/tenants/health", isSuperAdmin, tenantAdminController.getTenantsHealth);
+router.get("/tenants/:adminId/team", isSuperAdmin, zodValidate(tenantTeamQuerySchema, ValidationProperty.QUERY), tenantAdminController.getTenantTeam);
+router.get("/tenants/:adminId/audit", isSuperAdmin, zodValidate(tenantAuditQuerySchema, ValidationProperty.QUERY), tenantAdminController.getTenantAudit);
+router.get("/tenants/:adminId/billing", isSuperAdmin, zodValidate(tenantBillingQuerySchema, ValidationProperty.QUERY), tenantAdminController.getTenantBilling);
+router.get("/tenants/:adminId/activity", isSuperAdmin, zodValidate(tenantActivityQuerySchema, ValidationProperty.QUERY), tenantAdminController.getTenantActivity);
+router.get("/tenants/:adminId/sessions", isSuperAdmin, zodValidate(tenantSessionsQuerySchema, ValidationProperty.QUERY), tenantAdminController.getTenantSessions);
+router.post("/tenants/:adminId/sessions/revoke-all", isSuperAdmin, zodValidate(reasonSchema, ValidationProperty.BODY), tenantAdminController.revokeAllTenantSessions);
 router.get("/tenants/:adminId", isSuperAdmin, tenantAdminController.getTenant);
 router.patch("/tenants/:adminId/profile", isSuperAdmin, zodValidate(tenantProfileSchema, ValidationProperty.BODY), tenantAdminController.updateProfile);
 router.patch("/tenants/:adminId/owner", isSuperAdmin, zodValidate(tenantOwnerSchema, ValidationProperty.BODY), tenantAdminController.updateOwner);
