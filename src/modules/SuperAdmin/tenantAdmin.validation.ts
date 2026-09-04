@@ -80,6 +80,13 @@ export const entitlementSchema = z.object({
   features: entitlementFeaturesSchema.optional(),
 });
 
+
+export const supportModeStartSchema = z.object({
+  organizationId: z.string().uuid(),
+  durationMinutes: z.union([z.literal(15), z.literal(30)]).default(15),
+  reason,
+});
+
 export const platformConfigPatchSchema = z.object({
   reason,
   platformName: z.string().trim().min(2).max(100).optional(), supportEmail: z.string().email().optional(), maintenanceMode: z.boolean().optional(), registrationOpen: z.boolean().optional(), defaultTrialDays: z.number().int().min(0).max(365).optional(), defaultCurrency: z.string().trim().min(3).max(3).optional(), defaultTimezone: z.string().trim().min(1).max(100).optional(), authentication: z.object({ requireEmailOtpVerification: z.boolean().optional() }).optional(), emailTemplates: z.array(z.unknown()).max(100).optional(),

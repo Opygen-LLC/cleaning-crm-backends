@@ -5,11 +5,13 @@ import logger from "../logger";
 
 const CHANNEL = "cleaning-crm:realtime:v1";
 const SYSTEM_DISCONNECT_EVENT = "__system:disconnect-tenant-sockets";
+const SYSTEM_DISCONNECT_USER_EVENT = "__system:disconnect-user-sockets";
 const instanceId = randomUUID();
 
 type RealtimeTarget =
     | { scope: "admin"; id: string }
     | { scope: "staff"; id: string }
+    | { scope: "user"; id: string }
     | { scope: "super-admins" }
     | { scope: "all" };
 
@@ -26,8 +28,13 @@ const emitEnvelope = (io: SocketIOServer, message: RealtimeEnvelope) => {
         io.in(`admin:${target.id}`).disconnectSockets(true);
         return;
     }
+    if (event === SYSTEM_DISCONNECT_USER_EVENT && target.scope === "user") {
+        io.in(`user:${target.id}`).disconnectSockets(true);
+        return;
+    }
     if (target.scope === "admin") io.to(`admin:${target.id}`).emit(event, payload);
     else if (target.scope === "staff") io.to(`staff:${target.id}`).emit(event, payload);
+    else if (target.scope === "user") io.to(`user:${target.id}`).emit(event, payload);
     else if (target.scope === "super-admins") io.to("super-admins").emit(event, payload);
     else io.emit(event, payload);
 };
@@ -104,6 +111,10 @@ export const startRealtimeSubscriber = (io: SocketIOServer) => {
 
 export const publishTenantSocketDisconnect = async (adminId: string): Promise<void> => {
     await publishRealtimeEvent({ scope: "admin", id: adminId }, SYSTEM_DISCONNECT_EVENT, null);
+};
+
+export const publishUserSocketDisconnect = async (userId: string): Promise<void> => {
+    await publishRealtimeEvent({ scope: "user", id: userId }, SYSTEM_DISCONNECT_USER_EVENT, null);
 };
 
 export { instanceId as realtimeInstanceId };

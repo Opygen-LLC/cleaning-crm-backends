@@ -5,6 +5,7 @@ import { UserRole } from "../generated/prisma/enums";
 import { CookieUtils } from "../lib/utils/cookie";
 import { getVerifiedAccessToken } from "../lib/utils/verifiedRequestToken";
 import { AUTH_ERROR_CODES } from "../modules/Auth/auth.codes";
+import { SupportModeService } from "../modules/SuperAdmin/supportMode.service";
 
 /**
  * Lightweight gate used only by GET /auth/session.
@@ -58,6 +59,13 @@ export const checkAuthSession = async (
             });
         }
 
+        if (role === UserRole.SUPER_ADMIN) {
+            const supportMode = await SupportModeService.fromRequest(req, userId);
+            if (supportMode) {
+                req.supportMode = supportMode;
+                req.supportActor = { id: userId, email, role };
+            }
+        }
         req.user = { id: userId, email, role };
         next();
     } catch (error) {

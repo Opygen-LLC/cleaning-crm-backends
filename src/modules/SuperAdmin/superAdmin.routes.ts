@@ -20,7 +20,7 @@ import {
     tenantListQuerySchema, tenantTeamQuerySchema, tenantAuditQuerySchema, tenantBillingQuerySchema, tenantActivityQuerySchema, tenantSessionsQuerySchema, reasonSchema, tenantProfileSchema, tenantOwnerSchema, hardDeleteSchema,
     globalUsersQuerySchema, userRoleSchema, userStatusSchema, verifyUserSchema, subscriptionRequestQuerySchema,
     superAdminAuditQuerySchema,
-    planChangeSchema, cancellationSchema, trialManagementSchema, entitlementSchema, platformConfigPatchSchema, subscriptionRequestReviewSchema,
+    planChangeSchema, cancellationSchema, trialManagementSchema, entitlementSchema, supportModeStartSchema, platformConfigPatchSchema, subscriptionRequestReviewSchema,
 } from "./tenantAdmin.validation";
 
 const router = Router();
@@ -65,6 +65,7 @@ router.get("/tenants/:adminId/audit", isSuperAdmin, zodValidate(tenantAuditQuery
 router.get("/tenants/:adminId/billing", isSuperAdmin, zodValidate(tenantBillingQuerySchema, ValidationProperty.QUERY), tenantAdminController.getTenantBilling);
 router.get("/tenants/:adminId/activity", isSuperAdmin, zodValidate(tenantActivityQuerySchema, ValidationProperty.QUERY), tenantAdminController.getTenantActivity);
 router.get("/tenants/:adminId/sessions", isSuperAdmin, zodValidate(tenantSessionsQuerySchema, ValidationProperty.QUERY), tenantAdminController.getTenantSessions);
+router.post("/tenants/:adminId/sessions/revoke-owner", isSuperAdmin, zodValidate(reasonSchema, ValidationProperty.BODY), tenantAdminController.revokeOwnerTenantSessions);
 router.post("/tenants/:adminId/sessions/revoke-all", isSuperAdmin, zodValidate(reasonSchema, ValidationProperty.BODY), tenantAdminController.revokeAllTenantSessions);
 router.get("/tenants/:adminId", isSuperAdmin, tenantAdminController.getTenant);
 router.patch("/tenants/:adminId/profile", isSuperAdmin, zodValidate(tenantProfileSchema, ValidationProperty.BODY), tenantAdminController.updateProfile);
@@ -83,6 +84,11 @@ router.patch("/tenants/:adminId/subscription/trial", isSuperAdmin, zodValidate(t
 router.get("/tenants/:adminId/entitlement-overrides", isSuperAdmin, tenantAdminController.getEntitlements);
 router.put("/tenants/:adminId/entitlement-overrides", isSuperAdmin, zodValidate(entitlementSchema, ValidationProperty.BODY), tenantAdminController.setEntitlements);
 router.delete("/tenants/:adminId/entitlement-overrides", isSuperAdmin, zodValidate(reasonSchema, ValidationProperty.BODY), tenantAdminController.revokeEntitlements);
+
+// ─── Read-only Support Mode ───────────────────────────────────────────────────
+router.post("/support-mode/start", isSuperAdmin, zodValidate(supportModeStartSchema, ValidationProperty.BODY), tenantAdminController.startSupportMode);
+router.get("/support-mode/current", isSuperAdmin, tenantAdminController.currentSupportMode);
+router.post("/support-mode/end", isSuperAdmin, tenantAdminController.endSupportMode);
 
 // ─── Global Users ─────────────────────────────────────────────────────────────
 router.get("/users", isSuperAdmin, zodValidate(globalUsersQuerySchema, ValidationProperty.QUERY), tenantAdminController.getUsers);

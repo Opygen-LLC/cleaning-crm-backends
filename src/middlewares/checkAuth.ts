@@ -17,6 +17,7 @@ import { privateResponseCache } from "./privateResponseCache";
 import { enforcePrivateApiRateLimit } from "./privateApiRateLimit";
 import { recordTraceSpan } from "../lib/monitoring/requestTrace";
 import { AUTH_ERROR_CODES } from "../modules/Auth/auth.codes";
+import { SupportModeService } from "../modules/SuperAdmin/supportMode.service";
 
 // Browser authentication is cookie-first. Authorization: Bearer remains
 // supported for explicit server-to-server/integration callers, but cannot
@@ -70,12 +71,42 @@ export const checkAuth =
             }
 
             const tokenData = verifiedToken.data;
+            const actualRole = tokenData.role as UserRole;
+            const actualUserId = tokenData.userId as string;
+            const controlPlaneRequest = req.originalUrl.includes("/super-admin/") || req.originalUrl.endsWith("/super-admin");
+            let effectiveRole = actualRole;
+            let effectiveUserId = actualUserId;
+            let effectiveEmail = tokenData.email as string;
 
-            // ── Role check (from JWT) ───────────────────────────────────────
-            if (
-                authRoles.length > 0 &&
-                !authRoles.includes(tokenData.role as UserRole)
-            ) {
+            // A Super Admin may temporarily view one tenant as its owner through
+            // a separate short-lived support_mode cookie. The signed Super Admin
+            // access token remains the actor identity; writes are blocked below.
+            if (actualRole === UserRole.SUPER_ADMIN) {
+                const supportMode = req.supportMode ?? await SupportModeService.fromRequest(req, actualUserId);
+                if (supportMode) {
+                    req.supportMode = supportMode;
+                    req.supportActor = { id: actualUserId, role: actualRole, email: effectiveEmail };
+
+                    const supportModeEndRequest =
+                        controlPlaneRequest &&
+                        req.originalUrl.includes("/super-admin/support-mode/end");
+
+                    // While support mode is active, the only allowed write on
+                    // either the tenant plane or control plane is ending that
+                    // support session itself. This makes read-only a backend
+                    // security property rather than a UI convention.
+                    if (!supportModeEndRequest) SupportModeService.assertReadOnly(req);
+
+                    if (!controlPlaneRequest) {
+                        effectiveRole = UserRole.ADMIN;
+                        effectiveUserId = supportMode.targetUserId;
+                        effectiveEmail = supportMode.targetEmail;
+                    }
+                }
+            }
+
+            // ── Role check (effective identity) ─────────────────────────────
+            if (authRoles.length > 0 && !authRoles.includes(effectiveRole)) {
                 throw new AppError(status.FORBIDDEN, "Forbidden access.", { code: "FORBIDDEN", retryable: false });
             }
 
@@ -83,12 +114,12 @@ export const checkAuth =
             // routes and already populated this context. STAFF requests skip the
             // subscription gate, so resolve STAFF status + owning tenant with a
             // single cached context instead of two sequential DB lookups.
-            const role = tokenData.role as UserRole;
+            const role = effectiveRole;
             let userStatus = req.authRuntime?.userStatus;
             let adminId = req.authRuntime?.adminId;
 
             if (role === UserRole.ADMIN && (userStatus === undefined || adminId === undefined)) {
-                const tenantContext = await getRuntimeAdminAccessContext(tokenData.userId as string);
+                const tenantContext = await getRuntimeAdminAccessContext(effectiveUserId);
                 if (userStatus === undefined) userStatus = tenantContext.userStatus;
                 if (adminId === undefined) adminId = tenantContext.adminId;
                 req.authRuntime = {
@@ -100,14 +131,14 @@ export const checkAuth =
                     entitlementSummary: tenantContext.entitlementSummary,
                 };
             } else if (role === UserRole.STAFF && (userStatus === undefined || adminId === undefined)) {
-                const staffContext = await getRuntimeStaffAccessContext(tokenData.userId as string);
+                const staffContext = await getRuntimeStaffAccessContext(effectiveUserId);
                 if (userStatus === undefined) userStatus = staffContext.userStatus;
                 if (adminId === undefined) adminId = staffContext.adminId;
                 req.authRuntime = { ...req.authRuntime, userStatus, adminId };
             } else if (role === UserRole.SUPER_ADMIN && userStatus === undefined) {
-                userStatus = await getRuntimeUserStatus(tokenData.userId as string);
+                userStatus = await getRuntimeUserStatus(effectiveUserId);
             } else if (adminId === undefined) {
-                adminId = await getRuntimeTenantId(tokenData.userId as string, role);
+                adminId = await getRuntimeTenantId(effectiveUserId, role);
             }
 
             if (role === UserRole.STAFF && !adminId) {
@@ -205,9 +236,9 @@ export const checkAuth =
             }
 
             req.user = {
-                id: tokenData.userId as string,
-                role: tokenData.role as UserRole,
-                email: tokenData.email as string,
+                id: effectiveUserId,
+                role,
+                email: effectiveEmail,
                 adminId,
             };
 

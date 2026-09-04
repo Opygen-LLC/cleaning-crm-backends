@@ -4,6 +4,8 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { resolveTenant, TenantAdminService } from "./tenantAdmin.service";
 import { TenantEntitlementService } from "./tenantEntitlement.service";
+import { SupportModeService, SUPPORT_MODE_COOKIE } from "./supportMode.service";
+import { tokenUtils } from "../../lib/utils/token";
 
 const actor = (req: Request) => req.user.id;
 const context = (req: Request) => ({ actorUserId: actor(req), reason: String(req.body.reason ?? "") });
@@ -17,6 +19,7 @@ const getTenantAudit = catchAsync(async (req, res) => ok(res, "Tenant audit retr
 const getTenantBilling = catchAsync(async (req, res) => ok(res, "Tenant billing retrieved successfully", await TenantAdminService.getTenantBilling(req.params.adminId as string, req.query as Record<string, unknown>)));
 const getTenantActivity = catchAsync(async (req, res) => ok(res, "Tenant activity retrieved successfully", await TenantAdminService.getTenantActivity(req.params.adminId as string, req.query as Record<string, unknown>)));
 const getTenantSessions = catchAsync(async (req, res) => ok(res, "Tenant sessions retrieved successfully", await TenantAdminService.getTenantSessions(req.params.adminId as string, req.query as Record<string, unknown>)));
+const revokeOwnerTenantSessions = catchAsync(async (req, res) => ok(res, "Owner sessions revoked successfully", await TenantAdminService.revokeOwnerTenantSessions(req.params.adminId as string, actor(req), String(req.body.reason ?? ""))));
 const revokeAllTenantSessions = catchAsync(async (req, res) => ok(res, "Tenant sessions revoked successfully", await TenantAdminService.revokeAllTenantSessions(req.params.adminId as string, actor(req), String(req.body.reason ?? ""))));
 const updateProfile = catchAsync(async (req, res) => { const { reason: _reason, ...payload } = req.body; ok(res, "Tenant profile updated successfully", await TenantAdminService.updateTenantProfile(req.params.adminId as string, payload, context(req))); });
 const updateOwner = catchAsync(async (req, res) => { const { reason: _reason, ...payload } = req.body; ok(res, "Tenant owner updated successfully", await TenantAdminService.updateTenantOwner(req.params.adminId as string, payload, context(req))); });
@@ -34,6 +37,66 @@ const changeRole = catchAsync(async (req, res) => ok(res, "User role updated suc
 const changeStatus = catchAsync(async (req, res) => ok(res, "User status updated successfully", await TenantAdminService.updateGlobalUserStatus(req.params.id as string, req.body.status, context(req))));
 const verify = catchAsync(async (req, res) => ok(res, "User manually verified successfully", await TenantAdminService.verifyGlobalUser(req.params.id as string, context(req))));
 
+
+const startSupportMode = catchAsync(async (req, res) => {
+  const result = await SupportModeService.start({
+    supportAdminId: actor(req),
+    organizationId: req.body.organizationId,
+    reason: req.body.reason,
+    durationMinutes: req.body.durationMinutes,
+    ipAddress: req.ip,
+    userAgent: typeof req.get === "function" ? req.get("user-agent") : undefined,
+  });
+  const expiresInMs = Math.max(60_000, new Date(result.session.expiresAt).getTime() - Date.now());
+  tokenUtils.setSupportModeCookie(res, result.token, expiresInMs);
+  tokenUtils.setRoleHintCookie(res, "ADMIN");
+  res.setHeader("Cache-Control", "private, no-store");
+  res.vary("Cookie");
+  return ok(res, "Read-only support mode started", result.session);
+});
+
+const currentSupportMode = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  res.vary("Cookie");
+  const token = req.cookies?.[SUPPORT_MODE_COOKIE];
+  if (!token) return ok(res, "No active support mode", null);
+  try {
+    const session = await SupportModeService.current(token, actor(req));
+    return ok(res, "Active support mode retrieved", session);
+  } catch (error) {
+    if (error instanceof Error && "statusCode" in error && Number((error as { statusCode?: number }).statusCode) === status.UNAUTHORIZED) {
+      tokenUtils.clearSupportModeCookie(res);
+      tokenUtils.setRoleHintCookie(res, "SUPER_ADMIN");
+      return ok(res, "No active support mode", null);
+    }
+    throw error;
+  }
+});
+
+const endSupportMode = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  res.vary("Cookie");
+  const token = req.cookies?.[SUPPORT_MODE_COOKIE];
+  if (!token) {
+    tokenUtils.clearSupportModeCookie(res);
+    tokenUtils.setRoleHintCookie(res, "SUPER_ADMIN");
+    return ok(res, "Support mode already ended", { ended: false });
+  }
+  try {
+    const result = await SupportModeService.end(token, actor(req), { ipAddress: req.ip, userAgent: typeof req.get === "function" ? req.get("user-agent") : undefined });
+    tokenUtils.clearSupportModeCookie(res);
+    tokenUtils.setRoleHintCookie(res, "SUPER_ADMIN");
+    return ok(res, "Read-only support mode ended", result);
+  } catch (error) {
+    if (error instanceof Error && "statusCode" in error && Number((error as { statusCode?: number }).statusCode) === status.UNAUTHORIZED) {
+      tokenUtils.clearSupportModeCookie(res);
+      tokenUtils.setRoleHintCookie(res, "SUPER_ADMIN");
+      return ok(res, "Support mode already expired or ended", { ended: false });
+    }
+    throw error;
+  }
+});
+
 const auditLogs = catchAsync(async (req, res) => ok(res, "Super Admin audit logs retrieved successfully", await TenantAdminService.getSuperAdminAuditLogs(req.query as Record<string, unknown>)));
 const auditStats = catchAsync(async (_req, res) => ok(res, "Super Admin audit stats retrieved successfully", await TenantAdminService.getSuperAdminAuditStats()));
 
@@ -49,4 +112,4 @@ const getEntitlements = catchAsync(async (req, res) => { const tenant = await re
 const setEntitlements = catchAsync(async (req, res) => ok(res, "Tenant entitlement override saved", await TenantAdminService.setTenantEntitlements(req.params.adminId as string, req.body, actor(req))));
 const revokeEntitlements = catchAsync(async (req, res) => ok(res, "Tenant entitlement override revoked", await TenantAdminService.revokeTenantEntitlements(req.params.adminId as string, context(req))));
 
-export const tenantAdminController = { getTenants, getTenantsHealth, getTenant, getTenantTeam, getTenantAudit, getTenantBilling, getTenantActivity, getTenantSessions, revokeAllTenantSessions, updateProfile, updateOwner, suspend, reactivate, archive, restore, deletionPreview, hardDelete, getUsers, getUsersSummary, exportUsers, changeRole, changeStatus, verify, auditLogs, auditStats, subscriptionRequests, approveSubscriptionRequest, rejectSubscriptionRequest, changePlan, scheduleDowngrade, cancelScheduled, cancellation, trial, getEntitlements, setEntitlements, revokeEntitlements };
+export const tenantAdminController = { getTenants, getTenantsHealth, getTenant, getTenantTeam, getTenantAudit, getTenantBilling, getTenantActivity, getTenantSessions, revokeOwnerTenantSessions, revokeAllTenantSessions, startSupportMode, currentSupportMode, endSupportMode, updateProfile, updateOwner, suspend, reactivate, archive, restore, deletionPreview, hardDelete, getUsers, getUsersSummary, exportUsers, changeRole, changeStatus, verify, auditLogs, auditStats, subscriptionRequests, approveSubscriptionRequest, rejectSubscriptionRequest, changePlan, scheduleDowngrade, cancelScheduled, cancellation, trial, getEntitlements, setEntitlements, revokeEntitlements };

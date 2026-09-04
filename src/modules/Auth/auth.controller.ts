@@ -6,6 +6,7 @@ import { tokenUtils } from "../../lib/utils/token";
 import AppError from "../../errorHelper/AppError";
 import { AUTH_ERROR_CODES } from "./auth.codes";
 import { logAuthLoginStage } from "./authLoginDiagnostics";
+import { SupportModeService } from "../SuperAdmin/supportMode.service";
 
 const setAuthenticatedCookies = (
     res: Parameters<typeof tokenUtils.setAccessTokenCookie>[0],
@@ -98,10 +99,18 @@ const me = catchAsync(async (req, res) => {
 
 const session = catchAsync(async (req, res) => {
     const sessionToken = req.cookies["better-auth.session_token"];
+    // If a support cookie expired/ended between requests, checkAuthSession
+    // intentionally falls back to the real Super Admin. Clean the stale
+    // diagnostic cookie here so subsequent requests do not keep parsing it.
+    if (req.user.role === "SUPER_ADMIN" && !req.supportMode && req.cookies.support_mode) {
+        tokenUtils.clearSupportModeCookie(res);
+    }
     let result: Awaited<ReturnType<typeof authService.session>>;
 
     try {
-        result = await authService.session(req.user, sessionToken);
+        result = req.supportMode
+            ? await SupportModeService.sessionSnapshot(req.supportMode, sessionToken) as Awaited<ReturnType<typeof authService.session>>
+            : await authService.session(req.user, sessionToken);
     } catch (error) {
         // At this point checkAuthSession has already accepted the access JWT.
         // A 401/403 from the canonical DB-backed session read therefore means
@@ -112,7 +121,13 @@ const session = catchAsync(async (req, res) => {
             (error.statusCode === httpStatus.UNAUTHORIZED ||
                 error.statusCode === httpStatus.FORBIDDEN)
         ) {
-            tokenUtils.clearAuthCookies(res);
+            if (req.supportMode) {
+                // A stale support-mode target must not log out the real Super Admin.
+                tokenUtils.clearSupportModeCookie(res);
+                tokenUtils.setRoleHintCookie(res, "SUPER_ADMIN");
+            } else {
+                tokenUtils.clearAuthCookies(res);
+            }
         }
         throw error;
     }

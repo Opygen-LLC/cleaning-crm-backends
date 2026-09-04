@@ -15,6 +15,7 @@ const ACCESS_COOKIE_MAX_AGE_MS = 15 * 60 * 1000;
 const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_COOKIE_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
 const ROLE_HINT_COOKIE_MAX_AGE_MS = SESSION_COOKIE_MAX_AGE_MS;
+const SUPPORT_MODE_COOKIE_MAX_AGE_MS = 30 * 60 * 1000;
 const SECURE_COOKIE = NODE_ENV === "production";
 
 const getAccessToken = (payload: JwtPayload) =>
@@ -91,6 +92,26 @@ const setRoleHintCookie = (res: Response, role: string) => {
     });
 };
 
+
+const setSupportModeCookie = (res: Response, token: string, maxAgeMs = SUPPORT_MODE_COOKIE_MAX_AGE_MS) => {
+    CookieUtils.setCookie(res, "support_mode", token, {
+        httpOnly: true,
+        secure: SECURE_COOKIE,
+        sameSite: "lax",
+        path: "/",
+        maxAge: Math.min(SUPPORT_MODE_COOKIE_MAX_AGE_MS, Math.max(60_000, maxAgeMs)),
+    });
+};
+
+const clearSupportModeCookie = (res: Response) => {
+    CookieUtils.clearCookie(res, "support_mode", {
+        httpOnly: true,
+        secure: SECURE_COOKIE,
+        sameSite: "lax",
+        path: "/",
+    });
+};
+
 const clearAuthCookies = (res: Response) => {
     const options = {
         httpOnly: true,
@@ -104,6 +125,7 @@ const clearAuthCookies = (res: Response) => {
         "refreshToken",
         "better-auth.session_token",
         "user_role",
+        "support_mode",
     ]) {
         CookieUtils.clearCookie(res, name, options);
     }
@@ -116,5 +138,7 @@ export const tokenUtils = {
     setRefreshTokenCookie,
     setBetterAuthSessionCookie,
     setRoleHintCookie,
+    setSupportModeCookie,
+    clearSupportModeCookie,
     clearAuthCookies,
 };

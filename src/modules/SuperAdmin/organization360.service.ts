@@ -13,7 +13,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import {
   invalidateRuntimeAuth,
 } from "../../lib/cache/authRuntimeCache";
-import { disconnectTenantSockets } from "../../config/socketio";
+import { disconnectTenantSockets, disconnectUserSockets } from "../../config/socketio";
 import { revokeAllSessionsForUser } from "../Auth/sessionSecurity.service";
 import { FEATURE_CATALOG, FEATURE_KEYS, type FeatureKey } from "../Entitlement/featureCatalog";
 import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
@@ -146,7 +146,7 @@ const auditActionsForCategory = (category?: string): Prisma.SuperAdminAuditLogWh
     case "BILLING_INTERVENTIONS":
       return exact("MANUAL_PAYMENT_GRANTED", "BILLING_REFUNDED", "PAYMENT_PROOF_APPROVED", "PAYMENT_PROOF_REJECTED");
     case "SECURITY":
-      return exact("TENANT_SESSIONS_REVOKED", "USER_STATUS_UPDATED", "USER_ROLE_UPDATED");
+      return exact("TENANT_SESSIONS_REVOKED", "TENANT_OWNER_SESSIONS_REVOKED", "TENANT_SUPPORT_MODE_STARTED", "TENANT_SUPPORT_MODE_ENDED", "USER_STATUS_UPDATED", "USER_ROLE_UPDATED");
     case "PERMANENT_DELETION":
       return { OR: [prefix("TENANT_HARD_DELETE_"), exact("TENANT_HARD_DELETED")] };
     default:
@@ -162,7 +162,7 @@ export const categorizeOrganizationAuditAction = (action: string): OrganizationA
   if (value === "TENANT_OWNER_UPDATED") return "OWNER_CHANGES";
   if (value === "USER_MANUALLY_VERIFIED") return "MANUAL_VERIFICATION";
   if (["MANUAL_PAYMENT_GRANTED", "BILLING_REFUNDED", "PAYMENT_PROOF_APPROVED", "PAYMENT_PROOF_REJECTED"].includes(value)) return "BILLING_INTERVENTIONS";
-  if (["TENANT_SESSIONS_REVOKED", "USER_STATUS_UPDATED", "USER_ROLE_UPDATED"].includes(value)) return "SECURITY";
+  if (["TENANT_SESSIONS_REVOKED", "TENANT_OWNER_SESSIONS_REVOKED", "TENANT_SUPPORT_MODE_STARTED", "TENANT_SUPPORT_MODE_ENDED", "USER_STATUS_UPDATED", "USER_ROLE_UPDATED"].includes(value)) return "SECURITY";
   if (value.includes("HARD_DELETE") || value === "TENANT_HARD_DELETED") return "PERMANENT_DELETION";
   if (
     value.startsWith("TENANT_PLAN_") ||
@@ -719,6 +719,26 @@ export const getOrganizationSessions = async (organizationId: string, query: Lis
   return { data: mapSessions(rows), meta: paginationMeta(page, limit, total), persistedSessionHistorySupportsRevokedState: false };
 };
 
+export const revokeOwnerOrganizationSessions = async (organizationId: string, actorUserId: string, reason: string) => {
+  const identity = await organizationOrThrow(organizationId);
+  const normalizedReason = String(reason ?? "").trim();
+  if (normalizedReason.length < 10) {
+    throw new AppError(status.BAD_REQUEST, "reason must be at least 10 characters.", { code: "REASON_REQUIRED", retryable: false });
+  }
+  const revokedCount = await revokeAllSessionsForUser(identity.userId);
+  invalidateRuntimeAuth(identity.userId);
+  await disconnectUserSockets(identity.userId);
+  await writeSuperAdminAudit({
+    actorUserId,
+    tenantAdminId: identity.id,
+    targetUserId: identity.userId,
+    action: "TENANT_OWNER_SESSIONS_REVOKED",
+    reason: normalizedReason,
+    metadata: { revokedCount },
+  });
+  return { organizationId: identity.id, ownerUserId: identity.userId, revokedCount, affectedUsers: 1, revokedAt: new Date() };
+};
+
 export const revokeAllOrganizationSessions = async (organizationId: string, actorUserId: string, reason: string) => {
   const identity = await organizationOrThrow(organizationId);
   const normalizedReason = String(reason ?? "").trim();
@@ -748,5 +768,6 @@ export const Organization360Service = {
   getOrganizationBilling,
   getOrganizationActivity,
   getOrganizationSessions,
+  revokeOwnerOrganizationSessions,
   revokeAllOrganizationSessions,
 };

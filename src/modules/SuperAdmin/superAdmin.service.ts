@@ -300,7 +300,8 @@ const getPlatformRevenueDashboard = async (query: {
 
     // Calculate MRR from active (non-trial) subscriptions
     const totalMRR = allSubscriptions.reduce((sum, sub) => {
-        return sum + Number(sub.plan.price ?? 0);
+        const billed = Number(sub.totalCost ?? 0);
+        return sum + (sub.plan.interval === SubscriptionPlanInterval.YEARLY ? billed / 12 : billed);
     }, 0);
 
     // Total revenue from billing history
@@ -501,12 +502,15 @@ const getAllAdminAccounts = async (
         }),
         prisma.subscription.findMany({
             where: { status: SubscriptionStatus.ACTIVE, isTrial: false },
-            select: { plan: { select: { price: true } } },
+            select: { totalCost: true, plan: { select: { interval: true } } },
         }),
     ]);
 
     const totalMRR = activeMrrSubscriptions.reduce(
-        (sum, subscription) => sum + Number(subscription.plan?.price ?? 0),
+        (sum, subscription) => {
+            const billed = Number(subscription.totalCost ?? 0);
+            return sum + (subscription.plan?.interval === SubscriptionPlanInterval.YEARLY ? billed / 12 : billed);
+        },
         0,
     );
 
@@ -790,7 +794,7 @@ const getPlatformStats = async () => {
         }),
         prisma.subscription.findMany({
             where: { status: SubscriptionStatus.ACTIVE, isTrial: false },
-            include: { plan: { select: { price: true } } },
+            include: { plan: { select: { interval: true } } },
         }),
         prisma.billingHistory.aggregate({
             where: { status: "PAID", createdAt: { gte: startOfMonth } },
@@ -806,7 +810,10 @@ const getPlatformStats = async () => {
     ]);
 
     const totalMRR = allActiveSubs.reduce(
-        (sum, sub) => sum + Number(sub.plan.price ?? 0),
+        (sum, sub) => {
+            const billed = Number(sub.totalCost ?? 0);
+            return sum + (sub.plan.interval === SubscriptionPlanInterval.YEARLY ? billed / 12 : billed);
+        },
         0,
     );
 
@@ -1364,12 +1371,15 @@ const getAllSubscriptions = async (
         }),
         prisma.subscription.findMany({
             where: { status: SubscriptionStatus.ACTIVE, isTrial: false },
-            select: { plan: { select: { price: true } } },
+            select: { totalCost: true, plan: { select: { interval: true } } },
         }),
     ]);
 
     const totalMRR = mrrSubs.reduce(
-        (sum, s) => sum + Number(s.plan?.price ?? 0),
+        (sum, subscription) => {
+            const billed = Number(subscription.totalCost ?? 0);
+            return sum + (subscription.plan?.interval === SubscriptionPlanInterval.YEARLY ? billed / 12 : billed);
+        },
         0,
     );
 

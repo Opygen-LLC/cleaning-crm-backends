@@ -20,6 +20,8 @@ declare global {
             verifiedAccessToken?: VerifiedTokenResult;
             // Populated by the subscription gate and reused by checkAuth so
             // the same request never repeats remote status/tenant lookups.
+            supportMode?: import("../modules/SuperAdmin/supportMode.service").ActiveSupportMode;
+            supportActor?: { id: string; role: import("../generated/prisma/enums").UserRole; email: string };
             authRuntime?: {
                 userStatus?: string | null;
                 adminId?: string | null;

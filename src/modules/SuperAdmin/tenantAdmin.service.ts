@@ -326,6 +326,7 @@ export const getTenantAudit = Organization360Service.getOrganizationAudit;
 export const getTenantBilling = Organization360Service.getOrganizationBilling;
 export const getTenantActivity = Organization360Service.getOrganizationActivity;
 export const getTenantSessions = Organization360Service.getOrganizationSessions;
+export const revokeOwnerTenantSessions = Organization360Service.revokeOwnerOrganizationSessions;
 export const revokeAllTenantSessions = Organization360Service.revokeAllOrganizationSessions;
 
 export const updateTenantProfile = async (identifier: string, payload: Record<string, unknown>, context: TenantMutationContext) => {
@@ -634,8 +635,8 @@ export const getSuperAdminAuditStats = async () => {
 
 export const approveSubscriptionRequest = async (requestId: string, context: TenantMutationContext) => {
   const reason = normalizedReason(context.reason);
-  const request = await prisma.pendingPlanChange.findUnique({
-    where: { id: requestId },
+  const request = await prisma.pendingPlanChange.findFirst({
+    where: { id: requestId, isAdministrative: false },
     include: {
       subscription: { select: { adminId: true, admin: { select: { userId: true } } } },
       billingHistory: { where: { status: "PENDING", paymentProofUrl: { not: null } }, orderBy: { createdAt: "desc" }, take: 1 },
@@ -655,8 +656,8 @@ export const approveSubscriptionRequest = async (requestId: string, context: Ten
 
 export const rejectSubscriptionRequest = async (requestId: string, context: TenantMutationContext) => {
   const reason = normalizedReason(context.reason);
-  const request = await prisma.pendingPlanChange.findUnique({
-    where: { id: requestId },
+  const request = await prisma.pendingPlanChange.findFirst({
+    where: { id: requestId, isAdministrative: false },
     include: {
       subscription: { select: { adminId: true, admin: { select: { userId: true } } } },
       billingHistory: { where: { status: "PENDING", paymentProofUrl: { not: null } }, orderBy: { createdAt: "desc" }, take: 1 },
@@ -676,7 +677,7 @@ export const rejectSubscriptionRequest = async (requestId: string, context: Tena
 
 export const getSubscriptionRequests = async (query: Record<string, unknown>) => {
   const page = Math.max(1, Number(query.page) || 1); const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
-  const where: Prisma.PendingPlanChangeWhereInput = { ...(query.status ? { status: String(query.status) as PendingPlanChangeStatus } : {}), ...(query.tenant ? { subscription: { adminId: String(query.tenant) } } : {}) };
+  const where: Prisma.PendingPlanChangeWhereInput = { isAdministrative: false, ...(query.status ? { status: String(query.status) as PendingPlanChangeStatus } : {}), ...(query.tenant ? { subscription: { adminId: String(query.tenant) } } : {}) };
   const [total, rows] = await Promise.all([
     prisma.pendingPlanChange.count({ where }),
     prisma.pendingPlanChange.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: "desc" }, include: { targetPlan: { include: { subscriptionPlan: true } }, coupon: true, billingHistory: { orderBy: { createdAt: "desc" }, take: 5 }, subscription: { include: { admin: { select: { id: true, businessName: true, user: { select: { name: true, email: true } } } }, plan: { include: { subscriptionPlan: true } } } } } }),
@@ -697,7 +698,7 @@ export const changeTenantPlan = async (identifier: string, targetPlanId: string,
   const now = new Date(); const currentEnd = current.currentPeriodEnd && current.currentPeriodEnd > now ? current.currentPeriodEnd : (target.interval === SubscriptionPlanInterval.YEARLY ? addYears(now, 1) : addMonths(now, 1));
   const updated = await prisma.$transaction(async (tx) => {
     await tx.pendingPlanChange.updateMany({ where: { subscriptionId: current.id, isAdministrative: true, applyAt: { not: null }, status: PendingPlanChangeStatus.APPROVED }, data: { status: PendingPlanChangeStatus.CANCELLED, rejectionReason: "Superseded by immediate Super Admin plan override.", reviewedAt: now } });
-    const sub = await tx.subscription.update({ where: { id: current.id }, data: { planId: target.id, subscriptionPlanId: target.subscriptionPlanId, totalCost: target.price, status: SubscriptionStatus.ACTIVE, isTrial: false, trialEndsAt: null, currentPeriodStart: current.currentPeriodStart ?? now, currentPeriodEnd: currentEnd, cancelAtPeriodEnd: false, canceledAt: null } });
+    const sub = await tx.subscription.update({ where: { id: current.id }, data: { planId: target.id, subscriptionPlanId: target.subscriptionPlanId, status: SubscriptionStatus.ACTIVE, isTrial: false, trialEndsAt: null, currentPeriodStart: current.currentPeriodStart ?? now, currentPeriodEnd: currentEnd, cancelAtPeriodEnd: false, canceledAt: null } });
     await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_PLAN_OVERRIDDEN", reason, metadata: { fromPlanId: current.planId, toPlanId: target.id, noCharge: true } }, tx); return sub;
   });
   await invalidateTenantCaches(tenant); return updated;
@@ -712,8 +713,8 @@ export const scheduleTenantDowngrade = async (identifier: string, targetPlanId: 
   const existing = await prisma.pendingPlanChange.findFirst({ where: { subscriptionId: current.id, isAdministrative: true, status: PendingPlanChangeStatus.APPROVED, applyAt: { not: null } } });
   if (existing) throw new AppError(status.CONFLICT, "This tenant already has a scheduled plan change.");
   const row = await prisma.$transaction(async (tx) => {
-    const created = await tx.pendingPlanChange.create({ data: { subscriptionId: current.id, targetPlanId: target.id, quotedAmount: target.price, currency: target.subscriptionPlan.currency, status: PendingPlanChangeStatus.APPROVED, submittedAt: new Date(), reviewedAt: new Date(), expiresAt: addDays(current.currentPeriodEnd!, 30), applyAt: current.currentPeriodEnd, isAdministrative: true, reason, requestedByUserId: context.actorUserId, reviewedByUserId: context.actorUserId } });
-    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_DOWNGRADE_SCHEDULED", reason, metadata: { targetPlanId, applyAt: current.currentPeriodEnd } }, tx); return created;
+    const created = await tx.pendingPlanChange.create({ data: { subscriptionId: current.id, targetPlanId: target.id, quotedAmount: 0, currency: target.subscriptionPlan.currency, status: PendingPlanChangeStatus.APPROVED, submittedAt: new Date(), reviewedAt: new Date(), expiresAt: addDays(current.currentPeriodEnd!, 30), applyAt: current.currentPeriodEnd, isAdministrative: true, reason, requestedByUserId: context.actorUserId, reviewedByUserId: context.actorUserId } });
+    await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_DOWNGRADE_SCHEDULED", reason, metadata: { targetPlanId, applyAt: current.currentPeriodEnd, noCharge: true } }, tx); return created;
   }); return row;
 };
 
@@ -737,7 +738,25 @@ export const manageTenantTrial = async (identifier: string, input: { action: "RE
   else if (input.action === "EXTEND") { const days = input.days ?? 0; if (days < 1 || days > 365) throw new AppError(status.BAD_REQUEST, "days must be between 1 and 365."); const base = current.trialEndsAt && current.trialEndsAt > now ? current.trialEndsAt : now; data = { isTrial: true, status: SubscriptionStatus.ACTIVE, trialEndsAt: addDays(base, days) }; }
   else if (input.action === "SET_END") { if (!input.endAt) throw new AppError(status.BAD_REQUEST, "endAt is required."); const endAt = new Date(input.endAt); if (!Number.isFinite(endAt.getTime()) || endAt <= now) throw new AppError(status.BAD_REQUEST, "endAt must be a future date."); data = { isTrial: true, status: SubscriptionStatus.ACTIVE, trialEndsAt: endAt }; }
   else data = { isTrial: true, status: SubscriptionStatus.EXPIRED, trialEndsAt: now };
-  const row = await prisma.$transaction(async (tx) => { const sub = await tx.subscription.update({ where: { id: current.id }, data }); await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: `TENANT_TRIAL_${input.action}`, reason, metadata: { days: input.days, endAt: input.endAt } }, tx); return sub; }); await invalidateTenantCaches(tenant); return row;
+  const row = await prisma.$transaction(async (tx) => {
+    const sub = await tx.subscription.update({ where: { id: current.id }, data });
+    await writeSuperAdminAudit({
+      actorUserId: context.actorUserId,
+      tenantAdminId: tenant.id,
+      targetUserId: tenant.userId,
+      action: `TENANT_TRIAL_${input.action}`,
+      reason,
+      metadata: {
+        days: input.days ?? null,
+        requestedEndAt: input.endAt ?? null,
+        before: { isTrial: current.isTrial, status: current.status, trialEndsAt: current.trialEndsAt?.toISOString() ?? null },
+        after: { isTrial: sub.isTrial, status: sub.status, trialEndsAt: sub.trialEndsAt?.toISOString() ?? null },
+      },
+    }, tx);
+    return sub;
+  });
+  await invalidateTenantCaches(tenant);
+  return row;
 };
 
 export const setTenantEntitlements = async (identifier: string, payload: Parameters<typeof TenantEntitlementService.setTenantEntitlementOverride>[2], actorUserId: string) => {
@@ -755,9 +774,9 @@ export const applyDueAdministrativePlanChanges = async (now = new Date()) => {
   let applied = 0;
   for (const change of due) {
     await prisma.$transaction(async (tx) => {
-      await tx.subscription.update({ where: { id: change.subscriptionId }, data: { planId: change.targetPlanId, subscriptionPlanId: change.targetPlan.subscriptionPlanId, totalCost: change.targetPlan.price, status: SubscriptionStatus.ACTIVE, isTrial: false, trialEndsAt: null, currentPeriodStart: now, currentPeriodEnd: change.targetPlan.interval === SubscriptionPlanInterval.YEARLY ? addYears(now, 1) : addMonths(now, 1) } });
+      await tx.subscription.update({ where: { id: change.subscriptionId }, data: { planId: change.targetPlanId, subscriptionPlanId: change.targetPlan.subscriptionPlanId, status: SubscriptionStatus.ACTIVE, isTrial: false, trialEndsAt: null, currentPeriodStart: now, currentPeriodEnd: change.targetPlan.interval === SubscriptionPlanInterval.YEARLY ? addYears(now, 1) : addMonths(now, 1) } });
       await tx.pendingPlanChange.update({ where: { id: change.id }, data: { applyAt: null, reviewedAt: now } });
-      await writeSuperAdminAudit({ actorUserId: change.reviewedByUserId ?? null, tenantAdminId: change.subscription.adminId, action: "TENANT_SCHEDULED_PLAN_CHANGE_APPLIED", reason: change.reason ?? "Scheduled administrative plan change applied automatically.", metadata: { pendingPlanChangeId: change.id, targetPlanId: change.targetPlanId } }, tx);
+      await writeSuperAdminAudit({ actorUserId: change.reviewedByUserId ?? null, tenantAdminId: change.subscription.adminId, action: "TENANT_SCHEDULED_PLAN_CHANGE_APPLIED", reason: change.reason ?? "Scheduled administrative plan change applied automatically.", metadata: { pendingPlanChangeId: change.id, targetPlanId: change.targetPlanId, noCharge: true } }, tx);
     });
     await Promise.all([
       invalidateRuntimeSubscriptionForAdmin(change.subscription.adminId),
@@ -769,7 +788,7 @@ export const applyDueAdministrativePlanChanges = async (now = new Date()) => {
 };
 
 export const TenantAdminService = {
-  resolveTenant, resolveOrganizationIdByOwnerUserId, getTenants, getTenantsHealth, getTenant360, getTenantTeam, getTenantAudit, getTenantBilling, getTenantActivity, getTenantSessions, revokeAllTenantSessions, updateTenantProfile, updateTenantOwner,
+  resolveTenant, resolveOrganizationIdByOwnerUserId, getTenants, getTenantsHealth, getTenant360, getTenantTeam, getTenantAudit, getTenantBilling, getTenantActivity, getTenantSessions, revokeOwnerTenantSessions, revokeAllTenantSessions, updateTenantProfile, updateTenantOwner,
   suspendTenant, reactivateTenant, archiveTenant, restoreTenant, getTenantDeletionPreview, hardDeleteTenant,
   getGlobalUsers, getGlobalUsersSummary, exportGlobalUsersCsv, updateGlobalUserStatus, updateGlobalUserRole, verifyGlobalUser,
   getSuperAdminAuditLogs, getSuperAdminAuditStats, getSubscriptionRequests, approveSubscriptionRequest, rejectSubscriptionRequest, changeTenantPlan, scheduleTenantDowngrade, cancelScheduledTenantChange, setTenantCancelAtPeriodEnd, manageTenantTrial,

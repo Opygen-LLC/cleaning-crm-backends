@@ -5,7 +5,7 @@ import { ACCESS_TOKEN_SECRET } from "./ENV";
 import { getAuthenticatedOrigins } from "./authSecurity";
 import { jwtUtils } from "../lib/utils/jwt";
 import logger from "../lib/logger";
-import { publishRealtimeEvent, publishTenantSocketDisconnect, startRealtimeSubscriber } from "../lib/realtime/realtimeBus";
+import { publishRealtimeEvent, publishTenantSocketDisconnect, publishUserSocketDisconnect, startRealtimeSubscriber } from "../lib/realtime/realtimeBus";
 
 let io: SocketIOServer | undefined;
 
@@ -87,6 +87,7 @@ const authenticateSocket = async (socket: Socket): Promise<SocketAuthContext> =>
 };
 
 const joinCanonicalRooms = (socket: Socket, auth: SocketAuthContext) => {
+    socket.join(`user:${auth.userId}`);
     if ((auth.role === "ADMIN" || auth.role === "STAFF") && auth.adminId) socket.join(`admin:${auth.adminId}`);
     if (auth.role === "STAFF" && auth.staffId) socket.join(`staff:${auth.staffId}`);
     if (auth.role === "SUPER_ADMIN") socket.join("super-admins");
@@ -166,6 +167,11 @@ export const emitToSuperAdmins = (event: string, payload: unknown): void => {
 export const disconnectTenantSockets = async (adminId: string): Promise<void> => {
     if (io) io.in(`admin:${adminId}`).disconnectSockets(true);
     await publishTenantSocketDisconnect(adminId);
+};
+
+export const disconnectUserSockets = async (userId: string): Promise<void> => {
+    if (io) io.in(`user:${userId}`).disconnectSockets(true);
+    await publishUserSocketDisconnect(userId);
 };
 
 export default setUpSocketIO;

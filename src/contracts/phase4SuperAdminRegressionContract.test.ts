@@ -4,6 +4,7 @@ import {
   entitlementSchema,
   hardDeleteSchema,
   platformConfigPatchSchema,
+  supportModeStartSchema,
   reasonSchema,
   tenantActivityQuerySchema,
   tenantAuditQuerySchema,
@@ -34,6 +35,7 @@ describe("Phase 4 Super Admin regression contract", () => {
       'router.get("/tenants/:adminId/billing", isSuperAdmin',
       'router.get("/tenants/:adminId/activity", isSuperAdmin',
       'router.get("/tenants/:adminId/sessions", isSuperAdmin',
+      'router.post("/tenants/:adminId/sessions/revoke-owner", isSuperAdmin',
       'router.post("/tenants/:adminId/sessions/revoke-all", isSuperAdmin',
       'router.post("/tenants/:adminId/suspend", isSuperAdmin',
       'router.post("/tenants/:adminId/reactivate", isSuperAdmin',
@@ -45,6 +47,9 @@ describe("Phase 4 Super Admin regression contract", () => {
       'router.patch("/users/:id/verify", isSuperAdmin',
       'router.get("/subscription-requests", isSuperAdmin',
       'router.get("/audit-logs", isSuperAdmin',
+      'router.post("/support-mode/start", isSuperAdmin',
+      'router.get("/support-mode/current", isSuperAdmin',
+      'router.post("/support-mode/end", isSuperAdmin',
     ];
     for (const route of required) expect(routes).toContain(route);
     expect(routes).toContain("const isSuperAdmin = checkAuth(UserRole.SUPER_ADMIN)");
@@ -62,6 +67,8 @@ describe("Phase 4 Super Admin regression contract", () => {
     expect(() => platformConfigPatchSchema.parse({ reason: REASON, maintenanceMode: true })).not.toThrow();
     expect(() => trialManagementSchema.parse({ reason: REASON, action: "EXTEND", days: 7 })).not.toThrow();
     expect(() => entitlementSchema.parse({ reason: REASON, resources: { staff: { mode: "ADD", value: 2 } } })).not.toThrow();
+    expect(() => supportModeStartSchema.parse({ organizationId: UUID, durationMinutes: 15, reason: REASON })).not.toThrow();
+    expect(() => supportModeStartSchema.parse({ organizationId: UUID, durationMinutes: 20, reason: REASON })).toThrow();
   });
 
   it("hard delete requires both canonical tenant id and the exact destructive phrase", () => {
@@ -96,6 +103,38 @@ describe("Phase 4 Super Admin regression contract", () => {
     ];
     for (const action of actions) expect(service).toContain(`action: "${action}"`);
     expect(service).toContain("action: `TENANT_TRIAL_${input.action}`");
+    expect(service).toContain("before: { isTrial: current.isTrial");
+    expect(service).toContain("after: { isTrial: sub.isTrial");
+  });
+
+  it("keeps administrative plan changes no-charge and support mode read-only", () => {
+    const tenantService = read("src/modules/SuperAdmin/tenantAdmin.service.ts");
+    const support = read("src/modules/SuperAdmin/supportMode.service.ts");
+    const auth = read("src/middlewares/checkAuth.ts");
+    const organization360 = read("src/modules/SuperAdmin/organization360.service.ts");
+    const superAdminService = read("src/modules/SuperAdmin/superAdmin.service.ts");
+
+    expect(tenantService).toContain('action: "TENANT_PLAN_OVERRIDDEN"');
+    expect(tenantService).toContain("noCharge: true");
+    expect(tenantService).toContain("isAdministrative: false");
+    expect(tenantService).toContain("quotedAmount: 0");
+    const immediateBlock = tenantService.slice(tenantService.indexOf("export const changeTenantPlan"), tenantService.indexOf("const tierRank"));
+    expect(immediateBlock).not.toContain("totalCost: target.price");
+    const scheduledApplyBlock = tenantService.slice(tenantService.indexOf("export const applyDueAdministrativePlanChanges"));
+    expect(scheduledApplyBlock).not.toContain("totalCost: change.targetPlan.price");
+    expect(superAdminService).toContain("Number(sub.totalCost ?? 0)");
+    expect(superAdminService).toContain("Number(subscription.totalCost ?? 0)");
+    expect(superAdminService).not.toContain("sum + Number(sub.plan.price ?? 0)");
+    expect(superAdminService).not.toContain("sum + Number(subscription.plan?.price ?? 0)");
+
+    expect(support).toContain('readOnly: true');
+    expect(support).toContain('TENANT_SUPPORT_MODE_STARTED');
+    expect(support).toContain('TENANT_SUPPORT_MODE_ENDED');
+    expect(support).toContain('Support mode duration must be 15 or 30 minutes.');
+    expect(support).toContain('SUPPORT_MODE_READ_ONLY');
+    expect(auth).toContain('supportModeEndRequest');
+    expect(auth).toContain('SupportModeService.assertReadOnly(req)');
+    expect(organization360).toContain('action: "TENANT_OWNER_SESSIONS_REVOKED"');
   });
 
   it("keeps Organization 360 summary lightweight and exposes paginated lazy detail endpoints", () => {
@@ -121,6 +160,7 @@ describe("Phase 4 Super Admin regression contract", () => {
     expect(service).toContain("getOrganizationBilling");
     expect(service).toContain("getOrganizationActivity");
     expect(service).toContain("getOrganizationSessions");
+    expect(service).toContain('action: "TENANT_OWNER_SESSIONS_REVOKED"');
     expect(service).toContain('action: "TENANT_SESSIONS_REVOKED"');
     expect(service).toContain("revokeAllSessionsForUser");
     expect(service).toContain("disconnectTenantSockets(identity.id)");

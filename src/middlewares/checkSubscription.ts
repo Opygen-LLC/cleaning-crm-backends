@@ -20,6 +20,7 @@ import {
 } from "../lib/cache/authRuntimeCache";
 import { TenantAccessResolver, type TenantAccessDeniedReason } from "../modules/Entitlement/tenantAccessResolver.service";
 import { resolveFeatureKey, type FeatureKey } from "../modules/Entitlement/featureCatalog";
+import { SupportModeService } from "../modules/SuperAdmin/supportMode.service";
 
 function getAccessToken(req: Request): string | undefined {
   const cookieToken = CookieUtils.getCookie(req, "accessToken");
@@ -107,7 +108,20 @@ export const checkSubscription = async (
     const verified = getVerifiedAccessToken(req, accessToken);
     if (!verified.success) return next();
 
-    const { userId, role } = verified.data as { userId: string; role: string };
+    let { userId, role } = verified.data as { userId: string; role: string };
+    const actualUserId = userId;
+    const actualRole = role;
+    const controlPlaneRequest = req.originalUrl.includes("/super-admin/") || req.originalUrl.endsWith("/super-admin");
+    if (actualRole === UserRole.SUPER_ADMIN && !controlPlaneRequest) {
+      const supportMode = req.supportMode ?? await SupportModeService.fromRequest(req, actualUserId);
+      if (supportMode) {
+        req.supportMode = supportMode;
+        req.supportActor = { id: actualUserId, role: UserRole.SUPER_ADMIN, email: String(verified.data.email ?? "") };
+        SupportModeService.assertReadOnly(req);
+        userId = supportMode.targetUserId;
+        role = UserRole.ADMIN;
+      }
+    }
     if (role !== UserRole.ADMIN && role !== UserRole.STAFF) return next();
 
     const runtime = role === UserRole.ADMIN
@@ -128,7 +142,11 @@ export const checkSubscription = async (
       accessDeniedReason: resolution.access.deniedReason,
     };
 
-    if (!resolution.access.dashboardAllowed) throw accessError(resolution.access.deniedReason);
+    if (req.supportMode) {
+      if (!resolution.access.recoveryAllowed) throw accessError(resolution.access.deniedReason);
+    } else if (!resolution.access.dashboardAllowed) {
+      throw accessError(resolution.access.deniedReason);
+    }
     next();
   } catch (error) {
     next(error);
@@ -158,7 +176,17 @@ export function checkFeature(feature: FeatureKey | string) {
       const verified = getVerifiedAccessToken(req, accessToken);
       if (!verified.success) return next();
 
-      const { userId, role } = verified.data as { userId: string; role: string };
+      let { userId, role } = verified.data as { userId: string; role: string };
+      if (role === UserRole.SUPER_ADMIN && !req.originalUrl.includes("/super-admin/")) {
+        const supportMode = req.supportMode ?? await SupportModeService.fromRequest(req, userId);
+        if (supportMode) {
+          req.supportMode = supportMode;
+          req.supportActor = { id: userId, role: UserRole.SUPER_ADMIN, email: String(verified.data.email ?? "") };
+          SupportModeService.assertReadOnly(req);
+          userId = supportMode.targetUserId;
+          role = UserRole.ADMIN;
+        }
+      }
       if (role !== UserRole.ADMIN) return next();
 
       const requestEntitlements = req.authRuntime?.effectiveEntitlements;
@@ -170,7 +198,11 @@ export function checkFeature(feature: FeatureKey | string) {
           throw new AppError(status.FORBIDDEN, "No organization is provisioned for this account.", { code: "ORGANIZATION_NOT_FOUND", retryable: false });
         }
         const resolution = await TenantAccessResolver.resolve(runtime.adminId);
-        if (!resolution.access.dashboardAllowed) throw accessError(resolution.access.deniedReason);
+        if (req.supportMode) {
+          if (!resolution.access.recoveryAllowed) throw accessError(resolution.access.deniedReason);
+        } else if (!resolution.access.dashboardAllowed) {
+          throw accessError(resolution.access.deniedReason);
+        }
         if (resolution.effectiveEntitlements[canonicalKey]) return next();
       }
 
