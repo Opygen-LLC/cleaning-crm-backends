@@ -1,6 +1,7 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import { prisma } from "../../lib/prisma/prisma";
+import redis from "../../config/redis";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { Prisma } from "../../generated/prisma/client";
 import type { IRequestUser } from "../../types/requestUser.interface";
@@ -201,8 +202,11 @@ const followUpSelect = {
   assignedTo: { select: { id: true, name: true, email: true } },
 } satisfies Prisma.LeadActivitySelect;
 
-const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
-  const adminId = await getAdminId(user);
+const getAdminTimezone = async (adminId: string): Promise<string> => {
+  const cacheKey = `admin:tz:${adminId}`;
+  const cached = await redis.get(cacheKey).catch(() => null);
+  if (cached) return cached;
+
   const admin = await prisma.adminProfile.findFirst({
     where: { id: adminId },
     select: { businessHours: true },
@@ -211,6 +215,17 @@ const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
 
   const businessHours = admin.businessHours as { timezone?: unknown } | null;
   const timeZone = validTimeZone(businessHours?.timezone);
+  await redis.setex(cacheKey, 300, timeZone).catch(() => {});
+  return timeZone;
+};
+
+const invalidateFollowUpsCache = async (adminId: string) => {
+  await redis.incr(`followups:ver:${adminId}`).catch(() => {});
+};
+
+const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  const timeZone = await getAdminTimezone(adminId);
   const now = new Date();
   const today = dateKeyInZone(now, timeZone);
   const todayStart = localMidnightToUtc(today, timeZone);
@@ -218,6 +233,22 @@ const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
     addDaysToDateKey(today, 1),
     timeZone,
   );
+
+  const page = Math.max(1, Number(query.page ?? 1) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20) || 20));
+  const sort = query.sort === "desc" ? "desc" : "asc";
+
+  const version = (await redis.get(`followups:ver:${adminId}`).catch(() => null)) || "1";
+  const filterKey = `${adminId}:v${version}:${query.scope ?? "today"}:${query.status ?? "PENDING"}:${query.assignedTo ?? "all"}:${query.date ?? ""}:${query.from ?? ""}:${query.to ?? ""}:${page}:${limit}:${sort}`;
+  const cacheKey = `followups:${filterKey}`;
+  const cached = await redis.get(cacheKey).catch(() => null);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch {
+      /* ignore */
+    }
+  }
 
   const where: Prisma.LeadActivityWhereInput = {
     adminId,
@@ -252,11 +283,7 @@ const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
     where.scheduledAt = { gte: todayStart, lt: tomorrowStart };
   }
 
-  const page = Math.max(1, Number(query.page ?? 1) || 1);
-  const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20) || 20));
-  const sort = query.sort === "desc" ? "desc" : "asc";
-
-  const [rows, total] = await prisma.$transaction([
+  const [rows, total] = await Promise.all([
     prisma.leadActivity.findMany({
       where,
       select: followUpSelect,
@@ -267,7 +294,7 @@ const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
     prisma.leadActivity.count({ where }),
   ]);
 
-  return {
+  const result = {
     rows,
     meta: {
       page,
@@ -281,6 +308,9 @@ const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
         (query.date || query.from || query.to ? "custom" : "today"),
     },
   };
+
+  await redis.setex(cacheKey, 60, JSON.stringify(result)).catch(() => {});
+  return result;
 };
 
 const getFollowUpCalendar = async (
@@ -288,14 +318,7 @@ const getFollowUpCalendar = async (
   user: IRequestUser,
 ) => {
   const adminId = await getAdminId(user);
-  const admin = await prisma.adminProfile.findFirst({
-    where: { id: adminId },
-    select: { businessHours: true },
-  });
-  if (!admin) throw new AppError(status.NOT_FOUND, "Admin profile not found");
-
-  const businessHours = admin.businessHours as { timezone?: unknown } | null;
-  const timeZone = validTimeZone(businessHours?.timezone);
+  const timeZone = await getAdminTimezone(adminId);
   const today = dateKeyInZone(new Date(), timeZone);
   const where: Prisma.LeadActivityWhereInput = {
     adminId,
@@ -351,7 +374,7 @@ const createActivity = async (
 ) => {
   const adminId = await getAdminId(user);
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await ensureLead(tx, adminId, leadId);
     await ensureLeadActivityAssignee(tx, adminId, payload.assignedToUserId);
 
@@ -375,6 +398,9 @@ const createActivity = async (
     await recomputeLastContactedAt(tx, leadId);
     return activity;
   });
+
+  await invalidateFollowUpsCache(adminId);
+  return result;
 };
 
 const updateActivity = async (
@@ -385,7 +411,7 @@ const updateActivity = async (
 ) => {
   const adminId = await getAdminId(user);
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await ensureLead(tx, adminId, leadId);
     const existing = await tx.leadActivity.findFirst({
       where: { id: activityId, leadId, adminId },
@@ -431,6 +457,9 @@ const updateActivity = async (
     await recomputeLastContactedAt(tx, leadId);
     return activity;
   });
+
+  await invalidateFollowUpsCache(adminId);
+  return result;
 };
 
 const deleteActivity = async (
@@ -451,6 +480,8 @@ const deleteActivity = async (
     await tx.leadActivity.delete({ where: { id: activityId } });
     await recomputeLastContactedAt(tx, leadId);
   });
+
+  await invalidateFollowUpsCache(adminId);
 };
 
 export const leadActivityService = {

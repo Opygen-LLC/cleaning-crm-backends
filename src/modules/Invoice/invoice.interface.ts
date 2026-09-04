@@ -56,4 +56,6 @@ export interface IInvoiceFilters {
   searchTerm?: string;
   status?: InvoiceStatus;
   adminId?: string;
+  page?: number;
+  limit?: number;
 }

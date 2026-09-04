@@ -67,6 +67,7 @@ model LeadActivity {
     creator    User?        @relation("LeadActivityCreator", fields: [createdBy], references: [id], onDelete: SetNull)
 
     @@index([adminId, status, scheduledAt])
+    @@index([adminId, type, status, scheduledAt])
     @@index([leadId, createdAt(sort: Desc)])
     @@index([leadId, status, scheduledAt])
     @@index([assignedToUserId, status, scheduledAt])

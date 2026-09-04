@@ -73,9 +73,47 @@ const createInvoice = async (payload: IInvoiceCreate, user: IRequestUser) => {
     return invoice;
 };
 
+const invoiceListSelect = {
+    id: true,
+    invoiceRef: true,
+    clientName: true,
+    clientEmail: true,
+    serviceAddress: true,
+    linkedBookingRef: true,
+    status: true,
+    issuedDate: true,
+    dueDate: true,
+    paidDate: true,
+    subtotal: true,
+    taxRate: true,
+    taxAmount: true,
+    total: true,
+    createdAt: true,
+    serviceCatalog: {
+        select: {
+            id: true,
+            serviceName: true,
+        },
+    },
+} satisfies Prisma.InvoiceSelect;
+
 const getAllInvoices = async (filters: IInvoiceFilters, user: IRequestUser) => {
-    const { searchTerm, status: invoiceStatus, adminId } = filters;
+    const { searchTerm, status: invoiceStatus, adminId: filterAdminId } = filters;
+    const page = Math.max(1, Number(filters.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(filters.limit) || 10));
+
+    const resolvedAdminId = user.role === UserRole.SUPER_ADMIN
+        ? filterAdminId
+        : await getAdminId(user);
+
+    const tenantWhere: Prisma.InvoiceWhereInput = resolvedAdminId
+        ? { adminId: resolvedAdminId }
+        : {};
+
     const andConditions: Prisma.InvoiceWhereInput[] = [];
+    if (resolvedAdminId) {
+        andConditions.push({ adminId: resolvedAdminId });
+    }
 
     if (searchTerm) {
         andConditions.push({
@@ -91,29 +129,64 @@ const getAllInvoices = async (filters: IInvoiceFilters, user: IRequestUser) => {
         andConditions.push({ status: invoiceStatus });
     }
 
-    if (user.role === UserRole.SUPER_ADMIN) {
-        if (adminId) andConditions.push({ adminId });
-    } else {
-        andConditions.push({ adminId: await getAdminId(user) });
-    }
-
     const whereConditions =
         andConditions.length > 0 ? { AND: andConditions } : {};
 
-    return await prisma.invoice.findMany({
-        where: whereConditions,
-        include: {
-            serviceCatalog: {
-                select: {
-                    id: true,
-                    serviceName: true,
-                },
+    const [invoices, total, statsAgg] = await Promise.all([
+        prisma.invoice.findMany({
+            where: whereConditions,
+            select: invoiceListSelect,
+            orderBy: {
+                createdAt: "desc",
             },
+            skip: (page - 1) * limit,
+            take: limit,
+        }),
+        prisma.invoice.count({ where: whereConditions }),
+        Promise.all([
+            prisma.invoice.count({ where: tenantWhere }),
+            prisma.invoice.groupBy({
+                by: ["status"],
+                where: tenantWhere,
+                _count: { _all: true },
+            }),
+            prisma.invoice.aggregate({
+                where: { ...tenantWhere, status: InvoiceStatus.PAID },
+                _sum: { total: true },
+            }),
+            prisma.invoice.aggregate({
+                where: { ...tenantWhere, status: { in: [InvoiceStatus.SENT, InvoiceStatus.OVERDUE] } },
+                _sum: { total: true },
+            }),
+        ]),
+    ]);
+
+    const [tenantTotal, statusGroups, paidSum, outstandingSum] = statsAgg;
+    const countsByStatus: Record<string, number> = {};
+    for (const g of statusGroups) {
+        countsByStatus[g.status] = g._count._all;
+    }
+
+    const stats = {
+        total: tenantTotal,
+        draft: countsByStatus[InvoiceStatus.DRAFT] ?? 0,
+        sent: countsByStatus[InvoiceStatus.SENT] ?? 0,
+        paid: countsByStatus[InvoiceStatus.PAID] ?? 0,
+        overdue: countsByStatus[InvoiceStatus.OVERDUE] ?? 0,
+        totalRevenue: Number(paidSum._sum.total ?? 0),
+        outstanding: Number(outstandingSum._sum.total ?? 0),
+    };
+
+    return {
+        invoices,
+        meta: {
+            page,
+            limit,
+            total,
+            totalPages: Math.max(1, Math.ceil(total / limit)),
         },
-        orderBy: {
-            createdAt: "desc",
-        },
-    });
+        stats,
+    };
 };
 
 const invoiceTenantWhere = async (id: string, user: IRequestUser) =>

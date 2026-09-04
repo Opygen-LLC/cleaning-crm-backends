@@ -25,6 +25,8 @@ const getAllInvoices = catchAsync(async (req, res) => {
         searchTerm: req.query.searchTerm as string,
         status: req.query.status as InvoiceStatus,
         adminId: req.query.adminId as string,
+        page: req.query.page ? Number(req.query.page) : 1,
+        limit: req.query.limit ? Number(req.query.limit) : 10,
     };
 
     const result = await invoiceService.getAllInvoices(filters, req.user);
@@ -33,7 +35,11 @@ const getAllInvoices = catchAsync(async (req, res) => {
         httpStatusCode: status.OK,
         success: true,
         message: "Invoices retrieved successfully",
-        data: result,
+        data: result.invoices,
+        meta: {
+            ...result.meta,
+            stats: result.stats,
+        },
     });
 });
 
