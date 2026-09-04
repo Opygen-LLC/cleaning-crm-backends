@@ -2,6 +2,7 @@ import { randomBytes } from "crypto";
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import AppError from "../../errorHelper/AppError";
+import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import { BookingStatus, FormFieldType, FormSubmissionStatus, ServiceStatus } from "../../generated/prisma/enums";
@@ -651,6 +652,16 @@ const updateSubmissionStatus = async (
 
 // ─── Public endpoint (unauthenticated) ───────────────────────────────────────
 
+const assertPublicBookingAccess = async (adminId: string) => {
+    const access = await TenantAccessResolver.resolve(adminId);
+    if (!access.access.publicWritesAllowed || !access.effectiveEntitlements.online_booking) {
+        throw new AppError(status.NOT_FOUND, "This booking page is not available.", {
+            code: access.access.publicWritesAllowed ? "FEATURE_NOT_INCLUDED" : access.access.deniedReason,
+            retryable: false,
+        });
+    }
+};
+
 type PublicBookingFormSelector = {
     slug?: string;
     formId?: string;
@@ -674,7 +685,10 @@ const publicBookingFormWhere = (selector: PublicBookingFormSelector) => {
 const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelector) => {
     if (selector.formId && selector.adminId) {
         const cached = await getCachedBookingForm<any>(selector.formId);
-        if (cached) return cached;
+        if (cached) {
+            await assertPublicBookingAccess(selector.adminId);
+            return cached;
+        }
     }
 
     const form = await prisma.bookingForm.findFirst({
@@ -701,6 +715,8 @@ const getPublicBookingFormBySelector = async (selector: PublicBookingFormSelecto
             retryable: false,
         });
     }
+
+    await assertPublicBookingAccess(form.adminId);
 
     let reviewSummary: { rating: number; count: number } | null = null;
     if (form.showReviews) {
@@ -781,6 +797,8 @@ const getPublicSlotAvailabilityBySelector = async (selector: PublicBookingFormSe
             retryable: false,
         });
     }
+
+    await assertPublicBookingAccess(form.adminId);
 
     const empty = {
         slotDurationMinutes: form.slotDurationMinutes,
@@ -907,6 +925,8 @@ const submitPublicBookingFormBySelector = async (
             retryable: false,
         });
     }
+
+    await assertPublicBookingAccess(form.adminId);
 
     const today = new Date().toISOString().slice(0, 10);
     if (payload.date < today) {

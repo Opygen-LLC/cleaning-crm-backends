@@ -1,7 +1,7 @@
 /**
  * recurringBooking.routes.ts
  *
- * CHANGE: Added checkFeature("recurring bookings") gate to all ADMIN
+ * CHANGE: Added checkFeature("recurring_bookings") gate to all ADMIN
  * routes so the PRO-plan restriction is enforced at the API layer —
  * not just the FE FeatureGate wrapper. checkSubscription (status gate)
  * is applied at the router level in routes/index.ts.
@@ -21,7 +21,7 @@ import { recurringBookingValidation } from "./recurringBooking.validation";
 const router = Router();
 
 const isAdmin         = checkAuth(UserRole.ADMIN);
-const hasRecurring    = checkFeature("recurring bookings");
+const hasRecurring    = checkFeature("recurring_bookings");
 
 // Stats — gated
 router.get(

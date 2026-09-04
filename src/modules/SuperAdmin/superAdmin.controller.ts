@@ -139,8 +139,12 @@ const getAdminAccountById = catchAsync(async (req, res) => {
 });
 
 const suspendAdminAccount = catchAsync(async (req, res) => {
+    // Legacy /admin-accounts routes identify the owner User. Translate that
+    // explicitly at the compatibility boundary; canonical tenant services only
+    // accept AdminProfile.id.
+    const organizationId = await TenantAdminService.resolveOrganizationIdByOwnerUserId(req.params.adminId as string);
     const result = await TenantAdminService.suspendTenant(
-        req.params.adminId as string,
+        organizationId,
         { actorUserId: req.user.id, reason: String(req.body.reason) },
     );
     sendResponse(res, {
@@ -152,8 +156,9 @@ const suspendAdminAccount = catchAsync(async (req, res) => {
 });
 
 const activateAdminAccount = catchAsync(async (req, res) => {
+    const organizationId = await TenantAdminService.resolveOrganizationIdByOwnerUserId(req.params.adminId as string);
     const result = await TenantAdminService.reactivateTenant(
-        req.params.adminId as string,
+        organizationId,
         { actorUserId: req.user.id, reason: String(req.body.reason) },
     );
     sendResponse(res, {

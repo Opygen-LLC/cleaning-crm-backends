@@ -151,7 +151,7 @@ describe("BookingForm routes — gated behind 'online booking'", () => {
         const { bookingFormRoutes } = await import(
             "../modules/BookingForm/bookingForm.routes"
         );
-        const gate = markerFor(featureMarkers, "online booking");
+        const gate = markerFor(featureMarkers, "online_booking");
 
         for (const [method, path] of [
             ["get", "/"],
@@ -186,7 +186,7 @@ describe("BookingForm routes — gated behind 'online booking'", () => {
 describe("Lead routes — gated behind 'leads pipeline'", () => {
     it("wires the gate onto every route", async () => {
         const { leadRoutes } = await import("../modules/Lead/lead.routes");
-        const gate = markerFor(featureMarkers, "leads pipeline");
+        const gate = markerFor(featureMarkers, "crm_leads");
 
         for (const [method, path] of [
             ["post", "/"],
@@ -210,7 +210,7 @@ describe("EstimateForm routes — split between 'pricing forms' and 'estimate su
         const { estimateFormRoutes } = await import(
             "../modules/EstimateForm/estimateForm.routes"
         );
-        const formsGate = markerFor(featureMarkers, "pricing forms");
+        const formsGate = markerFor(featureMarkers, "pricing_forms");
 
         for (const [method, path] of [
             ["post", "/"],
@@ -231,8 +231,8 @@ describe("EstimateForm routes — split between 'pricing forms' and 'estimate su
         const { estimateFormRoutes } = await import(
             "../modules/EstimateForm/estimateForm.routes"
         );
-        const submissionsGate = markerFor(featureMarkers, "estimate submissions");
-        const formsGate = markerFor(featureMarkers, "pricing forms");
+        const submissionsGate = markerFor(featureMarkers, "estimate_submissions");
+        const formsGate = markerFor(featureMarkers, "pricing_forms");
 
         for (const [method, path] of [
             ["get", "/submissions"],
@@ -266,7 +266,7 @@ describe("Staff leave routes — one authoritative owner", () => {
         const { staffLeaveRoutes } = await import(
             "../modules/StaffLeave/staffLeave.routes"
         );
-        const gate = markerFor(featureMarkers, "leave approvals");
+        const gate = markerFor(featureMarkers, "leave_approvals");
 
         expect(
             routeHasMiddleware(staffLeaveRoutes, "get", "/leave/all", gate),
@@ -282,7 +282,7 @@ describe("PricingRules routes — gated behind 'advanced pricing rules'", () => 
         const { pricingRulesRoutes } = await import(
             "../modules/PricingRules/pricingRules.routes"
         );
-        const gate = markerFor(featureMarkers, "advanced pricing rules");
+        const gate = markerFor(featureMarkers, "advanced_pricing_rules");
 
         expect(routeHasMiddleware(pricingRulesRoutes, "get", "/", gate)).toBe(true);
         expect(routeHasMiddleware(pricingRulesRoutes, "put", "/", gate)).toBe(true);

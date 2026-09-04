@@ -102,7 +102,8 @@ openRoutes.forEach(({ path, route }) => {
     router.use(path, route);
 });
 
-// checkSubscription short-circuits on non-ADMIN users so staff routes are safe.
+// checkSubscription enforces the canonical organization access decision for both ADMIN and STAFF.
+// SUPER_ADMIN and anonymous/public routes continue to bypass the tenant subscription gate.
 gatedRoutes.forEach(({ path, route }) => {
     router.use(path, checkSubscription, route);
 });

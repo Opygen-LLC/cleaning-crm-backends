@@ -1,5 +1,6 @@
 import { API_SCHEMA } from "../../contracts/apiContract";
 import { z } from "zod";
+import { isFeatureKey } from "../Entitlement/featureCatalog";
 
 
 // ─── Read/list query contracts ───────────────────────────────────────────────
@@ -82,6 +83,9 @@ export type TCreateAdminAccountPayload = z.infer<
 // ─── Subscription plan editor ────────────────────────────────────────────────
 
 const planFeatureSchema = z.object({
+    key: z.string().trim().optional().superRefine((value, ctx) => {
+        if (value && !isFeatureKey(value)) ctx.addIssue({ code: "custom", message: "Unknown canonical feature key." });
+    }),
     label: z.string().trim().min(1).max(120),
     included: z.boolean(),
     limit: z.string().trim().max(120).optional(),
@@ -93,10 +97,9 @@ const planFeaturesSchema = z
     .superRefine((features, ctx) => {
         const seen = new Map<string, number>();
         features.forEach((feature, index) => {
-            const key = feature.label
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, " ")
-                .trim();
+            const key = feature.key
+                ? `feature:${feature.key}`
+                : `label:${feature.label.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
             const previous = seen.get(key);
             if (previous !== undefined) {
                 ctx.addIssue({

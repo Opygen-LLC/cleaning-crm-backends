@@ -11,10 +11,10 @@ import { pricingRulesValidation } from "./pricingRules.validation";
 
 const router = Router();
 
-// "advanced pricing rules" is the PRO-tier feature flag seeded on plans —
+// "advanced_pricing_rules" is the PRO-tier feature flag seeded on plans —
 // see seedSubscriptionPlan.ts. Matches GATES.settingsEstimatePricing.
 const isAdmin = checkAuth(UserRole.ADMIN);
-const hasAdvancedPricingRules = checkFeature("advanced pricing rules");
+const hasAdvancedPricingRules = checkFeature("advanced_pricing_rules");
 
 // GET /api/v1/pricing-rules
 router.get(

@@ -2,6 +2,7 @@ import cron from "node-cron";
 import { StaffStatus, WeekDay } from "../generated/prisma/enums";
 import { fail, log } from "./index.cron";
 import { prisma } from "../lib/prisma/prisma";
+import { TenantAccessResolver } from "../modules/Entitlement/tenantAccessResolver.service";
 
 const DAY_MAP: WeekDay[] = [
     WeekDay.SUNDAY,
@@ -28,6 +29,7 @@ cron.schedule("0 */6 * * *", async () => {
             where: { manuallyInactive: false },
             select: {
                 id: true,
+                adminId: true,
                 status: true,
                 staffAvailability: {
                     where: { day: todayWeekDay },
@@ -54,7 +56,14 @@ cron.schedule("0 */6 * * *", async () => {
         const inactiveIds: string[] = [];
         const activeIds: string[] = [];
 
+        const accessByTenant = new Map<string, boolean>();
         for (const staff of staffList) {
+            let allowed = accessByTenant.get(staff.adminId);
+            if (allowed === undefined) {
+                allowed = (await TenantAccessResolver.resolve(staff.adminId)).access.backgroundJobsAllowed;
+                accessByTenant.set(staff.adminId, allowed);
+            }
+            if (!allowed) continue;
             const hasApprovedLeave = staff.staffLeave.length > 0;
             const todaySlot = staff.staffAvailability[0];
             const isUnavailableToday = todaySlot && !todaySlot.isActive;

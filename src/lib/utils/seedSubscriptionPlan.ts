@@ -9,18 +9,9 @@ import logger from "../logger";
 import { normalizeSubscriptionPlanFeatures } from "./subscriptionPlanFeatures";
 
 /**
- * Feature label strings must stay in sync with the `featureLabel` /
- * `feature` props used in FeatureGate across the frontend.
- *
- * FeatureGate normalises labels (lowercase, collapse whitespace) before
- * comparing, so casing here doesn't matter — but keeping it readable does.
- *
- * Plan hierarchy (enforced by FeatureGate's PLAN_RANK):
- *   STARTER (0) → GROWTH (1) → PRO (2) → CUSTOM (3)
- *
- * A higher-tier plan automatically inherits all lower-tier features via
- * the PLAN_RANK check in FeatureGate — you only need to list features
- * that *first appear* at a given tier.
+ * Seed data remains human-readable, but known product capabilities are
+ * canonicalized through normalizeSubscriptionPlanFeatures before persistence.
+ * This writes stable feature keys while preserving unknown marketing-only rows.
  */
 const WEBSITE_ENTITLEMENT_LABELS = new Set([
     "custom domains",
@@ -295,7 +286,12 @@ export async function seedSubscriptionPlans() {
                     name: sub.name,
                     description: sub.description,
                     currency: sub.currency,
-                    features: sub.features,
+                    features: normalizeSubscriptionPlanFeatures(sub.features).map((feature) => ({
+                        ...(feature.key ? { key: feature.key } : {}),
+                        label: feature.label,
+                        included: feature.included,
+                        ...(feature.limit ? { limit: feature.limit } : {}),
+                    })) satisfies Prisma.InputJsonValue,
                 },
             });
         } catch (err) {
@@ -342,6 +338,7 @@ export async function seedSubscriptionPlans() {
                             ...existingFeatures,
                             ...missingWebsiteEntitlements,
                         ].map((feature) => ({
+                            ...(feature.key ? { key: feature.key } : {}),
                             label: feature.label,
                             included: feature.included,
                             ...(feature.limit ? { limit: feature.limit } : {}),

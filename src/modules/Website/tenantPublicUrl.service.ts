@@ -4,10 +4,7 @@ import { WEBSITE_CUSTOM_DOMAINS_ENABLED } from "../../config/ENV";
 import { prisma } from "../../lib/prisma/prisma";
 import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
-import {
-  deriveWebsiteEntitlements,
-  websiteEntitlementSubscriptionSelect,
-} from "./websiteEntitlement.service";
+import { WebsiteEntitlementService } from "./websiteEntitlement.service";
 
 export interface TenantPublicUrlResolution {
   websiteId: string;
@@ -33,15 +30,6 @@ const resolveForAdminId = async (
         orderBy: { createdAt: "asc" },
         take: 1,
       },
-      admin: {
-        select: {
-          subscription: {
-            orderBy: { createdAt: "desc" },
-            take: 1,
-            select: websiteEntitlementSubscriptionSelect,
-          },
-        },
-      },
     },
   });
 
@@ -56,9 +44,9 @@ const resolveForAdminId = async (
     );
   }
 
-  const entitlements = deriveWebsiteEntitlements(
-    website.admin.subscription[0] ?? null,
-  );
+  // Custom-domain selection consumes the same canonical tenant access and
+  // entitlement resolution as Website Studio, public routing and API gates.
+  const entitlements = await WebsiteEntitlementService.getForAdminId(adminId);
   const customDomain =
     WEBSITE_CUSTOM_DOMAINS_ENABLED &&
     entitlements.customDomains &&

@@ -1,30 +1,26 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
-import { SubscriptionStatus } from "../../generated/prisma/enums";
-import { prisma } from "../../lib/prisma/prisma";
-import redis from "../../config/redis";
-import { CacheNamespaces, CacheTtl, ttlForKey } from "../../lib/cache/cachePolicy";
-import { cacheRuntimeSubscriptionForAdmin, getRuntimeSubscriptionForAdmin } from "../../lib/cache/authRuntimeCache";
 import { normalizeSubscriptionPlanFeatures, type SubscriptionPlanFeature } from "../../lib/utils/subscriptionPlanFeatures";
+import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
+import type { FeatureKey } from "../Entitlement/featureCatalog";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import type { WebsiteTemplateDefinition } from "./templateRegistry";
-import { applyTenantFeatureOverrides, getTenantEntitlementOverride } from "../SuperAdmin/tenantEntitlement.service";
 
 export const MAX_WEBSITE_ANALYTICS_HISTORY_DAYS = 730 as const;
 
 export const WEBSITE_ENTITLEMENT_FEATURES = Object.freeze({
-  CUSTOM_DOMAINS: "Custom Domains",
-  PREMIUM_TEMPLATES: "Premium Website Templates",
-  ANALYTICS_HISTORY: "Website Analytics History",
-  ADVANCED_SEO: "Advanced Website SEO",
+  CUSTOM_DOMAINS: "custom_domain" as const,
+  PREMIUM_TEMPLATES: "premium_templates" as const,
+  ANALYTICS_HISTORY: "website_analytics" as const,
+  ADVANCED_SEO: "advanced_seo" as const,
 });
 
 export interface WebsiteEntitlements {
   planName: string;
-  basicWebsite: true;
-  freeSubdomain: true;
-  onlineBooking: true;
+  basicWebsite: boolean;
+  freeSubdomain: boolean;
+  onlineBooking: boolean;
   customDomains: boolean;
   customDomainLimit: number;
   premiumTemplates: boolean;
@@ -40,12 +36,8 @@ type SubscriptionEntitlementSource = {
   subscriptionPlan?: { name?: string | null; features?: unknown } | null;
 } | null | undefined;
 
-const normalizeKey = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-
-const featureByLabel = (features: SubscriptionPlanFeature[], label: string) => {
-  const key = normalizeKey(label);
-  return features.find((feature) => normalizeKey(feature.label) === key) ?? null;
-};
+const featureByKey = (features: SubscriptionPlanFeature[], key: FeatureKey) =>
+  features.find((feature) => feature.key === key) ?? null;
 
 const parsePositiveInteger = (value: string | undefined, fallback: number) => {
   if (!value) return fallback;
@@ -70,7 +62,7 @@ const planDefaults = (planNameRaw: string | null | undefined): Omit<WebsiteEntit
 };
 
 const hasActivePaidOrTrialAccess = (source: SubscriptionEntitlementSource): boolean => {
-  if (!source || source.status !== SubscriptionStatus.ACTIVE) return false;
+  if (!source || source.status !== "ACTIVE") return false;
   const now = Date.now();
   if (source.isTrial && source.trialEndsAt && new Date(source.trialEndsAt).getTime() < now) return false;
   if (!source.isTrial && source.currentPeriodEnd && new Date(source.currentPeriodEnd).getTime() < now) return false;
@@ -83,10 +75,10 @@ export const deriveWebsiteEntitlements = (source: SubscriptionEntitlementSource)
   const defaults = planDefaults(planName);
   const features = active ? normalizeSubscriptionPlanFeatures(source?.subscriptionPlan?.features ?? []) : [];
 
-  const customDomainsFeature = featureByLabel(features, WEBSITE_ENTITLEMENT_FEATURES.CUSTOM_DOMAINS);
-  const premiumFeature = featureByLabel(features, WEBSITE_ENTITLEMENT_FEATURES.PREMIUM_TEMPLATES);
-  const analyticsFeature = featureByLabel(features, WEBSITE_ENTITLEMENT_FEATURES.ANALYTICS_HISTORY);
-  const advancedSeoFeature = featureByLabel(features, WEBSITE_ENTITLEMENT_FEATURES.ADVANCED_SEO);
+  const customDomainsFeature = featureByKey(features, WEBSITE_ENTITLEMENT_FEATURES.CUSTOM_DOMAINS);
+  const premiumFeature = featureByKey(features, WEBSITE_ENTITLEMENT_FEATURES.PREMIUM_TEMPLATES);
+  const analyticsFeature = featureByKey(features, WEBSITE_ENTITLEMENT_FEATURES.ANALYTICS_HISTORY);
+  const advancedSeoFeature = featureByKey(features, WEBSITE_ENTITLEMENT_FEATURES.ADVANCED_SEO);
 
   const customDomains = customDomainsFeature ? customDomainsFeature.included : defaults.customDomains;
   const customDomainLimit = customDomains
@@ -126,77 +118,31 @@ export const websiteEntitlementSubscriptionSelect = {
 } as const;
 
 const getForAdminId = async (adminId: string): Promise<WebsiteEntitlements> => {
-  const key = CacheNamespaces.entitlements(adminId);
-  const cached = await redis.get(key).catch(() => null);
-  if (cached) {
-    try {
-      return JSON.parse(cached) as WebsiteEntitlements;
-    } catch {
-      void redis.del(key).catch(() => {});
-    }
-  }
+  const access = await TenantAccessResolver.resolve(adminId);
+  const defaults = planDefaults(access.plan.name);
+  const planFeatures = access.plan.features;
+  const customFeature = featureByKey(planFeatures, "custom_domain");
+  const analyticsFeature = featureByKey(planFeatures, "website_analytics");
 
-  // checkSubscription primes subscription:{adminId} as part of TenantContext.
-  // Reuse that snapshot so Website Studio/domain/template gates do not perform
-  // another subscription join on the same authenticated request.
-  const runtimeSubscription = await getRuntimeSubscriptionForAdmin(adminId);
-  let source: SubscriptionEntitlementSource;
-  if (runtimeSubscription) {
-    source = {
-      status: runtimeSubscription.status,
-      isTrial: runtimeSubscription.isTrial,
-      trialEndsAt: runtimeSubscription.trialEndsAt,
-      currentPeriodEnd: runtimeSubscription.currentPeriodEnd,
-      subscriptionPlan: {
-        name: runtimeSubscription.planName,
-        features: runtimeSubscription.features,
-      },
-    };
-  } else {
-    const subscription = await prisma.subscription.findFirst({
-      where: { adminId },
-      select: websiteEntitlementSubscriptionSelect,
-      orderBy: { createdAt: "desc" },
-    });
-    source = subscription;
-    if (subscription) {
-      void cacheRuntimeSubscriptionForAdmin(adminId, {
-        status: subscription.status,
-        planId: null,
-        planName: subscription.subscriptionPlan?.name ?? null,
-        isTrial: subscription.isTrial,
-        trialEndsAt: subscription.trialEndsAt?.toISOString() ?? null,
-        currentPeriodEnd: subscription.currentPeriodEnd?.toISOString() ?? null,
-        cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
-        features: subscription.subscriptionPlan?.features ?? [],
-      });
-    }
-  }
+  const customDomains = access.effectiveEntitlements.custom_domain;
+  const customDomainLimit = customDomains
+    ? Math.max(1, parsePositiveInteger(customFeature?.limit, defaults.customDomainLimit || 1))
+    : 0;
+  const analyticsHistoryDays = access.effectiveEntitlements.website_analytics
+    ? parsePositiveInteger(analyticsFeature?.limit, defaults.analyticsHistoryDays)
+    : 30;
 
-  const override = await getTenantEntitlementOverride(adminId);
-  if (source?.subscriptionPlan && override?.active) {
-    source = {
-      ...source,
-      subscriptionPlan: {
-        ...source.subscriptionPlan,
-        features: applyTenantFeatureOverrides(
-          source.subscriptionPlan.features ?? [],
-          override.features,
-          true,
-        ),
-      },
-    };
-  }
-
-  const entitlements = deriveWebsiteEntitlements(source);
-  const defaultTtl = ttlForKey(CacheTtl.entitlements, key);
-  const overrideTtl = override?.expiresAt
-    ? Math.max(1, Math.ceil((new Date(override.expiresAt).getTime() - Date.now()) / 1000))
-    : defaultTtl;
-  void redis
-    .setex(key, Math.min(defaultTtl, overrideTtl), JSON.stringify(entitlements))
-    .catch(() => {});
-  return entitlements;
+  return {
+    planName: access.plan.name ?? "STARTER",
+    basicWebsite: access.effectiveEntitlements.website,
+    freeSubdomain: access.effectiveEntitlements.website,
+    onlineBooking: access.effectiveEntitlements.online_booking,
+    customDomains,
+    customDomainLimit,
+    premiumTemplates: access.effectiveEntitlements.premium_templates,
+    analyticsHistoryDays: Math.min(MAX_WEBSITE_ANALYTICS_HISTORY_DAYS, Math.max(30, analyticsHistoryDays)),
+    advancedSeo: access.effectiveEntitlements.advanced_seo,
+  };
 };
 
 const getForUser = async (user: IRequestUser): Promise<WebsiteEntitlements> => getForAdminId(await getAdminId(user));

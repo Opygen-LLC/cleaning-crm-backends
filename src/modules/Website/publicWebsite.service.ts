@@ -12,10 +12,10 @@ import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service"
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
-import { deriveWebsiteEntitlements, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
+import { WebsiteEntitlementService, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
+import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
 import { ServiceStatus } from "../../generated/prisma/enums";
 import type { WebsiteLocalDraftInput } from "./website.interface";
-import { getFeatureOverrideMode, isOverrideActive } from "../SuperAdmin/tenantEntitlement.service";
 
 const WEBSITE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -149,19 +149,25 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
   // aggregate across every published tenant review so businesses with >50
   // reviews never display an incorrect rating/count. This is only paid on a
   // website projection cache miss.
-  const reviewAggregate = await prisma.review.aggregate({
-    where: {
-      adminId: website.adminId,
-      status: "published",
-      staffId: null,
-    },
-    _avg: { rating: true },
-    _count: { _all: true },
-  });
+  const [reviewAggregate, access] = await Promise.all([
+    prisma.review.aggregate({
+      where: {
+        adminId: website.adminId,
+        status: "published",
+        staffId: null,
+      },
+      _avg: { rating: true },
+      _count: { _all: true },
+    }),
+    TenantAccessResolver.resolve(website.adminId),
+  ]);
+  const entitlements = await WebsiteEntitlementService.getForAdminId(website.adminId);
 
   const averageRating = reviewAggregate._avg.rating;
   return {
     website,
+    access,
+    entitlements,
     reviewSummary: {
       averageRating: averageRating === null ? null : Math.round(averageRating * 10) / 10,
       count: reviewAggregate._count._all,
@@ -280,12 +286,15 @@ const projectWebsite = (
   const { website, reviewSummary } = source;
 
   if (options.mode === "public") {
-    const websiteOverrideDisabled = isOverrideActive(website.admin.entitlementOverride)
-      && getFeatureOverrideMode(website.admin.entitlementOverride?.features, "website") === "FORCE_DISABLED";
-    if (website.status === "SUSPENDED" || website.admin.user.status !== "ACTIVE" || website.admin.lifecycleStatus !== "ACTIVE" || websiteOverrideDisabled) {
-      throw new AppError(status.SERVICE_UNAVAILABLE, "Website temporarily unavailable");
+    if (!source.access.access.publicWebsiteAllowed) {
+      if (source.access.website.deniedReason === "WEBSITE_UNPUBLISHED") {
+        throw new AppError(status.NOT_FOUND, "Website not found");
+      }
+      throw new AppError(status.SERVICE_UNAVAILABLE, "Website temporarily unavailable", {
+        code: source.access.website.deniedReason,
+        retryable: false,
+      });
     }
-    if (website.status !== "PUBLISHED") throw new AppError(status.NOT_FOUND, "Website not found");
   }
 
   const snapshot = options.snapshotOverride ?? (options.mode === "preview"
@@ -300,7 +309,7 @@ const projectWebsite = (
 
   const config = snapshot.website;
   const pages = snapshot.pages.filter((page) => page.isEnabled);
-  const entitlements = deriveWebsiteEntitlements(website.admin.subscription[0]);
+  const entitlements = source.entitlements;
   const requestedTemplate = resolveCompatibleBackendTemplate(config);
   if (!requestedTemplate) {
     throw new AppError(status.SERVICE_UNAVAILABLE, "Website template schema is unavailable", {

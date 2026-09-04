@@ -18,7 +18,8 @@ import { prisma } from "../../lib/prisma/prisma";
 import { normalizeSubdomain } from "./websiteIdentity";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { getCanonicalWebsiteHost } from "./websiteCanonicalHost";
-import { deriveWebsiteEntitlements, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
+import { WebsiteEntitlementService } from "./websiteEntitlement.service";
+import { TenantAccessResolver, type TenantAccessResolution } from "../Entitlement/tenantAccessResolver.service";
 
 const ROUTE_CACHE_VERSION = 9 as const;
 const CACHE_NAMESPACE = `site-route:v${ROUTE_CACHE_VERSION}`;
@@ -234,14 +235,12 @@ const normalizeHost = (value: string): string => {
 };
 
 
-const hasCustomDomainRouting = (entitlements: ReturnType<typeof deriveWebsiteEntitlements>) =>
+const hasCustomDomainRouting = (entitlements: Awaited<ReturnType<typeof WebsiteEntitlementService.getForAdminId>>) =>
   WEBSITE_CUSTOM_DOMAINS_ENABLED && entitlements.customDomains && entitlements.customDomainLimit > 0;
 
-const websiteAvailability = (websiteStatus: string, accountStatus: string): WebsiteHostAvailability => {
-  if (websiteStatus === "SUSPENDED" || accountStatus === "SUSPENDED" || accountStatus === "DELETED") {
-    return "suspended";
-  }
-  if (websiteStatus !== "PUBLISHED" || accountStatus !== "ACTIVE") return "unpublished";
+const websiteAvailability = (access: TenantAccessResolution): WebsiteHostAvailability => {
+  if (!access.access.dashboardAllowed) return "suspended";
+  if (!access.access.publicWebsiteAllowed) return "unpublished";
   return "live";
 };
 
@@ -288,9 +287,8 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
       subdomain: true,
       status: true,
       admin: { select: {
+        id: true,
         businessName: true,
-        user: { select: { status: true } },
-        subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
       } },
       domains: {
         where: { ...readyWebsiteDomainWhere, isPrimary: true },
@@ -301,6 +299,8 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
     },
   });
   if (website) {
+    const access = await TenantAccessResolver.resolve(website.admin.id);
+    const entitlements = await WebsiteEntitlementService.getForAdminId(website.admin.id);
     return {
       version: ROUTE_CACHE_VERSION,
       websiteId: website.id,
@@ -309,10 +309,10 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
       canonicalSubdomain: website.subdomain,
       isAlias: false,
       redirectCode: null,
-      primaryCustomHost: hasCustomDomainRouting(deriveWebsiteEntitlements(website.admin.subscription[0]))
+      primaryCustomHost: hasCustomDomainRouting(entitlements)
         ? website.domains[0]?.domain ?? null
         : null,
-      availability: websiteAvailability(website.status, website.admin.user.status),
+      availability: websiteAvailability(access),
     };
   }
 
@@ -325,9 +325,8 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
           subdomain: true,
           status: true,
           admin: { select: {
+            id: true,
             businessName: true,
-            user: { select: { status: true } },
-            subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
           } },
           domains: {
             where: { ...readyWebsiteDomainWhere, isPrimary: true },
@@ -341,6 +340,8 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
   });
   if (!alias) return null;
 
+  const aliasAccess = await TenantAccessResolver.resolve(alias.website.admin.id);
+  const aliasEntitlements = await WebsiteEntitlementService.getForAdminId(alias.website.admin.id);
   return {
     version: ROUTE_CACHE_VERSION,
     websiteId: alias.websiteId,
@@ -349,10 +350,10 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
     canonicalSubdomain: alias.website.subdomain,
     isAlias: true,
     redirectCode: 308,
-    primaryCustomHost: hasCustomDomainRouting(deriveWebsiteEntitlements(alias.website.admin.subscription[0]))
+    primaryCustomHost: hasCustomDomainRouting(aliasEntitlements)
       ? alias.website.domains[0]?.domain ?? null
       : null,
-    availability: websiteAvailability(alias.website.status, alias.website.admin.user.status),
+    availability: websiteAvailability(aliasAccess),
   };
 };
 
@@ -438,9 +439,8 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
           subdomain: true,
           status: true,
           admin: { select: {
+        id: true,
         businessName: true,
-        user: { select: { status: true } },
-        subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
       } },
           domains: {
             where: { ...readyWebsiteDomainWhere },
@@ -456,7 +456,8 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
     throw new AppError(status.NOT_FOUND, "Website host not found");
   }
 
-  const entitlements = deriveWebsiteEntitlements(domain.website.admin.subscription[0]);
+  const domainAccess = await TenantAccessResolver.resolve(domain.website.admin.id);
+  const entitlements = await WebsiteEntitlementService.getForAdminId(domain.website.admin.id);
   if (!hasCustomDomainRouting(entitlements)) {
     // A downgrade must remove premium routing immediately without deleting the
     // verified domain record. Upgrading later restores it without DNS setup.
@@ -494,7 +495,7 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
     canonicalHost,
     routeKind: "custom_domain",
     customDomain: domain.domain,
-    availability: websiteAvailability(domain.website.status, domain.website.admin.user.status),
+    availability: websiteAvailability(domainAccess),
   };
 };
 

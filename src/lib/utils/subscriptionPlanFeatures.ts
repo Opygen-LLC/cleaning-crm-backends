@@ -1,4 +1,11 @@
+import {
+    resolveFeatureKey,
+    type FeatureKey,
+} from "../../modules/Entitlement/featureCatalog";
+
 export interface SubscriptionPlanFeature {
+    /** Stable authorization key. Labels are display-only. */
+    key?: FeatureKey;
     label: string;
     included: boolean;
     limit?: string;
@@ -19,7 +26,8 @@ function parseFeature(value: unknown): SubscriptionPlanFeature | null {
             // Legacy plain-string feature; treat it as included.
         }
 
-        return { label: trimmed, included: true };
+        const key = resolveFeatureKey(trimmed) ?? undefined;
+        return { ...(key ? { key } : {}), label: trimmed, included: true };
     }
 
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -28,12 +36,15 @@ function parseFeature(value: unknown): SubscriptionPlanFeature | null {
 
     const record = value as Record<string, unknown>;
     const label = typeof record.label === "string" ? record.label.trim() : "";
-    if (!label) return null;
+    const explicitKey = resolveFeatureKey(record.key);
+    const inferredKey = explicitKey ?? resolveFeatureKey(label);
+    if (!label && !inferredKey) return null;
 
     const limit = typeof record.limit === "string" ? record.limit.trim() : "";
 
     return {
-        label,
+        ...(inferredKey ? { key: inferredKey } : {}),
+        label: label || inferredKey!,
         included:
             typeof record.included === "boolean" ? record.included : true,
         ...(limit ? { limit } : {}),
@@ -41,10 +52,9 @@ function parseFeature(value: unknown): SubscriptionPlanFeature | null {
 }
 
 /**
- * Converts both the old TEXT[] representation (plain strings or JSON-encoded
- * strings) and the current JSON representation into one canonical structure.
- * The de-duplication key is case/punctuation-insensitive, matching the feature
- * gate's comparison semantics.
+ * Converts legacy feature rows and current JSON rows into one canonical
+ * structure. Known product features are de-duplicated by stable key; unknown
+ * marketing-only rows remain de-duplicated by normalized label.
  */
 export function normalizeSubscriptionPlanFeatures(
     raw: unknown,
@@ -57,19 +67,16 @@ export function normalizeSubscriptionPlanFeatures(
         const feature = parseFeature(value);
         if (!feature) continue;
 
-        const key = feature.label
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, " ")
-            .trim();
-        if (!key) continue;
+        const key = feature.key
+            ? `feature:${feature.key}`
+            : `label:${feature.label.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
+        if (!key || key === "label:") continue;
 
         const existingIndex = indexByKey.get(key);
         if (existingIndex === undefined) {
             indexByKey.set(key, result.length);
             result.push(feature);
         } else {
-            // The last submitted row wins. This makes editor retries and
-            // migration of duplicated legacy labels deterministic.
             result[existingIndex] = feature;
         }
     }

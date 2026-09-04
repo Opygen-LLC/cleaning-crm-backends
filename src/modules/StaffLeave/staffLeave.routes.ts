@@ -20,7 +20,7 @@ import { UserRole } from "../../generated/prisma/enums";
 import { staffLeaveController } from "./staffLeave.controller";
 
 const router = Router();
-const hasLeaveApprovals = checkFeature("leave approvals");
+const hasLeaveApprovals = checkFeature("leave_approvals");
 
 router.post(
   "/leave",

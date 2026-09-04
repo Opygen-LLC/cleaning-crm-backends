@@ -26,6 +26,8 @@ declare global {
                 subscriptionPlanName?: string | null;
                 subscriptionFeatures?: import("../lib/utils/subscriptionPlanFeatures").SubscriptionPlanFeature[] | null;
                 entitlementSummary?: import("../lib/utils/subscriptionPlanFeatures").SubscriptionPlanFeature[] | null;
+                effectiveEntitlements?: Partial<Record<import("../modules/Entitlement/featureCatalog").FeatureKey, boolean>>;
+                accessDeniedReason?: import("../modules/Entitlement/tenantAccessResolver.service").TenantAccessDeniedReason;
             };
             // Set by checkPortalAuth.ts (resolvePortalClient /
             // checkAuthOrPortalClient) when the request is authenticated via

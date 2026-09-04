@@ -6,6 +6,7 @@ import { advanceNextRunAt } from "../modules/RecurringBooking/recurringBooking.s
 import { fail, log } from "./index.cron";
 import { queueBookingNotification } from "../lib/notifications/businessNotificationEvents";
 import { bumpCacheResourceVersions, CacheResource } from "../lib/cache/resourceCacheVersion";
+import { TenantAccessResolver } from "../modules/Entitlement/tenantAccessResolver.service";
 
 // ─── Booking ref generator (mirrors booking.service.ts) ───────────────────────
 
@@ -69,6 +70,11 @@ export const runRecurringBookingEngine = async (
 
     for (const schedule of dueSchedules) {
         try {
+            const access = await TenantAccessResolver.resolve(schedule.adminId);
+            if (!access.access.backgroundJobsAllowed || !access.effectiveEntitlements.recurring_bookings) {
+                log(`  - Skipped ${schedule.scheduleRef}: organization background access is disabled`);
+                continue;
+            }
             const bookingId = await prismaClient.$transaction(async (tx: Prisma.TransactionClient) => {
                 const bookingRef = await generateBookingRef(tx);
 

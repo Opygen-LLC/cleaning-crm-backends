@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import AppError from "../../errorHelper/AppError";
+import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import status from "http-status";
 import {
@@ -778,6 +779,14 @@ const loadPublishedPublicForm = async (locator: PublicEstimateFormLocator) => {
         });
     }
 
+    const access = await TenantAccessResolver.resolve(form.adminId);
+    if (!access.access.publicWritesAllowed || !access.effectiveEntitlements.pricing_forms) {
+        throw new AppError(status.NOT_FOUND, "This estimate page is not available.", {
+            code: access.access.publicWritesAllowed ? "FEATURE_NOT_INCLUDED" : access.access.deniedReason,
+            retryable: false,
+        });
+    }
+
     return form;
 };
 
@@ -929,6 +938,10 @@ const submitPublicEstimateFormFor = async (
         throw new AppError(status.BAD_REQUEST, "Invalid Idempotency-Key header");
     }
     const form = await loadPublishedPublicForm(locator);
+    const submissionAccess = await TenantAccessResolver.resolve(form.adminId);
+    if (!submissionAccess.effectiveEntitlements.estimate_submissions) {
+        throw new AppError(status.NOT_FOUND, "This estimate page is not accepting submissions.", { code: "FEATURE_NOT_INCLUDED", retryable: false });
+    }
     const publicFields = buildPublicFields(form.fields);
 
     const service = form.services.find((candidate) =>

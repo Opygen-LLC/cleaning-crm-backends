@@ -13,10 +13,10 @@ import { UserRole } from "../../generated/prisma/enums";
 
 const router = Router();
 
-// "leads pipeline" is the single feature flag seeded on GROWTH+ plans —
+// "crm_leads" is the single feature flag seeded on GROWTH+ plans —
 // see seedSubscriptionPlan.ts. Matches GATES.leadsPipeline on the frontend.
 const isAdmin = checkAuth(UserRole.ADMIN);
-const hasLeadsPipeline = checkFeature("leads pipeline");
+const hasLeadsPipeline = checkFeature("crm_leads");
 
 // Create a lead
 router.post(

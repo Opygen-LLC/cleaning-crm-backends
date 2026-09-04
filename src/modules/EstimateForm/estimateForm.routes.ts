@@ -14,11 +14,11 @@ import { publicSpamGuard } from "../../middlewares/publicSpamProtection";
 const router = Router();
 
 // Two distinct frontend gates share this router (see featureGateConfig.ts):
-//   GATES.estimateForms       ("pricing forms")     — builder/list/CRUD pages
-//   GATES.estimateSubmissions ("estimate submissions") — submissions inbox
+//   GATES.estimateForms       ("pricing_forms")     — builder/list/CRUD pages
+//   GATES.estimateSubmissions ("estimate_submissions") — submissions inbox
 const isAdmin = checkAuth(UserRole.ADMIN);
-const hasPricingForms = checkFeature("pricing forms");
-const hasEstimateSubmissions = checkFeature("estimate submissions");
+const hasPricingForms = checkFeature("pricing_forms");
+const hasEstimateSubmissions = checkFeature("estimate_submissions");
 
 // ── Public routes (no auth) ───────────────────────────────────────────────────
 // Must be declared before /:id routes

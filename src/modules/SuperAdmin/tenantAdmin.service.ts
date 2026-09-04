@@ -25,6 +25,7 @@ import { deleteFileFromCloudinary } from "../../config/cloudinary";
 import { disconnectTenantSockets } from "../../config/socketio";
 import { writeSuperAdminAudit } from "./superAdminAudit.service";
 import { TenantEntitlementService } from "./tenantEntitlement.service";
+import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
 import { getPlatformConfig } from "../../lib/utils/platformConfig";
 import { superAdminService } from "./superAdmin.service";
 
@@ -46,9 +47,9 @@ const normalizedReason = (reason: string) => {
   return value;
 };
 
-export const resolveTenant = async (identifier: string, db: Db = prisma) => {
-  const tenant = await db.adminProfile.findFirst({
-    where: { OR: [{ id: identifier }, { userId: identifier }] },
+export const resolveTenant = async (organizationId: string, db: Db = prisma) => {
+  const tenant = await db.adminProfile.findUnique({
+    where: { id: organizationId },
     select: {
       id: true,
       userId: true,
@@ -77,8 +78,15 @@ export const resolveTenant = async (identifier: string, db: Db = prisma) => {
       },
     },
   });
-  if (!tenant) throw new AppError(status.NOT_FOUND, "Tenant not found.");
+  if (!tenant) throw new AppError(status.NOT_FOUND, "Organization not found.", { code: "ORGANIZATION_NOT_FOUND", retryable: false });
   return tenant;
+};
+
+/** Explicit compatibility resolver for legacy owner-user-id endpoints only. */
+export const resolveOrganizationIdByOwnerUserId = async (ownerUserId: string, db: Db = prisma) => {
+  const tenant = await db.adminProfile.findUnique({ where: { userId: ownerUserId }, select: { id: true } });
+  if (!tenant) throw new AppError(status.NOT_FOUND, "Organization not found.", { code: "ORGANIZATION_NOT_FOUND", retryable: false });
+  return tenant.id;
 };
 
 const invalidateTenantCaches = async (tenant: { id: string; userId: string }) => {
@@ -88,6 +96,7 @@ const invalidateTenantCaches = async (tenant: { id: string; userId: string }) =>
     invalidateRuntimeSubscriptionForAdmin(tenant.id),
     invalidateSubscriptionAccessCache(tenant.userId).catch(() => undefined),
     WebsiteProjectionCacheService.invalidateAdminWebsite(tenant.id).catch(() => undefined),
+    TenantAccessResolver.invalidate(tenant.id).catch(() => undefined),
   ]);
 
   const website = await prisma.businessWebsite.findUnique({
@@ -220,7 +229,7 @@ export const getTenantsHealth = async () => {
 export const getTenant360 = async (identifier: string) => {
   const resolved = await resolveTenant(identifier);
   const monthStart = startOfMonth(new Date());
-  const [tenant, limits, entitlementOverride, currentMonthBookings, lastSession, recentActivity] = await Promise.all([
+  const [tenant, accessResolution, entitlementOverride, currentMonthBookings, lastSession, recentActivity] = await Promise.all([
     prisma.adminProfile.findUniqueOrThrow({
       where: { id: resolved.id },
       include: {
@@ -251,7 +260,7 @@ export const getTenant360 = async (identifier: string) => {
         },
       },
     }),
-    TenantEntitlementService.getEffectiveResourceLimits(resolved.id),
+    TenantAccessResolver.resolve(resolved.id),
     TenantEntitlementService.getTenantEntitlementOverride(resolved.id),
     prisma.booking.count({ where: { adminId: resolved.id, createdAt: { gte: monthStart } } }),
     prisma.session.findFirst({ where: { userId: resolved.userId }, orderBy: { updatedAt: "desc" }, select: { updatedAt: true, lastUsedAt: true, ipAddress: true } }),
@@ -302,7 +311,8 @@ export const getTenant360 = async (identifier: string) => {
       clients: tenant._count.clients,
       monthlyBookings: currentMonthBookings,
     },
-    limits,
+    limits: accessResolution.resourceLimits.effective,
+    effectiveAccess: accessResolution,
     entitlementOverride,
     recentActivity,
     createdAt: tenant.createdAt,
@@ -753,7 +763,7 @@ export const applyDueAdministrativePlanChanges = async (now = new Date()) => {
 };
 
 export const TenantAdminService = {
-  getTenants, getTenantsHealth, getTenant360, updateTenantProfile, updateTenantOwner,
+  resolveTenant, resolveOrganizationIdByOwnerUserId, getTenants, getTenantsHealth, getTenant360, updateTenantProfile, updateTenantOwner,
   suspendTenant, reactivateTenant, archiveTenant, restoreTenant, getTenantDeletionPreview, hardDeleteTenant,
   getGlobalUsers, getGlobalUsersSummary, exportGlobalUsersCsv, updateGlobalUserStatus, updateGlobalUserRole, verifyGlobalUser,
   getSuperAdminAuditLogs, getSuperAdminAuditStats, getSubscriptionRequests, approveSubscriptionRequest, rejectSubscriptionRequest, changeTenantPlan, scheduleTenantDowngrade, cancelScheduledTenantChange, setTenantCancelAtPeriodEnd, manageTenantTrial,

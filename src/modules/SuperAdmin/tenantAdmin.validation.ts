@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AccountStatus, PendingPlanChangeStatus, TenantLifecycleStatus, UserRole } from "../../generated/prisma/enums";
+import { FEATURE_KEYS, LEGACY_OVERRIDE_KEY_MAP, isFeatureKey } from "../Entitlement/featureCatalog";
 
 const reason = z.string().trim().min(10).max(1000);
 const nullableString = z.string().trim().max(500).nullable().optional();
@@ -44,10 +45,22 @@ export const trialManagementSchema = z.object({ action: z.enum(["RESTART", "EXTE
 
 const resourceValue = z.discriminatedUnion("mode", [z.object({ mode: z.literal("INHERIT") }), z.object({ mode: z.enum(["ADD", "SET"]), value: z.number().int().min(0).max(1_000_000) })]);
 const featureMode = z.enum(["INHERIT", "FORCE_ENABLED", "FORCE_DISABLED"]);
+const legacyFeatureKeys = new Set(Object.keys(LEGACY_OVERRIDE_KEY_MAP));
+const entitlementFeaturesSchema = z.record(z.string(), featureMode).superRefine((features, ctx) => {
+  for (const key of Object.keys(features)) {
+    if (!isFeatureKey(key) && !legacyFeatureKeys.has(key)) {
+      ctx.addIssue({
+        code: "custom",
+        path: [key],
+        message: `Unknown feature key '${key}'. Use one of: ${FEATURE_KEYS.join(", ")}.`,
+      });
+    }
+  }
+});
 export const entitlementSchema = z.object({
   reason, expiresAt: z.string().datetime().nullable().optional(),
   resources: z.object({ staff: resourceValue.optional(), clients: resourceValue.optional(), monthlyBookings: resourceValue.optional(), storageMb: resourceValue.optional() }).optional(),
-  features: z.object({ website: featureMode.optional(), customDomain: featureMode.optional(), analytics: featureMode.optional(), bookingForms: featureMode.optional(), recurringBookings: featureMode.optional(), crmLeads: featureMode.optional(), reports: featureMode.optional(), automations: featureMode.optional() }).optional(),
+  features: entitlementFeaturesSchema.optional(),
 });
 
 export const platformConfigPatchSchema = z.object({

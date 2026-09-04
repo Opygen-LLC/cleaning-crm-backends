@@ -15,6 +15,7 @@ import { getPlatformConfig } from "../../lib/utils/platformConfig";
 import { emitToSuperAdmins } from "../../config/socketio";
 import { invalidateSubscriptionAccessCache } from "../../middlewares/checkSubscription";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
 
 // Fallback only — the real value is read from platform config
 // (super-admin → Settings → Platform Configuration → "Default trial days")
@@ -40,55 +41,59 @@ const getMySubscription = async (user: IRequestUser) => {
     const adminId = await resolveAdminProfileId(user);
     const now = new Date();
 
-    return await prisma.subscription
-        .findFirstOrThrow({
-            where: { adminId },
-            orderBy: { createdAt: "desc" },
-            include: {
-                plan: true,
-                subscriptionPlan: true,
-                coupon: true,
-                billingHistory: {
-                    orderBy: { createdAt: "desc" },
-                    take: 5,
-                },
-                pendingPlanChanges: {
-                    where: {
-                        OR: [
-                            { status: PendingPlanChangeStatus.UNDER_REVIEW },
-                            {
-                                status: {
-                                    in: [
-                                        PendingPlanChangeStatus.AWAITING_PAYMENT,
-                                        PendingPlanChangeStatus.REJECTED,
-                                    ],
+    const [subscription, access] = await Promise.all([
+        prisma.subscription
+            .findFirstOrThrow({
+                where: { adminId },
+                orderBy: { createdAt: "desc" },
+                include: {
+                    plan: true,
+                    subscriptionPlan: true,
+                    coupon: true,
+                    billingHistory: { orderBy: { createdAt: "desc" }, take: 5 },
+                    pendingPlanChanges: {
+                        where: {
+                            OR: [
+                                { status: PendingPlanChangeStatus.UNDER_REVIEW },
+                                {
+                                    status: { in: [PendingPlanChangeStatus.AWAITING_PAYMENT, PendingPlanChangeStatus.REJECTED] },
+                                    expiresAt: { gt: now },
                                 },
-                                expiresAt: { gt: now },
-                            },
-                        ],
-                    },
-                    orderBy: { createdAt: "desc" },
-                    take: 1,
-                    include: {
-                        targetPlan: { include: { subscriptionPlan: true } },
-                        coupon: true,
-                        billingHistory: { orderBy: { createdAt: "desc" }, take: 1 },
+                            ],
+                        },
+                        orderBy: { createdAt: "desc" },
+                        take: 1,
+                        include: {
+                            targetPlan: { include: { subscriptionPlan: true } },
+                            coupon: true,
+                            billingHistory: { orderBy: { createdAt: "desc" }, take: 1 },
+                        },
                     },
                 },
-            },
-        })
-        .catch((err) => {
-            if (
-                err instanceof Prisma.PrismaClientKnownRequestError &&
-                err.code === "P2025"
-            ) {
-                throw new AppError(
-                    status.NOT_FOUND,
-                    "No active subscription found.",
-                );
-            }
-            throw err;
-        });
+            })
+            .catch((err) => {
+                if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+                    throw new AppError(status.NOT_FOUND, "No active subscription found.");
+                }
+                throw err;
+            }),
+        TenantAccessResolver.resolve(adminId),
+    ]);
+
+    // Preserve the historical subscription response while exposing the exact
+    // canonical access/entitlement decision used by middleware, public routes,
+    // workers and Super Admin. Frontends should authorize by stable keys here.
+    return {
+        ...subscription,
+        organizationId: access.organizationId,
+        access: access.access,
+        effectiveEntitlements: access.effectiveEntitlements,
+        baseEntitlements: access.baseEntitlements,
+        paidExtras: access.paidExtras,
+        tenantOverrides: access.tenantOverrides,
+        resourceLimits: access.resourceLimits.effective,
+        effectiveAccess: access,
+    };
 };
 
 // ─── Existing: create trial subscription ─────────────────────────────────────

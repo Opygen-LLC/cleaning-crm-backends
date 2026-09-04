@@ -3,6 +3,7 @@ import { AccountStatus, BookingStatus, TenantLifecycleStatus } from "../generate
 import { prisma } from "../lib/prisma/prisma";
 import { queueBookingNotification } from "../lib/notifications/businessNotificationEvents";
 import { fail, log } from "./index.cron";
+import { TenantAccessResolver } from "../modules/Entitlement/tenantAccessResolver.service";
 
 const HOUR_MS = 60 * 60 * 1000;
 const LOOKAHEAD_MS = 24 * HOUR_MS + 10 * 60 * 1000;
@@ -50,6 +51,7 @@ export const runBookingReminderJob = async (now = new Date()) => {
     },
     select: {
       id: true,
+      adminId: true,
       scheduledDate: true,
       admin: { select: { businessHours: true } },
     },
@@ -59,7 +61,14 @@ export const runBookingReminderJob = async (now = new Date()) => {
 
   let reminder24hQueued = 0;
   let dayOfQueued = 0;
+  const accessByTenant = new Map<string, boolean>();
   for (const booking of bookings) {
+    let allowed = accessByTenant.get(booking.adminId);
+    if (allowed === undefined) {
+      allowed = (await TenantAccessResolver.resolve(booking.adminId)).access.backgroundJobsAllowed;
+      accessByTenant.set(booking.adminId, allowed);
+    }
+    if (!allowed) continue;
     const occurrence = booking.scheduledDate.toISOString();
     const untilStart = booking.scheduledDate.getTime() - now.getTime();
 

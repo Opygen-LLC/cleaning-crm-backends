@@ -50,11 +50,11 @@ router.post(
 // onlineBookingAvailability / onlineBookingSettings / onlineBookingSubmissions).
 // All of those pages read/write the same BookingForm resource via the routes
 // below, and only a single "Online Booking" label is ever seeded on plans
-// (see seedSubscriptionPlan.ts), so one checkFeature("online booking") gate
+// (see seedSubscriptionPlan.ts), so one checkFeature("online_booking") gate
 // covers every sub-page consistently with the frontend's OR-match logic.
 
 router.use(checkAuth(UserRole.ADMIN));
-router.use(checkFeature("online booking"));
+router.use(checkFeature("online_booking"));
 
 // GET    /api/v1/booking-form                — list all forms for admin
 router.get("/", bookingFormController.getAllBookingForms);

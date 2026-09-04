@@ -2,7 +2,7 @@
  * job.routes.ts — Phase 1 Production Version
  *
  * Changes vs original:
- *   • checkFeature("auto-dispatch") added to dispatch routes so PRO-only
+ *   • checkFeature("auto_dispatch") added to dispatch routes so PRO-only
  *     feature is enforced at the API layer, not just the FE gate.
  *   • All other routes unchanged — attachments, notes, checkin/checkout
  *     are already wired in the original.
@@ -42,7 +42,7 @@ router.get(
 router.post(
     "/dispatch/bulk",
     checkAuth(UserRole.ADMIN),
-    checkFeature("auto-dispatch"),
+    checkFeature("auto_dispatch"),
     jobDispatchController.bulkDispatch,
 );
 
@@ -81,8 +81,8 @@ router.put(
 );
 
 // ── Auto-dispatch single job (PRO feature gate) ───────────────────────────────
-router.get("/:id/dispatch", checkAuth(UserRole.ADMIN), checkFeature("auto-dispatch"), jobDispatchController.getRecommendations);
-router.post("/:id/dispatch", checkAuth(UserRole.ADMIN), checkFeature("auto-dispatch"), jobDispatchController.dispatchJob);
+router.get("/:id/dispatch", checkAuth(UserRole.ADMIN), checkFeature("auto_dispatch"), jobDispatchController.getRecommendations);
+router.post("/:id/dispatch", checkAuth(UserRole.ADMIN), checkFeature("auto_dispatch"), jobDispatchController.dispatchJob);
 
 // ── Job Notes ─────────────────────────────────────────────────────────────────
 router.get(

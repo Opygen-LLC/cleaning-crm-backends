@@ -1,7 +1,7 @@
 import { startOfMonth } from "date-fns";
 import AppError from "../../errorHelper/AppError";
 import { prisma } from "../prisma/prisma";
-import { TenantEntitlementService } from "../../modules/SuperAdmin/tenantEntitlement.service";
+import { TenantAccessResolver } from "../../modules/Entitlement/tenantAccessResolver.service";
 
 type Resource = "staff" | "client" | "booking";
 
@@ -15,7 +15,8 @@ export async function assertWithinLimit(
     adminId: string,
     resource: Resource,
 ): Promise<void> {
-    const limits = await TenantEntitlementService.getEffectiveResourceLimits(adminId);
+    const access = await TenantAccessResolver.resolve(adminId);
+    const limits = access.resourceLimits.effective;
 
     // null means unlimited/unmetered. Overrides are already folded into these
     // effective limits, including expiry fallback to the underlying plan.
@@ -44,6 +45,7 @@ export async function assertWithinLimit(
         throw new AppError(
             402,
             `Plan limit reached for ${resource}. Upgrade your plan to add more.`,
+            { code: "RESOURCE_LIMIT_REACHED", retryable: false },
         );
     }
 }
