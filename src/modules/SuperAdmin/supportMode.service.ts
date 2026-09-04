@@ -32,7 +32,7 @@ type PersistedSupportSession = {
 };
 
 export type ActiveSupportMode = PersistedSupportSession & {
-  targetRole: UserRole.ADMIN;
+  targetRole: typeof UserRole.ADMIN;
 };
 
 type SupportTokenPayload = {

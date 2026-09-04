@@ -316,13 +316,15 @@ export async function seedSubscriptionPlans() {
                     normalizeFeatureLabel(feature.label),
                 ),
             );
-            const missingWebsiteEntitlements = sub.features.filter((feature) => {
-                const key = normalizeFeatureLabel(feature.label);
-                return (
-                    WEBSITE_ENTITLEMENT_LABELS.has(key) &&
-                    !existingLabels.has(key)
-                );
-            });
+            const missingWebsiteEntitlements = normalizeSubscriptionPlanFeatures(
+                sub.features.filter((feature) => {
+                    const key = normalizeFeatureLabel(feature.label);
+                    return (
+                        WEBSITE_ENTITLEMENT_LABELS.has(key) &&
+                        !existingLabels.has(key)
+                    );
+                }),
+            );
 
             if (missingWebsiteEntitlements.length > 0) {
                 subscriptionPlan = await prisma.subscriptionPlan.update({
