@@ -111,8 +111,9 @@ vi.mock("./websiteBookingProvisioning.service", () => ({ WebsiteBookingProvision
 
 import { WebsiteService } from "./website.service";
 import { buildPublishedSnapshot } from "./websiteSnapshot";
+import type { WebsiteDesignContract } from "./websiteDesignContract";
 
-const cleanDesign = () => ({
+const cleanDesign = (): WebsiteDesignContract => ({
   schemaVersion: 1,
   componentOverrides: {},
   componentAnimations: {},
@@ -120,7 +121,7 @@ const cleanDesign = () => ({
   animationsEnabled: true,
 });
 
-const selectedDesign = () => ({
+const selectedDesign = (): WebsiteDesignContract => ({
   schemaVersion: 1,
   componentOverrides: {
     shared: { header: "shared.header.modern-glass.v1" },
