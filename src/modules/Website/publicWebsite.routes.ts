@@ -36,6 +36,8 @@ const router = Router();
 router.get("/resolve-subdomain/:subdomain", publicHostResolveRateLimit, websiteController.resolvePublicSubdomain);
 router.get("/resolve-host/:host", publicHostResolveRateLimit, websiteController.resolvePublicHost);
 
+router.get("/preview-session/:token", publicReadRateLimit, websiteController.getPreviewSession);
+
 // Phase 23 hot path: the frontend proxy already resolved host → websiteId.
 // Fetch the Redis projection directly instead of resolving the same subdomain
 // a second time during the Next.js server render. The service still enforces

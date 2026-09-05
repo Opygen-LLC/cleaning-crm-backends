@@ -25,6 +25,7 @@ import { WebsiteGoogleAnalyticsService } from "./websiteGoogleAnalytics.service"
 import { recordWebsitePublishAttempt, recordWebsitePublishResult } from "../../lib/monitoring/operationalMetrics";
 import { WebsiteSubmissionService } from "./websiteSubmission.service";
 import { WebsiteSubmissionKind, WebsiteSubmissionStatus } from "../../generated/prisma/enums";
+import { WebsitePreviewSessionService } from "./websitePreviewSession.service";
 
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
@@ -122,6 +123,16 @@ const previewEditorState = catchAsync(async (req, res) => {
   return ok(res, "Website editor preview retrieved successfully", await PublicWebsiteService.getEditorStatePreviewWebsite(req.body, req.user));
 });
 
+
+const createPreviewSession = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return created(res, "Secure website preview created successfully", await WebsitePreviewSessionService.create(req.user, req.body ?? {}));
+});
+const getPreviewSession = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+  return ok(res, "Secure website preview retrieved successfully", await WebsitePreviewSessionService.get(paramStr(req.params.token)));
+});
 const getGoogleAnalyticsStatus = catchAsync(async (req, res) =>
   ok(res, "Google Analytics connection status retrieved successfully", await WebsiteGoogleAnalyticsService.getStatus(req.user)),
 );
@@ -438,6 +449,8 @@ export const websiteController = {
   launchWebsite,
   previewWebsite,
   previewEditorState,
+  createPreviewSession,
+  getPreviewSession,
   getGoogleAnalyticsStatus,
   connectGoogleAnalytics,
   completeGoogleAnalyticsOAuth,

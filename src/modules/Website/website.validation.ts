@@ -83,6 +83,11 @@ const previewEditorState = z.object({
   pages: z.array(pagePatch.extend({ id: z.string().uuid() })).max(50),
 }).strict();
 
+const previewSession = z.object({
+  website: websitePatch.optional(),
+  pages: z.array(pagePatch.extend({ id: z.string().uuid() })).max(50).optional(),
+}).strict().default({});
+
 const googleAnalyticsOAuthCallback = z.object({
   code: z.string().trim().min(8).max(4096),
   state: z.string().trim().min(16).max(4096),
@@ -176,6 +181,7 @@ export const websiteValidation = {
   publishWebsite,
   saveEditorState,
   previewEditorState,
+  previewSession,
   googleAnalyticsOAuthCallback,
   googleAnalyticsProperty,
   googleAnalyticsReportQuery,

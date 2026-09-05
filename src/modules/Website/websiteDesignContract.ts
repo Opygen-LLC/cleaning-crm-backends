@@ -67,7 +67,7 @@ const componentOverridesSchema = z.object({
 
 const animationConfigSchema = z.object({
   enabled: z.boolean().optional(),
-  effect: z.string().trim().min(1).max(80).optional(),
+  effect: z.enum(["none", "fade-in", "fade-up", "fade-down", "fade-left", "fade-right", "slide-up", "slide-down", "slide-left", "slide-right", "zoom-in", "zoom-out", "blur-in", "reveal-up"]).optional(),
   duration: z.union([
     z.enum(["fast", "normal", "slow"]),
     z.number().int().min(0).max(10_000),

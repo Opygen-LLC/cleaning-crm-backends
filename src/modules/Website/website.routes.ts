@@ -47,6 +47,7 @@ router.post("/publish", zodValidate(websiteValidation.publishWebsite, Validation
 router.post("/launch", zodValidate(websiteValidation.publishWebsite, ValidationProperty.BODY), websiteController.launchWebsite);
 router.get("/preview", websiteController.previewWebsite);
 router.post("/preview", zodValidate(websiteValidation.previewEditorState, ValidationProperty.BODY), websiteController.previewEditorState);
+router.post("/preview-sessions", zodValidate(websiteValidation.previewSession, ValidationProperty.BODY), websiteController.createPreviewSession);
 router.get("/google-analytics/status", websiteController.getGoogleAnalyticsStatus);
 router.post("/google-analytics/connect", websiteController.connectGoogleAnalytics);
 router.post("/google-analytics/oauth/callback", zodValidate(websiteValidation.googleAnalyticsOAuthCallback, ValidationProperty.BODY), websiteController.completeGoogleAnalyticsOAuth);
