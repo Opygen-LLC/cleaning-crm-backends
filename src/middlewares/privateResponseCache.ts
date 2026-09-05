@@ -58,6 +58,7 @@ const isCacheableRequest = (req: Request): boolean =>
   !req.originalUrl.includes("/subscription/me") &&
   !req.originalUrl.includes("/pdf") &&
   !req.originalUrl.includes("/export") &&
+  !req.originalUrl.includes("/website") &&
   !isLiveAvailabilityRequest(req);
 
 const ttlForResource = (resource: CacheResourceName | null): number => {
@@ -218,7 +219,8 @@ export async function privateResponseCache(
       res.statusCode < 300 &&
       contentType.includes("application/json") &&
       bytes <= MAX_CACHEABLE_BODY_BYTES &&
-      !res.getHeader("Content-Disposition")
+      !res.getHeader("Content-Disposition") &&
+      !res.getHeader("Cache-Control")?.toString().includes("no-store")
     ) {
       const etag = `W/"${createHash("sha1").update(serialized).digest("base64url")}"`;
       const entry: CachedResponse = { body: serialized, contentType, etag, statusCode: res.statusCode };

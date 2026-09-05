@@ -37,6 +37,7 @@ import { validateWebsitePageContent } from "./websiteContent";
 import { parseWebsiteDesignContract } from "./websiteDesignContract";
 import { assertWebsiteDesignPublishable } from "./websiteComponentRegistry";
 import { WebsiteEntitlementService, type WebsiteEntitlements } from "./websiteEntitlement.service";
+import { bumpCacheResourceVersions, CacheResource } from "../../lib/cache/resourceCacheVersion";
 import type { Prisma } from "../../generated/prisma/client";
 
 type WebsiteDb = Prisma.TransactionClient | typeof prisma;
@@ -508,7 +509,12 @@ const assertExpectedRevision = async (
   expectedRevisionNumber: number | undefined,
 ): Promise<number> => {
   const currentRevisionNumber = await getLatestRevisionNumber(db, websiteId);
-  if (expectedRevisionNumber !== undefined && expectedRevisionNumber !== currentRevisionNumber) {
+  if (
+    expectedRevisionNumber !== undefined &&
+    expectedRevisionNumber > 0 &&
+    expectedRevisionNumber !== currentRevisionNumber
+  ) {
+    WebsiteProjectionCacheService.invalidateWebsite(websiteId).catch(() => undefined);
     throw new AppError(status.CONFLICT, "This website draft changed in another session. Reload Website Studio before saving again.", {
       code: "WEBSITE_DRAFT_CONFLICT",
       retryable: false,
@@ -929,6 +935,7 @@ const saveEditorState = async (payload: WebsiteEditorStateInput, user: IRequestU
   // Editor autosave intentionally invalidates only private Studio caches.
   // Public projection/host caches are invalidated exclusively by Publish.
   await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
+  void bumpCacheResourceVersions(adminId, [CacheResource.website]);
   return result;
 };
 
@@ -1017,6 +1024,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
     WebsiteProjectionCacheService.invalidateWebsite(website.id),
     WebsiteProjectionCacheService.invalidateStudioAdmin(adminId),
   ]);
+  void bumpCacheResourceVersions(adminId, [CacheResource.website]);
   return website;
 };
 
