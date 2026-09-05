@@ -15,7 +15,7 @@ import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { WebsiteEntitlementService, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
 import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
 import { ServiceStatus } from "../../generated/prisma/enums";
-import type { WebsiteLocalDraftInput } from "./website.interface";
+import type { WebsiteEditorStateInput } from "./website.interface";
 
 const WEBSITE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -181,6 +181,7 @@ const currentDraftAsPublishedSnapshot = (website: ProjectionWebsite) => buildPub
   templateId: website.templateId,
   templateVersion: website.templateVersion,
   schemaVersion: website.schemaVersion,
+  websiteDesign: website.websiteDesign,
   primaryColor: website.primaryColor,
   secondaryColor: website.secondaryColor,
   accentColor: website.accentColor,
@@ -377,6 +378,7 @@ const projectWebsite = (
       preview: options.mode === "preview",
     },
     business: projectPublicBusiness(website.admin),
+    design: config.websiteDesign,
     theme: {
       primaryColor: config.primaryColor,
       secondaryColor: config.secondaryColor,
@@ -621,7 +623,7 @@ const getPreviewWebsite = async (user: IRequestUser) => {
   return projectWebsite(source, { mode: "preview" });
 };
 
-const getLocalDraftPreviewWebsite = async (payload: WebsiteLocalDraftInput, user: IRequestUser) => {
+const getEditorStatePreviewWebsite = async (payload: WebsiteEditorStateInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
@@ -676,6 +678,6 @@ export const PublicWebsiteService = {
   resolvePublicContactIntegration,
   resolvePublicReviewIntegration,
   getPreviewWebsite,
-  getLocalDraftPreviewWebsite,
+  getEditorStatePreviewWebsite,
   getRevisionPreviewWebsite,
 };

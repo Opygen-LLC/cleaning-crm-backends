@@ -14,7 +14,7 @@ import type {
   WebsiteAssetCreateInput,
   WebsiteManagedBrandAssetInput,
   WebsiteCreateInput,
-  WebsiteLocalDraftInput,
+  WebsiteEditorStateInput,
   WebsitePageUpdateInput,
   WebsitePublishInput,
   WebsiteRevisionRestoreInput,
@@ -34,6 +34,7 @@ import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
 import { presentWebsiteDomain } from "./websiteDomainLifecycle";
 import { WEBSITE_STATUS, statusAfterDraftMutation, type WebsiteLifecycleStatus } from "./websiteLifecycle";
 import { validateWebsitePageContent } from "./websiteContent";
+import { parseWebsiteDesignContract } from "./websiteDesignContract";
 import { WebsiteEntitlementService, type WebsiteEntitlements } from "./websiteEntitlement.service";
 import type { Prisma } from "../../generated/prisma/client";
 
@@ -123,7 +124,7 @@ const assertManagedBrandReferences = async (
 
 const assertManagedPageSocialReferences = async (
   websiteId: string,
-  pages: WebsiteLocalDraftInput["pages"],
+  pages: WebsiteEditorStateInput["pages"],
   db: WebsiteDb,
 ) => {
   for (const page of pages ?? []) {
@@ -308,6 +309,7 @@ const loadDraftSnapshot = async (websiteId: string, db: Prisma.TransactionClient
       templateId: true,
       templateVersion: true,
       schemaVersion: true,
+      websiteDesign: true,
       primaryColor: true,
       secondaryColor: true,
       accentColor: true,
@@ -590,6 +592,9 @@ const prepareWebsitePatch = (
     ...(payload.socialImageUrl !== undefined
       ? { socialImageUrl: assertSafeHttpsUrl(payload.socialImageUrl, "Social image URL") }
       : {}),
+    ...(payload.websiteDesign !== undefined
+      ? { websiteDesign: toInputJsonValue(parseWebsiteDesignContract(payload.websiteDesign)) }
+      : {}),
   };
 };
 
@@ -777,7 +782,7 @@ const applyDraftPayloadTx = async (
   args: {
     websiteId: string;
     adminId: string;
-    payload: WebsiteLocalDraftInput;
+    payload: WebsiteEditorStateInput;
     entitlements: WebsiteEntitlements;
     applyDraftLifecycle?: boolean;
   },
@@ -851,6 +856,52 @@ const applyDraftPayloadTx = async (
   return lockedCurrent;
 };
 
+/**
+ * Persist the authenticated Website Studio working copy on the server without
+ * changing the immutable public snapshot. This is the canonical configured
+ * editor state used by autosave, cross-device editing and Preview.
+ */
+const saveEditorState = async (payload: WebsiteEditorStateInput, user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  const hasWebsitePatch = Boolean(payload.website && Object.keys(payload.website).length);
+  const hasPagePatch = Boolean(payload.pages?.length);
+  const current = await getWebsiteOrThrow(adminId);
+  if (!hasWebsitePatch && !hasPagePatch) return loadWebsiteDetails(current.id);
+
+  const entitlements = await WebsiteEntitlementService.getForAdminId(adminId);
+  const result = await prisma.$transaction(async (tx) => {
+    await acquireTextTransactionAdvisoryLock(tx, current.id);
+    const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
+
+    // Legacy PUBLISHED rows may not have an immutable snapshot yet. Capture it
+    // before touching the working row so an autosave can never become public.
+    await ensurePublishedSnapshotBeforeDraftMutationTx(tx, current.id);
+    await applyDraftPayloadTx(tx, {
+      websiteId: current.id,
+      adminId,
+      payload,
+      entitlements,
+      applyDraftLifecycle: true,
+    });
+
+    // Autosave advances the optimistic editor revision without creating an
+    // immutable WebsiteRevision row for every typing burst. Immutable history
+    // remains reserved for explicit revision-worthy mutations and Publish.
+    const nextRevisionNumber = baseRevisionNumber + 1;
+    await tx.businessWebsite.update({
+      where: { id: current.id },
+      data: { draftRevisionNumber: nextRevisionNumber },
+    });
+    const draft = await loadDraftSnapshot(current.id, tx);
+    return presentDraftSnapshot(draft, { draftRevisionNumber: nextRevisionNumber });
+  }, { maxWait: 10_000, timeout: 25_000 });
+
+  // Editor autosave intentionally invalidates only private Studio caches.
+  // Public projection/host caches are invalidated exclusively by Publish.
+  await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
+  return result;
+};
+
 const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const [current, entitlements] = await Promise.all([
@@ -862,9 +913,9 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
     await acquireTextTransactionAdvisoryLock(tx, current.id);
     const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
 
-    // Website Studio sends its complete browser-local draft here. Applying the
-    // draft and publishing it under the same advisory lock/transaction prevents
-    // unpublished browser edits from ever becoming a partially persisted DB draft.
+    // Current Website Studio publishes an already-confirmed server editor
+    // revision. Accept website/pages only for rolling-deploy compatibility and
+    // still apply them atomically under the same advisory lock when supplied.
     if (payload.website || payload.pages?.length) {
       await applyDraftPayloadTx(tx, {
         websiteId: current.id,
@@ -1073,9 +1124,9 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
       };
     }
 
-    // First launch can also receive the complete browser-local Website Studio
-    // draft. Apply it under this same transaction before booking provisioning
-    // and before the immutable publication snapshot is built.
+    // Rolling-deploy callers may still send editor fields with first launch.
+    // Apply them under this same transaction before booking provisioning and
+    // before the immutable publication snapshot is built.
     if (payload.website || payload.pages?.length) {
       await applyDraftPayloadTx(tx, {
         websiteId: current.id,
@@ -1338,6 +1389,7 @@ const restoreRevision = async (revisionId: string, payload: WebsiteRevisionResto
         templateId: restored.website.templateId,
         templateVersion: restored.website.templateVersion,
         schemaVersion: restored.website.schemaVersion,
+        websiteDesign: toInputJsonValue(restored.website.websiteDesign),
         primaryColor: restored.website.primaryColor,
         secondaryColor: restored.website.secondaryColor,
         accentColor: restored.website.accentColor,
@@ -1448,10 +1500,10 @@ const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, u
     });
 
 
-    // Phase 6: Website Studio drafts are browser-local. Finalizing a managed
-    // upload registers only the immutable tenant asset; the browser decides
-    // whether that URL belongs to the local logo/favicon/global/page OG field.
-    // Publishing later validates the managed reference in the same transaction.
+    // Finalizing a managed upload registers the immutable tenant asset. The
+    // Website Studio editor then persists the chosen logo/favicon/global/page
+    // reference through the canonical server editor-state endpoint. Publish
+    // later validates that managed reference in the same transaction.
     return { asset };
   });
   await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
@@ -1647,6 +1699,7 @@ export const WebsiteService = {
   getWebsiteEditor,
   getWebsiteEditorForAdmin,
   updateWebsite,
+  saveEditorState,
   publishWebsite,
   launchWebsite,
   listPages,

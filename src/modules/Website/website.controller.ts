@@ -51,6 +51,10 @@ const getStudio = catchAsync(async (req, res) => {
   return ok(res, "Website Studio retrieved successfully", await WebsiteStudioService.getStudio(req.user));
 });
 const updateWebsite = catchAsync(async (req, res) => ok(res, "Website updated successfully", await WebsiteService.updateWebsite(req.body, req.user)));
+const saveEditorState = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return ok(res, "Website editor state saved successfully", await WebsiteService.saveEditorState(req.body ?? {}, req.user));
+});
 const publishWebsite = catchAsync(async (req, res) => {
   recordWebsitePublishAttempt();
   try {
@@ -113,9 +117,9 @@ const previewWebsite = catchAsync(async (req, res) => {
     throw error;
   }
 });
-const previewLocalWebsite = catchAsync(async (req, res) => {
+const previewEditorState = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
-  return ok(res, "Local website draft preview retrieved successfully", await PublicWebsiteService.getLocalDraftPreviewWebsite(req.body, req.user));
+  return ok(res, "Website editor preview retrieved successfully", await PublicWebsiteService.getEditorStatePreviewWebsite(req.body, req.user));
 });
 
 const getGoogleAnalyticsStatus = catchAsync(async (req, res) =>
@@ -429,10 +433,11 @@ export const websiteController = {
   getWebsiteBookingSetup,
   configureWebsiteBooking,
   updateWebsite,
+  saveEditorState,
   publishWebsite,
   launchWebsite,
   previewWebsite,
-  previewLocalWebsite,
+  previewEditorState,
   getGoogleAnalyticsStatus,
   connectGoogleAnalytics,
   completeGoogleAnalyticsOAuth,

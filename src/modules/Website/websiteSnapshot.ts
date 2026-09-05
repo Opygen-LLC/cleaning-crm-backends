@@ -1,3 +1,5 @@
+import { cloneDefaultWebsiteDesign, parseWebsiteDesignContract, type WebsiteDesignContract } from "./websiteDesignContract";
+
 export interface WebsitePublishedPageSnapshot {
   id: string;
   kind: string;
@@ -19,6 +21,7 @@ export interface WebsitePublishedSnapshotV1 {
     templateId: string;
     templateVersion: string;
     schemaVersion: number;
+    websiteDesign: WebsiteDesignContract;
     primaryColor: string;
     secondaryColor: string;
     accentColor: string;
@@ -53,6 +56,7 @@ interface DraftWebsiteLike {
   templateId: string;
   templateVersion: string;
   schemaVersion: number;
+  websiteDesign?: unknown;
   primaryColor: string;
   secondaryColor: string;
   accentColor: string;
@@ -103,6 +107,7 @@ export const buildPublishedSnapshot = (draft: DraftWebsiteLike): WebsitePublishe
     templateId: draft.templateId,
     templateVersion: draft.templateVersion,
     schemaVersion: draft.schemaVersion,
+    websiteDesign: parseWebsiteDesignContract(draft.websiteDesign ?? cloneDefaultWebsiteDesign()),
     primaryColor: draft.primaryColor,
     secondaryColor: draft.secondaryColor,
     accentColor: draft.accentColor,
@@ -233,6 +238,7 @@ export const parsePublishedSnapshot = (value: unknown): WebsitePublishedSnapshot
       templateId: site.templateId,
       templateVersion: site.templateVersion,
       schemaVersion: site.schemaVersion,
+      websiteDesign: parseWebsiteDesignContract(site.websiteDesign),
       primaryColor: site.primaryColor,
       secondaryColor: site.secondaryColor,
       accentColor: site.accentColor,

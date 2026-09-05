@@ -40,8 +40,8 @@ describe("Phase 7 website publish/SEO/GA validation", () => {
     }).success).toBe(false);
   });
 
-  it("requires local preview to carry website and page arrays instead of persisting a draft", () => {
-    expect(websiteValidation.previewLocalDraft.safeParse({ website: {}, pages: [] }).success).toBe(true);
-    expect(websiteValidation.previewLocalDraft.safeParse({ website: {} }).success).toBe(false);
+  it("accepts configured editor preview payloads without requiring browser-local persistence", () => {
+    expect(websiteValidation.previewEditorState.safeParse({ website: {}, pages: [] }).success).toBe(true);
+    expect(websiteValidation.previewEditorState.safeParse({ website: {} }).success).toBe(false);
   });
 });

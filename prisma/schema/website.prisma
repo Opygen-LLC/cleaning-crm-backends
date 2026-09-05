@@ -7,6 +7,9 @@ model BusinessWebsite {
   templateId             String        @default("clean-modern")
   templateVersion        String        @default("1.0.0")
   schemaVersion          Int           @default(1)
+  // Canonical Website Studio design configuration. Working editor state lives
+  // on this row; the public runtime only sees the copy embedded at Publish.
+  websiteDesign          Json          @default("{\"schemaVersion\":1,\"componentOverrides\":{},\"componentAnimations\":{},\"sectionStyles\":{},\"animationsEnabled\":true}")
 
   primaryColor           String        @default("#0F766E")
   secondaryColor         String        @default("#0F172A")

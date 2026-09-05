@@ -23,6 +23,7 @@ router.use(isAdmin);
 router.post("/", zodValidate(websiteValidation.createWebsite, ValidationProperty.BODY), websiteController.createWebsite);
 router.get("/me", websiteController.getWebsite);
 router.get("/editor", zodValidate(websiteValidation.editorSurfaceQuery, ValidationProperty.QUERY), websiteController.getWebsiteEditor);
+router.put("/editor", zodValidate(websiteValidation.saveEditorState, ValidationProperty.BODY), websiteController.saveEditorState);
 router.get("/studio/overview", websiteController.getStudioOverview);
 router.get("/studio", websiteController.getStudio);
 router.get(
@@ -45,7 +46,7 @@ router.patch("/me", zodValidate(websiteValidation.updateWebsite, ValidationPrope
 router.post("/publish", zodValidate(websiteValidation.publishWebsite, ValidationProperty.BODY), websiteController.publishWebsite);
 router.post("/launch", zodValidate(websiteValidation.publishWebsite, ValidationProperty.BODY), websiteController.launchWebsite);
 router.get("/preview", websiteController.previewWebsite);
-router.post("/preview", zodValidate(websiteValidation.previewLocalDraft, ValidationProperty.BODY), websiteController.previewLocalWebsite);
+router.post("/preview", zodValidate(websiteValidation.previewEditorState, ValidationProperty.BODY), websiteController.previewEditorState);
 router.get("/google-analytics/status", websiteController.getGoogleAnalyticsStatus);
 router.post("/google-analytics/connect", websiteController.connectGoogleAnalytics);
 router.post("/google-analytics/oauth/callback", zodValidate(websiteValidation.googleAnalyticsOAuthCallback, ValidationProperty.BODY), websiteController.completeGoogleAnalyticsOAuth);

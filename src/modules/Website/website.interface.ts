@@ -1,3 +1,4 @@
+import type { WebsiteDesignContract } from "./websiteDesignContract";
 
 export const WEBSITE_EDITOR_SURFACES = [
   "content",
@@ -49,6 +50,7 @@ export interface WebsiteUpdateInput {
   indexSite?: boolean;
   googleAnalyticsEnabled?: boolean;
   googleAnalyticsMeasurementId?: string | null;
+  websiteDesign?: WebsiteDesignContract;
 }
 
 export interface WebsitePageUpdateInput {
@@ -67,7 +69,7 @@ export interface WebsiteDraftPageInput extends WebsitePageUpdateInput {
   id: string;
 }
 
-export interface WebsiteLocalDraftInput {
+export interface WebsiteEditorStateInput {
   /**
    * Optimistic concurrency guard used by Website Studio. Legacy callers may
    * omit it; Studio always sends the revision it loaded.
@@ -77,12 +79,12 @@ export interface WebsiteLocalDraftInput {
   pages?: WebsiteDraftPageInput[];
 }
 
-export interface WebsitePublishInput extends WebsiteLocalDraftInput {
+export interface WebsitePublishInput extends WebsiteEditorStateInput {
   /**
    * Optimistic guard against a publish based on an older confirmed server
-   * revision. Website Studio now sends its complete local draft here and the
-   * server applies + publishes it in one transaction. Legacy callers may still
-   * send only expectedRevisionNumber.
+   * revision. Website Studio first persists configured editor state through
+   * PUT /website/editor, then publishes that confirmed server revision. Legacy
+   * callers may still send website/pages during a rolling deployment.
    */
   expectedRevisionNumber?: number;
 }

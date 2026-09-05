@@ -1,6 +1,7 @@
 import { WEBSITE_EDITOR_SURFACES } from "./website.interface";
 import { z } from "zod";
 import { optionalE164PhoneSchema } from "../../lib/validation/phone";
+import { websiteDesignContractSchema } from "./websiteDesignContract";
 
 const color = z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Use a 6-digit hex color");
 const nullableText = (max: number) => z.string().trim().max(max).nullable();
@@ -49,6 +50,7 @@ const websitePatch = z.object({
   indexSite: z.boolean().optional(),
   googleAnalyticsEnabled: z.boolean().optional(),
   googleAnalyticsMeasurementId: gaMeasurementId.nullable().optional(),
+  websiteDesign: websiteDesignContractSchema.optional(),
 }).strict();
 
 const updateWebsite = websitePatch;
@@ -67,15 +69,16 @@ const pagePatch = z.object({
 
 const updatePage = pagePatch;
 
-const localDraftPayload = z.object({
+const editorStatePayload = z.object({
   expectedRevisionNumber: z.number().int().min(0).optional(),
   website: websitePatch.optional(),
   pages: z.array(pagePatch.extend({ id: z.string().uuid() })).max(50).optional(),
 }).strict();
 
-const publishWebsite = localDraftPayload.default({});
+const saveEditorState = editorStatePayload;
+const publishWebsite = editorStatePayload.default({});
 
-const previewLocalDraft = z.object({
+const previewEditorState = z.object({
   website: websitePatch,
   pages: z.array(pagePatch.extend({ id: z.string().uuid() })).max(50),
 }).strict();
@@ -171,7 +174,8 @@ export const websiteValidation = {
   updateWebsite,
   updatePage,
   publishWebsite,
-  previewLocalDraft,
+  saveEditorState,
+  previewEditorState,
   googleAnalyticsOAuthCallback,
   googleAnalyticsProperty,
   googleAnalyticsReportQuery,
