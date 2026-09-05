@@ -1,4 +1,3 @@
-import { randomUUID } from "crypto";
 import status from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
@@ -6,6 +5,7 @@ import { DomainService } from "./domain.service";
 import { PublicWebsiteService } from "./publicWebsite.service";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteDraftConflictError, WebsiteService } from "./website.service";
+import { sendWebsiteDraftConflict } from "./websiteDraftConflictResponse";
 import { WebsiteStudioService } from "./websiteStudio.service";
 import { WebsiteAssetService } from "./websiteAsset.service";
 import { WebsiteBookingProvisioningService } from "./websiteBookingProvisioning.service";
@@ -31,24 +31,7 @@ import { WebsitePreviewSessionService } from "./websitePreviewSession.service";
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
 
-const sendWebsiteDraftConflict = (res: any, error: WebsiteDraftConflictError) => {
-  const requestId = typeof res.locals?.requestId === "string" && res.locals.requestId
-    ? res.locals.requestId
-    : randomUUID();
-  res.setHeader("X-Request-Id", requestId);
-  res.setHeader("Cache-Control", "private, no-store");
-  return res.status(status.CONFLICT).json({
-    success: false,
-    code: "WEBSITE_DRAFT_CONFLICT",
-    kind: "LIFECYCLE_CONFLICT",
-    message: error.message,
-    fieldErrors: {},
-    retryable: false,
-    requestId,
-    expectedRevisionNumber: error.expectedRevisionNumber,
-    currentRevisionNumber: error.currentRevisionNumber,
-  });
-};
+
 
 const paramStr = (val: string | string[] | undefined): string => (Array.isArray(val) ? val[0] : val ?? "");
 

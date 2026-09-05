@@ -19,7 +19,7 @@ test("draft optimistic-lock conflicts do not invalidate any public website cache
 
 test("draft conflict carries both browser and server revision numbers", () => {
   const service = read("src/modules/Website/website.service.ts");
-  const controller = read("src/modules/Website/website.controller.ts");
+  const response = read("src/modules/Website/websiteDraftConflictResponse.ts");
 
   assert.match(service, /export class WebsiteDraftConflictError extends AppError/);
   assert.match(service, /expectedRevisionNumber: number/);
@@ -27,10 +27,10 @@ test("draft conflict carries both browser and server revision numbers", () => {
   assert.match(service, /code: "WEBSITE_DRAFT_CONFLICT"/);
   assert.match(service, /retryable: false/);
 
-  assert.match(controller, /code: "WEBSITE_DRAFT_CONFLICT"/);
-  assert.match(controller, /expectedRevisionNumber: error\.expectedRevisionNumber/);
-  assert.match(controller, /currentRevisionNumber: error\.currentRevisionNumber/);
-  assert.match(controller, /res\.status\(status\.CONFLICT\)\.json/);
+  assert.match(response, /code: "WEBSITE_DRAFT_CONFLICT"/);
+  assert.match(response, /expectedRevisionNumber: error\.expectedRevisionNumber/);
+  assert.match(response, /currentRevisionNumber: error\.currentRevisionNumber/);
+  assert.match(response, /res\.status\(status\.CONFLICT\)\.json/);
 });
 
 test("all revision-sensitive Website Studio mutations return the rich conflict contract", () => {

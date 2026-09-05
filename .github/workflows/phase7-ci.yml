@@ -92,6 +92,7 @@ jobs:
       - run: pnpm run data:audit:phase8
       - run: pnpm run test:security
       - run: pnpm run test:integration
+      - run: pnpm run test:phase5:website-studio
       - run: pnpm run check:phase4
       - run: pnpm run test:phase4:super-admin
       - run: pnpm run data:audit:super-admin:ci
