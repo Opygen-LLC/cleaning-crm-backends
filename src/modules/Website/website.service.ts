@@ -30,6 +30,7 @@ import { PublicWebsiteService } from "./publicWebsite.service";
 import { buildPublishedSnapshot, parsePublishedSnapshot, parseRevisionSnapshotAsPublished } from "./websiteSnapshot";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
+import { PublicWebsiteCacheRevalidation } from "../../lib/outbox/publicWebsiteCacheOutbox";
 import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
 import { presentWebsiteDomain } from "./websiteDomainLifecycle";
 import { WEBSITE_STATUS, statusAfterDraftMutation, type WebsiteLifecycleStatus } from "./websiteLifecycle";
@@ -414,6 +415,50 @@ const presentDraftSnapshot = (
     hasUnpublishedChanges:
       publishedRevisionNumber === null || draftRevisionNumber > publishedRevisionNumber,
   };
+};
+
+
+type PublicCacheWebsiteIdentity = {
+  id: string;
+  subdomain: string;
+  domains?: Array<{ domain?: string | null }> | null;
+  subdomainAliases?: Array<{ subdomain?: string | null }> | null;
+};
+
+const publicCacheTenantIdentifiers = (website: PublicCacheWebsiteIdentity): string[] =>
+  Array.from(new Set([
+    website.subdomain,
+    ...(website.subdomainAliases ?? []).map((alias) => alias.subdomain ?? ""),
+    ...(website.domains ?? []).map((domain) => domain.domain ?? ""),
+  ]
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)));
+
+/**
+ * Next.js is intentionally invalidated only after the publication transaction,
+ * Redis projection and host resolver caches have crossed their commit boundary.
+ * The direct signed callback is the normal path; the durable outbox is queued
+ * by PublicWebsiteCacheRevalidation only when direct delivery fails.
+ */
+const revalidatePublishedWebsite = async (
+  website: PublicCacheWebsiteIdentity,
+  reason: "website-published" | "website-launched",
+) => {
+  const tenantIdentifiers = publicCacheTenantIdentifiers(website);
+  return PublicWebsiteCacheRevalidation.triggerWithFallback({
+    websiteId: website.id,
+    tenantIdentifier: website.subdomain,
+    tenantIdentifiers,
+    reason,
+  });
+};
+
+const warmPublishedProjection = async (websiteId: string, reason: string) => {
+  try {
+    await PublicWebsiteService.getPublicWebsiteById(websiteId);
+  } catch (error) {
+    logger.warn(`[${reason}] projection warm failed for ${websiteId}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 };
 
 const loadWebsiteDetailsWhere = async (
@@ -1036,12 +1081,25 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
     });
   });
 
+  // Publication is already committed. First invalidate every server-side cache
+  // that could rebuild/route the public projection. Next.js revalidation is
+  // deliberately deferred until these invalidations finish so its next cache
+  // miss cannot observe a stale Redis/host projection.
   await Promise.all([
-    WebsiteHostResolverService.invalidateSubdomains([website.subdomain]),
+    WebsiteHostResolverService.invalidateSubdomains([
+      website.subdomain,
+      ...website.subdomainAliases.map((alias: any) => alias.subdomain),
+    ]),
     WebsiteHostResolverService.invalidateHosts(website.domains.map((domain: any) => domain.domain)),
-    WebsiteProjectionCacheService.invalidateWebsite(website.id),
-    WebsiteProjectionCacheService.invalidateStudioAdmin(adminId),
+    WebsiteProjectionCacheService.invalidateWebsite(website.id, adminId, {
+      revalidateNext: false,
+      reason: "website-published",
+    }),
   ]);
+
+  await revalidatePublishedWebsite(website, "website-published");
+  await warmPublishedProjection(website.id, "website-publish");
+
   void bumpCacheResourceVersions(adminId, [CacheResource.website]);
   return website;
 };
@@ -1302,23 +1360,23 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
   }, PROVISIONING_TRANSACTION_OPTIONS);
 
   // Drop both routing and projection caches only after the database commit, so
-  // no worker can rebuild Redis from a half-published transaction.
+  // no process can rebuild Redis from a half-published transaction. Historical
+  // subdomain aliases are invalidated as well because they may carry a cached
+  // canonical-host decision for this website.
   await Promise.all([
-    WebsiteHostResolverService.invalidateSubdomains([result.website.subdomain]),
+    WebsiteHostResolverService.invalidateSubdomains([
+      result.website.subdomain,
+      ...result.website.subdomainAliases.map((alias: any) => alias.subdomain),
+    ]),
     WebsiteHostResolverService.invalidateHosts(result.website.domains.map((domain: any) => domain.domain)),
-    WebsiteProjectionCacheService.invalidateWebsite(result.website.id),
-    WebsiteProjectionCacheService.invalidateStudioAdmin(adminId),
+    WebsiteProjectionCacheService.invalidateWebsite(result.website.id, adminId, {
+      revalidateNext: false,
+      reason: "website-launched",
+    }),
   ]);
 
-  // Warm the canonical public projection. A cache outage must not roll back a
-  // successful database publication; the first real visitor can rebuild it.
-  try {
-    await PublicWebsiteService.getPublicWebsiteById(result.website.id);
-  } catch (error) {
-    logger.warn(
-      `[website-launch] projection warm failed for ${result.website.id}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  await revalidatePublishedWebsite(result.website, "website-launched");
+  await warmPublishedProjection(result.website.id, "website-launch");
 
   return {
     businessName: result.businessName,

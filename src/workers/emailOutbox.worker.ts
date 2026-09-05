@@ -4,9 +4,6 @@ import logger from "../lib/logger";
 import { getRequestTrace, runWithRequestTrace, traceAsyncOperation } from "../lib/monitoring/requestTrace";
 import { prisma } from "../lib/prisma/prisma";
 import {
-  NEXT_REVALIDATE_SECRET,
-  NEXT_REVALIDATE_TIMEOUT_MS,
-  NEXT_REVALIDATE_URL,
   NODE_ENV,
   OUTBOX_LOCK_TIMEOUT_MS,
   OUTBOX_WORKER_BATCH_SIZE,
@@ -19,7 +16,8 @@ import {
 } from "../lib/outbox/authEmailOutbox";
 import {
   PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC,
-  type PublicWebsiteCacheInvalidationPayload,
+  PublicWebsiteCacheRevalidation,
+  parsePublicWebsiteCacheInvalidationPayload,
 } from "../lib/outbox/publicWebsiteCacheOutbox";
 import { BUSINESS_NOTIFICATION_OUTBOX_TOPIC } from "../lib/outbox/businessNotificationOutbox";
 import {
@@ -140,46 +138,10 @@ const deliverVerificationEmail = async (payload: EmailVerificationOutboxPayload)
   return "sent" as const;
 };
 
-const parsePublicWebsiteCachePayload = (payload: unknown): PublicWebsiteCacheInvalidationPayload => {
-  if (!payload || typeof payload !== "object") throw new Error("Invalid public website cache invalidation payload");
-  const value = payload as Record<string, unknown>;
-  const websiteId = typeof value.websiteId === "string" ? value.websiteId.trim() : "";
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(websiteId)) {
-    throw new Error("Public website cache invalidation payload has an invalid websiteId");
-  }
-  return {
-    websiteId,
-    tenantIdentifier: typeof value.tenantIdentifier === "string" ? value.tenantIdentifier.trim().toLowerCase() : null,
-    reason: typeof value.reason === "string" ? value.reason.trim().slice(0, 120) : null,
-  };
-};
-
-const deliverPublicWebsiteCacheInvalidation = async (payload: PublicWebsiteCacheInvalidationPayload) => {
-  if (!NEXT_REVALIDATE_URL || !NEXT_REVALIDATE_SECRET) {
-    throw new Error("Next public cache revalidation is not configured");
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), NEXT_REVALIDATE_TIMEOUT_MS);
-  timeout.unref?.();
-  try {
-    const response = await fetch(NEXT_REVALIDATE_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-revalidate-secret": NEXT_REVALIDATE_SECRET,
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`Next cache revalidation failed (${response.status})${body ? `: ${body.slice(0, 300)}` : ""}`);
-    }
-  } finally {
-    clearTimeout(timeout);
-  }
+const deliverPublicWebsiteCacheInvalidation = async (payload: unknown) => {
+  await PublicWebsiteCacheRevalidation.deliver(
+    parsePublicWebsiteCacheInvalidationPayload(payload),
+  );
 };
 
 
@@ -265,7 +227,7 @@ const processEvent = async (event: ClaimedOutboxEvent) => {
     }
     case PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC.INVALIDATION_REQUESTED:
       await traceAsyncOperation("external", "frontend.cache-revalidation", () =>
-        deliverPublicWebsiteCacheInvalidation(parsePublicWebsiteCachePayload(event.payload)),
+        deliverPublicWebsiteCacheInvalidation(event.payload),
       );
       return;
     case BUSINESS_NOTIFICATION_OUTBOX_TOPIC.DELIVERY_REQUESTED: {

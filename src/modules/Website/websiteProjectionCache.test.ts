@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { redisMock, prismaMock, publicCacheOutboxMock } = vi.hoisted(() => ({
-  redisMock: { get: vi.fn(), set: vi.fn(), eval: vi.fn() },
+const { redisMock, prismaMock, publicCacheRevalidationMock } = vi.hoisted(() => ({
+  redisMock: { get: vi.fn(), set: vi.fn(), eval: vi.fn(), del: vi.fn() },
   prismaMock: { businessWebsite: { findUnique: vi.fn() } },
-  publicCacheOutboxMock: { enqueue: vi.fn(async () => true) },
+  publicCacheRevalidationMock: {
+    triggerWithFallback: vi.fn(async () => ({ configured: true, delivered: true, queued: false })),
+  },
 }));
 
 vi.mock("../../config/redis", () => ({ default: redisMock }));
@@ -15,7 +17,9 @@ vi.mock("../../config/ENV", () => ({
   WEBSITE_PROJECTION_WAIT_FOR_FILL_MS: 100,
 }));
 vi.mock("../../lib/prisma/prisma", () => ({ prisma: prismaMock }));
-vi.mock("../../lib/outbox/publicWebsiteCacheOutbox", () => ({ PublicWebsiteCacheOutbox: publicCacheOutboxMock }));
+vi.mock("../../lib/outbox/publicWebsiteCacheOutbox", () => ({
+  PublicWebsiteCacheRevalidation: publicCacheRevalidationMock,
+}));
 
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 
@@ -89,7 +93,18 @@ describe("Phase 23 public website projection cache", () => {
       "site-projection-lock:v9:website-1",
       "site-projection-generation:v9:website-1",
     );
-    expect(publicCacheOutboxMock.enqueue).toHaveBeenCalledWith({ websiteId: "website-1" });
+    expect(publicCacheRevalidationMock.triggerWithFallback).toHaveBeenCalledWith({
+      websiteId: "website-1",
+      tenantIdentifier: undefined,
+      tenantIdentifiers: undefined,
+      reason: "website-projection-invalidated",
+    });
+  });
+
+  it("can defer Next revalidation so Publish can invalidate routing before the direct callback", async () => {
+    await WebsiteProjectionCacheService.invalidateWebsite("website-1", "admin-1", { revalidateNext: false });
+    expect(redisMock.eval).toHaveBeenCalled();
+    expect(publicCacheRevalidationMock.triggerWithFallback).not.toHaveBeenCalled();
   });
 
   it("uses the cached admin→website mapping so CRM invalidation does not query Postgres", async () => {

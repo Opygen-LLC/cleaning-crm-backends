@@ -8,7 +8,7 @@ import {
   WEBSITE_STUDIO_CACHE_TTL_SECONDS,
 } from "../../config/ENV";
 import redis from "../../config/redis";
-import { PublicWebsiteCacheOutbox } from "../../lib/outbox/publicWebsiteCacheOutbox";
+import { PublicWebsiteCacheRevalidation } from "../../lib/outbox/publicWebsiteCacheOutbox";
 import { CacheNamespaces, ttlForKey } from "../../lib/cache/cachePolicy";
 import { singleFlight } from "../../lib/utils/singleFlight";
 import { WEBSITE_EDITOR_SURFACES, type WebsiteEditorSurface } from "./website.interface";
@@ -319,9 +319,21 @@ const getAdminIdForWebsite = async (websiteId: string): Promise<string | null> =
   }
 };
 
+export interface WebsiteProjectionInvalidationOptions {
+  /**
+   * Publish/Launch set this to false so they can invalidate routing first and
+   * then trigger Next.js explicitly with the canonical tenant identifiers.
+   */
+  revalidateNext?: boolean;
+  tenantIdentifier?: string | null;
+  tenantIdentifiers?: string[] | null;
+  reason?: string | null;
+}
+
 const invalidateWebsite = async (
   websiteId: string | null | undefined,
   knownAdminId?: string | null,
+  options: WebsiteProjectionInvalidationOptions = {},
 ): Promise<void> => {
   if (!websiteId) return;
   const adminId = knownAdminId !== undefined ? knownAdminId : await getAdminIdForWebsite(websiteId);
@@ -343,18 +355,22 @@ const invalidateWebsite = async (
     );
   } catch {
     // Redis remains an acceleration layer. PostgreSQL mutations must succeed
-    // even during a cache outage; normal TTL expiry provides eventual refresh.
+    // even during a cache outage; the Next.js safety TTL still provides eventual refresh.
   }
 
-  // The Next.js public projection cache is a second acceleration layer. Queue
-  // revalidation after every explicit projection invalidation so ServiceCatalog,
-  // published Review, BookingForm, domain/subdomain and Publish writes all share
-  // one correctness boundary. The outbox helper is non-throwing; its one-hour
-  // frontend safety window is the fallback if this durable event cannot queue.
-  await Promise.all([
-    PublicWebsiteCacheOutbox.enqueue({ websiteId }),
-    invalidateStudioAdmin(adminId),
-  ]);
+  await invalidateStudioAdmin(adminId);
+
+  // Every public projection mutation still has a direct Next.js correctness
+  // boundary. Publish/Launch defer only this step so routing + Redis can be
+  // invalidated first and the richer tenant/alias payload can be sent afterward.
+  if (options.revalidateNext !== false) {
+    await PublicWebsiteCacheRevalidation.triggerWithFallback({
+      websiteId,
+      tenantIdentifier: options.tenantIdentifier,
+      tenantIdentifiers: options.tenantIdentifiers,
+      reason: options.reason ?? "website-projection-invalidated",
+    });
+  }
 };
 
 const invalidateAdminWebsite = async (adminId: string | null | undefined): Promise<void> => {

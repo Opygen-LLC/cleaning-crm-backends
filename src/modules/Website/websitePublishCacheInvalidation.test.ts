@@ -7,7 +7,7 @@ type WebsiteTransactionMock = {
   estimateForm: { findFirst: ReturnType<typeof vi.fn> };
 };
 
-const { prismaMock, txMock, hostResolverMock, projectionCacheMock } = vi.hoisted(() => {
+const { prismaMock, txMock, hostResolverMock, projectionCacheMock, revalidationMock, publicWebsiteMock } = vi.hoisted(() => {
   const tx: WebsiteTransactionMock = {
     businessWebsite: { findUnique: vi.fn(), update: vi.fn() },
     websiteRevision: { aggregate: vi.fn(), create: vi.fn() },
@@ -26,6 +26,10 @@ const { prismaMock, txMock, hostResolverMock, projectionCacheMock } = vi.hoisted
       invalidateWebsite: vi.fn(),
       invalidateStudioAdmin: vi.fn(),
     },
+    revalidationMock: {
+      triggerWithFallback: vi.fn(async () => ({ configured: true, delivered: true, queued: false })),
+    },
+    publicWebsiteMock: { getPublicWebsiteById: vi.fn(async () => ({ website: { id: "website-1" } })) },
   };
 });
 
@@ -48,6 +52,8 @@ vi.mock("./templateRegistry", () => ({
 vi.mock("./websiteSnapshot", () => ({ buildPublishedSnapshot: vi.fn().mockReturnValue({ website: {}, pages: [] }) }));
 vi.mock("./websiteHostResolver.service", () => ({ WebsiteHostResolverService: hostResolverMock }));
 vi.mock("./websiteProjectionCache.service", () => ({ WebsiteProjectionCacheService: projectionCacheMock }));
+vi.mock("../../lib/outbox/publicWebsiteCacheOutbox", () => ({ PublicWebsiteCacheRevalidation: revalidationMock }));
+vi.mock("./publicWebsite.service", () => ({ PublicWebsiteService: publicWebsiteMock }));
 vi.mock("./websiteProvisioning.service", () => ({ WebsiteProvisioningService: {} }));
 
 import { WebsiteService } from "./website.service";
@@ -118,7 +124,18 @@ describe("website publish cache invalidation", () => {
     }));
     expect(hostResolverMock.invalidateSubdomains).toHaveBeenCalledWith(["sparkle"]);
     expect(hostResolverMock.invalidateHosts).toHaveBeenCalledWith([]);
-    expect(projectionCacheMock.invalidateWebsite).toHaveBeenCalledWith("website-1");
+    expect(projectionCacheMock.invalidateWebsite).toHaveBeenCalledWith(
+      "website-1",
+      "admin-1",
+      expect.objectContaining({ revalidateNext: false, reason: "website-published" }),
+    );
+    expect(revalidationMock.triggerWithFallback).toHaveBeenCalledWith({
+      websiteId: "website-1",
+      tenantIdentifier: "sparkle",
+      tenantIdentifiers: ["sparkle"],
+      reason: "website-published",
+    });
+    expect(publicWebsiteMock.getPublicWebsiteById).toHaveBeenCalledWith("website-1");
   });
 
   it("refuses to publish when online booking is enabled without a valid Book page/form", async () => {
