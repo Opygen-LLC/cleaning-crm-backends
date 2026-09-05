@@ -1,4 +1,4 @@
-name: Phase 7 Production Gate
+name: Phase 8 Production Gate
 
 on:
   pull_request:
@@ -88,6 +88,8 @@ jobs:
       - run: pnpm run check:production-cleanup
       - run: pnpm run check:reliability
       - run: pnpm run check:release-infra
+      - run: pnpm run check:phase8:production
+      - run: pnpm run data:audit:phase8
       - run: pnpm run test:security
       - run: pnpm run test:integration
       - run: pnpm run check:phase4
