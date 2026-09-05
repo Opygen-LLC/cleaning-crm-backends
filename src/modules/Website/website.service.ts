@@ -362,6 +362,7 @@ const presentDraftSnapshot = (
     publishedAt?: Date | null;
     publishedRevisionNumber?: number | null;
     draftRevisionNumber?: number;
+    publishedSnapshot?: unknown;
   } = {},
 ) => {
   const domains = draft.domains.map((domain) => presentWebsiteDomain(domain));
@@ -369,6 +370,7 @@ const presentDraftSnapshot = (
   const primaryDomain = WEBSITE_CUSTOM_DOMAINS_ENABLED
     ? draft.domains.find((domain) => domain.isPrimary && isWebsiteDomainRoutingReady(domain))?.domain ?? null
     : null;
+  const liveSnapshot = parsePublishedSnapshot(overrides.publishedSnapshot);
   const draftRevisionNumber = overrides.draftRevisionNumber ?? Number(draft.draftRevisionNumber ?? 0);
   const publishedRevisionNumber =
     overrides.publishedRevisionNumber !== undefined
@@ -385,6 +387,9 @@ const presentDraftSnapshot = (
     editorSurface: null,
     platformUrl,
     publicUrl: primaryDomain ? `https://${primaryDomain}` : platformUrl,
+    publishedTemplateId: liveSnapshot?.website.templateId ?? null,
+    publishedTemplateVersion: liveSnapshot?.website.templateVersion ?? null,
+    publishedWebsiteDesign: liveSnapshot?.website.websiteDesign ?? null,
     hasUnpublishedChanges:
       publishedRevisionNumber === null || draftRevisionNumber > publishedRevisionNumber,
   };
@@ -420,6 +425,7 @@ const loadWebsiteDetailsWhere = async (
   if (!website) throw new AppError(status.NOT_FOUND, "Business website not found");
 
   const { publishedSnapshot: _publishedSnapshot, ...safeWebsite } = website;
+  const published = parsePublishedSnapshot(website.publishedSnapshot);
   const websiteDomains = Array.isArray((website as any).domains) ? (website as any).domains : [];
   const presentedDomains = websiteDomains.map((domain: any) => presentWebsiteDomain(domain as any));
   const platformUrl = WEBSITE_BASE_DOMAIN ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}` : null;
@@ -442,6 +448,12 @@ const loadWebsiteDetailsWhere = async (
     editorSurface: surface === "full" ? null : surface,
     platformUrl,
     publicUrl: primaryDomain ? `https://${primaryDomain}` : platformUrl,
+    // Phase 5 exposes the immutable live design identity separately from the
+    // configured editor rows. Website Studio can therefore show SELECTED vs
+    // LIVE without ever reading or mutating publishedSnapshot directly.
+    publishedTemplateId: published?.website.templateId ?? null,
+    publishedTemplateVersion: published?.website.templateVersion ?? null,
+    publishedWebsiteDesign: published?.website.websiteDesign ?? null,
     draftRevisionNumber,
     hasUnpublishedChanges:
       website.publishedRevisionNumber === null ||
@@ -892,8 +904,14 @@ const saveEditorState = async (payload: WebsiteEditorStateInput, user: IRequestU
       where: { id: current.id },
       data: { draftRevisionNumber: nextRevisionNumber },
     });
-    const draft = await loadDraftSnapshot(current.id, tx);
-    return presentDraftSnapshot(draft, { draftRevisionNumber: nextRevisionNumber });
+    const [draft, liveRow] = await Promise.all([
+      loadDraftSnapshot(current.id, tx),
+      tx.businessWebsite.findUnique({ where: { id: current.id }, select: { publishedSnapshot: true } }),
+    ]);
+    return presentDraftSnapshot(draft, {
+      draftRevisionNumber: nextRevisionNumber,
+      publishedSnapshot: liveRow?.publishedSnapshot ?? null,
+    });
   }, { maxWait: 10_000, timeout: 25_000 });
 
   // Editor autosave intentionally invalidates only private Studio caches.
@@ -973,6 +991,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
       publishedAt,
       publishedRevisionNumber: revision.revisionNumber,
       draftRevisionNumber: revision.revisionNumber,
+      publishedSnapshot,
     });
   });
 
@@ -1234,6 +1253,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
         publishedAt: launchedAt,
         publishedRevisionNumber: revision.revisionNumber,
         draftRevisionNumber: revision.revisionNumber,
+        publishedSnapshot,
       }),
     };
   }, PROVISIONING_TRANSACTION_OPTIONS);
