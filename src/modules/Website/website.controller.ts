@@ -1,10 +1,11 @@
+import { randomUUID } from "crypto";
 import status from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { DomainService } from "./domain.service";
 import { PublicWebsiteService } from "./publicWebsite.service";
 import { TemplateRegistry } from "./templateRegistry";
-import { WebsiteService } from "./website.service";
+import { WebsiteDraftConflictError, WebsiteService } from "./website.service";
 import { WebsiteStudioService } from "./websiteStudio.service";
 import { WebsiteAssetService } from "./websiteAsset.service";
 import { WebsiteBookingProvisioningService } from "./websiteBookingProvisioning.service";
@@ -30,6 +31,25 @@ import { WebsitePreviewSessionService } from "./websitePreviewSession.service";
 const created = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.CREATED, success: true, message, data });
 const ok = (res: any, message: string, data: unknown) => sendResponse(res, { httpStatusCode: status.OK, success: true, message, data });
 
+const sendWebsiteDraftConflict = (res: any, error: WebsiteDraftConflictError) => {
+  const requestId = typeof res.locals?.requestId === "string" && res.locals.requestId
+    ? res.locals.requestId
+    : randomUUID();
+  res.setHeader("X-Request-Id", requestId);
+  res.setHeader("Cache-Control", "private, no-store");
+  return res.status(status.CONFLICT).json({
+    success: false,
+    code: "WEBSITE_DRAFT_CONFLICT",
+    kind: "LIFECYCLE_CONFLICT",
+    message: error.message,
+    fieldErrors: {},
+    retryable: false,
+    requestId,
+    expectedRevisionNumber: error.expectedRevisionNumber,
+    currentRevisionNumber: error.currentRevisionNumber,
+  });
+};
+
 const paramStr = (val: string | string[] | undefined): string => (Array.isArray(val) ? val[0] : val ?? "");
 
 const createWebsite = catchAsync(async (req, res) => created(res, "Website created successfully", await WebsiteService.createWebsite(req.body, req.user)));
@@ -54,7 +74,12 @@ const getStudio = catchAsync(async (req, res) => {
 const updateWebsite = catchAsync(async (req, res) => ok(res, "Website updated successfully", await WebsiteService.updateWebsite(req.body, req.user)));
 const saveEditorState = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
-  return ok(res, "Website editor state saved successfully", await WebsiteService.saveEditorState(req.body ?? {}, req.user));
+  try {
+    return ok(res, "Website editor state saved successfully", await WebsiteService.saveEditorState(req.body ?? {}, req.user));
+  } catch (error) {
+    if (error instanceof WebsiteDraftConflictError) return sendWebsiteDraftConflict(res, error);
+    throw error;
+  }
 });
 const publishWebsite = catchAsync(async (req, res) => {
   recordWebsitePublishAttempt();
@@ -64,6 +89,7 @@ const publishWebsite = catchAsync(async (req, res) => {
     return ok(res, "Website published successfully", data);
   } catch (error) {
     recordWebsitePublishResult(false);
+    if (error instanceof WebsiteDraftConflictError) return sendWebsiteDraftConflict(res, error);
     throw error;
   }
 });
@@ -79,6 +105,7 @@ const launchWebsite = catchAsync(async (req, res) => {
     });
   } catch (error) {
     recordWebsitePublishResult(false);
+    if (error instanceof WebsiteDraftConflictError) return sendWebsiteDraftConflict(res, error);
     throw error;
   }
 });
@@ -189,9 +216,14 @@ const previewRevision = catchAsync(async (req, res) => {
     throw error;
   }
 });
-const restoreRevision = catchAsync(async (req, res) =>
-  ok(res, "Website revision restored to draft successfully", await WebsiteService.restoreRevision(paramStr(req.params.revisionId), req.body ?? {}, req.user)),
-);
+const restoreRevision = catchAsync(async (req, res) => {
+  try {
+    return ok(res, "Website revision restored to draft successfully", await WebsiteService.restoreRevision(paramStr(req.params.revisionId), req.body ?? {}, req.user));
+  } catch (error) {
+    if (error instanceof WebsiteDraftConflictError) return sendWebsiteDraftConflict(res, error);
+    throw error;
+  }
+});
 const listAssets = catchAsync(async (req, res) => ok(res, "Website assets retrieved successfully", await WebsiteService.listAssets(req.user)));
 const requestBrandUploadSignature = catchAsync(async (req, res) =>
   ok(res, "Website brand upload authorized", await WebsiteAssetService.requestBrandUploadSignature(req.body, req.user)),

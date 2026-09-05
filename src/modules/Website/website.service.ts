@@ -42,6 +42,25 @@ import type { Prisma } from "../../generated/prisma/client";
 
 type WebsiteDb = Prisma.TransactionClient | typeof prisma;
 
+export class WebsiteDraftConflictError extends AppError {
+  public readonly expectedRevisionNumber: number;
+  public readonly currentRevisionNumber: number;
+
+  constructor(expectedRevisionNumber: number, currentRevisionNumber: number) {
+    super(
+      status.CONFLICT,
+      "This website draft changed in another session. Reload Website Studio before saving again.",
+      {
+        code: "WEBSITE_DRAFT_CONFLICT",
+        retryable: false,
+      },
+    );
+    this.name = "WebsiteDraftConflictError";
+    this.expectedRevisionNumber = expectedRevisionNumber;
+    this.currentRevisionNumber = currentRevisionNumber;
+  }
+}
+
 const toInputJsonValue = (value: unknown): Prisma.InputJsonValue =>
   JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 
@@ -514,11 +533,10 @@ const assertExpectedRevision = async (
     expectedRevisionNumber > 0 &&
     expectedRevisionNumber !== currentRevisionNumber
   ) {
-    WebsiteProjectionCacheService.invalidateWebsite(websiteId).catch(() => undefined);
-    throw new AppError(status.CONFLICT, "This website draft changed in another session. Reload Website Studio before saving again.", {
-      code: "WEBSITE_DRAFT_CONFLICT",
-      retryable: false,
-    });
+    // A rejected configured-state mutation did not change either the private
+    // draft or the immutable live snapshot. Never invalidate public Redis,
+    // host-routing, CDN, or Next.js caches for an optimistic-lock conflict.
+    throw new WebsiteDraftConflictError(expectedRevisionNumber, currentRevisionNumber);
   }
   return currentRevisionNumber;
 };
