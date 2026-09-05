@@ -376,6 +376,9 @@ const projectWebsite = (
       canonicalUrl,
       redirectToSubdomain: options.aliasRedirectSubdomain ?? null,
       preview: options.mode === "preview",
+      componentEntitlements: {
+        premiumTemplates: entitlements.premiumTemplates,
+      },
     },
     business: projectPublicBusiness(website.admin),
     design: config.websiteDesign,
