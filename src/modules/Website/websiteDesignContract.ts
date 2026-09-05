@@ -77,9 +77,10 @@ const animationConfigSchema = z.object({
   replay: z.boolean().optional(),
 }).strict();
 
+const sectionColor = z.string().trim().regex(/^#[0-9A-Fa-f]{6}$/, "Use a 6-digit hex color");
 const sectionStyleSchema = z.object({
-  backgroundColor: z.string().trim().max(120).nullable().optional(),
-  textColor: z.string().trim().max(120).nullable().optional(),
+  backgroundColor: sectionColor.nullable().optional(),
+  textColor: sectionColor.nullable().optional(),
 }).strict();
 
 export const websiteDesignContractSchema = z.object({

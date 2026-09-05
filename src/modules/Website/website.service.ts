@@ -35,6 +35,7 @@ import { presentWebsiteDomain } from "./websiteDomainLifecycle";
 import { WEBSITE_STATUS, statusAfterDraftMutation, type WebsiteLifecycleStatus } from "./websiteLifecycle";
 import { validateWebsitePageContent } from "./websiteContent";
 import { parseWebsiteDesignContract } from "./websiteDesignContract";
+import { assertWebsiteDesignPublishable } from "./websiteComponentRegistry";
 import { WebsiteEntitlementService, type WebsiteEntitlements } from "./websiteEntitlement.service";
 import type { Prisma } from "../../generated/prisma/client";
 
@@ -948,6 +949,10 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
     assertLifecycleAllowsPublish(draft.status as WebsiteLifecycleStatus);
     const publishTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     WebsiteEntitlementService.assertTemplateAllowed(publishTemplate, entitlements);
+    // Publish is the only boundary that can make configured design public.
+    // Re-validate stable component IDs, slot assignments, animation/style slots
+    // and plan entitlements on the server immediately before snapshotting.
+    assertWebsiteDesignPublishable(draft.websiteDesign, entitlements);
     if ((draft.socialImageUrl || draft.metaKeywords?.length || draft.pages.some((page: any) => page.seoKeywords?.length || page.socialImageUrl)) && !entitlements.advancedSeo) {
       throw new AppError(status.FORBIDDEN, "Remove advanced SEO overrides or upgrade to Advanced Website SEO before publishing.", {
         code: "WEBSITE_ADVANCED_SEO_REQUIRED",
@@ -1184,6 +1189,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
     );
     const launchTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
     WebsiteEntitlementService.assertTemplateAllowed(launchTemplate, entitlements);
+    assertWebsiteDesignPublishable(draft.websiteDesign, entitlements);
     if ((draft.socialImageUrl || draft.metaKeywords?.length || draft.pages.some((page: any) => page.seoKeywords?.length || page.socialImageUrl)) && !entitlements.advancedSeo) {
       throw new AppError(status.FORBIDDEN, "Remove advanced SEO overrides or upgrade to Advanced Website SEO before launching.", { code: "WEBSITE_ADVANCED_SEO_REQUIRED", retryable: false });
     }
@@ -1403,6 +1409,20 @@ const restoreRevision = async (revisionId: string, payload: WebsiteRevisionResto
     // working draft. Restore is intentionally a draft-only operation.
     await ensurePublishedSnapshotBeforeDraftMutationTx(tx, current.id);
 
+    // Autosave intentionally does not create a permanent revision on every
+    // typing burst. A restore is destructive to the configured editor state,
+    // so capture that exact current server draft first to guarantee it remains
+    // recoverable from History.
+    const draftBeforeRestore = normalizeDraftPageContent(await loadDraftSnapshot(current.id, tx));
+    const preservedRevision = await createRevisionSnapshotTx(
+      tx,
+      current.id,
+      user.id,
+      `Draft preserved before restoring revision #${revision.revisionNumber}`,
+      baseRevisionNumber,
+      draftBeforeRestore,
+    );
+
     await tx.businessWebsite.update({
       where: { id: current.id },
       data: {
@@ -1469,7 +1489,7 @@ const restoreRevision = async (revisionId: string, payload: WebsiteRevisionResto
       current.id,
       user.id,
       `Restored revision #${revision.revisionNumber}`,
-      baseRevisionNumber,
+      preservedRevision.revisionNumber,
     );
 
     return {
