@@ -1,7 +1,11 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import type { WebsiteEntitlements } from "./websiteEntitlement.service";
-import { websiteDesignContractSchema, type WebsiteDesignContract } from "./websiteDesignContract";
+import {
+  websiteDesignContractSchema,
+  parseWebsiteDesignContract,
+  type WebsiteDesignContract,
+} from "./websiteDesignContract";
 
 export const WEBSITE_COMPONENT_SLOTS = [
   "shared.header", "shared.footer",
@@ -93,14 +97,25 @@ export const assertWebsiteDesignPublishable = (
   value: unknown,
   entitlements: WebsiteEntitlements,
 ): void => {
-  const parsed = websiteDesignContractSchema.safeParse(value);
-  if (!parsed.success) {
-    throw new AppError(status.UNPROCESSABLE_ENTITY, "Website design configuration is invalid and cannot be published.", {
-      code: "WEBSITE_DESIGN_INVALID",
-      retryable: false,
-    });
-  }
-  const design = parsed.data;
+  const design =
+    value === null ||
+    value === undefined ||
+    (typeof value === "object" && !("schemaVersion" in (value as Record<string, unknown>)))
+      ? parseWebsiteDesignContract(value)
+      : (() => {
+          const parsed = websiteDesignContractSchema.safeParse(value);
+          if (!parsed.success) {
+            throw new AppError(
+              status.UNPROCESSABLE_ENTITY,
+              "Website design configuration is invalid and cannot be published.",
+              {
+                code: "WEBSITE_DESIGN_INVALID",
+                retryable: false,
+              },
+            );
+          }
+          return parsed.data;
+        })();
   assertSlotScopedMaps(design);
 
   for (const slot of WEBSITE_COMPONENT_SLOTS) {

@@ -32,6 +32,9 @@ export interface IEstimateCreate {
     postcodeArea?: string;
     estimatedDuration?: string;
     numberOfCleaners?: number;
+    pricingType?: "fixed" | "range";
+    estimatedMin?: number | null;
+    estimatedMax?: number | null;
     lineItems: IEstimateLineItemInput[];
     discountType?: "percent" | "fixed";
     discountValue?: number;
@@ -51,6 +54,9 @@ export interface IEstimateUpdate {
     postcodeArea?: string;
     estimatedDuration?: string;
     numberOfCleaners?: number;
+    pricingType?: "fixed" | "range";
+    estimatedMin?: number | null;
+    estimatedMax?: number | null;
     lineItems?: IEstimateLineItemInput[];
     discountType?: "percent" | "fixed";
     discountValue?: number;

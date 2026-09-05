@@ -433,7 +433,18 @@ const loadWebsiteDetailsWhere = async (
   const primaryDomain = WEBSITE_CUSTOM_DOMAINS_ENABLED
     ? websiteDomains.find((domain: any) => domain.isPrimary && isWebsiteDomainRoutingReady(domain))?.domain ?? null
     : null;
-  const draftRevisionNumber = Number(website.draftRevisionNumber ?? 0);
+  const maxRevision = await (db as any).websiteRevision.aggregate({
+    where: { websiteId: website.id },
+    _max: { revisionNumber: true },
+  });
+  const maxNum = Number(maxRevision?._max?.revisionNumber ?? 0);
+  const draftRevisionNumber = Math.max(Number(website.draftRevisionNumber ?? 0), maxNum);
+  if (Number(website.draftRevisionNumber ?? 0) < draftRevisionNumber) {
+    await (db as any).businessWebsite.update({
+      where: { id: website.id },
+      data: { draftRevisionNumber },
+    }).catch(() => undefined);
+  }
 
   return {
     ...safeWebsite,

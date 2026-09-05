@@ -32,7 +32,9 @@ export const generateEstimatePDFBuffer = async (estimateId: string): Promise<Buf
         subtotal: estimate.subtotal.toString(),
         taxRate: estimate.taxRate.toString(),
         taxAmount: estimate.tax.toString(),
-        total: estimate.total.toString(),
+        total: estimate.pricingType === "range" && estimate.estimatedMin != null && estimate.estimatedMax != null
+            ? `${estimate.estimatedMin.toString()} – ${estimate.estimatedMax.toString()}`
+            : estimate.total.toString(),
         notes: estimate.notes,
         businessName: estimate.admin.businessName,
         businessEmail: estimate.admin.businessEmail,

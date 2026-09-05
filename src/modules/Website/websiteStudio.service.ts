@@ -71,7 +71,12 @@ const getOverview = async (user: IRequestUser) => {
       ? website.domains[0]?.domain ?? null
       : null;
   const publicUrl = getCanonicalWebsiteOrigin(website.subdomain, primaryCustomDomain);
-  const draftRevisionNumber = website.draftRevisionNumber ?? 0;
+  const maxRevision = await prisma.websiteRevision.aggregate({
+    where: { websiteId: website.id },
+    _max: { revisionNumber: true },
+  });
+  const maxNum = Number(maxRevision?._max?.revisionNumber ?? 0);
+  const draftRevisionNumber = Math.max(Number(website.draftRevisionNumber ?? 0), maxNum);
   const businessName = business?.businessName?.trim() || "Your cleaning business";
 
   return {

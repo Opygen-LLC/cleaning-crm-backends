@@ -34,6 +34,9 @@ const createEstimateSchema = z
         postcodeArea: z.string().optional(),
         estimatedDuration: z.string().optional(),
         numberOfCleaners: z.number().int().positive().optional(),
+        pricingType: z.enum(["fixed", "range"]).default("fixed"),
+        estimatedMin: z.number().min(0, "Minimum estimate cannot be negative").nullable().optional(),
+        estimatedMax: z.number().min(0, "Maximum estimate cannot be negative").nullable().optional(),
         lineItems: z
             .array(lineItemSchema)
             .min(1, "At least one line item is required"),
@@ -61,6 +64,35 @@ const createEstimateSchema = z
                 message: "Choose a service",
             });
         }
+        if (value.pricingType === "range") {
+            if (value.estimatedMin === undefined || value.estimatedMin === null) {
+                ctx.addIssue({
+                    code: "custom",
+                    path: ["estimatedMin"],
+                    message: "Minimum price is required for a range estimate",
+                });
+            }
+            if (value.estimatedMax === undefined || value.estimatedMax === null) {
+                ctx.addIssue({
+                    code: "custom",
+                    path: ["estimatedMax"],
+                    message: "Maximum price is required for a range estimate",
+                });
+            }
+            if (
+                value.estimatedMin !== undefined &&
+                value.estimatedMin !== null &&
+                value.estimatedMax !== undefined &&
+                value.estimatedMax !== null &&
+                value.estimatedMax < value.estimatedMin
+            ) {
+                ctx.addIssue({
+                    code: "custom",
+                    path: ["estimatedMax"],
+                    message: "Maximum price must be greater than or equal to minimum price",
+                });
+            }
+        }
     });
 
 // ── Update ─────────────────────────────────────────────────────────────────────
@@ -73,6 +105,9 @@ const updateEstimateSchema = z
         postcodeArea: z.string().optional(),
         estimatedDuration: z.string().optional(),
         numberOfCleaners: z.number().int().positive().optional(),
+        pricingType: z.enum(["fixed", "range"]).optional(),
+        estimatedMin: z.number().min(0, "Minimum estimate cannot be negative").nullable().optional(),
+        estimatedMax: z.number().min(0, "Maximum estimate cannot be negative").nullable().optional(),
         lineItems: z.array(lineItemSchema).min(1).optional(),
         discountType: z.enum(["percent", "fixed"]).optional(),
         discountValue: z.number().min(0).optional(),
@@ -81,7 +116,24 @@ const updateEstimateSchema = z
         internalNotes: z.string().optional(),
         terms: z.string().optional(),
     })
-    .strict();
+    .strict()
+    .superRefine((value, ctx) => {
+        if (value.pricingType === "range") {
+            if (
+                value.estimatedMin !== undefined &&
+                value.estimatedMin !== null &&
+                value.estimatedMax !== undefined &&
+                value.estimatedMax !== null &&
+                value.estimatedMax < value.estimatedMin
+            ) {
+                ctx.addIssue({
+                    code: "custom",
+                    path: ["estimatedMax"],
+                    message: "Maximum price must be greater than or equal to minimum price",
+                });
+            }
+        }
+    });
 
 // ── Status ─────────────────────────────────────────────────────────────────────
 
