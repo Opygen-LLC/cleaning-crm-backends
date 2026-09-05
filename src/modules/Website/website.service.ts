@@ -27,7 +27,12 @@ import { buildTemplateSelectionPatch } from "./templateSelection";
 import { WebsiteProvisioningService } from "./websiteProvisioning.service";
 import { WebsiteBookingProvisioningService } from "./websiteBookingProvisioning.service";
 import { PublicWebsiteService } from "./publicWebsite.service";
-import { buildPublishedSnapshot, parsePublishedSnapshot, parseRevisionSnapshotAsPublished } from "./websiteSnapshot";
+import {
+  buildPublishedSnapshot,
+  buildWebsitePublicationFingerprint,
+  parsePublishedSnapshot,
+  parseRevisionSnapshotAsPublished,
+} from "./websiteSnapshot";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { PublicWebsiteCacheRevalidation } from "../../lib/outbox/publicWebsiteCacheOutbox";
@@ -398,11 +403,22 @@ const presentDraftSnapshot = (
     overrides.publishedRevisionNumber !== undefined
       ? overrides.publishedRevisionNumber
       : draft.publishedRevisionNumber;
+  const publishedAt = overrides.publishedAt !== undefined ? overrides.publishedAt : draft.publishedAt;
+  const publicationFingerprint = buildWebsitePublicationFingerprint({
+    websiteId: draft.id,
+    draftRevisionNumber,
+    publishedRevisionNumber,
+    publishedAt,
+    templateId: draft.templateId,
+    templateVersion: draft.templateVersion,
+    websiteDesign: draft.websiteDesign,
+    publishedSnapshot: liveSnapshot,
+  });
 
   return {
     ...draft,
     status: overrides.status ?? draft.status,
-    publishedAt: overrides.publishedAt !== undefined ? overrides.publishedAt : draft.publishedAt,
+    publishedAt,
     publishedRevisionNumber,
     draftRevisionNumber,
     domains,
@@ -412,6 +428,7 @@ const presentDraftSnapshot = (
     publishedTemplateId: liveSnapshot?.website.templateId ?? null,
     publishedTemplateVersion: liveSnapshot?.website.templateVersion ?? null,
     publishedWebsiteDesign: liveSnapshot?.website.websiteDesign ?? null,
+    publicationFingerprint,
     hasUnpublishedChanges:
       publishedRevisionNumber === null || draftRevisionNumber > publishedRevisionNumber,
   };
@@ -456,10 +473,31 @@ const revalidatePublishedWebsite = async (
 const warmPublishedProjection = async (websiteId: string, reason: string) => {
   try {
     await PublicWebsiteService.getPublicWebsiteById(websiteId);
+    return true;
   } catch (error) {
     logger.warn(`[${reason}] projection warm failed for ${websiteId}: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
   }
 };
+
+type WebsitePublicationDelivery = {
+  cacheInvalidated: boolean;
+  revalidationTriggered: boolean;
+  revalidationDelivered: boolean;
+  revalidationQueued: boolean;
+  projectionWarmed: boolean;
+};
+
+const publishDeliveryStatus = (
+  revalidation: Awaited<ReturnType<typeof revalidatePublishedWebsite>>,
+  projectionWarmed: boolean,
+): WebsitePublicationDelivery => ({
+  cacheInvalidated: true,
+  revalidationTriggered: revalidation.configured,
+  revalidationDelivered: revalidation.delivered,
+  revalidationQueued: revalidation.queued,
+  projectionWarmed,
+});
 
 const loadWebsiteDetailsWhere = async (
   where: { id: string } | { adminId: string },
@@ -510,6 +548,16 @@ const loadWebsiteDetailsWhere = async (
       data: { draftRevisionNumber },
     }).catch(() => undefined);
   }
+  const publicationFingerprint = buildWebsitePublicationFingerprint({
+    websiteId: website.id,
+    draftRevisionNumber,
+    publishedRevisionNumber: website.publishedRevisionNumber,
+    publishedAt: website.publishedAt,
+    templateId: website.templateId,
+    templateVersion: website.templateVersion,
+    websiteDesign: website.websiteDesign,
+    publishedSnapshot: published,
+  });
 
   return {
     ...safeWebsite,
@@ -531,6 +579,7 @@ const loadWebsiteDetailsWhere = async (
     publishedTemplateId: published?.website.templateId ?? null,
     publishedTemplateVersion: published?.website.templateVersion ?? null,
     publishedWebsiteDesign: published?.website.websiteDesign ?? null,
+    publicationFingerprint,
     draftRevisionNumber,
     hasUnpublishedChanges:
       website.publishedRevisionNumber === null ||
@@ -1097,11 +1146,12 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
     }),
   ]);
 
-  await revalidatePublishedWebsite(website, "website-published");
-  await warmPublishedProjection(website.id, "website-publish");
+  const revalidation = await revalidatePublishedWebsite(website, "website-published");
+  const projectionWarmed = await warmPublishedProjection(website.id, "website-publish");
+  const publicationDelivery = publishDeliveryStatus(revalidation, projectionWarmed);
 
   void bumpCacheResourceVersions(adminId, [CacheResource.website]);
-  return website;
+  return { ...website, publicationDelivery };
 };
 
 
@@ -1375,15 +1425,18 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
     }),
   ]);
 
-  await revalidatePublishedWebsite(result.website, "website-launched");
-  await warmPublishedProjection(result.website.id, "website-launch");
+  const revalidation = await revalidatePublishedWebsite(result.website, "website-launched");
+  const projectionWarmed = await warmPublishedProjection(result.website.id, "website-launch");
+  const publicationDelivery = publishDeliveryStatus(revalidation, projectionWarmed);
+  const publishedWebsite = { ...result.website, publicationDelivery };
 
   return {
     businessName: result.businessName,
     alreadyLive: result.alreadyLive,
-    launchedAt: result.website.publishedAt,
-    publicUrl: result.website.publicUrl,
-    website: result.website,
+    launchedAt: publishedWebsite.publishedAt,
+    publicUrl: publishedWebsite.publicUrl,
+    website: publishedWebsite,
+    publicationDelivery,
   };
 };
 

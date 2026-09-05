@@ -5,7 +5,7 @@ import type { IRequestUser } from "../../types/requestUser.interface";
 import type { Prisma } from "../../generated/prisma/client";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteService } from "./website.service";
-import { parsePublishedSnapshot } from "./websiteSnapshot";
+import { buildWebsitePublicationFingerprint, parsePublishedSnapshot } from "./websiteSnapshot";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { WebsiteEntitlementService } from "./websiteEntitlement.service";
 import { isWebsiteDomainRoutingReady, readyWebsiteDomainWhere } from "./websiteDomainReadiness";
@@ -34,7 +34,9 @@ const getOverview = async (user: IRequestUser) => {
         subdomain: true,
         templateId: true,
         templateVersion: true,
+        websiteDesign: true,
         publishedAt: true,
+        publishedSnapshot: true,
         publishedRevisionNumber: true,
         draftRevisionNumber: true,
         metaTitle: true,
@@ -78,6 +80,17 @@ const getOverview = async (user: IRequestUser) => {
   const maxNum = Number(maxRevision?._max?.revisionNumber ?? 0);
   const draftRevisionNumber = Math.max(Number(website.draftRevisionNumber ?? 0), maxNum);
   const businessName = business?.businessName?.trim() || "Your cleaning business";
+  const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
+  const publicationFingerprint = buildWebsitePublicationFingerprint({
+    websiteId: website.id,
+    draftRevisionNumber,
+    publishedRevisionNumber: website.publishedRevisionNumber,
+    publishedAt: website.publishedAt,
+    templateId: website.templateId,
+    templateVersion: website.templateVersion,
+    websiteDesign: website.websiteDesign,
+    publishedSnapshot,
+  });
 
   return {
     website: {
@@ -92,6 +105,7 @@ const getOverview = async (user: IRequestUser) => {
       publishedAt: website.publishedAt,
       publishedRevisionNumber: website.publishedRevisionNumber,
       draftRevisionNumber,
+      publicationFingerprint,
       hasUnpublishedChanges:
         website.publishedRevisionNumber === null ||
         draftRevisionNumber > website.publishedRevisionNumber,

@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { cloneDefaultWebsiteDesign, parseWebsiteDesignContract, type WebsiteDesignContract } from "./websiteDesignContract";
 
 export interface WebsitePublishedPageSnapshot {
@@ -52,6 +53,24 @@ export interface WebsitePublishedSnapshotV1 {
   pages: WebsitePublishedPageSnapshot[];
 }
 
+export interface WebsitePublicationFingerprint {
+  websiteId: string;
+  draftRevisionNumber: number;
+  publishedRevisionNumber: number | null;
+  publishedAt: Date | string | null;
+  selected: {
+    templateId: string;
+    templateVersion: string;
+    websiteDesignHash: string;
+  };
+  live: {
+    templateId: string;
+    templateVersion: string;
+    websiteDesignHash: string;
+  } | null;
+  matchesLive: boolean;
+}
+
 interface DraftWebsiteLike {
   templateId: string;
   templateVersion: string;
@@ -100,6 +119,70 @@ interface DraftWebsiteLike {
 }
 
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+/**
+ * Stable JSON canonicalization for publication diagnostics. Website design
+ * records contain maps whose insertion order can differ across browser/server
+ * processes even when their semantic value is identical. Sorting object keys
+ * before hashing makes the fingerprint deterministic across those boundaries.
+ */
+const canonicalizeJson = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map((item) => canonicalizeJson(item));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, item]) => [key, canonicalizeJson(item)]),
+  );
+};
+
+export const hashWebsiteDesign = (value: unknown): string => {
+  const normalized = parseWebsiteDesignContract(value ?? cloneDefaultWebsiteDesign());
+  const canonical = JSON.stringify(canonicalizeJson(normalized));
+  return createHash("sha256").update(canonical).digest("hex");
+};
+
+export const buildWebsitePublicationFingerprint = (input: {
+  websiteId: string;
+  draftRevisionNumber: number;
+  publishedRevisionNumber: number | null;
+  publishedAt: Date | string | null;
+  templateId: string;
+  templateVersion: string;
+  websiteDesign: unknown;
+  publishedSnapshot: WebsitePublishedSnapshotV1 | null;
+}): WebsitePublicationFingerprint => {
+  const selectedHash = hashWebsiteDesign(input.websiteDesign);
+  const live = input.publishedSnapshot
+    ? {
+        templateId: input.publishedSnapshot.website.templateId,
+        templateVersion: input.publishedSnapshot.website.templateVersion,
+        websiteDesignHash: hashWebsiteDesign(input.publishedSnapshot.website.websiteDesign),
+      }
+    : null;
+  const matchesLive = Boolean(
+    live &&
+    input.publishedRevisionNumber !== null &&
+    input.draftRevisionNumber === input.publishedRevisionNumber &&
+    input.templateId === live.templateId &&
+    input.templateVersion === live.templateVersion &&
+    selectedHash === live.websiteDesignHash,
+  );
+
+  return {
+    websiteId: input.websiteId,
+    draftRevisionNumber: input.draftRevisionNumber,
+    publishedRevisionNumber: input.publishedRevisionNumber,
+    publishedAt: input.publishedAt,
+    selected: {
+      templateId: input.templateId,
+      templateVersion: input.templateVersion,
+      websiteDesignHash: selectedHash,
+    },
+    live,
+    matchesLive,
+  };
+};
 
 export const buildPublishedSnapshot = (draft: DraftWebsiteLike): WebsitePublishedSnapshotV1 => ({
   version: 1,
