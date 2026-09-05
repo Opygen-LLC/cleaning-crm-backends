@@ -60,7 +60,7 @@ const {
     businessName: "Bio Cleaning",
     businessEmail: "hello@biocleaning.example",
     onboardingCompletedAt: null,
-    onboardingCompletedSteps: ["business_profile", "services", "branding", "website_address", "template"],
+    onboardingCompletedSteps: ["business_profile", "services", "branding", "website_address", "review_launch"],
     user: { email: "owner@biocleaning.example", status: "ACTIVE" },
     businessWebsite: {
       id: "website-1",

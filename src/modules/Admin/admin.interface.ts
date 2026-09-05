@@ -41,7 +41,10 @@ export type OnboardingStepKey =
   | "branding"
   | "services"
   | "website_address"
-  | "template";
+  | "review_launch";
+
+/** Accepted temporarily for rolling deployments and legacy persisted progress. */
+export type LegacyOnboardingStepKey = "template";
 
 export type GettingStartedStepKey =
   | OnboardingStepKey

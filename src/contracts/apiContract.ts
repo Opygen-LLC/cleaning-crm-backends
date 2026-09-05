@@ -39,7 +39,7 @@ export const API_CONTRACT = {
     "ACTIVE",
     "FAILED",
   ] as const,
-  onboardingStep: ["business_profile", "branding", "services", "website_address", "template"] as const,
+  onboardingStep: ["business_profile", "branding", "services", "website_address", "review_launch"] as const,
   serviceType: Object.values(ServiceType),
   subscriptionName: Object.values(SubscriptionName),
   subscriptionStatus: Object.values(SubscriptionStatus),

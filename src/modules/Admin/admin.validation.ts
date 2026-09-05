@@ -74,7 +74,7 @@ const onboardingStepKeys = ONBOARDING_STEPS.map((step) => step.key) as [
 ];
 
 const completeOnboardingStepSchema = z.object({
-  step: z.enum(onboardingStepKeys),
+  step: z.union([z.enum(onboardingStepKeys), z.literal("template")]),
 }).strict();
 
 const legacySkippableKeys = [...SKIPPABLE_ONBOARDING_STEPS] as [
@@ -153,7 +153,7 @@ const onboardingClientErrorSchema = z
     browser: z.string().trim().min(1).max(600),
     bootstrapSchemaVersion: z.number().int().min(1).max(1000),
     section: z.enum(["route", "active-step", "preview", "bootstrap"]),
-    onboardingStep: z.enum(onboardingStepKeys).nullable().optional(),
+    onboardingStep: z.union([z.enum(onboardingStepKeys), z.literal("template")]).nullable().optional(),
     componentStack: z.string().max(6000).nullable().optional(),
   })
   .strict();

@@ -1035,7 +1035,11 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
       });
     }
 
-    const completed = new Set(owner.onboardingCompletedSteps);
+    const completed = new Set(
+      owner.onboardingCompletedSteps.map((step) =>
+        step === "template" ? "review_launch" : step,
+      ),
+    );
     const missingSteps = owner.onboardingCompletedAt
       ? []
       : REQUIRED_ONBOARDING_STEPS.filter((step) => !completed.has(step));
@@ -1118,7 +1122,7 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
       throw new AppError(status.CONFLICT, "Enable the Home page before launching the website", {
         code: "WEBSITE_HOME_REQUIRED",
         retryable: false,
-        fieldErrors: { template: "The Home page must be enabled." },
+        fieldErrors: { review_launch: "The Home page must be enabled." },
       });
     }
     if (draft.bookingEnabled && !draft.pages.some((page: any) => page.kind === "BOOK" && page.isEnabled)) {

@@ -28,6 +28,7 @@ import { businessHoursSchema, normalizeBusinessHours, type BusinessHours } from 
 import { bumpCacheResourceVersions, CacheResource } from "../../lib/cache/resourceCacheVersion";
 import type {
   GettingStartedStepKey,
+  LegacyOnboardingStepKey,
   LegacySkippableOnboardingStepKey,
   OnboardingStepKey,
   OnboardingStepStatus,
@@ -414,7 +415,9 @@ const normalizeCompletedSetupSteps = (
   if (onboardingCompletedAt) return new Set(REQUIRED_SETUP_KEYS);
   const allowed = new Set<string>(REQUIRED_SETUP_KEYS);
   return new Set(
-    persisted.filter((step): step is OnboardingStepKey => allowed.has(step)),
+    persisted
+      .map((step) => (step === "template" ? "review_launch" : step))
+      .filter((step): step is OnboardingStepKey => allowed.has(step)),
   );
 };
 
@@ -1066,8 +1069,9 @@ const saveOnboardingServices = async (
 /** Persist one setup milestone after its underlying resource has been saved. */
 const completeOnboardingStep = async (
   userId: string,
-  step: OnboardingStepKey,
+  step: OnboardingStepKey | LegacyOnboardingStepKey,
 ): Promise<OnboardingMutationResult> => {
+  const canonicalStep: OnboardingStepKey = step === "template" ? "review_launch" : step;
   const admin = await prisma.adminProfile.findUnique({
     where: { userId },
     select: {
@@ -1086,7 +1090,7 @@ const completeOnboardingStep = async (
 
   if (admin.onboardingCompletedAt) return buildOnboardingMutationResult(userId, admin.id);
 
-  const stepIndex = REQUIRED_SETUP_KEYS.indexOf(step);
+  const stepIndex = REQUIRED_SETUP_KEYS.indexOf(canonicalStep);
   if (stepIndex === -1) {
     throw new AppError(status.BAD_REQUEST, "Unknown onboarding step", {
       code: "INVALID_ONBOARDING_STEP",
@@ -1110,7 +1114,7 @@ const completeOnboardingStep = async (
     });
   }
 
-  if (step === "services") {
+  if (canonicalStep === "services") {
     const service = await prisma.serviceCatalog.findFirst({
       where: { adminId: admin.id },
       select: { id: true },
@@ -1124,15 +1128,15 @@ const completeOnboardingStep = async (
     }
   }
 
-  if (step === "business_profile" && !completed.has(step)) {
+  if (canonicalStep === "business_profile" && !completed.has(canonicalStep)) {
     logger.info("onboarding_started", { event: "onboarding_started", tenantHash: hashTelemetryId(admin.id), releaseSha: RELEASE_VERSION });
   }
 
   await prisma.$transaction(async (tx) => {
-    if (!completed.has(step)) {
+    if (!completed.has(canonicalStep)) {
       await tx.adminProfile.update({
         where: { id: admin.id },
-        data: { onboardingCompletedSteps: { push: step } },
+        data: { onboardingCompletedSteps: { push: canonicalStep } },
       });
     }
 
@@ -1218,7 +1222,7 @@ const finalizeOnboardingSetup = async (
       throw new AppError(status.CONFLICT, "Launch your website before finishing setup.", {
         code: "WEBSITE_NOT_PUBLISHED",
         retryable: true,
-        fieldErrors: { template: "Launch the website to finish setup" },
+        fieldErrors: { review_launch: "Launch the website to finish setup" },
       });
     }
 

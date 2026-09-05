@@ -17,7 +17,7 @@ export const ACCOUNT_SETUP_STEPS = [
   { key: API_CONTRACT.onboardingStep[1], label: "Brand" },
   { key: API_CONTRACT.onboardingStep[2], label: "Services + Booking" },
   { key: API_CONTRACT.onboardingStep[3], label: "Website Address" },
-  { key: API_CONTRACT.onboardingStep[4], label: "Template + Launch" },
+  { key: API_CONTRACT.onboardingStep[4], label: "Review + Launch" },
 ] as const;
 
 export const ONBOARDING_STEPS = ACCOUNT_SETUP_STEPS;

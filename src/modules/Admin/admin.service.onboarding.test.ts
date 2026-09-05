@@ -30,7 +30,7 @@ const db = prisma as unknown as {
 
 const USER_ID = "user-1";
 const ADMIN_ID = "admin-1";
-const STEPS = ["business_profile", "branding", "services", "website_address", "template"];
+const STEPS = ["business_profile", "branding", "services", "website_address", "review_launch"];
 
 const statusRow = (completed: string[] = [], finished: Date | null = null) => ({
   id: ADMIN_ID,
@@ -118,7 +118,7 @@ describe("website-first onboarding status", () => {
     [["business_profile"], 2, "branding"],
     [["business_profile", "branding"], 3, "services"],
     [["business_profile", "branding", "services"], 4, "website_address"],
-    [["business_profile", "branding", "services", "website_address"], 5, "template"],
+    [["business_profile", "branding", "services", "website_address"], 5, "review_launch"],
   ] as const)("resumes every persisted onboarding prefix %# without skipping a step", async (completed, currentStep, resumeStep) => {
     db.adminProfile.findUnique.mockResolvedValue(statusRow([...completed]));
     const result = await adminService.getOnboardingStatus(USER_ID);
@@ -157,6 +157,18 @@ describe("website-first onboarding status", () => {
     expect(result.currentStep).toBe(2);
     expect(result.resumeStep).toBe("branding");
     expect(result.steps.find((step) => step.key === "services")?.completed).toBe(true);
+  });
+
+  it("maps the legacy template milestone to Review & Launch without losing progress", async () => {
+    db.adminProfile.findUnique.mockResolvedValue(
+      statusRow(["business_profile", "branding", "services", "website_address", "template"]),
+    );
+
+    const result = await adminService.getOnboardingStatus(USER_ID);
+
+    expect(result.completedCount).toBe(5);
+    expect(result.steps.at(-1)).toMatchObject({ key: "review_launch", completed: true });
+    expect(result.resumeStep).toBeNull();
   });
 
   it("treats an already completed legacy tenant as fully complete", async () => {
