@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import status from "http-status";
 import redis from "../../config/redis";
-import prisma from "../../config/prisma";
+import { prisma } from "../../lib/prisma/prisma";
 import AppError from "../../errorHelper/AppError";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { PublicWebsiteService } from "./publicWebsite.service";
