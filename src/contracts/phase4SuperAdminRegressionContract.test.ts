@@ -53,6 +53,8 @@ describe("Phase 4 Super Admin regression contract", () => {
     ];
     for (const route of required) expect(routes).toContain(route);
     expect(routes).toContain("const isSuperAdmin = checkAuth(UserRole.SUPER_ADMIN)");
+    expect(routes).toMatch(/router\.get\(\s*"\/platform-config",\s*isSuperAdmin/);
+    expect(routes).toMatch(/router\.patch\(\s*"\/platform-config",\s*isSuperAdmin/);
   });
 
   it("requires a meaningful reason for sensitive tenant/user/platform mutations", () => {
@@ -65,6 +67,8 @@ describe("Phase 4 Super Admin regression contract", () => {
     expect(() => userRoleSchema.parse({ reason: REASON, role: "STAFF" })).not.toThrow();
     expect(() => userStatusSchema.parse({ reason: REASON, status: "SUSPENDED" })).not.toThrow();
     expect(() => platformConfigPatchSchema.parse({ reason: REASON, maintenanceMode: true })).not.toThrow();
+    expect(() => platformConfigPatchSchema.parse({ reason: REASON, authentication: { requireEmailOtpVerification: false } })).not.toThrow();
+    expect(() => platformConfigPatchSchema.parse({ authentication: { requireEmailOtpVerification: false }, reason: "short" })).toThrow();
     expect(() => trialManagementSchema.parse({ reason: REASON, action: "EXTEND", days: 7 })).not.toThrow();
     expect(() => entitlementSchema.parse({ reason: REASON, resources: { staff: { mode: "ADD", value: 2 } } })).not.toThrow();
     expect(() => supportModeStartSchema.parse({ organizationId: UUID, durationMinutes: 15, reason: REASON })).not.toThrow();
@@ -105,6 +109,12 @@ describe("Phase 4 Super Admin regression contract", () => {
     expect(service).toContain("action: `TENANT_TRIAL_${input.action}`");
     expect(service).toContain("before: { isTrial: current.isTrial");
     expect(service).toContain("after: { isTrial: sub.isTrial");
+
+    const controller = read("src/modules/SuperAdmin/superAdmin.controller.ts");
+    expect(controller).toContain('action: "PLATFORM_AUTH_SETTING_UPDATED"');
+    expect(controller).toContain('scope: "NEW_REGISTRATIONS_ONLY"');
+    expect(controller).toContain("before: { requireEmailOtpVerification: previousEmailOtpRequired }");
+    expect(controller).toContain("after: { requireEmailOtpVerification: nextEmailOtpRequired }");
   });
 
   it("keeps administrative plan changes no-charge and support mode read-only", () => {

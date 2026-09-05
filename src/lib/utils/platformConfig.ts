@@ -56,6 +56,12 @@ export const PLATFORM_CONFIG_KEY = "platformConfig";
 // window is eliminated below by busting the cache on every write.
 const CONFIG_CACHE_TTL_MS = 60_000;
 
+const readEmailOtpRequirement = (value: unknown): boolean => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return true;
+    const candidate = (value as { requireEmailOtpVerification?: unknown }).requireEmailOtpVerification;
+    return typeof candidate === "boolean" ? candidate : true;
+};
+
 let cachedConfig: PlatformConfig | null = null;
 let cacheExpiresAt = 0;
 
@@ -71,9 +77,11 @@ const readConfigFromDb = async (): Promise<PlatformConfig> => {
         return {
             ...DEFAULT_PLATFORM_CONFIG,
             ...parsed,
+            // Fail closed for registration verification. A legacy/malformed
+            // config blob must never silently disable OTP. Only an explicit
+            // persisted boolean false can turn verification off.
             authentication: {
-                ...DEFAULT_PLATFORM_CONFIG.authentication,
-                ...(parsed.authentication ?? {}),
+                requireEmailOtpVerification: readEmailOtpRequirement(parsed.authentication),
             },
         };
     } catch {

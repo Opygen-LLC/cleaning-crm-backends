@@ -77,7 +77,11 @@ beforeEach(() => {
   mocks.signOut.mockResolvedValue({ success: true });
   mocks.revokeSessionByTokenWithOwner.mockResolvedValue({ revoked: true, userId: "user-1" });
   mocks.enqueueEmailVerification.mockResolvedValue({ id: "outbox-1" });
-  mocks.getPlatformConfig.mockResolvedValue({ registrationOpen: true, defaultTrialDays: 14 });
+  mocks.getPlatformConfig.mockResolvedValue({
+    registrationOpen: true,
+    defaultTrialDays: 14,
+    authentication: { requireEmailOtpVerification: true },
+  });
   mocks.provisionRegisteredAdmin.mockResolvedValue({ userId: "user-1", reservedSubdomain: "jamie-cleaning" });
 });
 
@@ -118,7 +122,12 @@ describe("login Better Auth + rotating refresh contract", () => {
     expect(mocks.bindRefreshCredentialToSession).not.toHaveBeenCalled();
   });
 
-  it("queues verification through the durable outbox when valid credentials belong to an unverified account", async () => {
+  it("keeps existing unverified accounts behind OTP even when the new-registration setting is disabled", async () => {
+    mocks.getPlatformConfig.mockResolvedValue({
+      registrationOpen: true,
+      defaultTrialDays: 14,
+      authentication: { requireEmailOtpVerification: false },
+    });
     mocks.signInEmail.mockRejectedValue({
       status: "FORBIDDEN",
       body: { code: "EMAIL_NOT_VERIFIED", message: "Email not verified" },
@@ -141,6 +150,9 @@ describe("login Better Auth + rotating refresh contract", () => {
       { userId: "user-1", email: "jamie@example.com" },
       { dedupeKey: expect.stringMatching(/^login-email-verification:user-1:/) },
     );
+    // Login verification for an already-created account is intentionally not
+    // controlled by the registration-only platform switch.
+    expect(mocks.getPlatformConfig).not.toHaveBeenCalled();
   });
 
   it("revokes a newly-created Better Auth session when the account is suspended", async () => {
@@ -166,10 +178,68 @@ describe("login Better Auth + rotating refresh contract", () => {
 });
 
 describe("complete auth lifecycle service regression", () => {
-  it("register delegates to the canonical provisioning transaction", async () => {
+  it("register requires email verification by default and delegates to canonical provisioning", async () => {
     const result = await authService.register({ businessName: "Jamie Cleaning", name: "Jamie Doe", email: "jamie@example.com", password: "correct-password" });
-    expect(mocks.provisionRegisteredAdmin).toHaveBeenCalledWith({ businessName: "Jamie Cleaning", name: "Jamie Doe", email: "jamie@example.com", password: "correct-password", trialDays: 14, mobileNumber: undefined, businessType: undefined, licenseNumber: undefined });
-    expect(result).toEqual({ userId: "user-1", reservedSubdomain: "jamie-cleaning" });
+    expect(mocks.provisionRegisteredAdmin).toHaveBeenCalledWith({
+      businessName: "Jamie Cleaning",
+      name: "Jamie Doe",
+      email: "jamie@example.com",
+      password: "correct-password",
+      trialDays: 14,
+      requireEmailVerification: true,
+      mobileNumber: undefined,
+      businessType: undefined,
+      licenseNumber: undefined,
+    });
+    expect(mocks.signInEmail).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      userId: "user-1",
+      reservedSubdomain: "jamie-cleaning",
+      verificationRequired: true,
+      authentication: null,
+    });
+  });
+
+  it("register auto-verifies and creates a normal authenticated session when the global OTP setting is off", async () => {
+    mocks.getPlatformConfig.mockResolvedValue({
+      registrationOpen: true,
+      defaultTrialDays: 14,
+      authentication: { requireEmailOtpVerification: false },
+    });
+
+    const result = await authService.register(
+      { businessName: "Jamie Cleaning", name: "Jamie Doe", email: "jamie@example.com", password: "correct-password" },
+      { ipAddress: "203.0.113.20", userAgent: "Registration Browser" },
+    );
+
+    expect(mocks.provisionRegisteredAdmin).toHaveBeenCalledWith(expect.objectContaining({
+      email: "jamie@example.com",
+      requireEmailVerification: false,
+    }));
+    expect(mocks.signInEmail).toHaveBeenCalledWith({ body: { email: "jamie@example.com", password: "correct-password" } });
+    expect(result.verificationRequired).toBe(false);
+    expect(result.authentication).toMatchObject({
+      sessionToken: "session-token",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+    });
+  });
+
+  it("fails closed to OTP-required when the authentication setting is missing", async () => {
+    mocks.getPlatformConfig.mockResolvedValue({ registrationOpen: true, defaultTrialDays: 14 });
+
+    const result = await authService.register({
+      businessName: "Jamie Cleaning",
+      name: "Jamie Doe",
+      email: "jamie@example.com",
+      password: "correct-password",
+    });
+
+    expect(mocks.provisionRegisteredAdmin).toHaveBeenCalledWith(expect.objectContaining({
+      requireEmailVerification: true,
+    }));
+    expect(result.verificationRequired).toBe(true);
+    expect(mocks.signInEmail).not.toHaveBeenCalled();
   });
 
   it("does not return onboarding/password routing authority from login", async () => {

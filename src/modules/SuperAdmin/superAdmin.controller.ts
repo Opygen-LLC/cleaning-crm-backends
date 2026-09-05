@@ -406,15 +406,56 @@ const getPlatformConfig = catchAsync(async (_req, res) => {
 
 const updatePlatformConfig = catchAsync(async (req, res) => {
     const { reason, ...patch } = req.body as { reason: string } & Record<string, unknown>;
-    const result = await superAdminService.updatePlatformConfig(patch as Parameters<typeof superAdminService.updatePlatformConfig>[0]);
-    await writeSuperAdminAudit({
-        actorUserId: req.user.id,
-        action: "PLATFORM_CONFIG_UPDATED",
-        reason,
-        metadata: { fields: Object.keys(patch) },
-        ipAddress: req.ip ?? null,
-        userAgent: req.get("user-agent") ?? null,
-    });
+    const before = await superAdminService.getPlatformConfig();
+    const result = await superAdminService.updatePlatformConfig(
+        patch as Parameters<typeof superAdminService.updatePlatformConfig>[0],
+    );
+
+    const previousEmailOtpRequired = before.authentication?.requireEmailOtpVerification ?? true;
+    const nextEmailOtpRequired = result.authentication?.requireEmailOtpVerification ?? true;
+    const emailOtpSettingChanged = previousEmailOtpRequired !== nextEmailOtpRequired;
+    const beforeRecord = before as unknown as Record<string, unknown>;
+    const resultRecord = result as unknown as Record<string, unknown>;
+    const nonAuthenticationFields = Object.keys(patch).filter((field) =>
+        field !== "authentication" &&
+        JSON.stringify(beforeRecord[field]) !== JSON.stringify(resultRecord[field]),
+    );
+
+    // Authentication policy changes get a dedicated append-only audit event so
+    // Super Admin can answer exactly who changed registration verification,
+    // why it changed, and what the previous/new values were. This setting only
+    // governs registrations created after the change; existing unverified users
+    // are intentionally untouched and continue through OTP/manual verification.
+    if (emailOtpSettingChanged) {
+        await writeSuperAdminAudit({
+            actorUserId: req.user.id,
+            action: "PLATFORM_AUTH_SETTING_UPDATED",
+            reason,
+            metadata: {
+                setting: "authentication.requireEmailOtpVerification",
+                scope: "NEW_REGISTRATIONS_ONLY",
+            },
+            before: { requireEmailOtpVerification: previousEmailOtpRequired },
+            after: { requireEmailOtpVerification: nextEmailOtpRequired },
+            ipAddress: req.ip ?? null,
+            userAgent: req.get("user-agent") ?? null,
+        });
+    }
+
+    // Keep the existing generic platform-config audit for any other settings
+    // saved in the same request, without creating a duplicate generic event for
+    // an OTP-only change.
+    if (nonAuthenticationFields.length > 0) {
+        await writeSuperAdminAudit({
+            actorUserId: req.user.id,
+            action: "PLATFORM_CONFIG_UPDATED",
+            reason,
+            metadata: { fields: nonAuthenticationFields },
+            ipAddress: req.ip ?? null,
+            userAgent: req.get("user-agent") ?? null,
+        });
+    }
+
     sendResponse(res, {
         httpStatusCode: status.OK,
         success: true,

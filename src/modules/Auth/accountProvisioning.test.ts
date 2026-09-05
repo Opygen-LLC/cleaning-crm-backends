@@ -80,10 +80,10 @@ beforeEach(() => {
       id: data.id,
       name: data.name,
       email: data.email,
-      emailVerified: false,
+      emailVerified: data.emailVerified,
       image: null,
       role: "ADMIN",
-      status: "PENDING",
+      status: data.status,
       createdAt: new Date("2026-08-18T00:00:00.000Z"),
       updatedAt: new Date("2026-08-18T00:00:00.000Z"),
     };
@@ -169,6 +169,26 @@ describe("AccountProvisioningService", () => {
       status: "PROVISIONED",
       publicUrl: "https://sparkle.sites.example.com",
     });
+  });
+
+  it("auto-verifies new registrations and skips OTP outbox creation when verification is globally disabled", async () => {
+    const result = await AccountProvisioningService.provisionRegisteredAdmin({
+      name: "Jamie Doe",
+      email: "jamie@example.com",
+      password: "Secret123!",
+      businessName: "Sparkle Cleaning",
+      trialDays: 14,
+      requireEmailVerification: false,
+    });
+
+    expect(mocks.order).toEqual(["user+account", "admin", "website", "trial"]);
+    expect(mocks.enqueueVerification).not.toHaveBeenCalled();
+
+    const userCreate = mocks.tx.user.create.mock.calls[0]?.[0];
+    expect(userCreate.data.emailVerified).toBe(true);
+    expect(userCreate.data.status).toBe("ACTIVE");
+    expect(result.user.emailVerified).toBe(true);
+    expect(result.user.status).toBe("ACTIVE");
   });
 
   it("relies on the database unique-email constraint instead of SELECT-before-INSERT", async () => {
