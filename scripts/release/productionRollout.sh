@@ -4,7 +4,9 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CLIENT_DIR="${CLIENT_DIR:?Set CLIENT_DIR to the Cleaning CRM frontend checkout}"
 : "${PRODUCTION_DATABASE_URL:?Set PRODUCTION_DATABASE_URL}"
 : "${PRODUCTION_BACKUP_CMD:?Set PRODUCTION_BACKUP_CMD to a verified backup/snapshot command}"
-: "${BACKEND_DEPLOY_CMD:?Set BACKEND_DEPLOY_CMD}"
+: "${BACKEND_DEPLOY_CMD:?Set BACKEND_DEPLOY_CMD for the API release}"
+: "${WORKER_DEPLOY_CMD:?Set WORKER_DEPLOY_CMD for the dedicated durable-outbox worker release}"
+: "${WORKER_VERIFY_CMD:?Set WORKER_VERIFY_CMD to verify the deployed worker SHA and healthy running process}"
 : "${FRONTEND_DEPLOY_CMD:?Set FRONTEND_DEPLOY_CMD}"
 : "${APPLICATION_ROLLBACK_CMD:?Set APPLICATION_ROLLBACK_CMD to roll back application releases only}"
 : "${PRODUCTION_API_ORIGIN:?Set PRODUCTION_API_ORIGIN, e.g. https://api.example.com}"
@@ -23,6 +25,18 @@ CLIENT_DIR="${CLIENT_DIR:?Set CLIENT_DIR to the Cleaning CRM frontend checkout}"
 : "${E2E_STAFF_TEMP_PASSWORD:?Set E2E_STAFF_TEMP_PASSWORD}"
 : "${E2E_FIXTURE_RESET_CMD:?Set E2E_FIXTURE_RESET_CMD to restore staging admin/staff smoke fixtures}"
 : "${E2E_STAFF_MATRIX_JSON:?Set E2E_STAFF_MATRIX_JSON to the Phase 4 staging staff matrix fixtures}"
+: "${E2E_TEST_EMAIL_DOMAIN:?Set a staging-only synthetic email domain}"
+: "${E2E_TEST_PASSWORD:?Set a staging test password}"
+: "${E2E_STAFF_NEW_PASSWORD:?Set a distinct replacement staff password}"
+: "${E2E_EXPECT_OTP:?Set true or false for the deployed staging platform OTP setting}"
+: "${E2E_STAGING_ACK:?Explicit staging acknowledgement required}"
+: "${E2E_EXPECT_FRONTEND_SHA:?Set the deployed frontend candidate SHA}"
+: "${E2E_EXPECT_BACKEND_SHA:?Set the deployed backend candidate SHA}"
+: "${RELEASE_EVIDENCE_DIR:?Set the reviewed Phase 6 evidence directory}"
+: "${RELEASE_FRONTEND_SHA:?Set the production candidate frontend SHA}"
+: "${RELEASE_BACKEND_SHA:?Set the production candidate backend SHA}"
+: "${RELEASE_CANARY_COHORT:?Set a two-to-five-tenant read-only production cohort JSON file}"
+: "${WEBSITE_BASE_DOMAIN:?Set the canonical platform website base domain}"
 : "${PERF_ADMIN_ID:?Set PERF_ADMIN_ID to the production tenant admin/profile id used by read-only EXPLAIN probes}"
 
 API_ORIGIN="${PRODUCTION_API_ORIGIN%/}"
@@ -46,9 +60,12 @@ health_json() {
   curl --fail --silent --show-error --max-time 15 "${API_ORIGIN}${path}"
 }
 
-echo '[release] qualify frontend/backend source before touching production data'
-( cd "$CLIENT_DIR" && pnpm install --frozen-lockfile && env -u E2E_FRONTEND_URL -u E2E_API_URL -u E2E_TEST_TOKEN -u E2E_TEST_EMAIL_DOMAIN -u E2E_TEST_PASSWORD -u E2E_ACCESS_TOKEN_TTL_SECONDS -u E2E_ADMIN_EMAIL -u E2E_ADMIN_PASSWORD -u E2E_ADMIN_EXPECTED_PATH -u E2E_STAFF_EMAIL -u E2E_STAFF_TEMP_PASSWORD -u E2E_STAFF_NEW_PASSWORD pnpm run release:check )
-( cd "$ROOT" && pnpm install --frozen-lockfile && pnpm prisma validate && env -u E2E_FRONTEND_URL -u E2E_API_URL -u E2E_TEST_TOKEN -u E2E_TEST_EMAIL_DOMAIN -u E2E_TEST_PASSWORD -u E2E_ACCESS_TOKEN_TTL_SECONDS -u E2E_ADMIN_EMAIL -u E2E_ADMIN_PASSWORD -u E2E_ADMIN_EXPECTED_PATH -u E2E_STAFF_EMAIL -u E2E_STAFF_TEMP_PASSWORD -u E2E_STAFF_NEW_PASSWORD pnpm run release:check )
+echo '[phase6] verify reviewed staging, wildcard and production reconciliation evidence before any production mutation'
+( cd "$ROOT" && node scripts/release/phase6EvidenceGate.mjs --stage=predeploy )
+
+echo '[release] qualify frontend/backend source before touching production data' 
+( cd "$CLIENT_DIR" && pnpm install --frozen-lockfile && node "$ROOT/scripts/release/withoutE2E.mjs" pnpm run release:phase6 )
+( cd "$ROOT" && pnpm install --frozen-lockfile && pnpm prisma validate && node "$ROOT/scripts/release/withoutE2E.mjs" pnpm run release:phase6 )
 
 echo '[release] disposable fresh-database migration/auth regression'
 ( cd "$ROOT" && FRESH_DB_TEST_DATABASE_URL="$FRESH_DB_TEST_DATABASE_URL" E2E_TEST_TOKEN="$E2E_TEST_TOKEN" pnpm run test:fresh-db-auth )
@@ -59,15 +76,15 @@ bash -lc "$E2E_FIXTURE_RESET_CMD"
   E2E_FRONTEND_URL="$E2E_FRONTEND_URL" \
   E2E_API_URL="$E2E_API_URL" \
   E2E_TEST_TOKEN="$E2E_TEST_TOKEN" \
-  E2E_TEST_EMAIL_DOMAIN="${E2E_TEST_EMAIL_DOMAIN:-e2e.invalid}" \
-  E2E_TEST_PASSWORD="${E2E_TEST_PASSWORD:-Smoke!Test123}" \
+  E2E_TEST_EMAIL_DOMAIN="${E2E_TEST_EMAIL_DOMAIN}" \
+  E2E_TEST_PASSWORD="${E2E_TEST_PASSWORD}" \
   E2E_ACCESS_TOKEN_TTL_SECONDS="$E2E_ACCESS_TOKEN_TTL_SECONDS" \
   E2E_ADMIN_EMAIL="$E2E_ADMIN_EMAIL" \
   E2E_ADMIN_PASSWORD="$E2E_ADMIN_PASSWORD" \
   E2E_ADMIN_EXPECTED_PATH="${E2E_ADMIN_EXPECTED_PATH:-/admin/dashboard}" \
   E2E_STAFF_EMAIL="$E2E_STAFF_EMAIL" \
   E2E_STAFF_TEMP_PASSWORD="$E2E_STAFF_TEMP_PASSWORD" \
-  E2E_STAFF_NEW_PASSWORD="${E2E_STAFF_NEW_PASSWORD:-Smoke!Changed123}" \
+  E2E_STAFF_NEW_PASSWORD="${E2E_STAFF_NEW_PASSWORD}" \
   E2E_BROWSER_BIN="${E2E_BROWSER_BIN:-chromium}" \
   pnpm run test:e2e:smoke )
 
@@ -157,9 +174,15 @@ echo '[6/21] run report-only reconciliation and integrity gate'
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run website-reviews:reconcile )
 ( cd "$ROOT" && DATABASE_URL="$PRODUCTION_DATABASE_URL" pnpm run data:audit:ci )
 
-echo '[7/21] deploy backend application'
+echo '[phase6] refresh read-only production inventory after compatible migrations'
+( cd "$ROOT" && RELEASE_AUDIT_DATABASE_URL="$PRODUCTION_DATABASE_URL" RELEASE_GIT_SHA="$RELEASE_BACKEND_SHA" pnpm run website:release:reconcile --ci --output="$RELEASE_EVIDENCE_DIR/reconciliation-after-migrations.json" )
+
+echo '[7/21] deploy backend application' 
 DEPLOY_STARTED=1
 bash -lc "$BACKEND_DEPLOY_CMD"
+echo '[phase6] deploy and verify the existing durable-outbox worker before frontend traffic changes'
+bash -lc "$WORKER_DEPLOY_CMD"
+bash -lc "$WORKER_VERIFY_CMD"
 
 echo '[8/21] verify /livez'
 health_json /livez >/dev/null
@@ -211,7 +234,12 @@ echo '[20/21] final production migration/schema gate'
 echo '[21/21] verify outbox/cache/notification/publish/GA operational health'
 ( cd "$ROOT" && API_URL="$API_ORIGIN" PERFORMANCE_METRICS_TOKEN="$PERFORMANCE_METRICS_TOKEN" pnpm run monitoring:operations )
 
-echo '[release] production rollout gates passed'
+echo '[phase6] read-only canonical/app-host canary after both applications have deployed'
+( cd "$ROOT" && pnpm run website:release:canary )
+( cd "$ROOT" && node scripts/release/phase6EvidenceGate.mjs --stage=activate )
+echo '[phase6] New-template default activation is now eligible for a separate reviewed configuration rollout.'
+echo '[phase6] No tenant rows, template versions or defaults were changed by this approval step.'
+echo '[release] production rollout gates passed' 
 if [[ "$MIGRATIONS_APPLIED" == "1" ]]; then
   echo '[release] migrations were applied forward-only; future rollback must keep schema compatibility'
 fi

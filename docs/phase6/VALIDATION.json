@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "phase": 6,
+  "project": "backend",
+  "source": "local-container-validation-not-staging",
+  "createdAt": "2026-09-06T18:25:56.156102+00:00",
+  "releaseApproved": false,
+  "productionReadyVerified": false,
+  "environment": {
+    "node": "v22.16.0",
+    "dependencyStrategy": "Native TS loader executes real production exports; explicit I/O/framework adapters are confined to tests."
+  },
+  "executed": {
+    "nativeBehavioralTests": {
+      "status": "PASS",
+      "tests": 106,
+      "pass": 106,
+      "fail": 0,
+      "skipped": 0,
+      "command": "pnpm run test:phase6:regressions (equivalent node --test command, local TypeScript through NODE_PATH)",
+      "evidence": "evidence/native-tests.tap"
+    },
+    "sourceContractChecks": [
+      {
+        "command": "node scripts/checkRepositoryHygiene.mjs",
+        "exitCode": 0,
+        "status": "PASS"
+      },
+      {
+        "command": "node scripts/phase7/checkSecretSafety.mjs",
+        "exitCode": 0,
+        "status": "PASS"
+      },
+      {
+        "command": "node scripts/checkProductionCleanup.mjs",
+        "exitCode": 0,
+        "status": "PASS"
+      },
+      {
+        "command": "node scripts/verifyReliability.mjs",
+        "exitCode": 0,
+        "status": "PASS"
+      },
+      {
+        "command": "node scripts/verifyPhase5Security.mjs",
+        "exitCode": 0,
+        "status": "PASS"
+      },
+      {
+        "command": "node scripts/verifyPhase6Observability.mjs",
+        "exitCode": 0,
+        "status": "PASS"
+      },
+      {
+        "command": "node scripts/verifyAuthPhase6.mjs",
+        "exitCode": 0,
+        "status": "PASS"
+      },
+      {
+        "command": "node scripts/verifyPhase3Runtime.mjs",
+        "exitCode": 0,
+        "status": "PASS"
+      },
+      {
+        "command": "node scripts/checkPhase3WebsiteSubmissions.mjs",
+        "exitCode": 0,
+        "status": "PASS"
+      },
+      {
+        "command": "node scripts/checkPhase4WebsiteReviews.mjs",
+        "exitCode": 0,
+        "status": "PASS"
+      },
+      {
+        "command": "node scripts/phase7/verifyPhase7Release.mjs",
+        "exitCode": 0,
+        "status": "PASS"
+      }
+    ],
+    "changedFileSyntax": {
+      "status": "PASS",
+      "typescript": 16,
+      "javascript": 7,
+      "yaml": 1,
+      "shell": 1,
+      "note": "TypeScript transpilation detects syntax errors; not full project typechecking."
+    },
+    "isolatedStrictTypecheck": {
+      "status": "PASS",
+      "files": [
+        "src/scripts/release/websiteReleaseChecks.ts"
+      ],
+      "note": "Global TypeScript and Node declarations, not generated Prisma/Next project types."
+    }
+  },
+  "notExecuted": [
+    {
+      "check": "Frozen dependency installation",
+      "status": "BLOCKED",
+      "reason": "Registry DNS resolution failed (EAI_AGAIN); no project dependencies available."
+    },
+    {
+      "check": "Full project generated types, Vitest and production build",
+      "status": "NOT_RUN",
+      "reason": "Requires unavailable frozen project dependencies."
+    },
+    {
+      "check": "Staging native-CDP browser suites and real renderer/browser QA",
+      "status": "NOT_RUN",
+      "reason": "No deployed staging targets/credentials supplied; framework integration requires project dependencies."
+    },
+    {
+      "check": "Production read-only reconciliation and real PostgreSQL SQL execution",
+      "status": "NOT_RUN",
+      "reason": "No authorized database connection supplied; audit engine tested with explicit read-only I/O adapters only."
+    },
+    {
+      "check": "DNS/TLS, real Redis/provider outage drills, production canary and deployment",
+      "status": "NOT_RUN",
+      "reason": "No deployment/provider credentials or approved tenant cohort supplied."
+    },
+    {
+      "check": "Server/browser percentiles and real-device keyboard/screen-reader validation",
+      "status": "NOT_RUN",
+      "reason": "Needs instrumented deployed environment and real device/user-agent qualification."
+    }
+  ],
+  "requiredNextGate": "Run the complete release:phase6 command with frozen dependencies, protected staging CI, reviewed production read-only audit, real fault drills and the release canary. Do not treat this file as a production evidence report."
+}

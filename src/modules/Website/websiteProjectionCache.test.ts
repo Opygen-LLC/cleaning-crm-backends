@@ -27,10 +27,13 @@ vi.mock("../Entitlement/tenantAccessResolver.service", () => ({
 
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 
+const access = () => ({ organizationId: "org-1", generation: "access-epoch", validUntil: new Date(Date.now() + 3_600_000).toISOString() });
+
 const envelope = (data: unknown) => JSON.stringify({
-  version: 10,
+  version: 11,
   websiteId: "website-1",
   generation: 0,
+  access: access(),
   cachedAt: new Date().toISOString(),
   data,
 });
@@ -48,7 +51,7 @@ describe("Phase 23 public website projection cache", () => {
     redisMock.get.mockResolvedValueOnce(envelope({ business: { name: "Bio Cleaning" } }));
     const loader = vi.fn();
 
-    await expect(WebsiteProjectionCacheService.getOrLoad("website-1", loader))
+    await expect(WebsiteProjectionCacheService.getOrLoad("website-1", loader, access()))
       .resolves.toEqual({ business: { name: "Bio Cleaning" } });
     expect(loader).not.toHaveBeenCalled();
   });
@@ -60,7 +63,7 @@ describe("Phase 23 public website projection cache", () => {
     redisMock.set.mockResolvedValueOnce(null); // another process has NX lock
     const loader = vi.fn();
 
-    await expect(WebsiteProjectionCacheService.getOrLoad("website-1", loader))
+    await expect(WebsiteProjectionCacheService.getOrLoad("website-1", loader, access()))
       .resolves.toEqual({ services: ["cached"] });
     expect(loader).not.toHaveBeenCalled();
   });
@@ -72,17 +75,17 @@ describe("Phase 23 public website projection cache", () => {
       .mockResolvedValueOnce("0"); // generation
     const loader = vi.fn().mockResolvedValue({ services: ["current"] });
 
-    await WebsiteProjectionCacheService.getOrLoad("website-1", loader);
+    await WebsiteProjectionCacheService.getOrLoad("website-1", loader, access());
 
     expect(loader).toHaveBeenCalledTimes(1);
     expect(redisMock.eval).toHaveBeenCalledWith(
       expect.stringContaining("redis.call('SET', KEYS[2]"),
       3,
       "website-projection:website-1",
-      "site-projection-stale:v10:website-1",
-      "site-projection-generation:v10:website-1",
+      "site-projection-stale:v11:website-1",
+      "site-projection-generation:v11:website-1",
       "0",
-      expect.stringContaining('"version":10'),
+      expect.stringContaining('"version":11'),
       "180000",
       "900000",
     );
@@ -94,9 +97,9 @@ describe("Phase 23 public website projection cache", () => {
       expect.stringContaining("INCR"),
       4,
       "website-projection:website-1",
-      "site-projection-stale:v10:website-1",
-      "site-projection-lock:v10:website-1",
-      "site-projection-generation:v10:website-1",
+      "site-projection-stale:v11:website-1",
+      "site-projection-lock:v11:website-1",
+      "site-projection-generation:v11:website-1",
     );
     expect(publicCacheRevalidationMock.triggerWithFallback).toHaveBeenCalledWith({
       websiteId: "website-1",

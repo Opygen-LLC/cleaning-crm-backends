@@ -122,7 +122,13 @@
     "perf:website:gate": "node scripts/phase4/performanceGate.mjs",
     "perf:website:topology": "node scripts/performance/topologyEvidence.mjs",
     "publication:delivery:reconcile": "tsx src/scripts/phase1/reconcilePublicationDelivery.ts",
-    "release:phase5:performance": "pnpm run test:phase5:performance && pnpm run release:phase4:design && pnpm run test:phase4:contracts && pnpm run test:phase1:launch:integration"
+    "release:phase5:performance": "pnpm run test:phase5:performance && pnpm run release:phase4:design && pnpm run test:phase4:contracts && pnpm run test:phase1:launch:integration",
+    "test:phase6:security": "node --test tests/security-release/*.test.cjs tests/security-release/*.test.mjs",
+    "test:phase6:regressions": "node --test tests/launch/*.test.cjs tests/onboarding/*.test.cjs tests/interface/*.test.cjs tests/design/*.test.cjs tests/performance/*.test.cjs tests/security-release/*.test.cjs tests/security-release/*.test.mjs",
+    "website:release:reconcile": "tsx src/scripts/release/reconcileWebsiteRelease.ts",
+    "website:release:canary": "node scripts/release/phase6Canary.mjs",
+    "website:release:gate": "node scripts/release/phase6EvidenceGate.mjs",
+    "release:phase6": "pnpm run test:phase6:regressions && pnpm run test:phase1:launch:integration && pnpm run test:phase3:preview-contract && pnpm run test:phase4:design:contracts && pnpm run release:check"
   },
   "keywords": [],
   "author": "opygen",

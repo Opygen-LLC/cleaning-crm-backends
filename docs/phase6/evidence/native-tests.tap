@@ -1,0 +1,646 @@
+TAP version 13
+# Subtest: release gate defaults to v1 and rejects invalid/incompatible activation
+ok 1 - release gate defaults to v1 and rejects invalid/incompatible activation
+  ---
+  duration_ms: 1.360688
+  type: 'test'
+  ...
+# Subtest: all four explicit v1 and v2 renderers are registered; v1 remains selectable and immutable
+ok 2 - all four explicit v1 and v2 renderers are registered; v1 remains selectable and immutable
+  ---
+  duration_ms: 11.211486
+  type: 'test'
+  ...
+# Subtest: activation enables explicit selection but changes the default only when separately configured
+ok 3 - activation enables explicit selection but changes the default only when separately configured
+  ---
+  duration_ms: 0.2382
+  type: 'test'
+  ...
+# Subtest: versionless legacy writes cannot upgrade an existing website
+ok 4 - versionless legacy writes cannot upgrade an existing website
+  ---
+  duration_ms: 0.255146
+  type: 'test'
+  ...
+# Subtest: gate rollback permits editing already selected v2, but blocks a new v2 publication
+ok 5 - gate rollback permits editing already selected v2, but blocks a new v2 publication
+  ---
+  duration_ms: 0.207043
+  type: 'test'
+  ...
+# Subtest: component registry retains every old ID, adds versioned counterparts, and does not expose mutable entries
+ok 6 - component registry retains every old ID, adds versioned counterparts, and does not expose mutable entries
+  ---
+  duration_ms: 0.351051
+  type: 'test'
+  ...
+# Subtest: v2 components enforce release, slot ownership, known IDs and premium entitlement at publication
+ok 7 - v2 components enforce release, slot ownership, known IDs and premium entitlement at publication
+  ---
+  duration_ms: 0.805298
+  type: 'test'
+  ...
+# Subtest: hero-image ownership is scoped to the current website and deduplicates repeated URLs
+ok 8 - hero-image ownership is scoped to the current website and deduplicates repeated URLs
+  ---
+  duration_ms: 0.580758
+  type: 'test'
+  ...
+# Subtest: clearing media is accepted; historical ABOUT URLs retain their contract; all content references are tracked
+ok 9 - clearing media is accepted; historical ABOUT URLs retain their contract; all content references are tracked
+  ---
+  duration_ms: 0.425343
+  type: 'test'
+  ...
+# Subtest: public compatibility and entitlement downgrade cannot upgrade an old publication to the latest release
+ok 10 - public compatibility and entitlement downgrade cannot upgrade an old publication to the latest release
+  ---
+  duration_ms: 0.508129
+  type: 'test'
+  ...
+# Subtest: saved preview expectation rejects stale revisions, profiles and tenants before issuing a token
+ok 11 - saved preview expectation rejects stale revisions, profiles and tenants before issuing a token
+  ---
+  duration_ms: 176.10488
+  type: 'test'
+  ...
+# Subtest: legacy Studio preview still accepts editor overrides but saved preview cannot claim overrides are persisted
+ok 12 - legacy Studio preview still accepts editor overrides but saved preview cannot claim overrides are persisted
+  ---
+  duration_ms: 49.391296
+  type: 'test'
+  ...
+# Subtest: secure preview uses a hashed random bearer, ten-minute TTL and atomic NX delivery acknowledgement
+ok 13 - secure preview uses a hashed random bearer, ten-minute TTL and atomic NX delivery acknowledgement
+  ---
+  duration_ms: 32.025424
+  type: 'test'
+  ...
+# Subtest: Redis outage is not represented as confirmed preview readiness
+ok 14 - Redis outage is not represented as confirmed preview readiness
+  ---
+  duration_ms: 17.312192
+  type: 'test'
+  ...
+# Subtest: malformed or expired bearer never reaches tenant projection reads
+ok 15 - malformed or expired bearer never reaches tenant projection reads
+  ---
+  duration_ms: 16.84195
+  type: 'test'
+  ...
+# Subtest: suspension, account disablement, deletion and reassignment revoke already issued bearer previews
+ok 16 - suspension, account disablement, deletion and reassignment revoke already issued bearer previews
+  ---
+  duration_ms: 116.919442
+  type: 'test'
+  ...
+# Subtest: envelope validity rejects immortal dates, future issuance, excessive TTL and identity mismatches
+ok 17 - envelope validity rejects immortal dates, future issuance, excessive TTL and identity mismatches
+  ---
+  duration_ms: 0.506065
+  type: 'test'
+  ...
+# Subtest: regression 1: an in-flight DRAFT lookup cannot refill access after launch invalidation
+ok 18 - regression 1: an in-flight DRAFT lookup cannot refill access after launch invalidation
+  ---
+  duration_ms: 193.983889
+  type: 'test'
+  ...
+# Subtest: authorization expires at the exact trial/period boundary, not a second later
+ok 19 - authorization expires at the exact trial/period boundary, not a second later
+  ---
+  duration_ms: 187.821179
+  type: 'test'
+  ...
+# Subtest: Redis invalidation failure is reported as failure, never confirmed delivery
+ok 20 - Redis invalidation failure is reported as failure, never confirmed delivery
+  ---
+  duration_ms: 100.749061
+  type: 'test'
+  ...
+# Subtest: R1: cached DRAFT access -> launch -> FIRST canonical host resolves the published website
+ok 21 - R1: cached DRAFT access -> launch -> FIRST canonical host resolves the published website
+  ---
+  duration_ms: 925.25332
+  type: 'test'
+  ...
+# Subtest: R3: concurrent same-revision launch requests return one site and one publication revision
+ok 22 - R3: concurrent same-revision launch requests return one site and one publication revision
+  ---
+  duration_ms: 349.418124
+  type: 'test'
+  ...
+# Subtest: R4: response lost AFTER commit -> retry ORIGINAL expected revision without republishing
+ok 23 - R4: response lost AFTER commit -> retry ORIGINAL expected revision without republishing
+  ---
+  duration_ms: 296.504645
+  type: 'test'
+  ...
+# Subtest: regression 1: cached DRAFT -> launch -> first canonical host serves the committed site/revision
+ok 24 - regression 1: cached DRAFT -> launch -> first canonical host serves the committed site/revision
+  ---
+  duration_ms: 641.872318
+  type: 'test'
+  ...
+# Subtest: regression 3: simultaneous double-clicks, stale expected revision and later retries create one publication
+ok 25 - regression 3: simultaneous double-clicks, stale expected revision and later retries create one publication
+  ---
+  duration_ms: 341.718213
+  type: 'test'
+  ...
+# Subtest: regression 4: post-COMMIT timeout is safely retried with the original expected revision
+ok 26 - regression 4: post-COMMIT timeout is safely retried with the original expected revision
+  ---
+  duration_ms: 234.804954
+  type: 'test'
+  ...
+# Subtest: durable outbox insert failure rolls back snapshot, review milestone and onboarding completion
+ok 27 - durable outbox insert failure rolls back snapshot, review milestone and onboarding completion
+  ---
+  duration_ms: 235.278836
+  type: 'test'
+  ...
+# Subtest: a failed warm is preparing, never confirmed ready; the same durable event can recover
+ok 28 - a failed warm is preparing, never confirmed ready; the same durable event can recover
+  ---
+  duration_ms: 194.591388
+  type: 'test'
+  ...
+# Subtest: access invalidation must succeed before any host/projection fill or Next callback
+ok 29 - access invalidation must succeed before any host/projection fill or Next callback
+  ---
+  duration_ms: 133.55532
+  type: 'test'
+  ...
+# Subtest: the existing worker delivery path recovers a committed publication after callback failure
+ok 30 - the existing worker delivery path recovers a committed publication after callback failure
+  ---
+  duration_ms: 260.945558
+  type: 'test'
+  ...
+# Subtest: subscription horizon caps routing/projection TTL even with jitter, including stale copies
+ok 31 - subscription horizon caps routing/projection TTL even with jitter, including stale copies
+  ---
+  duration_ms: 444.501872
+  type: 'test'
+  ...
+# Subtest: cached routes reject an expired override even when Redis TTL has not elapsed
+ok 32 - cached routes reject an expired override even when Redis TTL has not elapsed
+  ---
+  duration_ms: 263.608425
+  type: 'test'
+  ...
+# Subtest: suspension and restoration rotate access before warming, using the existing durable topic
+ok 33 - suspension and restoration rotate access before warming, using the existing durable topic
+  ---
+  duration_ms: 280.722516
+  type: 'test'
+  ...
+# Subtest: actual outbox worker recovers the same transactional publication row and persists a truthful receipt
+ok 34 - actual outbox worker recovers the same transactional publication row and persists a truthful receipt
+  ---
+  duration_ms: 941.986836
+  type: 'test'
+  ...
+# Subtest: actual worker keeps a warming failure retryable rather than acknowledging readiness
+ok 35 - actual worker keeps a warming failure retryable rather than acknowledging readiness
+  ---
+  duration_ms: 398.418915
+  type: 'test'
+  ...
+# Subtest: an expired worker lease cannot acknowledge, overwrite or emit success for the newer claimant
+ok 36 - an expired worker lease cannot acknowledge, overwrite or emit success for the newer claimant
+  ---
+  duration_ms: 202.7396
+  type: 'test'
+  ...
+# Subtest: profile clears are persisted; omitted currency/hours/phone are unchanged; response is the committed read
+ok 37 - profile clears are persisted; omitted currency/hours/phone are unchanged; response is the committed read
+  ---
+  duration_ms: 661.965695
+  type: 'test'
+  ...
+# Subtest: business hours retain the saved timezone and explicit null removes the entire value
+ok 38 - business hours retain the saved timezone and explicit null removes the entire value
+  ---
+  duration_ms: 344.63229
+  type: 'test'
+  ...
+# Subtest: profile version rejects a different-tab profile write without a partial website/progress mutation
+ok 39 - profile version rejects a different-tab profile write without a partial website/progress mutation
+  ---
+  duration_ms: 299.994903
+  type: 'test'
+  ...
+# Subtest: same request concurrently and after a lost response creates one receipt and one milestone
+ok 40 - same request concurrently and after a lost response creates one receipt and one milestone
+  ---
+  duration_ms: 225.241637
+  type: 'test'
+  ...
+# Subtest: a late retry acknowledges the latest state rather than undoing a subsequent deliberate save
+ok 41 - a late retry acknowledges the latest state rather than undoing a subsequent deliberate save
+  ---
+  duration_ms: 192.07364
+  type: 'test'
+  ...
+# Subtest: branding persists all fields and owned logo/favicon before progress and revision
+ok 42 - branding persists all fields and owned logo/favicon before progress and revision
+  ---
+  duration_ms: 242.43302
+  type: 'test'
+  ...
+# Subtest: foreign, unregistered or wrong-slot assets fail before any branding milestone
+ok 43 - foreign, unregistered or wrong-slot assets fail before any branding milestone
+  ---
+  duration_ms: 641.762331
+  type: 'test'
+  ...
+# Subtest: complete catalog above the old 100-row UI limit is safe; explicit single deselection affects only that row
+ok 44 - complete catalog above the old 100-row UI limit is safe; explicit single deselection affects only that row
+  ---
+  duration_ms: 444.370582
+  type: 'test'
+  ...
+# Subtest: legacy selected-page upsert no longer deactivates omitted services; omitted add-ons are preserved
+ok 45 - legacy selected-page upsert no longer deactivates omitted services; omitted add-ons are preserved
+  ---
+  duration_ms: 297.507653
+  type: 'test'
+  ...
+# Subtest: concurrent service update, new row or ABA timestamp change conflicts without overwriting another tab
+ok 46 - concurrent service update, new row or ABA timestamp change conflicts without overwriting another tab
+  ---
+  duration_ms: 542.566908
+  type: 'test'
+  ...
+# Subtest: booking/revision failure rolls back services, profile, progress and website together
+ok 47 - booking/revision failure rolls back services, profile, progress and website together
+  ---
+  duration_ms: 150.612679
+  type: 'test'
+  ...
+# Subtest: unknown tenant IDs and v2 mutable-name identity substitution are rejected
+ok 48 - unknown tenant IDs and v2 mutable-name identity substitution are rejected
+  ---
+  duration_ms: 157.355957
+  type: 'test'
+  ...
+# Subtest: expected revision zero is a real precondition, not an escape from optimistic concurrency
+ok 49 - expected revision zero is a real precondition, not an escape from optimistic concurrency
+  ---
+  duration_ms: 181.887577
+  type: 'test'
+  ...
+# Subtest: cache failure after commit does not lose persisted acknowledgement or duplicate a retry
+ok 50 - cache failure after commit does not lose persisted acknowledgement or duplicate a retry
+  ---
+  duration_ms: 198.000105
+  type: 'test'
+  ...
+# Subtest: lock acquisition order is website, owner row, booking, catalog; progress sets deduplicate legacy template
+ok 51 - lock acquisition order is website, owner row, booking, catalog; progress sets deduplicate legacy template
+  ---
+  duration_ms: 176.163891
+  type: 'test'
+  ...
+# Subtest: legacy add-on prices normalize losslessly while invalid saved JSON fails closed
+ok 52 - legacy add-on prices normalize losslessly while invalid saved JSON fails closed
+  ---
+  duration_ms: 196.895374
+  type: 'test'
+  ...
+# Subtest: remote roundtrip and header clocks never stand in for API finish latency
+ok 53 - remote roundtrip and header clocks never stand in for API finish latency
+  ---
+  duration_ms: 13.080352
+  type: 'test'
+  ...
+# Subtest: incomplete samples, failures, unverified cold and unobserved Redis outage cannot pass
+ok 54 - incomplete samples, failures, unverified cold and unobserved Redis outage cannot pass
+  ---
+  duration_ms: 5.567129
+  type: 'test'
+  ...
+# Subtest: actual route normalization and per-process log extraction are explicit
+ok 55 - actual route normalization and per-process log extraction are explicit
+  ---
+  duration_ms: 0.349659
+  type: 'test'
+  ...
+# Subtest: missing numeric server measurements cannot turn a log envelope into a passing budget
+ok 56 - missing numeric server measurements cannot turn a log envelope into a passing budget
+  ---
+  duration_ms: 0.95885
+  type: 'test'
+  ...
+# Subtest: compact status uses durable latest proof without reading the public snapshot/history/analytics
+ok 57 - compact status uses durable latest proof without reading the public snapshot/history/analytics
+  ---
+  duration_ms: 889.134993
+  type: 'test'
+  ...
+# Subtest: URL and published status without a delivery receipt are preparing, never ready
+ok 58 - URL and published status without a delivery receipt are preparing, never ready
+  ---
+  duration_ms: 342.480882
+  type: 'test'
+  ...
+# Subtest: an old lifecycle receipt cannot acknowledge a newer event pointer
+ok 59 - an old lifecycle receipt cannot acknowledge a newer event pointer
+  ---
+  duration_ms: 200.020533
+  type: 'test'
+  ...
+# Subtest: receipt persistence failure rolls back event completion and leaves the durable retry recoverable
+ok 60 - receipt persistence failure rolls back event completion and leaves the durable retry recoverable
+  ---
+  duration_ms: 157.939648
+  type: 'test'
+  ...
+# Subtest: Redis keeps pipeline command promise identity; failures create no second rejection
+ok 61 - Redis keeps pipeline command promise identity; failures create no second rejection
+  ---
+  duration_ms: 75.479581
+  type: 'test'
+  ...
+# Subtest: Redis captures the originating request for commands, multi-get hits and misses
+ok 62 - Redis captures the originating request for commands, multi-get hits and misses
+  ---
+  duration_ms: 26.813131
+  type: 'test'
+  ...
+# Subtest: circuit denial rejects the command used by pipelines, with no dispatch, and is counted
+ok 63 - circuit denial rejects the command used by pipelines, with no dispatch, and is counted
+  ---
+  duration_ms: 38.413223
+  type: 'test'
+  ...
+# Subtest: a Redis write remains successful when telemetry fails
+ok 64 - a Redis write remains successful when telemetry fails
+  ---
+  duration_ms: 17.682662
+  type: 'test'
+  ...
+# Subtest: one request deduplicates concurrent access; another request and background work never share it
+ok 65 - one request deduplicates concurrent access; another request and background work never share it
+  ---
+  duration_ms: 6.413685
+  type: 'test'
+  ...
+# Subtest: in-flight pre-invalidation result cannot restore the old request slot or overwrite a newer load
+ok 66 - in-flight pre-invalidation result cannot restore the old request slot or overwrite a newer load
+  ---
+  duration_ms: 0.44987
+  type: 'test'
+  ...
+# Subtest: expired memo and rejected loads are evicted; closed requests do not supply credentials
+ok 67 - expired memo and rejected loads are evicted; closed requests do not supply credentials
+  ---
+  duration_ms: 0.713409
+  type: 'test'
+  ...
+# Subtest: pool/query Promise and callback overloads preserve results, release, and account exactly once
+ok 68 - pool/query Promise and callback overloads preserve results, release, and account exactly once
+  ---
+  duration_ms: 1.661353
+  type: 'test'
+  ...
+# Subtest: query completion keeps originating ALS scope even when another request is active
+ok 69 - query completion keeps originating ALS scope even when another request is active
+  ---
+  duration_ms: 11.673234
+  type: 'test'
+  ...
+# Subtest: driver failures remain failures even if telemetry throws
+ok 70 - driver failures remain failures even if telemetry throws
+  ---
+  duration_ms: 0.728461
+  type: 'test'
+  ...
+# Subtest: response instrumentation measures real JSON serialization once and exact bytes
+ok 71 - response instrumentation measures real JSON serialization once and exact bytes
+  ---
+  duration_ms: 192.419839
+  type: 'test'
+  ...
+# Subtest: streaming includes all chunks; finish and response-header clocks remain distinct
+ok 72 - streaming includes all chunks; finish and response-header clocks remain distinct
+  ---
+  duration_ms: 103.039175
+  type: 'test'
+  ...
+# Subtest: HEAD and no-content responses do not count unsent payload bytes
+ok 73 - HEAD and no-content responses do not count unsent payload bytes
+  ---
+  duration_ms: 141.74733
+  type: 'test'
+  ...
+# Subtest: cached live Redis data cannot bypass a committed suspension when invalidation delivery fails
+ok 74 - cached live Redis data cannot bypass a committed suspension when invalidation delivery fails
+  ---
+  duration_ms: 615.557125
+  type: 'test'
+  ...
+# Subtest: archival, pending deletion, owner deletion and unpublishing deny warm direct by-id reads
+ok 75 - archival, pending deletion, owner deletion and unpublishing deny warm direct by-id reads
+  ---
+  duration_ms: 726.995201
+  type: 'test'
+  ...
+# Subtest: fresh access really bypasses a warm Redis decision; restoration needs no stale-TTL wait
+ok 76 - fresh access really bypasses a warm Redis decision; restoration needs no stale-TTL wait
+  ---
+  duration_ms: 154.014928
+  type: 'test'
+  ...
+# Subtest: already warm routes cannot extend trial authorization deadlines
+ok 77 - already warm routes cannot extend trial authorization deadlines
+  ---
+  duration_ms: 167.487899
+  type: 'test'
+  ...
+# Subtest: Redis outage and recovery do not resurrect an old live authorization decision
+ok 78 - Redis outage and recovery do not resurrect an old live authorization decision
+  ---
+  duration_ms: 192.543463
+  type: 'test'
+  ...
+# Subtest: an access-less legacy projection envelope is a cache miss, not a public response
+ok 79 - an access-less legacy projection envelope is a cache miss, not a public response
+  ---
+  duration_ms: 181.436365
+  type: 'test'
+  ...
+# Subtest: every Express entry strips internal headers from parsed and raw representations
+ok 80 - every Express entry strips internal headers from parsed and raw representations
+  ---
+  duration_ms: 3.531702
+  type: 'test'
+  ...
+# Subtest: missing Prisma delegate fails with a configuration error rather than an allow-access fixture
+ok 81 - missing Prisma delegate fails with a configuration error rather than an allow-access fixture
+  ---
+  duration_ms: 32.948579
+  type: 'test'
+  ...
+# Subtest: unknown lifecycle/account/subscription values never receive allow-access by falling through
+ok 82 - unknown lifecycle/account/subscription values never receive allow-access by falling through
+  ---
+  duration_ms: 472.771334
+  type: 'test'
+  ...
+# Subtest: an old warm projection cannot hide a newer committed revision when delivery was missed
+ok 83 - an old warm projection cannot hide a newer committed revision when delivery was missed
+  ---
+  duration_ms: 144.361169
+  type: 'test'
+  ...
+# Subtest: a live state with a missing committed revision fails closed even with a warm projection
+ok 84 - a live state with a missing committed revision fails closed even with a warm projection
+  ---
+  duration_ms: 126.887638
+  type: 'test'
+  ...
+# Subtest: a feature override expiry caps the cache horizon and is reevaluated on the next request
+ok 85 - a feature override expiry caps the cache horizon and is reevaluated on the next request
+  ---
+  duration_ms: 117.557267
+  type: 'test'
+  ...
+# Subtest: Socket.IO polling/upgrades sanitize routing hints before the existing session authenticator
+ok 86 - Socket.IO polling/upgrades sanitize routing hints before the existing session authenticator
+  ---
+  duration_ms: 10.108663
+  type: 'test'
+  ...
+# Subtest: read-only rules accept retained old renderers and legitimate autosave counters ahead of history
+ok 87 - read-only rules accept retained old renderers and legitimate autosave counters ahead of history
+  ---
+  duration_ms: 33.550009
+  type: 'test'
+  ...
+# Subtest: reports broken publication, completed-without-publication, missing initial revision and regressed counters
+ok 88 - reports broken publication, completed-without-publication, missing initial revision and regressed counters
+  ---
+  duration_ms: 0.597083
+  type: 'test'
+  ...
+# Subtest: unknown stored template/components cannot be hidden by a permissive runtime projection parser
+ok 89 - unknown stored template/components cannot be hidden by a permissive runtime projection parser
+  ---
+  duration_ms: 0.652086
+  type: 'test'
+  ...
+# Subtest: tenant-owned form/asset/page references are checked for drafts and snapshots
+ok 90 - tenant-owned form/asset/page references are checked for drafts and snapshots
+  ---
+  duration_ms: 1.275659
+  type: 'test'
+  ...
+# Subtest: intentional clears and legacy external ABOUT photos are not misclassified as foreign managed assets
+ok 91 - intentional clears and legacy external ABOUT photos are not misclassified as foreign managed assets
+  ---
+  duration_ms: 0.479014
+  type: 'test'
+  ...
+# Subtest: empty services and malformed/duplicate legacy progress are reported without modifying data
+ok 92 - empty services and malformed/duplicate legacy progress are reported without modifying data
+  ---
+  duration_ms: 0.558465
+  type: 'test'
+  ...
+# Subtest: audit cannot accept fix flags, unbounded batch sizes, or duplicate options
+ok 93 - audit cannot accept fix flags, unbounded batch sizes, or duplicate options
+  ---
+  duration_ms: 0.725236
+  type: 'test'
+  ...
+# Subtest: audit executes a read-only repeatable snapshot and records exact counts with bounded per-code samples
+ok 94 - audit executes a read-only repeatable snapshot and records exact counts with bounded per-code samples
+  ---
+  duration_ms: 1.968828
+  type: 'test'
+  ...
+# Subtest: read failure rolls back and throws, never emits a partial successful reconciliation
+ok 95 - read failure rolls back and throws, never emits a partial successful reconciliation
+  ---
+  duration_ms: 1.119182
+  type: 'test'
+  ...
+# Subtest: an audit bound that excludes rows fails rather than returning an apparently clean partial scan
+ok 96 - an audit bound that excludes rows fails rather than returning an apparently clean partial scan
+  ---
+  duration_ms: 3.671062
+  type: 'test'
+  ...
+# Subtest: audit detects divergence between the immutable publication and its exact revision, ignoring object-key order
+ok 97 - audit detects divergence between the immutable publication and its exact revision, ignoring object-key order
+  ---
+  duration_ms: 0.564974
+  type: 'test'
+  ...
+# Subtest: complete version-bound OTP/renderer/reconciliation/wildcard evidence approves only predeploy
+ok 98 - complete version-bound OTP/renderer/reconciliation/wildcard evidence approves only predeploy
+  ---
+  duration_ms: 6.540612
+  type: 'test'
+  ...
+# Subtest: stale, placeholder, failed and missing-cleanup reports cannot satisfy release approval
+ok 99 - stale, placeholder, failed and missing-cleanup reports cannot satisfy release approval
+  ---
+  duration_ms: 10.368881
+  type: 'test'
+  ...
+# Subtest: empty CI databases, incomplete inventory and unreviewed warning reports block production
+ok 100 - empty CI databases, incomplete inventory and unreviewed warning reports block production
+  ---
+  duration_ms: 2.999977
+  type: 'test'
+  ...
+# Subtest: custom-domain evidence is required only when enabled; default activation additionally needs a production canary
+ok 101 - custom-domain evidence is required only when enabled; default activation additionally needs a production canary
+  ---
+  duration_ms: 1.802837
+  type: 'test'
+  ...
+# Subtest: small canary exercises canonical/app routes cold/warm and public by-id without writes
+ok 102 - small canary exercises canonical/app routes cold/warm and public by-id without writes
+  ---
+  duration_ms: 22.647271
+  type: 'test'
+  ...
+# Subtest: canary fails for a denied website exposed as live or a mismatched committed revision
+ok 103 - canary fails for a denied website exposed as live or a mismatched committed revision
+  ---
+  duration_ms: 2.342512
+  type: 'test'
+  ...
+# Subtest: cohort validation cannot silently expand to unrelated hosts, duplicate tenants or a large rollout
+ok 104 - cohort validation cannot silently expand to unrelated hosts, duplicate tenants or a large rollout
+  ---
+  duration_ms: 0.256528
+  type: 'test'
+  ...
+# Subtest: source qualification removes ALL staging E2E variables, not just a historical allowlist
+ok 105 - source qualification removes ALL staging E2E variables, not just a historical allowlist
+  ---
+  duration_ms: 105.651501
+  type: 'test'
+  ...
+# Subtest: missing interface viewport or incomplete service catalog evidence blocks release
+ok 106 - missing interface viewport or incomplete service catalog evidence blocks release
+  ---
+  duration_ms: 4.675952
+  type: 'test'
+  ...
+1..106
+# tests 106
+# suites 0
+# pass 106
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 8053.105774

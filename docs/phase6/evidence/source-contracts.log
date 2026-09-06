@@ -1,0 +1,40 @@
+$ node scripts/checkRepositoryHygiene.mjs
+Repository hygiene check passed.
+
+$ node scripts/phase7/checkSecretSafety.mjs
+Phase 7 secret safety: OK
+
+$ node scripts/checkProductionCleanup.mjs
+Production cleanup contract: OK
+
+$ node scripts/verifyReliability.mjs
+[reliability] PASS
+
+$ node scripts/verifyPhase5Security.mjs
+Phase 5 backend security verification passed.
+
+$ node scripts/verifyPhase6Observability.mjs
+Phase 6 backend observability verification passed.
+
+$ node scripts/verifyAuthPhase6.mjs
+✓ canonical /auth/session route exists
+✓ session snapshot remains one SQL statement
+✓ session query selects narrow display identity
+✓ session response is non-cacheable
+✓ session varies on cookie
+✓ login response is not routing authority
+✓ verify response is not routing authority
+
+Phase 6 backend auth verification passed (7/7).
+
+$ node scripts/verifyPhase3Runtime.mjs
+[phase3-runtime] PASS: 260 production module files checked
+
+$ node scripts/checkPhase3WebsiteSubmissions.mjs
+Phase 3 website submissions backend contract OK
+
+$ node scripts/checkPhase4WebsiteReviews.mjs
+Phase 4 website reviews backend contract OK
+
+$ node scripts/phase7/verifyPhase7Release.mjs
+Phase 7 backend release gate: OK

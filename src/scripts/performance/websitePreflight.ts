@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -10,10 +11,10 @@ export async function websitePerformancePreflight(args = process.argv.slice(2)) 
   const adminId = args.find(arg => arg.startsWith("--admin-id="))?.slice(11);
   if ((adminId && !uuid.test(adminId)) || (args.includes("--explain") && !adminId)) throw new Error("EXPLAIN requires a representative --admin-id=UUID");
   return prisma.$transaction(async tx => {
-    await tx.$executeRawUnsafe("SET TRANSACTION READ ONLY");
-    await tx.$executeRawUnsafe("SET LOCAL statement_timeout='30s'");
-    await tx.$executeRawUnsafe("SET LOCAL lock_timeout='3s'");
-    const counters = await tx.$queryRawUnsafe<Array<Record<string, unknown>>>(`
+    await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+    await tx.$executeRaw`SET LOCAL statement_timeout='30s'`;
+    await tx.$executeRaw`SET LOCAL lock_timeout='3s'`;
+    const counters = await tx.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       WITH history AS (SELECT "websiteId", MAX("revisionNumber") AS maximum FROM website_revision GROUP BY "websiteId")
       SELECT COUNT(*)::int AS websites,
         COUNT(*) FILTER (WHERE w."draftRevisionNumber" < GREATEST(COALESCE(h.maximum,0), COALESCE(w."publishedRevisionNumber",0)))::int AS counters_behind,
@@ -21,28 +22,28 @@ export async function websitePerformancePreflight(args = process.argv.slice(2)) 
         COUNT(*) FILTER (WHERE w.status='PUBLISHED' AND (w."publishedAt" IS NULL OR w."publishedRevisionNumber" IS NULL
           OR jsonb_typeof(w."publishedSnapshot"->'website') IS DISTINCT FROM 'object'))::int AS invalid_publications
       FROM business_website w LEFT JOIN history h ON h."websiteId"=w.id`);
-    const columns = await tx.$queryRawUnsafe<Array<{ column_name: string }>>("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='business_website' AND column_name IN ('publishedDesignMetadata','publicationDeliveryEventId','publicationDeliveryReceipt')");
-    const triggers = await tx.$queryRawUnsafe<Array<{ tgname: string; tgenabled: string }>>("SELECT tgname, tgenabled FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ('website_revision_counter_monotonic','website_revision_counter_advance','website_publication_design_metadata')");
-    const constraints = await tx.$queryRawUnsafe<Array<{ conname: string; convalidated: boolean }>>("SELECT conname, convalidated FROM pg_constraint WHERE conname='business_website_revision_counter_valid'");
-    const indexes = await tx.$queryRawUnsafe<Array<{ tablename: string; indexname: string; indexdef: string }>>("SELECT tablename,indexname,indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename IN ('business_website','website_revision','website_subdomain_alias','website_domain','service_catalog','outbox_event') ORDER BY tablename,indexname");
-    const receiptHealth = columns.length === 3 ? await tx.$queryRawUnsafe<Array<Record<string, unknown>>>(`
+    const columns = await tx.$queryRaw<Array<{ column_name: string }>>(Prisma.sql`SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='business_website' AND column_name IN ('publishedDesignMetadata','publicationDeliveryEventId','publicationDeliveryReceipt')`);
+    const triggers = await tx.$queryRaw<Array<{ tgname: string; tgenabled: string }>>(Prisma.sql`SELECT tgname, tgenabled FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ('website_revision_counter_monotonic','website_revision_counter_advance','website_publication_design_metadata')`);
+    const constraints = await tx.$queryRaw<Array<{ conname: string; convalidated: boolean }>>(Prisma.sql`SELECT conname, convalidated FROM pg_constraint WHERE conname='business_website_revision_counter_valid'`);
+    const indexes = await tx.$queryRaw<Array<{ tablename: string; indexname: string; indexdef: string }>>(Prisma.sql`SELECT tablename,indexname,indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename IN ('business_website','website_revision','website_subdomain_alias','website_domain','service_catalog','outbox_event') ORDER BY tablename,indexname`);
+    const receiptHealth = columns.length === 3 ? await tx.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`
       SELECT COUNT(*) FILTER (WHERE status='PUBLISHED' AND "publishedDesignMetadata" IS NULL)::int AS missing_design_metadata,
         COUNT(*) FILTER (WHERE status='PUBLISHED' AND ("publicationDeliveryEventId" IS NULL OR "publicationDeliveryReceipt" IS NULL))::int AS missing_delivery_proofs
       FROM business_website`) : null;
     const plans: Array<Record<string, unknown>> = [];
     if (args.includes("--explain")) {
-      const rows = await tx.$queryRawUnsafe<Array<{ id: string; subdomain: string }>>('SELECT id,subdomain FROM business_website WHERE "adminId"=$1', adminId);
+      const rows = await tx.$queryRaw<Array<{ id: string; subdomain: string }>>(Prisma.sql`SELECT id,subdomain FROM business_website WHERE "adminId"=${adminId}`);
       if (rows.length !== 1) throw new Error("Representative tenant website not found");
       const website = rows[0]!;
       const queries = [
-        { name: "compact-status-row", sql: 'SELECT id,status,subdomain,"publishedRevisionNumber" FROM business_website WHERE "adminId"=$1', value: adminId },
-        { name: "host-lookup", sql: 'SELECT id,"adminId",status,"publishedRevisionNumber" FROM business_website WHERE subdomain=$1', value: website.subdomain },
-        { name: "revision-counter", sql: 'SELECT "draftRevisionNumber" FROM business_website WHERE id=$1', value: website.id },
-        { name: "revision-history-page", sql: 'SELECT id,"revisionNumber",reason,"createdAt" FROM website_revision WHERE "websiteId"=$1 ORDER BY "revisionNumber" DESC LIMIT 100', value: website.id },
-        { name: "catalog-page", sql: 'SELECT id,"serviceName",status,"updatedAt" FROM service_catalog WHERE "adminId"=$1 ORDER BY "serviceName" ASC,id ASC LIMIT 100', value: adminId },
+        { name: "compact-status-row", sql: Prisma.sql`SELECT id,status,subdomain,"publishedRevisionNumber" FROM business_website WHERE "adminId"=${adminId}` },
+        { name: "host-lookup", sql: Prisma.sql`SELECT id,"adminId",status,"publishedRevisionNumber" FROM business_website WHERE subdomain=${website.subdomain}` },
+        { name: "revision-counter", sql: Prisma.sql`SELECT "draftRevisionNumber" FROM business_website WHERE id=${website.id}` },
+        { name: "revision-history-page", sql: Prisma.sql`SELECT id,"revisionNumber",reason,"createdAt" FROM website_revision WHERE "websiteId"=${website.id} ORDER BY "revisionNumber" DESC LIMIT 100` },
+        { name: "catalog-page", sql: Prisma.sql`SELECT id,"serviceName",status,"updatedAt" FROM service_catalog WHERE "adminId"=${adminId} ORDER BY "serviceName" ASC,id ASC LIMIT 100` },
       ];
       for (const query of queries) {
-        const explained = await tx.$queryRawUnsafe<Array<Record<string, unknown>>>(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, TIMING TRUE) ${query.sql}`, query.value);
+        const explained = await tx.$queryRaw<Array<Record<string, unknown>>>(Prisma.sql`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, TIMING TRUE) ${query.sql}`);
         const raw = explained[0]?.["QUERY PLAN"] as Array<{ "Execution Time"?: number; "Planning Time"?: number; Plan?: Record<string, unknown> }>;
         const plan = raw?.[0];
         // Parent node buffers include children. Report the root, do not sum them.

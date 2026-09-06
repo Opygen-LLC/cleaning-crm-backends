@@ -1,4 +1,4 @@
-name: Phase 8 Production Gate
+name: Backend security and release gate
 
 on:
   pull_request:
@@ -90,6 +90,14 @@ jobs:
       - run: pnpm run check:release-infra
       - run: pnpm run check:phase8:production
       - run: pnpm run data:audit:phase8
+      - run: pnpm run test:phase6:regressions
+      - run: pnpm run test:phase1:launch:integration
+      - run: pnpm run test:phase3:preview-contract
+      - run: pnpm run test:phase4:design:contracts
+      - name: Execute reconciliation SQL against the migrated CI database (not production evidence)
+        run: pnpm run website:release:reconcile --ci --output=artifacts/phase6/ci-reconciliation.json
+        env:
+          RELEASE_GIT_SHA: ${{ github.sha }}
       - run: pnpm run test:phase1:launch
       - run: pnpm run test:security
       - run: pnpm run test:integration
@@ -103,3 +111,10 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run test
       - run: pnpm run build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase6-backend-ci-audit-${{ github.sha }}
+          path: artifacts/phase6/ci-reconciliation.json
+          if-no-files-found: error
+          retention-days: 7

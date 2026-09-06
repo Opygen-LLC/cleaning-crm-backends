@@ -160,7 +160,7 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
       _avg: { rating: true },
       _count: { _all: true },
     }),
-    TenantAccessResolver.resolve(website.adminId),
+    TenantAccessResolver.resolve(website.adminId, { authoritative: true }),
   ]);
   const entitlements = WebsiteEntitlementService.fromAccess(access);
 
@@ -479,7 +479,8 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
   const adminId = await WebsiteProjectionCacheService.getAdminIdForWebsite(websiteId);
   if (!adminId) throw new AppError(status.NOT_FOUND, "Website not found");
 
-  const access = await TenantAccessResolver.resolve(adminId);
+  const access = await TenantAccessResolver.resolve(adminId, { authoritative: true });
+  if (access.website.id !== websiteId) throw new AppError(status.NOT_FOUND, "Website not found");
   if (!access.access.publicWebsiteAllowed) {
     if (access.website.deniedReason === "WEBSITE_UNPUBLISHED") {
       throw new AppError(status.NOT_FOUND, "Website not found");
@@ -490,20 +491,33 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
     });
   }
 
+  if (!Number.isSafeInteger(access.website.publishedRevisionNumber) || access.website.publishedRevisionNumber! < 1) {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Website publication is not ready", {
+      code: "WEBSITE_PUBLICATION_REVISION_MISMATCH", retryable: false,
+    });
+  }
+
   type PublicProjection = ReturnType<typeof projectWebsite>;
-  const canonical = await WebsiteProjectionCacheService.getOrLoad<PublicProjection>(
-    websiteId,
-    async () => {
-      const source = await loadProjectionSource(websiteId, { includeDraftPages: false });
-      const publishedSnapshot = await resolveSafePublishedSnapshot(source.website);
-      return projectWebsite(source, {
-        mode: "public",
-        aliasRedirectSubdomain: null,
-        snapshotOverride: publishedSnapshot,
-      });
-    },
-    access,
-  );
+  const loadCurrentProjection = async (): Promise<PublicProjection> => {
+    const source = await loadProjectionSource(websiteId, { includeDraftPages: false });
+    const publishedSnapshot = await resolveSafePublishedSnapshot(source.website);
+    return projectWebsite(source, {
+      mode: "public", aliasRedirectSubdomain: null, snapshotOverride: publishedSnapshot,
+    });
+  };
+  let canonical = await WebsiteProjectionCacheService.getOrLoad<PublicProjection>(websiteId, loadCurrentProjection, access);
+  // Invalidation may have failed while Redis remained readable. Never return
+  // that older publication, including to direct by-id callers (no Next proxy).
+  if (canonical?.website?.id !== websiteId ||
+      canonical.website.publishedRevisionNumber !== access.website.publishedRevisionNumber) {
+    canonical = await loadCurrentProjection();
+  }
+  if (!Number.isSafeInteger(access.website.publishedRevisionNumber) || access.website.publishedRevisionNumber! < 1 ||
+      canonical?.website?.id !== websiteId || canonical.website.publishedRevisionNumber !== access.website.publishedRevisionNumber) {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Website publication changed; retry the request", {
+      code: "WEBSITE_PUBLICATION_REVISION_MISMATCH", retryable: true,
+    });
+  }
 
   // A slow rebuild may cross an authorization boundary. Fail closed rather
   // than serve the projection that was authorized before that boundary. With

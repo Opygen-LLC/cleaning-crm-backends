@@ -29,7 +29,7 @@ const samples = async <T>(tx: Prisma.TransactionClient, sql: Prisma.Sql) =>
 const runAudit = async (): Promise<AuditFinding[]> => prisma.$transaction(async (tx) => {
   // Defense in depth: this script must never repair, delete, or otherwise mutate
   // production data. PostgreSQL will reject any accidental write after this.
-  await tx.$executeRawUnsafe("SET TRANSACTION READ ONLY");
+  await tx.$executeRaw`SET TRANSACTION READ ONLY`;
 
   const findings: AuditFinding[] = [];
   const add = async <T>(

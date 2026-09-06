@@ -22,7 +22,7 @@ import { getCanonicalWebsiteHost } from "./websiteCanonicalHost";
 import { WebsiteEntitlementService } from "./websiteEntitlement.service";
 import { TenantAccessResolver, type TenantAccessResolution } from "../Entitlement/tenantAccessResolver.service";
 
-const ROUTE_CACHE_VERSION = 10 as const;
+const ROUTE_CACHE_VERSION = 11 as const;
 const CACHE_NAMESPACE = `site-route:v${ROUTE_CACHE_VERSION}`;
 const SUBDOMAIN_KEY_PREFIX = `${CACHE_NAMESPACE}:subdomain:`;
 const LOCK_KEY_PREFIX = `${CACHE_NAMESPACE}:lock:`;
@@ -328,7 +328,7 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
     },
   });
   if (website) {
-    const access = await TenantAccessResolver.resolve(website.admin.id);
+    const access = await TenantAccessResolver.resolve(website.admin.id, { authoritative: true });
     const entitlements = WebsiteEntitlementService.fromAccess(access);
     return {
       version: ROUTE_CACHE_VERSION,
@@ -372,7 +372,7 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
   });
   if (!alias) return null;
 
-  const aliasAccess = await TenantAccessResolver.resolve(alias.website.admin.id);
+  const aliasAccess = await TenantAccessResolver.resolve(alias.website.admin.id, { authoritative: true });
   const aliasEntitlements = WebsiteEntitlementService.fromAccess(aliasAccess);
   return {
     version: ROUTE_CACHE_VERSION,
@@ -396,7 +396,7 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
  * app instances and writes are generation-guarded, so a rename/suspension that
  * invalidates Redis cannot be overwritten by an older in-flight SQL result.
  */
-const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> => {
+const resolveSubdomainCached = async (input: string): Promise<WebsiteRouteResolution> => {
   let subdomain: string;
   try {
     subdomain = normalizeSubdomain(input);
@@ -491,7 +491,7 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
     throw new AppError(status.NOT_FOUND, "Website host not found");
   }
 
-  const domainAccess = await TenantAccessResolver.resolve(domain.website.admin.id);
+  const domainAccess = await TenantAccessResolver.resolve(domain.website.admin.id, { authoritative: true });
   const entitlements = WebsiteEntitlementService.fromAccess(domainAccess);
   if (!hasCustomDomainRouting(entitlements)) {
     // A downgrade must remove premium routing immediately without deleting the
@@ -558,10 +558,13 @@ const readHostCache = async (key: string, host: string): Promise<WebsiteHostReso
   return null;
 };
 
-const loadHostFromDatabase = async (host: string): Promise<WebsiteHostResolution> => {
+const loadHostFromDatabase = async (host: string, freshBinding = false): Promise<WebsiteHostResolution> => {
   const platformSubdomain = platformSubdomainFromHost(host);
   if (platformSubdomain) {
-    const route = await resolveSubdomain(platformSubdomain);
+    const route = freshBinding
+      ? await loadSubdomainFromDatabase(platformSubdomain)
+      : await resolveSubdomainCached(platformSubdomain);
+    if (!route) throw new AppError(status.NOT_FOUND, "Website host not found");
     const canonicalHost = getCanonicalWebsiteHost(route.canonicalSubdomain, route.primaryCustomHost);
     if (!canonicalHost) throw new AppError(status.NOT_FOUND, "Website host not found");
     const shouldRedirect = canonicalHost !== host;
@@ -580,6 +583,44 @@ const loadHostFromDatabase = async (host: string): Promise<WebsiteHostResolution
   return resolveCustomHost(host);
 };
 
+/** Bind the cached identity to current SQL authorization. A Redis epoch is an
+ * invalidation optimization, not durable evidence that a tenant is still live.
+ */
+const authorizeRoute = async <T extends WebsiteRouteResolution>(route: T): Promise<T> => {
+  const access = await TenantAccessResolver.resolve(route.organizationId, { authoritative: true });
+  if (access.website.id !== route.websiteId || !access.website.subdomain) {
+    throw new AppError(status.NOT_FOUND, "Website not found");
+  }
+  if (!Number.isFinite(Date.parse(access.validUntil)) || Date.parse(access.validUntil) <= Date.now()) {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Website authorization changed; retry the request");
+  }
+  if (access.access.publicWebsiteAllowed &&
+      (!Number.isSafeInteger(access.website.publishedRevisionNumber) || access.website.publishedRevisionNumber! < 1)) {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Website publication is not ready", {
+      code: "WEBSITE_PUBLICATION_INVALID", retryable: false,
+    });
+  }
+  return {
+    ...route, ...accessMetadata(access),
+    canonicalSubdomain: access.website.subdomain,
+    publishedRevisionNumber: access.website.publishedRevisionNumber,
+    availability: websiteAvailability(access),
+  };
+};
+
+// Direct /site identifier reads require the same fence as canonical host reads.
+const resolveSubdomain = async (input: string): Promise<WebsiteRouteResolution> => {
+  let route = await resolveSubdomainCached(input);
+  const authorized = await authorizeRoute(route);
+  if (route.isAlias || authorized.canonicalSubdomain !== route.canonicalSubdomain) {
+    const current = await loadSubdomainFromDatabase(route.requestedSubdomain);
+    if (!current) throw new AppError(status.NOT_FOUND, "Website not found");
+    route = current;
+    return authorizeRoute(route);
+  }
+  return authorized;
+};
+
 /**
  * Resolve a full request host for the frontend proxy. A distributed Redis lock
  * collapses cold-host stampedes, while per-key generations prevent an older DB
@@ -591,17 +632,15 @@ const resolveHostWithDiagnostics = async (input: string): Promise<{
 }> => {
   const startedAt = performance.now();
   const finish = async (resolution: WebsiteHostResolution, source: WebsiteHostResolverSource) => {
-    // SQL/rebuild waits may cross an expiry or an epoch rotation. Re-evaluate
-    // once before sending this time-bounded routing decision to the edge.
-    if (Date.parse(resolution.validUntil) <= Date.now() ||
-        (resolution.accessGeneration !== null && !await validCachedRoute(resolution))) {
-      await TenantAccessResolver.resolve(resolution.organizationId, { fresh: true });
-      resolution = await loadHostFromDatabase(host);
+    // All responses, including warm Redis hits, cross a request-scoped SQL
+    // fence. Cached aliases/custom hosts also re-prove their domain binding.
+    const authorized = await authorizeRoute(resolution);
+    if (resolution.isAlias || resolution.routeKind === "custom_domain" ||
+        resolution.primaryCustomHost || authorized.canonicalSubdomain !== resolution.canonicalSubdomain) {
+      resolution = await authorizeRoute(await loadHostFromDatabase(host, true));
       source = "database";
-      if (Date.parse(resolution.validUntil) <= Date.now() ||
-          (resolution.accessGeneration !== null && !await validCachedRoute(resolution))) {
-        throw new AppError(status.SERVICE_UNAVAILABLE, "Website authorization changed; retry the request");
-      }
+    } else {
+      resolution = authorized;
     }
     recordTraceResponseCache(source === "redis" || source === "redis-fill" ? "hit" : "miss");
     return { resolution, diagnostics: { source, durationMs: Math.round((performance.now() - startedAt) * 10) / 10 } };

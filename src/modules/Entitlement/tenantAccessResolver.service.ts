@@ -21,6 +21,7 @@ import {
 } from "../SuperAdmin/tenantEntitlement.service";
 
 export type TenantAccessDeniedReason =
+  | "ACCESS_CONFIGURATION_INVALID"
   | "ACTIVE"
   | "TENANT_SUSPENDED"
   | "TENANT_ARCHIVED"
@@ -62,6 +63,9 @@ export interface TenantAccessResolution {
     cancelAtPeriodEnd: boolean;
   };
   website: {
+    id: string | null;
+    subdomain: string | null;
+    publishedRevisionNumber: number | null;
     status: string | null;
     published: boolean;
     publicAccessAllowed: boolean;
@@ -106,7 +110,7 @@ export interface TenantAccessResolution {
 // A new namespace rejects legacy entries without an epoch/deadline. Epochs do
 // not expire independently of values; random tokens also prevent an ABA race
 // after eviction, FLUSHDB or Redis failover.
-const accessCacheKey = (organizationId: string) => `${CacheNamespaces.tenantAccess(organizationId)}:v2`;
+const accessCacheKey = (organizationId: string) => `${CacheNamespaces.tenantAccess(organizationId)}:v3`;
 const generationKey = (organizationId: string) => `${accessCacheKey(organizationId)}:generation`;
 
 const getGeneration = async (organizationId: string): Promise<string | null> => {
@@ -174,8 +178,12 @@ export const evaluateTenantAccess = (input: {
   else if (input.isTrial && input.trialEndsAt && input.trialEndsAt <= now) deniedReason = "TRIAL_EXPIRED";
   else if (!input.isTrial && input.currentPeriodEnd && input.currentPeriodEnd <= now) deniedReason = "SUBSCRIPTION_EXPIRED";
 
+  if (deniedReason === "ACTIVE" && (input.lifecycleStatus !== "ACTIVE" ||
+      input.ownerStatus !== "ACTIVE" || input.subscriptionStatus !== "ACTIVE")) {
+    deniedReason = "ACCESS_CONFIGURATION_INVALID";
+  }
   const dashboardAllowed = deniedReason === "ACTIVE";
-  const recoveryAllowed = !["TENANT_ARCHIVED", "TENANT_PENDING_DELETION", "TENANT_SUSPENDED", "OWNER_ACCOUNT_DELETED", "OWNER_ACCOUNT_SUSPENDED"].includes(deniedReason);
+  const recoveryAllowed = !["ACCESS_CONFIGURATION_INVALID", "TENANT_ARCHIVED", "TENANT_PENDING_DELETION", "TENANT_SUSPENDED", "OWNER_ACCOUNT_DELETED", "OWNER_ACCOUNT_SUSPENDED"].includes(deniedReason);
   return { deniedReason, dashboardAllowed, recoveryAllowed };
 };
 
@@ -232,6 +240,13 @@ function addLimit(base: number | null, extra: number): number | null {
 
 const loadTenantAccess = async (organizationId: string, generation: string | null): Promise<TenantAccessResolution> => {
   const key = accessCacheKey(organizationId);
+  // Never manufacture allow-access state for a missing client/delegate. Tests
+  // provide an explicit adapter; a bad deployment fails closed in every mode.
+  if (typeof prisma?.adminProfile?.findUnique !== "function") {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "Organization access resolver is not configured.", {
+      code: "TENANT_ACCESS_CONFIGURATION_INVALID", retryable: false,
+    });
+  }
   const tenant = await prisma.adminProfile.findUnique({
     where: { id: organizationId },
     select: {
@@ -247,7 +262,7 @@ const loadTenantAccess = async (organizationId: string, generation: string | nul
       deletionLastError: true,
       deletionReason: true,
       user: { select: { status: true } },
-      businessWebsite: { select: { status: true } },
+      businessWebsite: { select: { id: true, subdomain: true, status: true, publishedRevisionNumber: true } },
       entitlementOverride: { select: { resources: true, features: true, expiresAt: true, reason: true } },
       subscription: {
         orderBy: { createdAt: "desc" },
@@ -347,6 +362,9 @@ const loadTenantAccess = async (organizationId: string, generation: string | nul
       cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd ?? false,
     },
     website: {
+      id: tenant.businessWebsite?.id ?? null,
+      subdomain: tenant.businessWebsite?.subdomain ?? null,
+      publishedRevisionNumber: tenant.businessWebsite?.publishedRevisionNumber ?? null,
       status: tenant.businessWebsite?.status ?? null,
       published: websitePublished,
       publicAccessAllowed: publicWebsiteAllowed,
@@ -382,11 +400,11 @@ const loadTenantAccess = async (organizationId: string, generation: string | nul
   return resolution;
 };
 
-async function resolveUncachedTenantAccess(organizationId: string): Promise<TenantAccessResolution> {
+async function resolveUncachedTenantAccess(organizationId: string, bypassCache = false): Promise<TenantAccessResolution> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     // Capture the epoch BEFORE starting SQL, never after the result arrives.
     const generation = await getGeneration(organizationId);
-    const cached = await readCached(organizationId, generation);
+    const cached = bypassCache ? null : await readCached(organizationId, generation);
     if (cached) return cached;
     const loaded = await loadTenantAccess(organizationId, generation);
     const ttlMs = Math.floor(Date.parse(loaded.validUntil) - Date.now());
@@ -413,15 +431,26 @@ async function resolveUncachedTenantAccess(organizationId: string): Promise<Tena
   });
 }
 
-export function resolveTenantAccess(organizationId: string, options: { fresh?: boolean } = {}): Promise<TenantAccessResolution> {
-  const key = `tenant-access:${organizationId}`;
-  if (options.fresh) forgetRequestMemo(key);
-  return requestMemo(key, () => resolveUncachedTenantAccess(organizationId), value =>
+export function resolveTenantAccess(
+  organizationId: string,
+  options: { fresh?: boolean; authoritative?: boolean } = {},
+): Promise<TenantAccessResolution> {
+  // Public authorization is SQL-backed even when Redis still holds an old
+  // epoch after a failed invalidation, restore, restart or missed callback.
+  // It is deduplicated within this request, never between requests/tenants.
+  const authoritative = options.authoritative === true || options.fresh === true;
+  const key = `tenant-access${authoritative ? ":authoritative" : ""}:${organizationId}`;
+  if (options.fresh) {
+    forgetRequestMemo(`tenant-access:${organizationId}`);
+    forgetRequestMemo(`tenant-access:authoritative:${organizationId}`);
+  }
+  return requestMemo(key, () => resolveUncachedTenantAccess(organizationId, authoritative), value =>
     value.organizationId === organizationId && Number.isFinite(Date.parse(value.validUntil)) && Date.parse(value.validUntil) > Date.now());
 }
 
 export async function invalidateTenantAccess(organizationId: string): Promise<boolean> {
   forgetRequestMemo(`tenant-access:${organizationId}`);
+  forgetRequestMemo(`tenant-access:authoritative:${organizationId}`);
   try {
     const result = await redis.eval(
       `-- access:invalidate

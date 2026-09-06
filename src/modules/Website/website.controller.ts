@@ -322,7 +322,7 @@ const getPublicWebsiteBooking = catchAsync(async (req, res) => {
       ctaLabel: integration.ctaLabel,
     },
   };
-  res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
+  res.setHeader("Cache-Control", "no-store, max-age=0");
   return ok(res, "Website booking form retrieved successfully", data);
 });
 
@@ -372,7 +372,7 @@ const submitPublicWebsiteBooking = catchAsync(async (req, res) => {
 const getPublicWebsiteEstimate = catchAsync(async (req, res) => {
   const integration = await PublicWebsiteService.resolvePublicEstimateIntegration(paramStr(req.params.identifier));
   const data = await estimateFormService.getPublicEstimateFormById(integration.formId, integration.adminId);
-  res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
+  res.setHeader("Cache-Control", "no-store, max-age=0");
   return ok(res, "Website estimate form retrieved successfully", data);
 });
 
@@ -478,6 +478,12 @@ const updateWebsiteSubmissionStatus = catchAsync(async (req, res) => {
 
 const getPublicWebsiteById = catchAsync(async (req, res) => {
   const data = await PublicWebsiteService.getPublicWebsiteById(paramStr(req.params.websiteId));
+  if (req.query.publicationRevision !== undefined &&
+      String(data.website.publishedRevisionNumber) !== String(req.query.publicationRevision)) {
+    throw new AppError(status.CONFLICT, "Website publication changed; retry the request", {
+      code: "WEBSITE_PUBLICATION_REVISION_MISMATCH", retryable: true,
+    });
+  }
   // This endpoint is used by the Next.js server after the edge host resolver
   // has already produced websiteId. Redis remains the cache of record; do not
   // allow downstream shared caches to outlive CRM invalidation.

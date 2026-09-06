@@ -15,7 +15,7 @@ import { WEBSITE_EDITOR_SURFACES, type WebsiteEditorSurface } from "./website.in
 import { prisma } from "../../lib/prisma/prisma";
 import { TenantAccessResolver, type TenantAccessResolution } from "../Entitlement/tenantAccessResolver.service";
 
-const CACHE_VERSION = 10 as const;
+const CACHE_VERSION = 11 as const;
 const STALE_KEY_PREFIX = `site-projection-stale:v${CACHE_VERSION}:`;
 const LOCK_PREFIX = `site-projection-lock:v${CACHE_VERSION}:`;
 const GENERATION_PREFIX = `site-projection-generation:v${CACHE_VERSION}:`;
@@ -63,9 +63,11 @@ const parseEnvelope = async <T>(raw: string | null, websiteId: string): Promise<
   try {
     const parsed = JSON.parse(raw) as ProjectionCacheEnvelope<T>;
     if (parsed.version !== CACHE_VERSION || parsed.websiteId !== websiteId) return null;
-    if (parsed.access && (!Number.isFinite(Date.parse(parsed.access.validUntil)) ||
+    // Legacy/access-less envelopes are data, not authorization evidence.
+    if (!parsed.access?.organizationId || !parsed.access.generation ||
+        !Number.isFinite(Date.parse(parsed.access.validUntil)) ||
         Date.parse(parsed.access.validUntil) <= Date.now() ||
-        !await TenantAccessResolver.isCurrentGeneration(parsed.access.organizationId, parsed.access.generation))) return null;
+        !await TenantAccessResolver.isCurrentGeneration(parsed.access.organizationId, parsed.access.generation)) return null;
     return parsed.data;
   } catch {
     return null;
@@ -103,6 +105,7 @@ const getGeneration = async (websiteId: string): Promise<number | null> => {
  * without sacrificing immediate CRM freshness.
  */
 const setForGeneration = async <T>(websiteId: string, data: T, generation: number, access?: ProjectionAccess): Promise<boolean> => {
+  if (!access?.organizationId || !access.generation) return false;
   const envelope: ProjectionCacheEnvelope<T> = {
     version: CACHE_VERSION,
     websiteId,
@@ -147,7 +150,7 @@ const set = async <T>(websiteId: string, data: T): Promise<boolean> => {
   const adminId = await getAdminIdForWebsite(websiteId);
   if (!adminId) return false;
   try {
-    const access = await TenantAccessResolver.resolve(adminId);
+    const access = await TenantAccessResolver.resolve(adminId, { authoritative: true });
     if (!access.access.publicWebsiteAllowed) return false;
     return setForGeneration(websiteId, data, generation, access);
   } catch {

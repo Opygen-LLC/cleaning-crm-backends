@@ -59,6 +59,9 @@ const defaultAccess = (overrides: Record<string, any> = {}) => ({
     cancelAtPeriodEnd: false,
   },
   website: {
+    id: "website-1",
+    subdomain: "sparkle",
+    publishedRevisionNumber: 1,
     status: "PUBLISHED",
     published: true,
     publicAccessAllowed: true,
@@ -95,7 +98,7 @@ const defaultAccess = (overrides: Record<string, any> = {}) => ({
     afterPaidExtras: {},
     effective: {},
   },
-  ...overrides,
+  ...Object.fromEntries(Object.entries(overrides).filter(([key]) => !["website", "access", "plan", "effectiveEntitlements"].includes(key))),
 });
 
 beforeEach(() => {
@@ -131,6 +134,7 @@ describe("production tenant host routing", () => {
   });
 
   it("turns an old subdomain alias into one permanent redirect to the current host", async () => {
+    tenantAccessMock.resolve.mockImplementation(async () => defaultAccess({ website: { subdomain: "sparkle-london" } }));
     prismaMock.websiteSubdomainAlias.findUnique.mockResolvedValue({
       websiteId: "website-1",
       website: {
@@ -243,6 +247,7 @@ describe("production tenant host routing", () => {
   });
 
   it("falls back to the free subdomain when no routing-ready primary custom domain is returned", async () => {
+    tenantAccessMock.resolve.mockImplementation(async () => defaultAccess({ website: { subdomain: "bio-cleaning" } }));
     prismaMock.businessWebsite.findUnique.mockResolvedValue({
       id: "website-1",
       subdomain: "bio-cleaning",
@@ -267,16 +272,16 @@ describe("production tenant host routing", () => {
       expect.stringContaining("current ~= ARGV[1]"),
       2,
       expect.stringContaining("website-host:missing.sites.example.com"),
-      expect.stringContaining("site-route:v10:generation:"),
+      expect.stringContaining("site-route:v11:generation:"),
       "0",
       expect.stringContaining('"notFound":true'),
       "10000",
     );
   });
 
-  it("serves a cached host route without querying the database", async () => {
+  it("reuses a cached binding but authorizes it using a fresh tenant access decision", async () => {
     redisMock.get.mockResolvedValue(JSON.stringify({
-      version: 10,
+      version: 11,
       organizationId: "org-1",
       accessGeneration: "generation-1",
       validUntil: new Date(Date.now() + 60_000).toISOString(),
@@ -297,6 +302,7 @@ describe("production tenant host routing", () => {
 
     const result = await WebsiteHostResolverService.resolveHost("sparkle.sites.example.com");
     expect(result.websiteId).toBe("website-1");
+    expect(tenantAccessMock.resolve).toHaveBeenCalledWith("org-1", { authoritative: true });
     expect(prismaMock.businessWebsite.findUnique).not.toHaveBeenCalled();
     expect(prismaMock.websiteSubdomainAlias.findUnique).not.toHaveBeenCalled();
     expect(prismaMock.websiteDomain.findFirst).not.toHaveBeenCalled();
@@ -328,10 +334,11 @@ describe("production tenant host routing", () => {
   });
 
   it("keeps cached tenant routes isolated by exact host", async () => {
+    tenantAccessMock.resolve.mockImplementation(async (organizationId: string) => defaultAccess({ organizationId, website: organizationId === "org-b" ? {id:"website-b",subdomain:"fresh"} : {id:"website-a",subdomain:"sparkle"} }));
     redisMock.get.mockImplementation(async (key: string) => {
       if (key.includes("sparkle.sites.example.com")) {
         return JSON.stringify({
-          version: 10,
+          version: 11,
       organizationId: "org-1",
       accessGeneration: "generation-1",
       validUntil: new Date(Date.now() + 60_000).toISOString(),
@@ -356,7 +363,7 @@ describe("production tenant host routing", () => {
       id: "website-b",
       subdomain: "fresh",
       status: "PUBLISHED",
-      admin: { id: "org-1", businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
+      admin: { id: "org-b", businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
       domains: [],
     });
 
@@ -369,9 +376,9 @@ describe("production tenant host routing", () => {
   });
 
   it("marks draft websites unpublished so the edge can fail closed before rendering", async () => {
-    tenantAccessMock.resolve.mockResolvedValueOnce(
+    tenantAccessMock.resolve.mockResolvedValue(
       defaultAccess({
-        website: { status: "DRAFT", published: false, publicAccessAllowed: false, deniedReason: "WEBSITE_UNPUBLISHED" },
+        website: { id: "website-draft", subdomain: "draft-cleaner", publishedRevisionNumber: null, status: "DRAFT", published: false, publicAccessAllowed: false, deniedReason: "WEBSITE_UNPUBLISHED" },
         access: {
           dashboardAllowed: true,
           publicWebsiteAllowed: false,
@@ -395,7 +402,7 @@ describe("production tenant host routing", () => {
   });
 
   it("marks suspended tenant accounts unavailable at the routing layer", async () => {
-    tenantAccessMock.resolve.mockResolvedValueOnce(
+    tenantAccessMock.resolve.mockResolvedValue(
       defaultAccess({
         access: {
           dashboardAllowed: false,
@@ -405,7 +412,7 @@ describe("production tenant host routing", () => {
           recoveryAllowed: false,
           deniedReason: "TENANT_SUSPENDED",
         },
-        website: { status: "PUBLISHED", published: true, publicAccessAllowed: false, deniedReason: "TENANT_SUSPENDED" },
+        website: { id:"website-suspended", subdomain:"paused-cleaner", status: "PUBLISHED", published: true, publicAccessAllowed: false, deniedReason: "TENANT_SUSPENDED" },
       })
     );
     prismaMock.businessWebsite.findUnique.mockResolvedValue({

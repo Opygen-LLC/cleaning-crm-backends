@@ -1,3 +1,4 @@
+import { stripInternalRoutingHeaders } from "./middlewares/internalRoutingHeaders";
 import { getRuntimePerformanceSnapshot } from "./lib/monitoring/runtimePerformance";
 /**
  * server.ts — Phase 1 Production Version
@@ -51,6 +52,8 @@ import { getOperationalHealthSnapshot } from "./lib/monitoring/operationalHealth
 import { isTenantPublicApiPath } from "./lib/security/tenantPublicApiPolicy";
 
 const app = express();
+app.disable("x-powered-by");
+app.use(stripInternalRoutingHeaders);
 
 // Public rate limits and privacy-preserving analytics depend on req.ip. In
 // production, trust only the explicitly configured ingress hop count. Local
