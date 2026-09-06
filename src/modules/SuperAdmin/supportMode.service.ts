@@ -245,6 +245,7 @@ export const getSupportSessionSnapshot = async (mode: ActiveSupportMode, origina
   const tenant = await prisma.adminProfile.findUniqueOrThrow({ where: { id: mode.organizationId }, select: { onboardingCompletedAt: true, onboardingCompletedSteps: true, user: { select: { id: true, name: true, email: true, image: true, role: true, status: true, emailVerified: true, needPasswordChange: true } } } });
   return {
     authenticated: true as const,
+    organizationId: mode.organizationId,
     user: { ...tenant.user, role: UserRole.ADMIN },
     // Support mode is a diagnostic view, never an onboarding impersonation.
     onboarding: { completed: true, currentStep: null },

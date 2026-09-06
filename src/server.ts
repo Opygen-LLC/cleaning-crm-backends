@@ -271,7 +271,7 @@ app.get("/", (_req: Request, res: Response) => {
   res.setHeader("Cache-Control", "no-store, max-age=0");
   return res.status(200).json({
     success: true,
-    service: "Cleaning CRM Backend API 06 Sep 2:22 AM",
+    service: "Cleaning CRM Backend API 07 Sep 12:55 AM",
     status: "healthy",
     version: APP_VERSION,
     gitSha: GIT_SHA,

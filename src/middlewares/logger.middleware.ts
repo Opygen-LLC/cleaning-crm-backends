@@ -52,13 +52,13 @@ const logRequestResponse = (
   const originalWriteHead = res.writeHead;
   // Express json() serializes before calling send(). Time that actual boundary
   // without a second JSON.stringify (which can be expensive or mutate toJSON).
-  res.json = function(body: unknown) {
+  res.json = function(this: Response, body: unknown) {
     const previous = jsonStarted;
     jsonStarted = process.hrtime.bigint();
     try { return originalJson.call(this, body); }
     finally { jsonStarted = previous; }
   } as Response["json"];
-  res.send = function(body: unknown) {
+  res.send = function(this: Response, body: unknown) {
     if (jsonStarted !== null) {
       const encodeMs = Number(process.hrtime.bigint() - jsonStarted) / 1_000_000;
       if (requestTrace && !requestTrace.closed) requestTrace.serializationDurationMs += encodeMs;

@@ -1,6 +1,6 @@
 import { stripIncomingRoutingHeaders } from "../middlewares/internalRoutingHeaders";
 import { Server as SocketIOServer, type Socket } from "socket.io";
-import type { Server } from "http";
+import type { IncomingMessage, Server, ServerResponse } from "http";
 import { prisma } from "../lib/prisma/prisma";
 import { ACCESS_TOKEN_SECRET } from "./ENV";
 import { getAuthenticatedOrigins } from "./authSecurity";
@@ -105,7 +105,7 @@ const setUpSocketIO = (server: Server): SocketIOServer => {
 
     // Engine.IO owns polling and upgrade requests outside Express. Scrub both
     // representations before the existing cookie/session authorization runs.
-    io.engine.use((request, _response, next) => {
+    io.engine.use((request: IncomingMessage, _response: ServerResponse, next: (err?: unknown) => void) => {
         stripIncomingRoutingHeaders(request);
         next();
     });

@@ -105,11 +105,11 @@ const session = catchAsync(async (req, res) => {
     if (req.user.role === "SUPER_ADMIN" && !req.supportMode && req.cookies.support_mode) {
         tokenUtils.clearSupportModeCookie(res);
     }
-    let result: Awaited<ReturnType<typeof authService.session>>;
+    let result: Awaited<ReturnType<typeof authService.session>> | Awaited<ReturnType<typeof SupportModeService.sessionSnapshot>>;
 
     try {
         result = req.supportMode
-            ? await SupportModeService.sessionSnapshot(req.supportMode, sessionToken) as Awaited<ReturnType<typeof authService.session>>
+            ? await SupportModeService.sessionSnapshot(req.supportMode, sessionToken)
             : await authService.session(req.user, sessionToken);
     } catch (error) {
         // At this point checkAuthSession has already accepted the access JWT.

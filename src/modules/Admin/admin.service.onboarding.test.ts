@@ -90,7 +90,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   optionalCounts();
   db.$transaction.mockImplementation(async (fn: (tx: typeof db) => unknown) => fn(db));
-  db.adminProfile.findUniqueOrThrow.mockImplementation((args: unknown) => db.adminProfile.findUnique(args));
+  db.adminProfile.findUniqueOrThrow.mockImplementation((args: unknown) => (db.adminProfile.findUnique as (args: unknown) => unknown)(args));
   db.serviceCatalog.findFirst.mockResolvedValue({ id: "service-1" });
 });
 
@@ -367,12 +367,19 @@ describe("onboarding finalization", () => {
   });
 
   it("stamps completion after all steps and a successful website publish", async () => {
+    const preCompletion = {
+      ...statusRow(STEPS),
+      businessWebsite: { id: "website-1", status: "PUBLISHED", publishedAt: new Date("2026-08-17T10:00:00Z"), subdomain: "bio-cleaning" },
+    };
+    const postCompletion = {
+      ...statusRow(STEPS, new Date("2026-08-17T10:01:00Z")),
+      businessWebsite: { id: "website-1", status: "PUBLISHED", publishedAt: new Date("2026-08-17T10:00:00Z"), subdomain: "bio-cleaning" },
+    };
     db.adminProfile.findUnique
-      .mockResolvedValueOnce({
-        ...statusRow(STEPS),
-        businessWebsite: { status: "PUBLISHED", publishedAt: new Date("2026-08-17T10:00:00Z") },
-      })
-      .mockResolvedValueOnce(statusRow(STEPS, new Date("2026-08-17T10:01:00Z")));
+      .mockResolvedValueOnce(preCompletion)
+      .mockResolvedValueOnce(preCompletion)
+      .mockResolvedValueOnce(preCompletion)
+      .mockResolvedValue(postCompletion);
     db.adminProfile.update.mockResolvedValue({});
 
     const result = await adminService.finalizeOnboardingSetup(USER_ID);

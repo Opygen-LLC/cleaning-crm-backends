@@ -56,7 +56,7 @@ export function instrumentPgPool(pool: Pool, observe: (event: DatabaseObservatio
     } as PoolClient["query"];
   };
   const connect = pool.connect;
-  pool.connect = function(this: Pool, callback?: (error: Error, client: PoolClient, release: (error?: Error | boolean) => void) => void) {
+  pool.connect = function(this: Pool, callback?: (error: Error | undefined, client: PoolClient | undefined, release: (error?: Error | boolean) => void) => void) {
     const trace = getRequestTrace();
     const started = process.hrtime.bigint();
     let recorded = false;
