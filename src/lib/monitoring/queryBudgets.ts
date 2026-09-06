@@ -6,8 +6,17 @@ export const ENDPOINT_QUERY_BUDGETS = {
   "GET /api/v1/notification/inbox": 2,
   "GET /api/v1/admin/usage": 5,
   "PUT /api/v1/website/booking-setup": 10,
-  "PUT /api/v1/website/draft": 10,
-  "POST /api/v1/website/launch": 15,
+  // Observation budgets, not reasons to weaken transactional safeguards.
+  "GET /api/v1/website/status": 8,
+  "GET /api/v1/website/editor": 12,
+  "PUT /api/v1/website/editor": 18,
+  "GET /api/v1/website/studio/overview": 8,
+  "GET /api/v1/admin/onboarding/services": 8,
+  "PUT /api/v1/admin/onboarding/services": 24,
+  "PUT /api/v1/admin/onboarding/step": 18,
+  "POST /api/v1/website/publish": 24,
+  "GET /api/v1/website/public/resolve-host/:host": 6,
+  "POST /api/v1/website/launch": 32,
   "POST /api/v1/auth/register": 12,
 
   // Phase 3 hot CRUD/query paths. List endpoints should normally be one data

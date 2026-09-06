@@ -29,6 +29,7 @@ import {
   buildPublishedSnapshot,
   buildWebsitePublicationFingerprint,
   parsePublishedSnapshot,
+  parsePublishedDesignMetadata,
   parseRevisionSnapshotAsPublished,
 } from "./websiteSnapshot";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
@@ -415,7 +416,7 @@ const presentDraftSnapshot = (
   const primaryDomain = WEBSITE_CUSTOM_DOMAINS_ENABLED
     ? draft.domains.find((domain) => domain.isPrimary && isWebsiteDomainRoutingReady(domain))?.domain ?? null
     : null;
-  const liveSnapshot = parsePublishedSnapshot(overrides.publishedSnapshot);
+  const liveSnapshot = parsePublishedDesignMetadata(overrides.publishedSnapshot);
   const draftRevisionNumber = overrides.draftRevisionNumber ?? Number(draft.draftRevisionNumber ?? 0);
   const publishedRevisionNumber =
     overrides.publishedRevisionNumber !== undefined
@@ -490,6 +491,7 @@ const loadWebsiteDetailsWhere = async (
 
   const website = await db.businessWebsite.findUnique({
     where,
+    omit: { publishedSnapshot: true, publicationDeliveryEventId: true, publicationDeliveryReceipt: true },
     include: {
       ...(includePages ? { pages: { orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] } } : {}),
       ...(includeDomains ? { domains: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] } } : {}),
@@ -505,26 +507,17 @@ const loadWebsiteDetailsWhere = async (
   });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website not found");
 
-  const { publishedSnapshot: _publishedSnapshot, ...safeWebsite } = website;
-  const published = parsePublishedSnapshot(website.publishedSnapshot);
+  const { publishedDesignMetadata: _publishedDesignMetadata, ...safeWebsite } = website;
+  const published = parsePublishedDesignMetadata(website.publishedDesignMetadata);
   const websiteDomains = Array.isArray((website as any).domains) ? (website as any).domains : [];
   const presentedDomains = websiteDomains.map((domain: any) => presentWebsiteDomain(domain as any));
   const platformUrl = WEBSITE_BASE_DOMAIN ? `https://${website.subdomain}.${WEBSITE_BASE_DOMAIN}` : null;
   const primaryDomain = WEBSITE_CUSTOM_DOMAINS_ENABLED
     ? websiteDomains.find((domain: any) => domain.isPrimary && isWebsiteDomainRoutingReady(domain))?.domain ?? null
     : null;
-  const maxRevision = await (db as any).websiteRevision.aggregate({
-    where: { websiteId: website.id },
-    _max: { revisionNumber: true },
-  });
-  const maxNum = Number(maxRevision?._max?.revisionNumber ?? 0);
-  const draftRevisionNumber = Math.max(Number(website.draftRevisionNumber ?? 0), maxNum);
-  if (Number(website.draftRevisionNumber ?? 0) < draftRevisionNumber) {
-    await (db as any).businessWebsite.update({
-      where: { id: website.id },
-      data: { draftRevisionNumber },
-    }).catch(() => undefined);
-  }
+  // The migration reconciles this counter and installs monotonic write guards.
+  // GET is read-only: never repair rows or aggregate revision history here.
+  const draftRevisionNumber = Number(website.draftRevisionNumber ?? 0);
   const publicationFingerprint = buildWebsitePublicationFingerprint({
     websiteId: website.id,
     draftRevisionNumber,
@@ -577,20 +570,11 @@ const loadWebsiteEditorDetailsForAdmin = (
 ) => loadWebsiteDetailsWhere({ adminId }, db, { surface });
 
 const getLatestRevisionNumber = async (db: WebsiteDb, websiteId: string): Promise<number> => {
-  const [website, maxRevision] = await Promise.all([
-    db.businessWebsite.findUnique({
-      where: { id: websiteId },
-      select: { draftRevisionNumber: true },
-    }),
-    db.websiteRevision.aggregate({
-      where: { websiteId },
-      _max: { revisionNumber: true },
-    }),
-  ]);
+  const website = await db.businessWebsite.findUnique({
+    where: { id: websiteId }, select: { draftRevisionNumber: true },
+  });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website not found");
-  const draftNum = Number(website.draftRevisionNumber ?? 0);
-  const maxNum = Number(maxRevision._max.revisionNumber ?? 0);
-  return Math.max(draftNum, maxNum);
+  return Number(website.draftRevisionNumber ?? 0);
 };
 
 const assertExpectedRevision = async (
@@ -681,9 +665,13 @@ export const createRevisionSnapshotTx = async (
 export const ensurePublishedSnapshotBeforeDraftMutationTx = async (db: WebsiteDb, websiteId: string) => {
   const current = await db.businessWebsite.findUnique({
     where: { id: websiteId },
-    select: { status: true, publishedSnapshot: true, publishedRevisionNumber: true, draftRevisionNumber: true },
+    select: { status: true, publishedDesignMetadata: true, publishedRevisionNumber: true, draftRevisionNumber: true },
   });
-  if (!current || current.status !== "PUBLISHED" || current.publishedSnapshot) return;
+  if (!current || current.status !== "PUBLISHED" || current.publishedDesignMetadata) return;
+  // Only legacy/malformed publications need the large JSON column. Never replace
+  // an existing snapshot simply because its diagnostics metadata is unavailable.
+  const legacy = await db.businessWebsite.findUnique({ where: { id: websiteId }, select: { publishedSnapshot: true } });
+  if (legacy?.publishedSnapshot) return;
 
   const draft = normalizeDraftPageContent(await loadDraftSnapshot(websiteId, db));
   await db.businessWebsite.update({
@@ -1014,11 +1002,11 @@ const saveEditorState = async (payload: WebsiteEditorStateInput, user: IRequestU
     });
     const [draft, liveRow] = await Promise.all([
       loadDraftSnapshot(current.id, tx),
-      tx.businessWebsite.findUnique({ where: { id: current.id }, select: { publishedSnapshot: true } }),
+      tx.businessWebsite.findUnique({ where: { id: current.id }, select: { publishedDesignMetadata: true } }),
     ]);
     return presentDraftSnapshot(draft, {
       draftRevisionNumber: nextRevisionNumber,
-      publishedSnapshot: liveRow?.publishedSnapshot ?? null,
+      publishedSnapshot: liveRow?.publishedDesignMetadata ?? null,
     });
   }, { maxWait: 10_000, timeout: 25_000 });
 

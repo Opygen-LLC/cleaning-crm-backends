@@ -5,7 +5,7 @@ import type { IRequestUser } from "../../types/requestUser.interface";
 import type { Prisma } from "../../generated/prisma/client";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteService } from "./website.service";
-import { buildWebsitePublicationFingerprint, parsePublishedSnapshot } from "./websiteSnapshot";
+import { buildWebsitePublicationFingerprint, parsePublishedSnapshot, parsePublishedDesignMetadata } from "./websiteSnapshot";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { WebsiteEntitlementService } from "./websiteEntitlement.service";
 import { isWebsiteDomainRoutingReady, readyWebsiteDomainWhere } from "./websiteDomainReadiness";
@@ -22,7 +22,7 @@ const primaryReadyWebsiteDomainWhere = {
   ...readyWebsiteDomainWhere,
 } satisfies Prisma.WebsiteDomainWhereInput;
 
-const getOverview = async (user: IRequestUser) => {
+const getOverview = async (user: IRequestUser, options: { includeMetrics?: boolean } = {}) => {
   const adminId = await getAdminId(user);
 
   const [website, business, overview, entitlements] = await Promise.all([
@@ -36,7 +36,9 @@ const getOverview = async (user: IRequestUser) => {
         templateVersion: true,
         websiteDesign: true,
         publishedAt: true,
-        publishedSnapshot: true,
+        publishedDesignMetadata: true,
+        googleAnalyticsEnabled: true,
+        googleAnalyticsMeasurementId: true,
         publishedRevisionNumber: true,
         draftRevisionNumber: true,
         metaTitle: true,
@@ -58,7 +60,7 @@ const getOverview = async (user: IRequestUser) => {
       where: { id: adminId },
       select: { businessName: true, city: true, businessDescription: true },
     }),
-    WebsiteOverviewService.getForAdminId(adminId),
+    options.includeMetrics === false ? Promise.resolve(null) : WebsiteOverviewService.getForAdminId(adminId),
     WebsiteEntitlementService.getForAdminId(adminId),
   ]);
 
@@ -73,14 +75,9 @@ const getOverview = async (user: IRequestUser) => {
       ? website.domains[0]?.domain ?? null
       : null;
   const publicUrl = getCanonicalWebsiteOrigin(website.subdomain, primaryCustomDomain);
-  const maxRevision = await prisma.websiteRevision.aggregate({
-    where: { websiteId: website.id },
-    _max: { revisionNumber: true },
-  });
-  const maxNum = Number(maxRevision?._max?.revisionNumber ?? 0);
-  const draftRevisionNumber = Math.max(Number(website.draftRevisionNumber ?? 0), maxNum);
+  const draftRevisionNumber = Number(website.draftRevisionNumber ?? 0);
   const businessName = business?.businessName?.trim() || "Your cleaning business";
-  const publishedSnapshot = parsePublishedSnapshot(website.publishedSnapshot);
+  const publishedSnapshot = parsePublishedDesignMetadata(website.publishedDesignMetadata);
   const publicationFingerprint = buildWebsitePublicationFingerprint({
     websiteId: website.id,
     draftRevisionNumber,
@@ -117,6 +114,7 @@ const getOverview = async (user: IRequestUser) => {
       businessDescription: business?.businessDescription ?? null,
     }),
     overview,
+    tracking: { enabled: website.googleAnalyticsEnabled, measurementId: website.googleAnalyticsMeasurementId },
     readiness: {
       templateSelected: Boolean(template),
       homePageEnabled: Boolean(website.pages[0]?.isEnabled),

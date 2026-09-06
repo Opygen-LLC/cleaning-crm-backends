@@ -12,6 +12,7 @@ import {
 import { prisma } from "../../lib/prisma/prisma";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
+import { traceAsyncOperation } from "../../lib/monitoring/requestTrace";
 import { recordGoogleAnalyticsRequest } from "../../lib/monitoring/operationalMetrics";
 
 const OAUTH_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -102,7 +103,7 @@ const verifyState = (state: string, adminId: string, userId: string) => {
   }
 };
 
-const fetchJson = async <T>(url: string, init: RequestInit, errorCode: string): Promise<T> => {
+const fetchJson = async <T>(url: string, init: RequestInit, errorCode: string): Promise<T> => traceAsyncOperation("external", "google-analytics", async () => {
   let response: Response;
   try {
     response = await fetch(url, { ...init, signal: timeoutSignal() });
@@ -125,7 +126,7 @@ const fetchJson = async <T>(url: string, init: RequestInit, errorCode: string): 
   }
   recordGoogleAnalyticsRequest(errorCode, true);
   return body as T;
-};
+});
 
 const websiteForAdmin = async (adminId: string) => {
   const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
@@ -295,7 +296,10 @@ const getStatus = async (user: IRequestUser) => {
   if (!isConfigured()) {
     return { configured: false, connected: false, googleEmail: null, propertyId: null, propertyName: null, accountName: null, measurementId: null };
   }
-  const connection = await getConnection(website.id);
+  // Status does not need the encrypted refresh token or OAuth state.
+  const connection = await prisma.websiteGoogleAnalyticsConnection.findUnique({ where: { websiteId: website.id }, select: {
+    googleEmail: true, propertyId: true, propertyName: true, accountName: true, measurementId: true,
+  } });
   return {
     configured: true,
     connected: Boolean(connection),

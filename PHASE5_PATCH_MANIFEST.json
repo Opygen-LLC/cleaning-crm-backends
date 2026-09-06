@@ -1,0 +1,316 @@
+{
+  "schemaVersion": 1,
+  "phase": 5,
+  "component": "backend",
+  "generatedAtUtc": "2026-09-06T17:47:38+00:00",
+  "archiveType": "changed_files_overlay",
+  "requires": "Supplied original repository with all Phase 1-4 updates applied in order.",
+  "baselineManifestSha256": "da1c808c41f9919aef1517e8556ca190f60a6a021783d868b0ce0cde7b29639c",
+  "apply": "Review changes in source control; copy each archive path over the same path at repository root. Keep unlisted files. Follow PHASE5_PERFORMANCE.md before deploying; the backend requires its additive migration and Prisma regeneration.",
+  "deletedFiles": [],
+  "files": [
+    {
+      "path": "PHASE5_PERFORMANCE.md",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "0e3932ec147e5f965a36be979de177145b5750d3866bfd683e5a08d2f4d96bd8",
+      "bytes": 14682
+    },
+    {
+      "path": "PHASE5_VALIDATION.json",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "c153c3a27c83776c00bccc0bde1a7dd279ac36f0b95dcaab328d798914cb5501",
+      "bytes": 4071
+    },
+    {
+      "path": "package.json",
+      "operation": "modified",
+      "baselineSha256": "5e29cc55bc2342ae60c8bfa8adfcdb7da9c65fbc71c3b27e43af65991a4932dd",
+      "sha256": "d6fd1cfcd71b0eadf1c3b57d8f83bc9922b869e7b2c9d8aefa20e790af9e7246",
+      "bytes": 15960
+    },
+    {
+      "path": "prisma/migrations/20260906050000_website_performance_read_models/migration.sql",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "3b9f728f23383466f239adb6971b22b20b8e54e90be93ecbe8fa25088d704e89",
+      "bytes": 4134
+    },
+    {
+      "path": "prisma/schema/website.prisma",
+      "operation": "modified",
+      "baselineSha256": "429edbd90c64db379b7d5c40909f5d77b96121bb403e0965e87891c7090e2d13",
+      "sha256": "6705183375e2fb423bfe4e45729b65bc700d1859cefbe5aa33688765ea64a39c",
+      "bytes": 10199
+    },
+    {
+      "path": "scripts/load/phase7-load.js",
+      "operation": "modified",
+      "baselineSha256": "385b4096601a20d1ba98066ffaae36144c399b7c690d0e6fc342d31de37e78da",
+      "sha256": "c79366722ea55de937ea10f4803e11971996fe63c8272977d8804ea33fe8d8a1",
+      "bytes": 4531
+    },
+    {
+      "path": "scripts/performance/topologyEvidence.mjs",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "36ac5bdf0f740f03d12cf9173da6bb14cb4fc92be0f667af3bbbeae55478d6fb",
+      "bytes": 3307
+    },
+    {
+      "path": "scripts/performance/websiteBudgets.mjs",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "dbc1b0c569cd4b926c20e459a8f5dc2063c52a84a5ad01cd128f11eb2b3bba00",
+      "bytes": 7120
+    },
+    {
+      "path": "scripts/phase4/performanceGate.mjs",
+      "operation": "modified",
+      "baselineSha256": "5fbe7238f8973506590ec4a77f9564147dbc1d8a3acf1ea16e9ca27b190fb61f",
+      "sha256": "088eed6f8e63f2c2a05f872def3ce0b339577a124ce49051cbcf0f4705bf2041",
+      "bytes": 10136
+    },
+    {
+      "path": "src/config/redis.ts",
+      "operation": "modified",
+      "baselineSha256": "4496a3c118445185315407cda65516f3ee23ee902c549996ac5b5b11fe2059e5",
+      "sha256": "ef402ef6ba9f7bdc74fe0b0f3804a04c0fb7d79be38180c7fb9f58c142a4d4f2",
+      "bytes": 5203
+    },
+    {
+      "path": "src/lib/monitoring/performanceMetrics.ts",
+      "operation": "modified",
+      "baselineSha256": "73d28d75c15a987a52b06e330ecd7b4c5ac79964097aaa1140badf0a79fb62c4",
+      "sha256": "0066689c4b0dae83720c47759728addf8ae31d51ac6837eecb3e3f6c42861729",
+      "bytes": 15228
+    },
+    {
+      "path": "src/lib/monitoring/pgInstrumentation.ts",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "2fbeefb616c00bc4788c4f07c6dd05dc8b9f7f930d2e32124ea09ff6648b3d92",
+      "bytes": 4398
+    },
+    {
+      "path": "src/lib/monitoring/queryBudgets.ts",
+      "operation": "modified",
+      "baselineSha256": "387c69e74071b3089a49a4c9b5a3dfd40b59556208e5be2a48a37c36e55dd7bd",
+      "sha256": "500b0c10c725abccf32b0a6d8744afc12b28c10691ef9b7f811b54d3620ee3f5",
+      "bytes": 2310
+    },
+    {
+      "path": "src/lib/monitoring/requestMemo.ts",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "c1e15162a2297fe02431de6b55fe47023763b0026971aa3a3b74badff9fe90db",
+      "bytes": 1458
+    },
+    {
+      "path": "src/lib/monitoring/requestTrace.ts",
+      "operation": "modified",
+      "baselineSha256": "298685834269839c920bbe85dedf18e0796c5ec17c6f1e21ab041b96098eaf6e",
+      "sha256": "c921aebf2a3d01f1c6ef3597264db7d7e3dbdffa59b6443da87966fdd4553664",
+      "bytes": 4824
+    },
+    {
+      "path": "src/lib/monitoring/runtimePerformance.ts",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "7d40fc882e19c92744e9453efbc3d7f0c0e50d743ba3d2aaa6f743618fee65aa",
+      "bytes": 1094
+    },
+    {
+      "path": "src/lib/outbox/publicWebsiteCacheOutbox.ts",
+      "operation": "modified",
+      "baselineSha256": "9a5c97e54f2abaffe04bcd29d4cf4364fd8ffd799201367dfb8d69308ca15542",
+      "sha256": "4df99a09f6251e05305d472b6acda09f85fba5647abf3523f342b6f3b96075a7",
+      "bytes": 10924
+    },
+    {
+      "path": "src/lib/prisma/prisma.ts",
+      "operation": "modified",
+      "baselineSha256": "f309d742adeac3bf84665a913469c8c164f2809ad26423d4ef9521b21d0eef65",
+      "sha256": "ec2501f67bca198ade042bc317cea890621a55d53de4c0eb1afd166a2c4e0fa5",
+      "bytes": 3645
+    },
+    {
+      "path": "src/middlewares/logger.middleware.ts",
+      "operation": "modified",
+      "baselineSha256": "09bbf898f5ab995cf3c7b3dcb5a4160fa4b3660865a89fedd615a46e05c8f0a2",
+      "sha256": "43111b1e7703f60fff8ee443e9ec76961ae8319c9b31f7a07fd2bfa800e8d134",
+      "bytes": 13148
+    },
+    {
+      "path": "src/modules/Entitlement/tenantAccessResolver.service.ts",
+      "operation": "modified",
+      "baselineSha256": "bbf25115919fa91b033ffbe81af6b2a728a14821931bb482bbc8ec1e2c107218",
+      "sha256": "989bc283a675bf87d03d126acc26c3dc044d64f7cff2bc2cdd6e44c3d373e753",
+      "bytes": 18862
+    },
+    {
+      "path": "src/modules/Website/publicWebsite.service.ts",
+      "operation": "modified",
+      "baselineSha256": "5189b70da9d30db86c52de75f282e85978dcb38eba1f4828775c9ccf57adb2aa",
+      "sha256": "5cbacfe130f41b2b1dcbc19fc5eb686c20463c56c0de90e6f4488e6281a7574a",
+      "bytes": 29782
+    },
+    {
+      "path": "src/modules/Website/website.controller.ts",
+      "operation": "modified",
+      "baselineSha256": "37b3dcd8934916811f96ac3758329469cebea7f0c7aa47c5297ff2b7b01059af",
+      "sha256": "b973f31c9295aad03e3043db3871f20ef30e6636645ad6e788e9bcd476bad243",
+      "bytes": 27502
+    },
+    {
+      "path": "src/modules/Website/website.service.ts",
+      "operation": "modified",
+      "baselineSha256": "43d88e345512e73c333b8f8b6347ceaa620766953893e84fc3e736c1d0969048",
+      "sha256": "14c927a03f7c7c00aecedea2d916ac0ca603435a889b9061857b4c53895ccdb6",
+      "bytes": 80621
+    },
+    {
+      "path": "src/modules/Website/websiteEntitlement.service.ts",
+      "operation": "modified",
+      "baselineSha256": "36d30648591f7f01ec86ff6cda4a258857e0af6a0abc4518bd32e0e251098f17",
+      "sha256": "5140702a25efbc75ce8dcfc092fcbd3a027f98265b69ba5690e1cdacd33f8593",
+      "bytes": 8333
+    },
+    {
+      "path": "src/modules/Website/websiteGoogleAnalytics.service.ts",
+      "operation": "modified",
+      "baselineSha256": "cbb551eb882f01cd593326861f834c0b5fbf182280a87ac6e59587c8b3c587c7",
+      "sha256": "d46bb9831517f1c1265be99afc557e937a3e432550b14047b1f7156c3faebb5d",
+      "bytes": 16975
+    },
+    {
+      "path": "src/modules/Website/websiteHostResolver.service.ts",
+      "operation": "modified",
+      "baselineSha256": "576d0e0cd5fa203afe132ea59131f2649aa5074f813477ec288d4378aedcd0a0",
+      "sha256": "b80b53904d9765c6a995e7f8d711dc40bc95026764252dbbc89bfd7128ce3aa4",
+      "bytes": 24211
+    },
+    {
+      "path": "src/modules/Website/websitePublicationDelivery.service.ts",
+      "operation": "modified",
+      "baselineSha256": "16f8609c1df0e4dd28cd8a9f2b64275603c6e626d228a5c731bf17b6487ec6a5",
+      "sha256": "5e995ee0e0f6296b99540ed0d66bedf44032e46c4f6faea8ebc009f28ceef516",
+      "bytes": 17856
+    },
+    {
+      "path": "src/modules/Website/websiteSnapshot.ts",
+      "operation": "modified",
+      "baselineSha256": "0594fe3caf49b578d7488a2c02da2c3199737d17313d31650c1a697d93014dd1",
+      "sha256": "248e5952daaa404c636d8af1a6234fac0959f7e9e115fe85f5278aaf638a0bcc",
+      "bytes": 16459
+    },
+    {
+      "path": "src/modules/Website/websiteStatus.service.ts",
+      "operation": "modified",
+      "baselineSha256": "66cff9c91116fca3d01f7d5499ef5df4b896cddae3f7794a970c3bfa0dd630f4",
+      "sha256": "c808d6b07ca810f37d11152968ac920151effa0ef48fc42aa96e1f23bd7c651b",
+      "bytes": 548
+    },
+    {
+      "path": "src/modules/Website/websiteStudio.service.ts",
+      "operation": "modified",
+      "baselineSha256": "32f3024f73ff802c584fd8e34f4eb6adc40577f085041f84fadbfdb85b9cadd4",
+      "sha256": "04f420f7fca0b102a2537611d7dc2f4ce765065e9838c5dd00cddd5912600f39",
+      "bytes": 12469
+    },
+    {
+      "path": "src/scripts/performance/websitePreflight.ts",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "bb5b92569e331d6c7e3a82555b4f2eed59263a469d3552a1735301def7a20a5e",
+      "bytes": 6743
+    },
+    {
+      "path": "src/scripts/phase1/reconcilePublicationDelivery.ts",
+      "operation": "modified",
+      "baselineSha256": "d756abbb430927463d124ac6dfc2dae9172eecc4cad80b102cc3998312eb0aa8",
+      "sha256": "b2e97ff64a55b19805220a33e20f17f3e5b2ef7fe8932ca7b283d4bef5781684",
+      "bytes": 4713
+    },
+    {
+      "path": "src/server.ts",
+      "operation": "modified",
+      "baselineSha256": "62cc418da89bec98a99d2ae3e436e23615adb076286e16245bb206e2d6300d4d",
+      "sha256": "2a3bd9a4e6d5b71878bb1c42c78848ddce8a2eb55d762b1106fcfdccd0068ea6",
+      "bytes": 13797
+    },
+    {
+      "path": "src/workers/emailOutbox.worker.ts",
+      "operation": "modified",
+      "baselineSha256": "fb507f5da1ba93f9a078880d6463699aa2636b27c3472823894e8e27a3759ddc",
+      "sha256": "6973fc1df5a3b819925828585fb6d655ea8d643dbb94f00ccf327e187ae53809",
+      "bytes": 15649
+    },
+    {
+      "path": "tests/helpers/launch-fixture.cjs",
+      "operation": "modified",
+      "baselineSha256": "c427872c81c920cee9eed1932b72fc04a574430931cac5de4e382afe2e36b2fb",
+      "sha256": "7be02e671eac1d8a9b39f55d5f38120900d1ae94ed8da561481f75c0e514fc7f",
+      "bytes": 16443
+    },
+    {
+      "path": "tests/launch/worker.behavior.test.cjs",
+      "operation": "modified",
+      "baselineSha256": "0f946c539b87f4dcadb86cda30eb0441df47f0b95441da59cb6d8d44de128286",
+      "sha256": "099fd8f975894b066304ed6a63d3d9cb7b327847a34f425148d1a1673c2e5686",
+      "bytes": 4390
+    },
+    {
+      "path": "tests/performance/budgets.test.cjs",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "4f9f80332d1b176159209102758c17bac602a2d56649c0ee0adc00f9aed6688d",
+      "bytes": 3024
+    },
+    {
+      "path": "tests/performance/compact-status.test.cjs",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "01e2f796f00ef320fb43d4e8152d9fbaf26300a97e3a2d4202d4b91b9e4797cf",
+      "bytes": 2830
+    },
+    {
+      "path": "tests/performance/redis-observation.test.cjs",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "e430915967e0a27aa10e4665458b1bdae5dcdbd7a8564002e2aee38cc7dda7c5",
+      "bytes": 3452
+    },
+    {
+      "path": "tests/performance/request-instrumentation.test.cjs",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "3f12d5708626672b3af870bba2fda230714403c8f218a166b3276962b805fe90",
+      "bytes": 5326
+    },
+    {
+      "path": "tests/performance/response-measurement.test.cjs",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "d7a0ae5094c4829dd187305c8911ffef225bbeb04d8d5ed7a8aad2af7012cdd7",
+      "bytes": 3951
+    },
+    {
+      "path": "tests/performance/validation/local-regressions.tap",
+      "operation": "added",
+      "baselineSha256": null,
+      "sha256": "e36e63663239a45c5f97896f4998c7d4103ebe77f487e8cbb6e44fe8faa4007d",
+      "bytes": 18022
+    },
+    {
+      "path": "tsup.config.ts",
+      "operation": "modified",
+      "baselineSha256": "79108b4501d7c46cc61b96d72d38c1e77f1fd3ad1fb04f9e1c1495b6ed296101",
+      "sha256": "e061901a8cf2f1541a3c9c821dd00996c978ed124fda06e141789d9866848a2e",
+      "bytes": 862
+    }
+  ],
+  "manifestHashPolicy": "This manifest is included in the archive but intentionally does not contain its own recursive hash.",
+  "validation": "PHASE5_VALIDATION.json"
+}

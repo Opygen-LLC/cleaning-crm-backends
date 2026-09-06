@@ -115,7 +115,14 @@
     "release:phase3:onboarding": "pnpm run generate && pnpm exec prisma validate && pnpm run test:phase1:launch && pnpm run test:phase2:onboarding && pnpm run test:phase2:contracts && pnpm run test:phase3:interface && pnpm run test:phase3:preview-contract && pnpm run typecheck && pnpm run build",
     "test:phase4:design": "node --test tests/design/*.test.cjs",
     "test:phase4:design:contracts": "vitest run src/modules/Website/templateRegistry.test.ts src/modules/Website/templateSelection.test.ts src/modules/Website/websiteComponentRegistry.test.ts src/modules/Website/websiteStudio.service.test.ts src/modules/Website/websitePublishCacheInvalidation.test.ts src/modules/Website/websitePreviewContract.test.ts",
-    "release:phase4:design": "pnpm run generate && pnpm exec prisma validate && pnpm run test:phase1:launch && pnpm run test:phase2:onboarding && pnpm run test:phase3:interface && pnpm run test:phase4:design && pnpm run test:phase4:design:contracts && pnpm run typecheck && pnpm run build"
+    "release:phase4:design": "pnpm run generate && pnpm exec prisma validate && pnpm run test:phase1:launch && pnpm run test:phase2:onboarding && pnpm run test:phase3:interface && pnpm run test:phase4:design && pnpm run test:phase4:design:contracts && pnpm run typecheck && pnpm run build",
+    "test:phase5:performance": "node --test tests/performance/*.test.cjs",
+    "perf:website:reconcile": "tsx src/scripts/performance/websitePreflight.ts",
+    "perf:website:explain": "tsx src/scripts/performance/websitePreflight.ts --explain",
+    "perf:website:gate": "node scripts/phase4/performanceGate.mjs",
+    "perf:website:topology": "node scripts/performance/topologyEvidence.mjs",
+    "publication:delivery:reconcile": "tsx src/scripts/phase1/reconcilePublicationDelivery.ts",
+    "release:phase5:performance": "pnpm run test:phase5:performance && pnpm run release:phase4:design && pnpm run test:phase4:contracts && pnpm run test:phase1:launch:integration"
   },
   "keywords": [],
   "author": "opygen",

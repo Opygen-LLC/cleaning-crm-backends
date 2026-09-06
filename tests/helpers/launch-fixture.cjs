@@ -106,7 +106,14 @@ function fixture() {
         return copy({ ...website, admin: { id: adminId, businessName: owner.businessName } });
       },
       findFirst: async () => null,
-      update: async ({ data }) => { operations.push('website.write'); Object.assign(website, copy(data)); return copy(website); },
+      update: async ({ data }) => { operations.push('website.write'); Object.assign(website, copy(data));
+        if (data.publishedSnapshot) website.publishedDesignMetadata = { website: copy(data.publishedSnapshot.website) };
+        return copy(website); },
+      updateMany: async ({ where, data }) => {
+        if (where.id !== website.id || (where.publicationDeliveryEventId && where.publicationDeliveryEventId !== website.publicationDeliveryEventId) ||
+            (where.publishedRevisionNumber !== undefined && where.publishedRevisionNumber !== website.publishedRevisionNumber)) return { count: 0 };
+        Object.assign(website, copy(data)); return { count: 1 };
+      },
     },
     websiteSubdomainAlias: { findUnique: async () => null, findFirst: async () => null },
     websiteDomain: { findFirst: async () => null },
@@ -119,7 +126,7 @@ function fixture() {
     outboxEvent: {
       upsert: async ({ where, create }) => {
         operations.push('outbox.write'); if (controls.failEnqueue) throw new Error('outbox insert failed');
-        if (!events.has(where.dedupeKey)) events.set(where.dedupeKey, { ...copy(create), id: `outbox-${events.size+1}`, status: 'PENDING', attempts: 0 });
+        if (!events.has(where.dedupeKey)) events.set(where.dedupeKey, { ...copy(create), id: create.id || `outbox-${events.size+1}`, status: 'PENDING', attempts: 0 });
         return copy(events.get(where.dedupeKey));
       },
       findUnique: async ({ where }) => copy(events.get(where.dedupeKey) ?? null),
@@ -162,8 +169,8 @@ function fixture() {
     '../../lib/utils/resolveAdminId': { getAdminId: async () => adminId },
     '../../lib/utils/cloudinary': {},
     '../../lib/logger': { warn() {}, info() {}, error() {} }, '../logger': { warn() {}, info() {} },
-    '../monitoring/requestTrace': { getTracePropagationMetadata: () => ({ traceId: 'test-trace' }), traceAsyncOperation: (_k, _n, fn) => fn() },
-    '../../lib/monitoring/requestTrace': { getTracePropagationMetadata: () => ({ traceId: 'test-trace' }), traceAsyncOperation: (_k, _n, fn) => fn() },
+    '../monitoring/requestTrace': { getRequestTrace: () => undefined, recordTraceResponseCache: () => {}, getTracePropagationMetadata: () => ({ traceId: 'test-trace' }), traceAsyncOperation: (_k, _n, fn) => fn() },
+    '../../lib/monitoring/requestTrace': { getRequestTrace: () => undefined, recordTraceResponseCache: () => {}, getTracePropagationMetadata: () => ({ traceId: 'test-trace' }), traceAsyncOperation: (_k, _n, fn) => fn() },
     '../../lib/utils/subscriptionPlanFeatures': { normalizeSubscriptionPlanFeatures: v => v ?? [] },
     './featureCatalog': { FEATURE_KEYS: ['website', 'online_booking', 'custom_domain'], featureParent: () => null },
     '../SuperAdmin/tenantEntitlement.service': {
@@ -182,7 +189,7 @@ function fixture() {
     } } },
     './websiteSnapshot': {
       buildPublishedSnapshot: draft => ({ version: 1, website: copy(draft), pages: copy(draft.pages) }),
-      parsePublishedSnapshot: v => v || null, buildWebsitePublicationFingerprint: () => null, parseRevisionSnapshotAsPublished: v => v,
+      parsePublishedSnapshot: v => v || null, parsePublishedDesignMetadata: v => v || null, buildWebsitePublicationFingerprint: () => null, parseRevisionSnapshotAsPublished: v => v,
     },
     './websiteContent': { validateWebsitePageContent: (_kind, value) => value },
     './websiteDesignContract': { parseWebsiteDesignContract: v => v },

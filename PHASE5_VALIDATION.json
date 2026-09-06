@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "phase": 5,
+  "component": "backend",
+  "generatedAtUtc": "2026-09-06T17:47:38+00:00",
+  "releaseStatus": "local_regressions_passed_staging_and_full_build_unverified",
+  "productionPerformanceCertified": false,
+  "basis": "Changed-files overlay on the supplied original repository plus Phase 1-4 updates; preserve all unlisted files.",
+  "environment": {
+    "node": "v22.16.0",
+    "typescript": "5.8.3",
+    "platform": "linux",
+    "projectDependenciesInstalled": false
+  },
+  "localRegressionTests": {
+    "status": "passed",
+    "command": "node --test tests/launch/*.test.cjs tests/onboarding/*.test.cjs tests/interface/*.test.cjs tests/design/*.test.cjs tests/performance/*.test.cjs",
+    "workingDirectory": "repository root",
+    "counts": {
+      "tests": 73,
+      "pass": 73,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "evidence": "tests/performance/validation/local-regressions.tap",
+    "evidenceSha256": "e36e63663239a45c5f97896f4998c7d4103ebe77f487e8cbb6e44fe8faa4007d",
+    "method": "Native Node test runner; actual TypeScript production modules transpiled using TypeScript with explicit dependency/I/O adapters, plus source/asset contracts. Backend response tests also use local Node HTTP.",
+    "limitation": "Not a real Prisma/PostgreSQL/Redis/React integration run. TAP elapsed durations are test runtime, not application endpoint latency. Existing Phase 4 image hashes are checked; screenshots were not recaptured."
+  },
+  "sourceValidation": {
+    "status": "passed",
+    "typescriptTranspileFiles": 26,
+    "javascriptNodeCheckFiles": 11,
+    "jsonParseFilesBeforePackagingReports": 1,
+    "syntaxErrors": [],
+    "unresolvedLocalImports": [],
+    "limitation": "Syntax transpilation and local import existence checks only, not dependency-complete type checking. Prisma-generated imports require regeneration."
+  },
+  "unverifiedReleaseGates": {
+    "dependencyCompleteTypecheck": {
+      "status": "attempted_blocked",
+      "reason": "Pinned project dependencies are not installed; package-registry access was unavailable. Node type definitions and generated Prisma client were unavailable; tsc stopped at TS2688."
+    },
+    "productionBuild": {
+      "status": "not_run",
+      "reason": "Requires pinned project dependencies and, for backend, regenerated Prisma client."
+    },
+    "vitestAndDependencyCompleteIntegration": {
+      "status": "not_run",
+      "reason": "Requires the repository dependencies."
+    },
+    "stagingEndpointBudgets": {
+      "status": "not_measured",
+      "reason": "No authenticated staging API, exported request logs, representative database or isolated Redis fault environment was available."
+    },
+    "realDatabaseMigrationAndExplainAnalyze": {
+      "status": "not_run",
+      "reason": "No representative PostgreSQL deployment was available. Read-only preflight and explain tooling and a migration rollout procedure are included."
+    },
+    "providerRegionsAndNetworkRoute": {
+      "status": "unverified",
+      "reason": "No deployment-provider inventory/access was available. Topology annotations must be independently verified."
+    },
+    "browserRequestLoopsAndTemplateParity": {
+      "status": "not_run",
+      "reason": "No dependency-complete running Next application and authenticated staging browser were available."
+    },
+    "bundleDeltaAndRouteChunkTransfers": {
+      "status": "not_measured",
+      "reason": "Requires comparable baseline/candidate production builds and real browser network observations."
+    },
+    "realConcurrencyAndRedisOutage": {
+      "status": "not_run",
+      "reason": "Local behavioral adapters do not replace multi-process database/cache staging tests."
+    }
+  },
+  "deploymentGuide": "PHASE5_PERFORMANCE.md",
+  "mandatoryReleaseCommand": "pnpm run release:phase5:performance",
+  "securityAndCorrectness": "Do not bypass authorization, weaken hashing, disable CSRF, change immediate revalidation to stale-while-revalidate, or claim readiness from a URL to achieve a latency target."
+}

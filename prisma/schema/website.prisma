@@ -62,6 +62,14 @@ model BusinessWebsite {
   // the extra MAX(revisionNumber) round-trip from every authenticated Studio read.
   // It is advanced in the same transaction that inserts WebsiteRevision.
   draftRevisionNumber     Int           @default(0)
+  // Maintained by the publication metadata trigger, not a mutable editor field.
+  // Reading the Studio must not transfer the full immutable page snapshot.
+  publishedDesignMetadata Json?
+  // Pointer and compact receipt for the EXISTING durable cache outbox. A new
+  // lifecycle event clears the proof in the same transaction as the change.
+  // No FK: normal outbox retention must not delete the durable readiness proof.
+  publicationDeliveryEventId String?
+  publicationDeliveryReceipt Json?
 
   admin                   AdminProfile  @relation(fields: [adminId], references: [id], onDelete: Cascade)
   primaryBookingForm      BookingForm?  @relation("WebsitePrimaryBookingForm", fields: [primaryBookingFormId], references: [id], onDelete: SetNull)

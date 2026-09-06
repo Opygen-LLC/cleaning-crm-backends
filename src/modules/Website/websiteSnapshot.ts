@@ -142,6 +142,23 @@ export const hashWebsiteDesign = (value: unknown): string => {
   return createHash("sha256").update(canonical).digest("hex");
 };
 
+export type WebsitePublishedDesignMetadata = {
+  website: Pick<WebsitePublishedSnapshotV1["website"], "templateId" | "templateVersion" | "websiteDesign">;
+};
+
+/** Diagnostics only. This never authorizes a public read or replaces snapshot validation. */
+export const parsePublishedDesignMetadata = (value: unknown): WebsitePublishedDesignMetadata | null => {
+  if (!value || typeof value !== "object" || !("website" in value)) return null;
+  const site = (value as { website?: unknown }).website;
+  if (!site || typeof site !== "object") return null;
+  const fields = site as Record<string, unknown>;
+  if (typeof fields.templateId !== "string" || typeof fields.templateVersion !== "string") return null;
+  try {
+    return { website: { templateId: fields.templateId, templateVersion: fields.templateVersion,
+      websiteDesign: parseWebsiteDesignContract(fields.websiteDesign ?? cloneDefaultWebsiteDesign()) } };
+  } catch { return null; }
+};
+
 export const buildWebsitePublicationFingerprint = (input: {
   websiteId: string;
   draftRevisionNumber: number;
@@ -150,7 +167,7 @@ export const buildWebsitePublicationFingerprint = (input: {
   templateId: string;
   templateVersion: string;
   websiteDesign: unknown;
-  publishedSnapshot: WebsitePublishedSnapshotV1 | null;
+  publishedSnapshot: WebsitePublishedDesignMetadata | null;
 }): WebsitePublicationFingerprint => {
   const selectedHash = hashWebsiteDesign(input.websiteDesign);
   const live = input.publishedSnapshot

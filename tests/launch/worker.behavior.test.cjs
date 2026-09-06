@@ -28,6 +28,7 @@ function workerFor(f, onDelivery) {
     '../lib/outbox/businessNotificationOutbox': { BUSINESS_NOTIFICATION_OUTBOX_TOPIC: { DELIVERY_REQUESTED: 'BUSINESS_NOTIFICATION_DELIVERY_REQUESTED' } },
     '../lib/notifications/businessNotificationRegistry': { BUSINESS_NOTIFICATION_REGISTRY: {}, isBusinessNotificationTemplateKey: () => false },
     '../modules/Website/websitePublicationDelivery.service': { WebsitePublicationDeliveryService: {
+      recordReceipt: f.delivery.recordReceipt,
       deliver: async payload => { const outcome = await f.delivery.deliver(payload); if (onDelivery) onDelivery(); return outcome; },
     } },
     '../modules/Entitlement/tenantAccessResolver.service': { TenantAccessResolver: f.access },

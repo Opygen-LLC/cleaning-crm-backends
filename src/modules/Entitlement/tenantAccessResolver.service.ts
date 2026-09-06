@@ -1,3 +1,4 @@
+import { requestMemo, forgetRequestMemo } from "../../lib/monitoring/requestMemo";
 import { randomUUID } from "node:crypto";
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
@@ -381,7 +382,7 @@ const loadTenantAccess = async (organizationId: string, generation: string | nul
   return resolution;
 };
 
-export async function resolveTenantAccess(organizationId: string): Promise<TenantAccessResolution> {
+async function resolveUncachedTenantAccess(organizationId: string): Promise<TenantAccessResolution> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     // Capture the epoch BEFORE starting SQL, never after the result arrives.
     const generation = await getGeneration(organizationId);
@@ -412,7 +413,15 @@ export async function resolveTenantAccess(organizationId: string): Promise<Tenan
   });
 }
 
+export function resolveTenantAccess(organizationId: string, options: { fresh?: boolean } = {}): Promise<TenantAccessResolution> {
+  const key = `tenant-access:${organizationId}`;
+  if (options.fresh) forgetRequestMemo(key);
+  return requestMemo(key, () => resolveUncachedTenantAccess(organizationId), value =>
+    value.organizationId === organizationId && Number.isFinite(Date.parse(value.validUntil)) && Date.parse(value.validUntil) > Date.now());
+}
+
 export async function invalidateTenantAccess(organizationId: string): Promise<boolean> {
+  forgetRequestMemo(`tenant-access:${organizationId}`);
   try {
     const result = await redis.eval(
       `-- access:invalidate

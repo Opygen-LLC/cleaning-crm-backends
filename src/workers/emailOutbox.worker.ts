@@ -147,11 +147,20 @@ const deliverPublicWebsiteCacheInvalidation = async (event: ClaimedOutboxEvent) 
     return;
   }
   const outcome = await WebsitePublicationDeliveryService.deliver(payload);
-  if (!outcome.delivered) throw new Error(outcome.reason ?? "Publication delivery is not ready");
-  await prisma.outboxEvent.updateMany({
-    where: { id: event.id, status: "PROCESSING", attempts: event.attempts },
-    data: { payload: { ...(event.payload as Prisma.InputJsonObject), receipt: JSON.parse(JSON.stringify(outcome)) as Prisma.InputJsonValue } },
+  const recorded = await prisma.$transaction(async (tx) => {
+    const updated = await tx.outboxEvent.updateMany({
+      where: { id: event.id, status: "PROCESSING", attempts: event.attempts },
+      data: { payload: { ...(event.payload as Prisma.InputJsonObject), receipt: JSON.parse(JSON.stringify(outcome)) as Prisma.InputJsonValue } },
+    });
+    if (updated.count === 1) await WebsitePublicationDeliveryService.recordReceipt(event.id, payload.websiteId,
+      !outcome.delivered && event.attempts >= event.maxAttempts
+        ? { ...outcome, state: "temporarily_unavailable" } : outcome, tx);
+    return updated.count === 1;
   });
+  // An expired claimant cannot overwrite the current proof, emit a success,
+  // or demote a newer claimant's successful delivery.
+  if (!recorded) return;
+  if (!outcome.delivered) throw new Error(outcome.reason ?? "Publication delivery is not ready");
 };
 
 const parseBusinessDeliveryId = (payload: unknown): string => {

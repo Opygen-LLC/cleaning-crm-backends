@@ -173,8 +173,11 @@ const assertAnalyticsWindow = (days: number, entitlements: WebsiteEntitlements) 
   }
 };
 
-const getForAdminId = async (adminId: string): Promise<WebsiteEntitlements> =>
-  fromAccess(await TenantAccessResolver.resolve(adminId));
+const getForAdminId = async (adminId: string, access?: TenantAccessResolution): Promise<WebsiteEntitlements> => {
+  if (access && access.organizationId !== adminId) throw new AppError(status.FORBIDDEN, "Tenant access scope mismatch");
+  const current = access && Date.parse(access.validUntil) > Date.now() ? access : await TenantAccessResolver.resolve(adminId);
+  return fromAccess(current);
+};
 
 export const WebsiteEntitlementService = {
   fromAccess,

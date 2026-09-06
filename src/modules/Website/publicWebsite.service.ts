@@ -162,7 +162,7 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
     }),
     TenantAccessResolver.resolve(website.adminId),
   ]);
-  const entitlements = await WebsiteEntitlementService.getForAdminId(website.adminId);
+  const entitlements = WebsiteEntitlementService.fromAccess(access);
 
   const averageRating = reviewAggregate._avg.rating;
   return {
@@ -510,7 +510,7 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
   // Redis unavailable a fresh SQL decision is used instead of an old epoch.
   if (Date.parse(access.validUntil) <= Date.now() ||
       !await TenantAccessResolver.isCurrentGeneration(adminId, access.generation)) {
-    const currentAccess = await TenantAccessResolver.resolve(adminId);
+    const currentAccess = await TenantAccessResolver.resolve(adminId, { fresh: true });
     if (!currentAccess.access.publicWebsiteAllowed || Date.parse(currentAccess.validUntil) <= Date.now() ||
         (access.generation !== null && currentAccess.generation !== access.generation)) {
       throw new AppError(status.SERVICE_UNAVAILABLE, "Website authorization changed; retry the request", {

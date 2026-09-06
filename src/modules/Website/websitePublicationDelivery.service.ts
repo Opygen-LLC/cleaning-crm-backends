@@ -5,7 +5,7 @@ import logger from "../../lib/logger";
 import { getTracePropagationMetadata, traceAsyncOperation } from "../../lib/monitoring/requestTrace";
 import {
   PublicWebsiteCacheRevalidation, parsePublicWebsiteCacheInvalidationPayload,
-  publicationDeliveryDedupeKey, type PublicWebsiteCacheInvalidationPayload,
+  type PublicWebsiteCacheInvalidationPayload,
 } from "../../lib/outbox/publicWebsiteCacheOutbox";
 import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
@@ -163,12 +163,24 @@ const deliver = async (payload: PublicWebsiteCacheInvalidationPayload): Promise<
   return result;
 };
 
+/** The event pointer is changed inside the lifecycle transaction. An older
+ * worker/request can never acknowledge a newer publication or restoration.
+ * Keeping the receipt on the website also survives ordinary outbox retention.
+ */
+const recordReceipt = async (eventId: string, websiteId: string, outcome: WebsitePublicationDelivery, db: Pick<Prisma.TransactionClient, "businessWebsite"> = prisma) => {
+  return db.businessWebsite.updateMany({
+    where: { id: websiteId, publicationDeliveryEventId: eventId, publishedRevisionNumber: outcome.revision },
+    data: { publicationDeliveryReceipt: JSON.parse(JSON.stringify(outcome)) as Prisma.InputJsonValue },
+  });
+};
+
 /** CAS receipt update: never steal a row already leased by the outbox worker. */
 const attemptImmediate = async (event: { id: string; payload: unknown }): Promise<WebsitePublicationDelivery> => {
   const payload = parsePublicWebsiteCacheInvalidationPayload(event.payload);
   const outcome = await deliver(payload);
   try {
-    const updated = await prisma.outboxEvent.updateMany({
+    const updated = await prisma.$transaction(async (tx) => {
+      const updated = await tx.outboxEvent.updateMany({
       where: { id: event.id, status: { in: ["PENDING", "RETRY", "DEAD", "PROCESSED"] } },
       data: {
         status: outcome.delivered ? "PROCESSED" : "RETRY",
@@ -177,6 +189,11 @@ const attemptImmediate = async (event: { id: string; payload: unknown }): Promis
         ...(outcome.delivered ? {} : { attempts: 0, nextAttemptAt: new Date(Date.now() + 5_000) }),
         payload: { ...(event.payload as Prisma.InputJsonObject), receipt: JSON.parse(JSON.stringify(outcome)) as Prisma.InputJsonValue },
       },
+    });
+      // Persist both receipts atomically. A failed website write must not leave
+      // a PROCESSED event with no recoverable compact readiness receipt.
+      if (updated.count === 1) await recordReceipt(event.id, payload.websiteId, outcome, tx);
+      return updated;
     });
     outcome.revalidationQueued = !outcome.delivered || updated.count !== 1;
   } catch {
@@ -206,11 +223,16 @@ const compactStatus = (organizationId: string, websiteId: string, publishedRevis
   };
 };
 
-/** Compact, authenticated, no-store read model for the topbar; no analytics. */
+/** Compact, authenticated, no-store read model. A persisted proof belongs to
+ * the latest durable lifecycle event and the immutable publication revision.
+ * Only the delivery path loads/warms the full projection; a header poll must
+ * never load snapshots, history, pages, assets, or analytics aggregates.
+ */
 const getStatus = async (adminId: string) => {
-  const row = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
-  if (!row) return null;
-  const website = await loadIdentity(row.id);
+  const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: {
+    id: true, status: true, subdomain: true, publishedRevisionNumber: true,
+    publicationDeliveryEventId: true, publicationDeliveryReceipt: true,
+  } });
   if (!website) return null;
   const outcome = emptyOutcome();
   outcome.revision = website.publishedRevisionNumber;
@@ -225,24 +247,43 @@ const getStatus = async (adminId: string) => {
     if (!access.access.publicWebsiteAllowed) {
       outcome.state = "temporarily_unavailable"; outcome.reason = access.website.deniedReason;
     } else {
-      const event = website.publishedRevisionNumber === null ? null : await prisma.outboxEvent.findUnique({
-        where: { dedupeKey: publicationDeliveryDedupeKey(website.id, website.publishedRevisionNumber) },
-        select: { status: true },
-      });
-      if (event && event.status !== "PROCESSED") {
-        outcome.state = event.status === "DEAD" ? "temporarily_unavailable" : "preparing";
+      const receipt = website.publicationDeliveryReceipt as Partial<WebsitePublicationDelivery> | null;
+      const proof = website.publicationDeliveryEventId && receipt?.delivered === true && receipt.ready === true &&
+        receipt.revision === website.publishedRevisionNumber && receipt.projectionWarmed === true &&
+        receipt.projectionRevisionVerified === true && receipt.revalidationDelivered === true;
+      if (!proof) {
+        outcome.state = receipt?.state === "temporarily_unavailable" ? "temporarily_unavailable" : "preparing";
         outcome.reason = "PUBLICATION_DELIVERY_PENDING";
       } else {
-        const verified = await verify(website);
-        Object.assign(outcome, verified, { canonicalHostVerified: true, projectionRevisionVerified: true });
-        outcome.ready = verified.projectionWarmed;
-        outcome.state = verified.projectionWarmed ? "live" : "preparing";
+        if (!WEBSITE_BASE_DOMAIN) throw new Error("WEBSITE_BASE_DOMAIN_NOT_CONFIGURED");
+        const platform = await WebsiteHostResolverService.resolveHost(`${website.subdomain}.${WEBSITE_BASE_DOMAIN}`);
+        const canonical = platform.isAlias
+          ? await WebsiteHostResolverService.resolveHost(platform.canonicalHost) : platform;
+        if (platform.websiteId !== website.id || canonical.websiteId !== website.id ||
+            canonical.availability !== "live" || canonical.isAlias ||
+            platform.publishedRevisionNumber !== website.publishedRevisionNumber ||
+            canonical.publishedRevisionNumber !== website.publishedRevisionNumber) throw new Error("CANONICAL_HOST_NOT_READY");
+        // A lifecycle change may commit while the routing read is in flight.
+        const current = await prisma.businessWebsite.findUnique({ where: { id: website.id }, select: {
+          status: true, publishedRevisionNumber: true, publicationDeliveryEventId: true,
+        } });
+        if (current?.status !== "PUBLISHED" || current.publishedRevisionNumber !== website.publishedRevisionNumber ||
+            current.publicationDeliveryEventId !== website.publicationDeliveryEventId ||
+            !await TenantAccessResolver.isCurrentGeneration(adminId, canonical.accessGeneration)) {
+          throw new Error("PUBLICATION_CHANGED_DURING_STATUS");
+        }
+        Object.assign(outcome, { publicUrl: `https://${canonical.canonicalHost}`, ready: true, state: "live",
+          // These attest to the delivered immutable revision, not a Redis ping.
+          projectionWarmed: true, projectionRevisionVerified: true, canonicalHostVerified: true,
+          validUntil: new Date(Math.min(Date.now() + 30_000, Date.parse(access.validUntil), Date.parse(platform.validUntil), Date.parse(canonical.validUntil))).toISOString(),
+        });
       }
     }
   } catch {
     outcome.state = "temporarily_unavailable"; outcome.reason = "PUBLICATION_READINESS_UNAVAILABLE";
   }
+  outcome.checkedAt = new Date().toISOString();
   return compactStatus(adminId, website.id, website.publishedRevisionNumber, outcome);
 };
 
-export const WebsitePublicationDeliveryService = { deliver, attemptImmediate, bindToRevision, compactStatus, getStatus };
+export const WebsitePublicationDeliveryService = { deliver, attemptImmediate, recordReceipt, bindToRevision, compactStatus, getStatus };

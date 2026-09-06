@@ -233,11 +233,12 @@ const enqueueDeliveryTx = async (
     : publicationDeliveryDedupeKey(input.websiteId, input.delivery.revision),
 ) => {
   const payload = withTraceMetadata(normalizePayload(input) as unknown as Record<string, unknown>) as Prisma.InputJsonObject;
-  return traceAsyncOperation("queue", "outbox.enqueue.website-publication", () => tx.outboxEvent.upsert({
+  const eventId = randomUUID();
+  const event = await traceAsyncOperation("queue", "outbox.enqueue.website-publication", () => tx.outboxEvent.upsert({
     where: { dedupeKey },
     create: {
       topic: PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC.INVALIDATION_REQUESTED,
-      dedupeKey, payload, maxAttempts: 8,
+      id: eventId, dedupeKey, payload, maxAttempts: 8,
       // Give the immediate path a head start. A crash after COMMIT still leaves
       // a claimable row for the existing worker, with its normal retry policy.
       nextAttemptAt: new Date(Date.now() + 15_000),
@@ -245,6 +246,13 @@ const enqueueDeliveryTx = async (
     update: {},
     select: { id: true, payload: true },
   }));
+  if (event.id === eventId) {
+    await tx.businessWebsite.updateMany({
+      where: { id: input.websiteId },
+      data: { publicationDeliveryEventId: event.id, publicationDeliveryReceipt: { state: "preparing", ready: false } },
+    });
+  }
+  return event;
 };
 
 const enqueueTenantDeliveryTx = async (tx: Prisma.TransactionClient, adminId: string, reason: string) => {

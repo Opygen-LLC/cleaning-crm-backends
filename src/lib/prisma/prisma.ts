@@ -6,14 +6,12 @@ import {
     DB_POOL_IDLE_TIMEOUT_MS,
     DB_POOL_MAX,
     DB_POOL_MIN,
-    LOG_SQL_DETAILS,
-    NODE_ENV,
     SLOW_QUERY_THRESHOLD_MS,
 } from "../../config/ENV";
 import { PrismaClient } from "../../generated/prisma/client";
 import logger from "../logger";
 import { recordDatabaseQueryMetric } from "../monitoring/performanceMetrics";
-import { getRequestTrace, recordTraceDatabaseQuery } from "../monitoring/requestTrace";
+import { instrumentPgPool, summarizeSql } from "../monitoring/pgInstrumentation";
 
 if (!DATABASE_URL) {
     throw new Error(
@@ -52,67 +50,22 @@ pool.on("error", (error) => {
     });
 });
 
-const adapter = new PrismaPg(pool);
-
-const prisma = new PrismaClient({
-    adapter,
-    log: [{ level: "query", emit: "event" }],
-});
-
-// PERF FIX (Phase 1.3): there was no visibility into query duration before
-// this, so "it feels slow" had no concrete numbers to point at. Any query
-// over SLOW_QUERY_THRESHOLD_MS (default 300ms) is logged via the existing
-// winston logger (not console.warn, so it's captured by the same rotating
-// file transport as the rest of the app) — use this to confirm the Phase
-// 2–4 fixes actually move the needle, and to catch regressions later.
-const summarizeQuery = (query: string) => {
-    const normalized = query.replace(/\s+/g, " ").trim();
-    const operation = normalized.match(/^(SELECT|INSERT|UPDATE|DELETE|WITH)/i)?.[1]?.toUpperCase() ?? "QUERY";
-    const table =
-        normalized.match(/(?:FROM|INTO|UPDATE|JOIN)\s+"(?:public)"\."([^"]+)"/i)?.[1]
-        ?? normalized.match(/(?:FROM|INTO|UPDATE|JOIN)\s+"([^"]+)"/i)?.[1]
-        ?? "database";
-    return { operation, table, normalized };
-};
-
-prisma.$on("query", (e: { query: string; params: string; duration: number }) => {
-    recordDatabaseQueryMetric(e.duration, e.query);
-    const summary = summarizeQuery(e.query);
-    recordTraceDatabaseQuery(e.duration, {
-        operation: summary.operation,
-        table: summary.table,
-    });
-
-    const trace = getRequestTrace();
+// Capture the request at checkout/query invocation. Prisma query event emitters
+// may run outside the originating ALS scope, so do not count those a second time.
+instrumentPgPool(pool, ({ durationMs, query, error, trace }) => {
+    recordDatabaseQueryMetric(durationMs, query, error);
+    const summary = summarizeSql(query);
     const requestId = trace?.requestId ?? "background";
-    const isBackground = requestId === "background";
-    const threshold = isBackground
-        ? Math.max(SLOW_QUERY_THRESHOLD_MS, 1500)
-        : SLOW_QUERY_THRESHOLD_MS;
-
-    if (e.duration > threshold) {
-        // Query parameters are never logged: they can contain emails, tokens,
-        // customer data or payment metadata. Local operators get a concise
-        // operation/table summary; production keeps a structured event for
-        // Google Cloud Logging. Full SQL is opt-in only for local debugging.
-        const durationMs = Math.round(e.duration * 10) / 10;
-        if (NODE_ENV === "production") {
-            logger.warn("slow_database_query", {
-                event: "slow_database_query",
-                durationMs,
-                operation: summary.operation,
-                table: summary.table,
-                requestId,
-            });
-        } else {
-            const reqLabel = isBackground ? "background" : requestId.slice(0, 8);
-            logger.warn(
-                `Slow database query — ${durationMs}ms · ${summary.operation} ${summary.table} · request ${reqLabel}`,
-            );
-            if (LOG_SQL_DETAILS) logger.debug(summary.normalized.slice(0, 1_500));
-        }
+    const threshold = trace ? SLOW_QUERY_THRESHOLD_MS : Math.max(SLOW_QUERY_THRESHOLD_MS, 1500);
+    if (durationMs > threshold) {
+        logger.warn("slow_database_query", { event: "slow_database_query", durationMs: Math.round(durationMs * 10) / 10,
+            operation: summary.operation, table: summary.table, requestId, failed: error });
+        // Never log values, URLs or raw SQL, even for prepared statements. SQL
+        // shape fingerprints in performanceMetrics redact inline literals.
     }
 });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
 
 export const getDatabasePoolSnapshot = () => ({
     configuredMin: DB_POOL_MIN,

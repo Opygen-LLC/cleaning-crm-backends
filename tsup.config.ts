@@ -10,6 +10,7 @@ export default defineConfig({
         "src/scripts/migrateWebsiteRelease.ts",
         "src/scripts/phase2/reconcileAdminProvisioning.ts",
         "src/scripts/phase1/reconcilePublicationDelivery.ts",
+        "src/scripts/performance/websitePreflight.ts",
     ],
     format: ["esm"],
     target: "esnext",

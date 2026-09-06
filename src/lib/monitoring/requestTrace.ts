@@ -9,6 +9,9 @@ export interface RequestTraceState {
   dbQueryCount: number;
   dbDurationMs: number;
   dbPoolWaitMs: number;
+  dbPoolAcquisitions: number;
+  dbPoolErrors: number;
+  closed?: boolean;
   handlerDurationMs: number;
   serializationDurationMs: number;
   slowestDbQuery: { durationMs: number; operation: string; table: string } | null;
@@ -38,6 +41,8 @@ export const runWithRequestTrace = <T>(
     dbQueryCount: 0,
     dbDurationMs: 0,
     dbPoolWaitMs: 0,
+    dbPoolAcquisitions: 0,
+    dbPoolErrors: 0,
     handlerDurationMs: 0,
     serializationDurationMs: 0,
     slowestDbQuery: null,
@@ -66,9 +71,9 @@ export const getTracePropagationMetadata = (): { traceId: string; requestId: str
 export const recordTraceDatabaseQuery = (
   durationMs: number,
   query?: { operation: string; table: string },
+  trace = storage.getStore(),
 ): void => {
-  const trace = storage.getStore();
-  if (!trace) return;
+  if (!trace || trace.closed) return;
   trace.dbQueryCount += 1;
   trace.dbDurationMs += durationMs;
 
@@ -84,10 +89,11 @@ export const recordTraceDatabaseQuery = (
   }
 };
 
-export const recordTraceDatabasePoolWait = (durationMs: number): void => {
-  const trace = storage.getStore();
-  if (!trace) return;
+export const recordTraceDatabasePoolWait = (durationMs: number, error = false, trace = storage.getStore()): void => {
+  if (!trace || trace.closed) return;
   trace.dbPoolWaitMs += Math.max(0, durationMs);
+  trace.dbPoolAcquisitions += 1;
+  if (error) trace.dbPoolErrors += 1;
 };
 
 export const recordTraceRequestPhases = (input: {
@@ -95,7 +101,7 @@ export const recordTraceRequestPhases = (input: {
   serializationDurationMs?: number;
 }): void => {
   const trace = storage.getStore();
-  if (!trace) return;
+  if (!trace || trace.closed) return;
   if (input.handlerDurationMs !== undefined) {
     trace.handlerDurationMs = Math.max(0, input.handlerDurationMs);
   }
@@ -107,9 +113,9 @@ export const recordTraceRequestPhases = (input: {
 export const recordTraceRedisCommand = (
   durationMs: number,
   input: { hits?: number; misses?: number; error?: boolean } = {},
+  trace = storage.getStore(),
 ): void => {
-  const trace = storage.getStore();
-  if (!trace) return;
+  if (!trace || trace.closed) return;
   trace.redisCommandCount += 1;
   trace.redisDurationMs += durationMs;
   trace.redisHits += input.hits ?? 0;
@@ -119,7 +125,7 @@ export const recordTraceRedisCommand = (
 
 export const recordTraceResponseCache = (outcome: "hit" | "miss"): void => {
   const trace = storage.getStore();
-  if (!trace) return;
+  if (!trace || trace.closed) return;
   if (outcome === "hit") trace.responseCacheHits += 1;
   else trace.responseCacheMisses += 1;
 };
@@ -130,7 +136,7 @@ export const recordTraceSpan = (
   name: string = kind,
 ): void => {
   const trace = storage.getStore();
-  if (!trace) return;
+  if (!trace || trace.closed) return;
   const safeDuration = Math.max(0, durationMs);
   if (kind === "auth") trace.authDurationMs += safeDuration;
   if (kind === "queue") trace.queueDurationMs += safeDuration;

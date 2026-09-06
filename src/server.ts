@@ -1,3 +1,4 @@
+import { getRuntimePerformanceSnapshot } from "./lib/monitoring/runtimePerformance";
 /**
  * server.ts — Phase 1 Production Version
  *
@@ -267,7 +268,7 @@ app.get("/", (_req: Request, res: Response) => {
   res.setHeader("Cache-Control", "no-store, max-age=0");
   return res.status(200).json({
     success: true,
-    service: "Cleaning CRM Backend API 06 Sep 8:25 PM",
+    service: "Cleaning CRM Backend API 06 Sep 2:22 AM",
     status: "healthy",
     version: APP_VERSION,
     gitSha: GIT_SHA,
@@ -304,6 +305,7 @@ app.get("/health", async (_req: Request, res: Response) => {
 });
 
 app.get("/health/details", async (req: Request, res: Response) => {
+  res.setHeader("Cache-Control", "private, no-store");
   if (!monitoringTokenAllowed(req))
     return res.status(404).json({ success: false, message: "Not found" });
   const checks = await dependencyHealth();
@@ -323,12 +325,14 @@ app.get("/health/details", async (req: Request, res: Response) => {
 });
 
 app.get("/health/performance", (req: Request, res: Response) => {
+  res.setHeader("Cache-Control", "private, no-store");
   if (!monitoringTokenAllowed(req))
     return res.status(404).json({ success: false, message: "Not found" });
   return res.status(200).json({
     success: true,
     data: {
       ...getPerformanceSnapshot(),
+      runtime: getRuntimePerformanceSnapshot(),
       productReliability: getProductReliabilitySnapshot(),
       infrastructure: getInfrastructureAlignment(),
       databasePool: getDatabasePoolSnapshot(),

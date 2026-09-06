@@ -7,8 +7,8 @@ import {
 } from "./ENV";
 import dotenv from "dotenv";
 import logger from "../lib/logger";
-import { recordRedisReadMetric } from "../lib/monitoring/performanceMetrics";
-import { recordTraceRedisCommand } from "../lib/monitoring/requestTrace";
+import { recordRedisCommandMetric } from "../lib/monitoring/performanceMetrics";
+import { getRequestTrace, recordTraceRedisCommand } from "../lib/monitoring/requestTrace";
 import {
     RedisCircuitOpenError,
     acquireRedisCircuitPermit,
@@ -54,28 +54,42 @@ const installRedisCircuit = () => {
     target.sendCommand = (...args: any[]) => {
         const command = args[0];
         const commandName = String(command?.name ?? "").toUpperCase();
-        const isRecoveryProbe = commandName === "PING";
-        const permit = acquireRedisCircuitPermit({ forceProbe: isRecoveryProbe });
+        const trace = getRequestTrace();
+        const started = process.hrtime.bigint();
+        let done = false;
+        const finish = (value: unknown, error = false) => {
+            if (done) return; done = true;
+            const read = ["GET", "HGET", "MGET", "HMGET"].includes(commandName);
+            const values = read ? (Array.isArray(value) ? value : [value]) : [];
+            const hits = error ? 0 : values.filter(item => item != null).length;
+            const misses = error ? 0 : values.length - hits;
+            const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+            try {
+                recordTraceRedisCommand(durationMs, { hits, misses, error }, trace);
+                recordRedisCommandMetric({ durationMs, hits, misses, error, read });
+            } catch { /* Instrumentation cannot change a cache or lock operation. */ }
+        };
+        const permit = acquireRedisCircuitPermit({ forceProbe: commandName === "PING" });
         if (!permit) {
-            const snapshot = getRedisCircuitSnapshot();
-            return Promise.reject(new RedisCircuitOpenError(snapshot.retryAfterMs));
+            const error = new RedisCircuitOpenError(getRedisCircuitSnapshot().retryAfterMs);
+            finish(undefined, true);
+            // Reject the Command as well as its returned promise. ioredis
+            // pipelines settle command.promise, not the dispatch return value.
+            command?.reject?.(error);
+            const rejected = command?.promise ?? Promise.reject(error);
+            return rejected;
         }
-
         try {
             const result = originalSendCommand(...args);
-            return Promise.resolve(result).then(
-                (value) => {
-                    recordRedisCircuitSuccess();
-                    return value;
-                },
-                (error) => {
-                    recordRedisCircuitFailure(error);
-                    throw error;
-                },
-            );
+            // Observe without replacing the Command promise. Pipeline dispatch
+            // ignores this return value and awaits command.promise; a rethrowing
+            // observer would otherwise create an unhandled second rejection.
+            void Promise.resolve(result).then(value => {
+                recordRedisCircuitSuccess(); finish(value);
+            }, error => { recordRedisCircuitFailure(error); finish(undefined, true); }).catch(() => { /* telemetry only */ });
+            return result;
         } catch (error) {
-            recordRedisCircuitFailure(error);
-            throw error;
+            recordRedisCircuitFailure(error); finish(undefined, true); throw error;
         }
     };
 };
@@ -107,77 +121,6 @@ redis.on("ready", () => {
     }
     hasLoggedOutage = false;
 });
-
-// Instrument the cache commands used throughout the application without
-// forcing every service to adopt a new Redis wrapper. Fast circuit-open
-// rejections are recorded as Redis errors and are expected to be caught by
-// cache callers, which then use PostgreSQL/source-of-truth paths.
-const instrumentRedisCommands = () => {
-    const target = redis as any;
-
-    const wrapSingle = (command: "get" | "hget") => {
-        const original = target[command].bind(redis);
-        target[command] = async (...args: unknown[]) => {
-            const started = process.hrtime.bigint();
-            try {
-                const value = await original(...args);
-                const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-                recordTraceRedisCommand(durationMs, { hits: value == null ? 0 : 1, misses: value == null ? 1 : 0 });
-                recordRedisReadMetric({ durationMs, hits: value == null ? 0 : 1, misses: value == null ? 1 : 0 });
-                return value;
-            } catch (error) {
-                const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-                recordTraceRedisCommand(durationMs, { error: true });
-                recordRedisReadMetric({ durationMs, hits: 0, misses: 0, error: true });
-                throw error;
-            }
-        };
-    };
-
-    const originalMget = target.mget.bind(redis);
-    target.mget = async (...args: unknown[]) => {
-        const started = process.hrtime.bigint();
-        try {
-            const values = await originalMget(...args) as Array<string | null>;
-            const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-            const hits = values.filter((value) => value != null).length;
-            recordTraceRedisCommand(durationMs, { hits, misses: Math.max(0, values.length - hits) });
-            recordRedisReadMetric({ durationMs, hits, misses: Math.max(0, values.length - hits) });
-            return values;
-        } catch (error) {
-            const durationMs = Number(process.hrtime.bigint() - started) / 1_000_000;
-            recordTraceRedisCommand(durationMs, { error: true });
-            recordRedisReadMetric({ durationMs, hits: 0, misses: 0, error: true });
-            throw error;
-        }
-    };
-
-    const wrapCommand = (command: string) => {
-        if (typeof target[command] !== "function") return;
-        const original = target[command].bind(redis);
-        target[command] = async (...args: unknown[]) => {
-            const started = process.hrtime.bigint();
-            try {
-                const value = await original(...args);
-                recordTraceRedisCommand(Number(process.hrtime.bigint() - started) / 1_000_000);
-                return value;
-            } catch (error) {
-                recordTraceRedisCommand(Number(process.hrtime.bigint() - started) / 1_000_000, { error: true });
-                throw error;
-            }
-        };
-    };
-
-    wrapSingle("get");
-    wrapSingle("hget");
-    [
-        "set", "setex", "del", "unlink", "sadd", "srem", "expire", "hset",
-        "incr", "incrby", "decr", "scan", "sscan", "smembers", "eval",
-        "publish", "ping", "call",
-    ].forEach(wrapCommand);
-};
-
-instrumentRedisCommands();
 
 export { getRedisCircuitSnapshot };
 export default redis;

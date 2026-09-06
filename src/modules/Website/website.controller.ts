@@ -52,7 +52,7 @@ const getWebsiteEditor = catchAsync(async (req, res) => {
 });
 const getStudioOverview = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
-  return ok(res, "Website Studio overview retrieved successfully", await WebsiteStudioService.getOverview(req.user));
+  return ok(res, "Website Studio overview retrieved successfully", await WebsiteStudioService.getOverview(req.user, { includeMetrics: req.query.includeMetrics !== "false" }));
 });
 const getStudio = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");

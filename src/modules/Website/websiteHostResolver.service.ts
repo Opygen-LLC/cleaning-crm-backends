@@ -1,3 +1,4 @@
+import { recordTraceResponseCache } from "../../lib/monitoring/requestTrace";
 import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import { domainToASCII } from "node:url";
@@ -594,6 +595,7 @@ const resolveHostWithDiagnostics = async (input: string): Promise<{
     // once before sending this time-bounded routing decision to the edge.
     if (Date.parse(resolution.validUntil) <= Date.now() ||
         (resolution.accessGeneration !== null && !await validCachedRoute(resolution))) {
+      await TenantAccessResolver.resolve(resolution.organizationId, { fresh: true });
       resolution = await loadHostFromDatabase(host);
       source = "database";
       if (Date.parse(resolution.validUntil) <= Date.now() ||
@@ -601,6 +603,7 @@ const resolveHostWithDiagnostics = async (input: string): Promise<{
         throw new AppError(status.SERVICE_UNAVAILABLE, "Website authorization changed; retry the request");
       }
     }
+    recordTraceResponseCache(source === "redis" || source === "redis-fill" ? "hit" : "miss");
     return { resolution, diagnostics: { source, durationMs: Math.round((performance.now() - startedAt) * 10) / 10 } };
   };
 

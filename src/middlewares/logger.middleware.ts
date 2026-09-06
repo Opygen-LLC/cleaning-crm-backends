@@ -8,7 +8,7 @@ import {
   SLOW_REQUEST_THRESHOLD_MS,
 } from "../config/ENV";
 import { recordRequestMetric } from "../lib/monitoring/performanceMetrics";
-import { getRequestTrace, recordTraceRequestPhases } from "../lib/monitoring/requestTrace";
+import { getRequestTrace } from "../lib/monitoring/requestTrace";
 import { resolveRequestGeography } from "../lib/monitoring/requestGeography";
 import { observeRequestStorm } from "../lib/monitoring/requestStormDetector";
 import { evaluateEndpointQueryBudget, getEndpointQueryBudget } from "../lib/monitoring/queryBudgets";
@@ -36,25 +36,52 @@ const logRequestResponse = (
   res: Response,
   next: NextFunction,
 ) => {
-  const start = process.hrtime.bigint();
+  const start = getRequestTrace()?.startedAtNs ?? process.hrtime.bigint();
   // Keep a direct reference to the mutable ALS trace state. Some Node/Express
   // event-emitter callbacks can execute outside the active ALS lookup context;
   // the object itself remains valid and continues accumulating timings.
   const requestTrace = getRequestTrace();
-  const originalSend = res.send.bind(res);
   let durationMs = 0;
   let responseBytes = 0;
   let routeLabel: string | null = null;
-
-  res.send = ((body: unknown) => {
-    const serializationSizingStarted = process.hrtime.bigint();
-    responseBytes = Buffer.isBuffer(body)
-      ? body.byteLength
-      : Buffer.byteLength(typeof body === "string" ? body : JSON.stringify(body ?? null));
-    const serializationSizingDurationMs = Number(process.hrtime.bigint() - serializationSizingStarted) / 1_000_000;
-    const handlerDurationMs = Number(serializationSizingStarted - start) / 1_000_000;
-    recordTraceRequestPhases({ handlerDurationMs, serializationDurationMs: serializationSizingDurationMs });
-    durationMs = handlerDurationMs + serializationSizingDurationMs;
+  let jsonStarted: bigint | null = null;
+  const originalJson = res.json;
+  const originalSend = res.send;
+  const originalWrite = res.write;
+  const originalEnd = res.end;
+  const originalWriteHead = res.writeHead;
+  // Express json() serializes before calling send(). Time that actual boundary
+  // without a second JSON.stringify (which can be expensive or mutate toJSON).
+  res.json = function(body: unknown) {
+    const previous = jsonStarted;
+    jsonStarted = process.hrtime.bigint();
+    try { return originalJson.call(this, body); }
+    finally { jsonStarted = previous; }
+  } as Response["json"];
+  res.send = function(body: unknown) {
+    if (jsonStarted !== null) {
+      const encodeMs = Number(process.hrtime.bigint() - jsonStarted) / 1_000_000;
+      if (requestTrace && !requestTrace.closed) requestTrace.serializationDurationMs += encodeMs;
+      jsonStarted = null;
+    }
+    return originalSend.call(this, body);
+  } as Response["send"];
+  const countChunk = (chunk: unknown, encoding?: unknown) => {
+    if (req.method === "HEAD" || res.statusCode === 204 || res.statusCode === 304) return;
+    if (typeof chunk === "string") responseBytes += Buffer.byteLength(chunk, typeof encoding === "string" ? encoding as BufferEncoding : "utf8");
+    else if (ArrayBuffer.isView(chunk)) responseBytes += chunk.byteLength;
+  };
+  res.write = function(this: Response, ...args: unknown[]) {
+    countChunk(args[0], args[1]);
+    return (originalWrite as (...args: unknown[]) => boolean).apply(this, args);
+  } as Response["write"];
+  res.end = function(this: Response, ...args: unknown[]) {
+    countChunk(args[0], args[1]);
+    return (originalEnd as (...args: unknown[]) => Response).apply(this, args);
+  } as Response["end"];
+  res.writeHead = function(this: Response, ...args: unknown[]) {
+    durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
+    if (requestTrace && !requestTrace.closed) requestTrace.handlerDurationMs = Math.max(0, durationMs - requestTrace.serializationDurationMs);
     const rounded = round(durationMs);
     routeLabel = compactPath(req);
     if (!res.headersSent) {
@@ -63,13 +90,16 @@ const logRequestResponse = (
       const queryBudget = getEndpointQueryBudget(req.method, route);
       if (NODE_ENV !== "production" || process.env.E2E_TEST_HOOKS_ENABLED === "true") {
         res.setHeader("X-DB-Query-Count", String(trace?.dbQueryCount ?? 0));
+        res.setHeader("X-Redis-Command-Count", String(trace?.redisCommandCount ?? 0));
+        res.setHeader("X-Redis-Errors", String(trace?.redisErrors ?? 0));
+        res.setHeader("X-Application-Cache", (trace?.responseCacheMisses ?? 0) > 0 ? "miss" : (trace?.responseCacheHits ?? 0) > 0 ? "hit" : "unclassified");
         if (queryBudget !== null) res.setHeader("X-DB-Query-Budget", String(queryBudget));
       }
-      const timings = [`app;dur=${rounded}`];
+      const timings = [`app;dur=${rounded};desc="API middleware to response headers"`];
       if (trace) {
         timings.push(`auth;dur=${round(trace.authDurationMs)}`);
         timings.push(`db.query;dur=${round(trace.dbDurationMs)}`);
-        if (trace.dbPoolWaitMs > 0) timings.push(`db.pool;dur=${round(trace.dbPoolWaitMs)}`);
+        timings.push(`db.pool;dur=${round(trace.dbPoolWaitMs)}`);
         timings.push(`redis;dur=${round(trace.redisDurationMs)}`);
         timings.push(`handler;dur=${round(trace.handlerDurationMs)}`);
         if (trace.serializationDurationMs > 0) timings.push(`serialize;dur=${round(trace.serializationDurationMs)}`);
@@ -88,16 +118,11 @@ const logRequestResponse = (
         [existingTimings, ...timings].filter(Boolean).join(", "),
       );
     }
-    const sendStarted = process.hrtime.bigint();
-    const result = originalSend(body);
-    const sendSerializationDurationMs = Number(process.hrtime.bigint() - sendStarted) / 1_000_000;
-    recordTraceRequestPhases({ serializationDurationMs: sendSerializationDurationMs });
-    durationMs = handlerDurationMs + serializationSizingDurationMs + sendSerializationDurationMs;
-    return result;
-  }) as Response["send"];
+    return (originalWriteHead as (...args: unknown[]) => Response).apply(this, args);
+  } as Response["writeHead"];
 
   res.once("finish", () => {
-    if (!durationMs) durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
+    durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
     const rounded = round(durationMs);
     const route = routeLabel ?? compactPath(req);
     const trace = getRequestTrace() ?? requestTrace;
@@ -119,6 +144,9 @@ const logRequestResponse = (
       durationMs,
       dbDurationMs: trace?.dbDurationMs,
       dbQueryCount: trace?.dbQueryCount,
+      dbPoolWaitMs: trace?.dbPoolWaitMs,
+      dbPoolAcquisitions: trace?.dbPoolAcquisitions,
+      redisCommandCount: trace?.redisCommandCount,
       redisDurationMs: trace?.redisDurationMs,
       redisHits: trace?.redisHits,
       redisMisses: trace?.redisMisses,
@@ -132,6 +160,7 @@ const logRequestResponse = (
       authErrorCode,
     });
 
+    if (trace) trace.closed = true;
     const level = durationMs >= SLOW_REQUEST_THRESHOLD_MS || res.statusCode >= 500 ? "warn" : "info";
     const requestId = trace?.requestId ?? (typeof res.locals.requestId === "string" ? res.locals.requestId : "unknown");
     const traceId = trace?.traceId ?? (typeof res.locals.traceId === "string" ? res.locals.traceId : "unknown");
@@ -177,7 +206,7 @@ const logRequestResponse = (
     const cacheAttempts = (trace?.responseCacheHits ?? 0) + (trace?.responseCacheMisses ?? 0);
     const redisAttempts = (trace?.redisHits ?? 0) + (trace?.redisMisses ?? 0);
 
-    if (NODE_ENV !== "production") {
+    if (NODE_ENV !== "production" && process.env.PERFORMANCE_JSON_LOGS !== "true") {
       const devLevel = res.statusCode >= 500 ? "error" : res.statusCode >= 400 ? "warn" : "info";
       const dbMs = round(trace?.dbDurationMs ?? 0);
       const dbQueries = trace?.dbQueryCount ?? 0;
@@ -210,6 +239,11 @@ const logRequestResponse = (
       method: req.method,
       statusCode: res.statusCode,
       totalDurationMs: rounded,
+      measurementClock: "api-middleware-to-finish",
+      responseBytesClock: "node-response-body-excluding-headers",
+      dbPoolAcquisitions: trace?.dbPoolAcquisitions ?? 0,
+      dbPoolErrors: trace?.dbPoolErrors ?? 0,
+      dbPoolAcquisitionMs: round(trace?.dbPoolWaitMs ?? 0),
       dbDurationMs: round(trace?.dbDurationMs ?? 0),
       "db.query_ms": round(trace?.dbDurationMs ?? 0),
       "db.pool_wait_ms": round(trace?.dbPoolWaitMs ?? 0),
