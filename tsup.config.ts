@@ -9,6 +9,7 @@ export default defineConfig({
         "src/scripts/backfillBusinessWebsites.ts",
         "src/scripts/migrateWebsiteRelease.ts",
         "src/scripts/phase2/reconcileAdminProvisioning.ts",
+        "src/scripts/phase1/reconcilePublicationDelivery.ts",
     ],
     format: ["esm"],
     target: "esnext",

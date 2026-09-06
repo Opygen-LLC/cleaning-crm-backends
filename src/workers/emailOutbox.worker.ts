@@ -1,3 +1,4 @@
+import { WebsitePublicationDeliveryService } from "../modules/Website/websitePublicationDelivery.service";
 import { auth } from "../lib/auth";
 import { sendEmail } from "../lib/email";
 import logger from "../lib/logger";
@@ -24,8 +25,6 @@ import {
   BUSINESS_NOTIFICATION_REGISTRY,
   isBusinessNotificationTemplateKey,
 } from "../lib/notifications/businessNotificationRegistry";
-import { WebsitePublicationDeliveryService } from "../modules/Website/websitePublicationDelivery.service";
-import type { Prisma } from "../generated/prisma/client";
 import { TenantAccessResolver } from "../modules/Entitlement/tenantAccessResolver.service";
 import {
   recordEmailOutboxSuccessfulDelivery,
@@ -140,19 +139,16 @@ const deliverVerificationEmail = async (payload: EmailVerificationOutboxPayload)
   return "sent" as const;
 };
 
-const deliverPublicWebsiteCacheInvalidation = async (event: ClaimedOutboxEvent) => {
-  const payload = parsePublicWebsiteCacheInvalidationPayload(event.payload);
-  if (!payload.delivery) {
-    await PublicWebsiteCacheRevalidation.deliver(payload);
+const deliverPublicWebsiteCacheInvalidation = async (payload: unknown) => {
+  const work = parsePublicWebsiteCacheInvalidationPayload(payload);
+  if (work.publication || work.accessChange) {
+    const result = await WebsitePublicationDeliveryService.deliver(work);
+    if (!result.completed) throw new Error(result.errors.join("; ") || "Publication delivery is pending");
     return;
   }
-  const outcome = await WebsitePublicationDeliveryService.deliver(payload);
-  if (!outcome.delivered) throw new Error(outcome.reason ?? "Publication delivery is not ready");
-  await prisma.outboxEvent.updateMany({
-    where: { id: event.id, status: "PROCESSING", attempts: event.attempts },
-    data: { payload: { ...(event.payload as Prisma.InputJsonObject), receipt: JSON.parse(JSON.stringify(outcome)) as Prisma.InputJsonValue } },
-  });
+  await PublicWebsiteCacheRevalidation.deliver(work);
 };
+
 
 const parseBusinessDeliveryId = (payload: unknown): string => {
   if (!payload || typeof payload !== "object") throw new Error("Invalid business notification outbox payload");
@@ -234,9 +230,10 @@ const processEvent = async (event: ClaimedOutboxEvent) => {
       }
       return;
     }
+    case PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC.DELIVERY_REQUESTED:
     case PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC.INVALIDATION_REQUESTED:
       await traceAsyncOperation("external", "frontend.cache-revalidation", () =>
-        deliverPublicWebsiteCacheInvalidation(event),
+        deliverPublicWebsiteCacheInvalidation(event.payload),
       );
       return;
     case BUSINESS_NOTIFICATION_OUTBOX_TOPIC.DELIVERY_REQUESTED: {
@@ -252,8 +249,8 @@ const processEvent = async (event: ClaimedOutboxEvent) => {
 };
 
 const markProcessed = async (event: ClaimedOutboxEvent) => {
-  const updated = await prisma.outboxEvent.updateMany({
-    where: { id: event.id, status: "PROCESSING", attempts: event.attempts },
+  await prisma.outboxEvent.update({
+    where: { id: event.id },
     data: {
       status: "PROCESSED",
       processedAt: new Date(),
@@ -261,9 +258,7 @@ const markProcessed = async (event: ClaimedOutboxEvent) => {
       lastError: null,
     },
   });
-  if (updated.count !== 1) return false;
   recordOutboxOutcome(event.topic, "success");
-  return true;
 };
 
 const markFailed = async (event: ClaimedOutboxEvent, error: unknown) => {
@@ -272,8 +267,8 @@ const markFailed = async (event: ClaimedOutboxEvent, error: unknown) => {
   const jitter = Math.floor(Math.random() * Math.min(5_000, Math.max(250, exponential * 0.15)));
   const nextAttemptAt = new Date(Date.now() + exponential + jitter);
 
-  const updated = await prisma.outboxEvent.updateMany({
-    where: { id: event.id, status: "PROCESSING", attempts: event.attempts },
+  await prisma.outboxEvent.update({
+    where: { id: event.id },
     data: {
       status: dead ? "DEAD" : "RETRY",
       lockedAt: null,
@@ -281,7 +276,6 @@ const markFailed = async (event: ClaimedOutboxEvent, error: unknown) => {
       lastError: normalizeError(error),
     },
   });
-  if (updated.count !== 1) return;
   recordOutboxOutcome(event.topic, dead ? "dead" : "retry");
   if (event.topic === AUTH_EMAIL_OUTBOX_TOPIC.EMAIL_VERIFICATION_REQUESTED || event.topic === BUSINESS_NOTIFICATION_OUTBOX_TOPIC.DELIVERY_REQUESTED) {
     recordSmtpDelivery(false);
@@ -337,7 +331,7 @@ export const processEmailOutboxOnce = async () => {
       const execute = async () => {
         try {
           await processEvent(event);
-          if (!await markProcessed(event)) return;
+          await markProcessed(event);
           const trace = getRequestTrace();
           if (NODE_ENV === "production") {
             logger.info("outbox_event_processed", {

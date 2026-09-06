@@ -64,8 +64,8 @@ const planDefaults = (planNameRaw: string | null | undefined): Omit<WebsiteEntit
 const hasActivePaidOrTrialAccess = (source: SubscriptionEntitlementSource): boolean => {
   if (!source || source.status !== "ACTIVE") return false;
   const now = Date.now();
-  if (source.isTrial && source.trialEndsAt && new Date(source.trialEndsAt).getTime() <= now) return false;
-  if (!source.isTrial && source.currentPeriodEnd && new Date(source.currentPeriodEnd).getTime() <= now) return false;
+  if (source.isTrial && source.trialEndsAt && new Date(source.trialEndsAt).getTime() < now) return false;
+  if (!source.isTrial && source.currentPeriodEnd && new Date(source.currentPeriodEnd).getTime() < now) return false;
   return true;
 };
 
@@ -117,7 +117,8 @@ export const websiteEntitlementSubscriptionSelect = {
   subscriptionPlan: { select: { name: true, features: true } },
 } as const;
 
-const fromAccess = (access: TenantAccessResolution): WebsiteEntitlements => {
+const getForAdminId = async (adminId: string, suppliedAccess?: TenantAccessResolution): Promise<WebsiteEntitlements> => {
+  const access = suppliedAccess ?? await TenantAccessResolver.resolve(adminId);
   const defaults = planDefaults(access.plan.name);
   const planFeatures = access.plan.features;
   const customFeature = featureByKey(planFeatures, "custom_domain");
@@ -173,11 +174,7 @@ const assertAnalyticsWindow = (days: number, entitlements: WebsiteEntitlements) 
   }
 };
 
-const getForAdminId = async (adminId: string): Promise<WebsiteEntitlements> =>
-  fromAccess(await TenantAccessResolver.resolve(adminId));
-
 export const WebsiteEntitlementService = {
-  fromAccess,
   getForAdminId,
   getForUser,
   assertTemplateAllowed,

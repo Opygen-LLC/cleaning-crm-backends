@@ -1,0 +1,168 @@
+{
+  "component": "backend",
+  "format": "changed-files-only repository-root overlay",
+  "preparedDate": "2026-09-06",
+  "baseArchive": {
+    "name": "cleaning-crm-backends-master (1)(1).zip",
+    "sha256": "0ae8f903564658cd5c5e7c3ba90100afb5a9ac7cb72abfe8fce616d5d9e9395e"
+  },
+  "deletedPaths": [],
+  "files": [
+    {
+      "path": ".github/workflows/phase7-ci.yml",
+      "size": 3734,
+      "sha256": "a2cef02edc362deb702275cd8272262fd12d89a3304a07323f25ab6c47eb8a0b"
+    },
+    {
+      "path": "PHASE1_PATCH.md",
+      "size": 10507,
+      "sha256": "f78e80f4a03b359dea9a9f5efb6fd87f4d80c83ab12d6b8a2ad9b0471c8c4ca9"
+    },
+    {
+      "path": "_phase1_patch/validation-results.json",
+      "size": 11536,
+      "sha256": "4931b4c85a424e3ea8679e08e01e1891be158e495db9b20f376b8dfd46155380"
+    },
+    {
+      "path": "package.json",
+      "size": 13325,
+      "sha256": "faaa0dc3caaa8cf46ece69a8aad05e0b93b48e4f3ea128df561708421bf619dc"
+    },
+    {
+      "path": "scripts/phase8/verifyProductionRollout.mjs",
+      "size": 2443,
+      "sha256": "54beb49de4541a0e30c8a1b23285aac1d5e04f836b41151c30d0588fd6bf16f5"
+    },
+    {
+      "path": "src/lib/outbox/publicWebsiteCacheOutbox.ts",
+      "size": 12575,
+      "sha256": "716304a0f33c3611ab19ae836552cdfa2593821ce8f2d1d43162daa0f1b4aceb"
+    },
+    {
+      "path": "src/modules/Auth/auth.service.ts",
+      "size": 37191,
+      "sha256": "88cf77f2dd5a20e968ad51187a03abdba4249443738966b9cd571a3f1169a14b"
+    },
+    {
+      "path": "src/modules/Entitlement/tenantAccessResolver.service.ts",
+      "size": 18069,
+      "sha256": "e4d229185ab52ba470bd09676e7e0f53918424326eede9df8162703e1786e60b"
+    },
+    {
+      "path": "src/modules/SuperAdmin/tenantAdmin.service.ts",
+      "size": 64290,
+      "sha256": "15315b3a3dde7ada7aa5bd66f1f75cb1d09050e3685f865118ae8ca2faa3ca44"
+    },
+    {
+      "path": "src/modules/Website/publicWebsite.service.ts",
+      "size": 28776,
+      "sha256": "318f66e12cc8116dd3a2cff8e2de133cf2c4a568eb892b788d655223b21c366f"
+    },
+    {
+      "path": "src/modules/Website/website.controller.ts",
+      "size": 25887,
+      "sha256": "9c9ebd2afd23673ab12a482c60eff6470d1d2abc7d903da67a216d970386709d"
+    },
+    {
+      "path": "src/modules/Website/website.routes.ts",
+      "size": 6213,
+      "sha256": "796c34a394ae9732832ee0c94e80686e88e5fe944fd16a8834adfe3616d95a15"
+    },
+    {
+      "path": "src/modules/Website/website.service.ts",
+      "size": 78845,
+      "sha256": "30e0ff0d01202f8dd23e3637d3ac3d422751d9a8c56b46163b13d781158aa9fe"
+    },
+    {
+      "path": "src/modules/Website/websiteEntitlement.service.ts",
+      "size": 8045,
+      "sha256": "0977892cd63b3567cf217aff048e4988925491f8b176a1788d0908f11be3f3d6"
+    },
+    {
+      "path": "src/modules/Website/websiteHostResolver.production.test.ts",
+      "size": 15860,
+      "sha256": "469c9018af988ee71fcfc971f424a3a29f2dcbab27c88be79b2f0910f022d74d"
+    },
+    {
+      "path": "src/modules/Website/websiteHostResolver.service.ts",
+      "size": 23400,
+      "sha256": "38d5b17f8ac7c8d6bb2bf29628e182d421424cd01a4ac57cef35b57837e01d62"
+    },
+    {
+      "path": "src/modules/Website/websiteLaunch.service.test.ts",
+      "size": 11396,
+      "sha256": "da4de81694681a365265a2a5b8991c18770359a274b04d2941385640339418b5"
+    },
+    {
+      "path": "src/modules/Website/websiteProjectionCache.service.ts",
+      "size": 15608,
+      "sha256": "efb7b5b05afa02d82c175c0f84d2f384e48a53473997531de9b5cd8c5e11af73"
+    },
+    {
+      "path": "src/modules/Website/websiteProjectionCache.test.ts",
+      "size": 4527,
+      "sha256": "40bb1a92ea0dcb564f52c36f7f29aac8d20162485e59c7a7fdf09cdd0b51a829"
+    },
+    {
+      "path": "src/modules/Website/websitePublicationDelivery.service.ts",
+      "size": 9359,
+      "sha256": "b24e156b110c7b5b51c754bec6136dbe88c7888b176e9d8e230282693668eabe"
+    },
+    {
+      "path": "src/modules/Website/websitePublishCacheInvalidation.test.ts",
+      "size": 16761,
+      "sha256": "8390d17412e10b042dda01406fa333f0904bf75ff2ab16b65a219c354296f586"
+    },
+    {
+      "path": "src/modules/Website/websiteStatus.service.ts",
+      "size": 3371,
+      "sha256": "66cff9c91116fca3d01f7d5499ef5df4b896cddae3f7794a970c3bfa0dd630f4"
+    },
+    {
+      "path": "src/scripts/phase1/reconcilePublicationDelivery.ts",
+      "size": 5297,
+      "sha256": "d756abbb430927463d124ac6dfc2dae9172eecc4cad80b102cc3998312eb0aa8"
+    },
+    {
+      "path": "src/workers/emailOutbox.worker.ts",
+      "size": 14633,
+      "sha256": "e628ab61044c4042530e75db0733e2001ce1ce4ee92c7b272c55ab900656b8eb"
+    },
+    {
+      "path": "tests/phase1/README.md",
+      "size": 855,
+      "sha256": "02bfc51dc98984de68ca92b2efe4ec6df331519f2ba400dc3cb92c135a323913"
+    },
+    {
+      "path": "tests/phase1/access-cache.test.cjs",
+      "size": 4424,
+      "sha256": "bf3fdec1586af8771d99be330e341cfcfc1334688a42f65722555a7a2bf6b25e"
+    },
+    {
+      "path": "tests/phase1/backend-fixture.cjs",
+      "size": 11003,
+      "sha256": "dd8f92c40f4e0e075c392a3f680d394fe94491c4f972d614211e2c72a86c1776"
+    },
+    {
+      "path": "tests/phase1/launch-regressions.test.cjs",
+      "size": 6290,
+      "sha256": "b84e9de575e8d63da0e8396a0fccace756e59b10af94ad960001b66a3cda54fa"
+    },
+    {
+      "path": "tests/phase1/load-source.cjs",
+      "size": 2691,
+      "sha256": "94c3b3f0ff69116a5b838b2da388b881485d895dab81d62390db5d324522b4bc"
+    },
+    {
+      "path": "tests/phase1/memory-redis.cjs",
+      "size": 2819,
+      "sha256": "5794f0fa72a19f310458dc6dd22c8852165af6cfc0fcfd3e2ec5bc6f69510560"
+    },
+    {
+      "path": "tsup.config.ts",
+      "size": 807,
+      "sha256": "79108b4501d7c46cc61b96d72d38c1e77f1fd3ad1fb04f9e1c1495b6ed296101"
+    }
+  ],
+  "manifestExcludesItself": true
+}

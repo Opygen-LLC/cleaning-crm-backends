@@ -21,10 +21,6 @@ vi.mock("../../lib/outbox/publicWebsiteCacheOutbox", () => ({
   PublicWebsiteCacheRevalidation: publicCacheRevalidationMock,
 }));
 
-vi.mock("../Entitlement/tenantAccessResolver.service", () => ({
-  TenantAccessResolver: { isCurrentGeneration: vi.fn(async () => true) },
-}));
-
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 
 const envelope = (data: unknown) => JSON.stringify({
@@ -40,7 +36,6 @@ beforeEach(() => {
   redisMock.get.mockResolvedValue(null);
   redisMock.set.mockResolvedValue("OK");
   redisMock.eval.mockResolvedValue(1);
-  redisMock.del.mockResolvedValue(1);
 });
 
 describe("Phase 23 public website projection cache", () => {

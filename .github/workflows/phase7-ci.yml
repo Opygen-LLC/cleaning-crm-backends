@@ -90,6 +90,7 @@ jobs:
       - run: pnpm run check:release-infra
       - run: pnpm run check:phase8:production
       - run: pnpm run data:audit:phase8
+      - run: pnpm run test:phase1:launch
       - run: pnpm run test:security
       - run: pnpm run test:integration
       - run: pnpm run test:phase5:website-studio

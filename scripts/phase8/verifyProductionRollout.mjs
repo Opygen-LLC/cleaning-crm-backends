@@ -35,8 +35,13 @@ assert.doesNotMatch(save, /invalidateWebsite\(/);
 assert.doesNotMatch(save, /invalidateHosts\(/);
 assert.doesNotMatch(save, /invalidateSubdomains\(/);
 assert.match(publish, /publishedSnapshot/);
-assert.match(publish, /invalidateWebsite\(/);
-assert.match(publish, /invalidateHosts\(/);
-assert.match(publish, /invalidateSubdomains\(/);
+assert.match(publish, /enqueuePublicationTx\(tx/);
+assert.match(publish, /deliverImmediate/);
+const delivery = read("src/modules/Website/websitePublicationDelivery.service.ts");
+assert.match(delivery, /await TenantAccessResolver\.invalidate/);
+assert.match(delivery, /invalidateWebsite\(/);
+assert.match(delivery, /invalidateHosts\(/);
+assert.match(delivery, /invalidateSubdomains\(/);
+assert.ok(delivery.indexOf("await TenantAccessResolver.invalidate") < delivery.indexOf("invalidateSubdomains("));
 
 console.log("Phase 8 production rollout source gate passed.");

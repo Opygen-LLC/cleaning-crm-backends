@@ -104,9 +104,10 @@
     "data:audit:phase8:fix": "node scripts/phase8/auditWebsiteStudioRollout.mjs --fix --ci",
     "release:phase8": "pnpm run generate && pnpm exec prisma validate && pnpm run check:phase8:production && pnpm run data:audit:phase8 && pnpm run typecheck && pnpm run build",
     "test:phase5:website-studio": "vitest run src/modules/Website/websitePublishCacheInvalidation.test.ts src/modules/Website/websiteComponentRegistry.test.ts src/modules/Website/websiteDraftConflictResponse.test.ts src/lib/outbox/publicWebsiteCacheOutbox.test.ts src/modules/Website/websiteProjectionCache.test.ts",
-    "test:phase1:launch": "node --test tests/launch/*.test.cjs",
-    "platform:wildcard:check": "node scripts/release/provisionPlatformWildcard.mjs",
-    "test:phase1:launch:integration": "vitest run src/modules/Website/websiteLaunch.service.test.ts src/modules/Website/websitePublishCacheInvalidation.test.ts src/modules/Website/websiteProjectionCache.test.ts src/modules/Website/websiteHostResolver.production.test.ts src/workers/emailOutbox.worker.test.ts src/cron/subscriptionExpiry.cron.test.ts"
+    "test:phase1:launch": "node --test tests/phase1/*.test.cjs",
+    "publication:reconcile": "tsx src/scripts/phase1/reconcilePublicationDelivery.ts --dry-run",
+    "publication:reconcile:apply": "tsx src/scripts/phase1/reconcilePublicationDelivery.ts --apply",
+    "publication:reconcile:prod": "node dist/reconcilePublicationDelivery.js"
   },
   "keywords": [],
   "author": "opygen",

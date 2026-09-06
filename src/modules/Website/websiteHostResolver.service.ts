@@ -19,7 +19,7 @@ import { normalizeSubdomain } from "./websiteIdentity";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { getCanonicalWebsiteHost } from "./websiteCanonicalHost";
 import { WebsiteEntitlementService } from "./websiteEntitlement.service";
-import { TenantAccessResolver, type TenantAccessResolution } from "../Entitlement/tenantAccessResolver.service";
+import { TenantAccessResolver, tenantAccessGenerationKey, tenantAccessValidUntil, type TenantAccessResolution } from "../Entitlement/tenantAccessResolver.service";
 
 const ROUTE_CACHE_VERSION = 10 as const;
 const CACHE_NAMESPACE = `site-route:v${ROUTE_CACHE_VERSION}`;
@@ -34,10 +34,9 @@ export type WebsiteHostAvailability = "live" | "unpublished" | "suspended";
 export interface WebsiteRouteResolution {
   version: typeof ROUTE_CACHE_VERSION;
   websiteId: string;
-  publishedRevisionNumber: number | null;
   organizationId: string;
-  accessGeneration: string | null;
-  validUntil: string;
+  accessGeneration: string;
+  accessValidUntil: string;
   businessName: string;
   requestedSubdomain: string;
   canonicalSubdomain: string;
@@ -107,28 +106,30 @@ const safeSetForGeneration = async (
   ttlSeconds = WEBSITE_ROUTE_CACHE_TTL_SECONDS,
 ): Promise<boolean | null> => {
   try {
-    let ttlMs = jitteredTtl(ttlSeconds) * 1000;
     const route = value as Partial<WebsiteRouteResolution>;
-    if (route.websiteId) {
-      if (!route.organizationId || !route.accessGeneration || !route.validUntil ||
-          !await TenantAccessResolver.isCurrentGeneration(route.organizationId, route.accessGeneration)) return false;
-      ttlMs = Math.min(ttlMs, Math.floor(Date.parse(route.validUntil) - Date.now()));
-      if (!Number.isFinite(ttlMs) || ttlMs <= 0) return false;
-    }
+    const deadline = route.accessValidUntil ? Date.parse(route.accessValidUntil) : Infinity;
+    const ttlMs = Math.floor(Math.min(jitteredTtl(ttlSeconds) * 1000, deadline - Date.now()));
+    if (!Number.isFinite(ttlMs) || ttlMs < 1) return false;
     const result = await redis.eval(
       `
         local current = redis.call('GET', KEYS[2])
         if not current then current = '0' end
         if current ~= ARGV[1] then return 0 end
+        if ARGV[4] ~= '' then
+          local access = redis.call('GET', KEYS[3]) or '0'
+          if access ~= ARGV[4] then return 0 end
+        end
         redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
         return 1
       `,
-      2,
+      3,
       cacheKey,
       routeGenerationKey(cacheKey),
+      route.organizationId ? tenantAccessGenerationKey(route.organizationId) : routeGenerationKey(cacheKey),
       String(generation),
       JSON.stringify(value),
       String(ttlMs),
+      route.organizationId ? route.accessGeneration ?? "0" : "",
     );
     return Number(result) === 1;
   } catch {
@@ -136,12 +137,12 @@ const safeSetForGeneration = async (
   }
 };
 
-const invalidateCacheKeys = async (keys: string[]) => {
-  const unique = [...new Set(keys)];
+const invalidateCacheKeys = async (keys: string[]): Promise<boolean> => {
   let delivered = true;
+  const unique = [...new Set(keys)];
   for (const key of unique) {
     try {
-      const result = await redis.eval(
+      const outcome = await redis.eval(
         `
           redis.call('INCR', KEYS[2])
           redis.call('DEL', KEYS[1], KEYS[3])
@@ -152,7 +153,7 @@ const invalidateCacheKeys = async (keys: string[]) => {
         routeGenerationKey(key),
         routeLockKey(key),
       );
-      delivered = Number(result) === 1 && delivered;
+      if (Number(outcome) !== 1) delivered = false;
     } catch {
       delivered = false;
     }
@@ -253,6 +254,20 @@ const normalizeHost = (value: string): string => {
 const hasCustomDomainRouting = (entitlements: Awaited<ReturnType<typeof WebsiteEntitlementService.getForAdminId>>) =>
   WEBSITE_CUSTOM_DOMAINS_ENABLED && entitlements.customDomains && entitlements.customDomainLimit > 0;
 
+const routingAccessMetadata = (access: TenantAccessResolution) => ({
+  organizationId: access.organizationId,
+  accessGeneration: access.cache?.generation ?? "0",
+  accessValidUntil: new Date(tenantAccessValidUntil(access)).toISOString(),
+});
+
+const hasCurrentAuthorization = async (route: WebsiteRouteResolution): Promise<boolean> => {
+  if (!route.organizationId || !route.accessValidUntil || !Number.isFinite(Date.parse(route.accessValidUntil)) || Date.parse(route.accessValidUntil) <= Date.now()) return false;
+  try {
+    const generation = (await redis.get(tenantAccessGenerationKey(route.organizationId))) ?? "0";
+    return generation === route.accessGeneration;
+  } catch { return false; }
+};
+
 const websiteAvailability = (access: TenantAccessResolution): WebsiteHostAvailability => {
   if (!access.access.dashboardAllowed) return "suspended";
   if (!access.access.publicWebsiteAllowed) return "unpublished";
@@ -278,17 +293,6 @@ const platformSubdomainFromHost = (host: string): string | null => {
  * current BusinessWebsite row, so repeated renames never build database-level
  * redirect chains. Both hits and short-lived misses are cached in Redis.
  */
-const validCachedRoute = async (route: WebsiteRouteResolution): Promise<boolean> =>
-  Boolean(route.organizationId && route.accessGeneration && Number.isFinite(Date.parse(route.validUntil)) &&
-    Date.parse(route.validUntil) > Date.now() &&
-    await TenantAccessResolver.isCurrentGeneration(route.organizationId, route.accessGeneration));
-
-const accessMetadata = (access: TenantAccessResolution) => ({
-  organizationId: access.organizationId,
-  accessGeneration: access.generation,
-  validUntil: access.validUntil,
-});
-
 const readSubdomainCache = async (key: string, subdomain: string): Promise<WebsiteRouteResolution | null> => {
   const cached = await safeGet<WebsiteRouteResolution | NegativeCacheEntry>(key);
   if (isNegativeCacheHit(cached, subdomain)) {
@@ -299,7 +303,7 @@ const readSubdomainCache = async (key: string, subdomain: string): Promise<Websi
     cached.version === ROUTE_CACHE_VERSION &&
     "requestedSubdomain" in cached &&
     cached.requestedSubdomain === subdomain &&
-    await validCachedRoute(cached as WebsiteRouteResolution)
+    await hasCurrentAuthorization(cached as WebsiteRouteResolution)
   ) {
     return cached as WebsiteRouteResolution;
   }
@@ -313,7 +317,6 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
       id: true,
       subdomain: true,
       status: true,
-      publishedRevisionNumber: true,
       admin: { select: {
         id: true,
         businessName: true,
@@ -328,12 +331,11 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
   });
   if (website) {
     const access = await TenantAccessResolver.resolve(website.admin.id);
-    const entitlements = WebsiteEntitlementService.fromAccess(access);
+    const entitlements = await WebsiteEntitlementService.getForAdminId(website.admin.id, access);
     return {
       version: ROUTE_CACHE_VERSION,
       websiteId: website.id,
-      publishedRevisionNumber: website.publishedRevisionNumber ?? null,
-      ...accessMetadata(access),
+      ...routingAccessMetadata(access),
       businessName: website.admin.businessName,
       requestedSubdomain: subdomain,
       canonicalSubdomain: website.subdomain,
@@ -354,7 +356,6 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
         select: {
           subdomain: true,
           status: true,
-          publishedRevisionNumber: true,
           admin: { select: {
             id: true,
             businessName: true,
@@ -372,12 +373,11 @@ const loadSubdomainFromDatabase = async (subdomain: string): Promise<WebsiteRout
   if (!alias) return null;
 
   const aliasAccess = await TenantAccessResolver.resolve(alias.website.admin.id);
-  const aliasEntitlements = WebsiteEntitlementService.fromAccess(aliasAccess);
+  const aliasEntitlements = await WebsiteEntitlementService.getForAdminId(alias.website.admin.id, aliasAccess);
   return {
     version: ROUTE_CACHE_VERSION,
     websiteId: alias.websiteId,
-    publishedRevisionNumber: alias.website.publishedRevisionNumber ?? null,
-    ...accessMetadata(aliasAccess),
+    ...routingAccessMetadata(aliasAccess),
     businessName: alias.website.admin.businessName,
     requestedSubdomain: subdomain,
     canonicalSubdomain: alias.website.subdomain,
@@ -471,7 +471,6 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
         select: {
           subdomain: true,
           status: true,
-          publishedRevisionNumber: true,
           admin: { select: {
         id: true,
         businessName: true,
@@ -491,7 +490,7 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
   }
 
   const domainAccess = await TenantAccessResolver.resolve(domain.website.admin.id);
-  const entitlements = WebsiteEntitlementService.fromAccess(domainAccess);
+  const entitlements = await WebsiteEntitlementService.getForAdminId(domain.website.admin.id, domainAccess);
   if (!hasCustomDomainRouting(entitlements)) {
     // A downgrade must remove premium routing immediately without deleting the
     // verified domain record. Upgrading later restores it without DNS setup.
@@ -519,8 +518,7 @@ const resolveCustomHost = async (host: string): Promise<WebsiteHostResolution> =
   return {
     version: ROUTE_CACHE_VERSION,
     websiteId: domain.websiteId,
-    publishedRevisionNumber: domain.website.publishedRevisionNumber ?? null,
-    ...accessMetadata(domainAccess),
+    ...routingAccessMetadata(domainAccess),
     businessName: domain.website.admin.businessName,
     requestedSubdomain: domain.website.subdomain,
     canonicalSubdomain: domain.website.subdomain,
@@ -550,7 +548,7 @@ const readHostCache = async (key: string, host: string): Promise<WebsiteHostReso
     cached.version === ROUTE_CACHE_VERSION &&
     "requestedHost" in cached &&
     cached.requestedHost === host &&
-    await validCachedRoute(cached as WebsiteHostResolution)
+    await hasCurrentAuthorization(cached as WebsiteHostResolution)
   ) {
     return cached as WebsiteHostResolution;
   }
@@ -589,20 +587,13 @@ const resolveHostWithDiagnostics = async (input: string): Promise<{
   diagnostics: WebsiteHostResolverDiagnostics;
 }> => {
   const startedAt = performance.now();
-  const finish = async (resolution: WebsiteHostResolution, source: WebsiteHostResolverSource) => {
-    // SQL/rebuild waits may cross an expiry or an epoch rotation. Re-evaluate
-    // once before sending this time-bounded routing decision to the edge.
-    if (Date.parse(resolution.validUntil) <= Date.now() ||
-        (resolution.accessGeneration !== null && !await validCachedRoute(resolution))) {
-      resolution = await loadHostFromDatabase(host);
-      source = "database";
-      if (Date.parse(resolution.validUntil) <= Date.now() ||
-          (resolution.accessGeneration !== null && !await validCachedRoute(resolution))) {
-        throw new AppError(status.SERVICE_UNAVAILABLE, "Website authorization changed; retry the request");
-      }
-    }
-    return { resolution, diagnostics: { source, durationMs: Math.round((performance.now() - startedAt) * 10) / 10 } };
-  };
+  const finish = (resolution: WebsiteHostResolution, source: WebsiteHostResolverSource) => ({
+    resolution,
+    diagnostics: {
+      source,
+      durationMs: Math.round((performance.now() - startedAt) * 10) / 10,
+    },
+  });
 
   const host = normalizeHost(input);
   const key = hostCacheKey(host);
@@ -634,7 +625,7 @@ const resolveHostWithDiagnostics = async (input: string): Promise<{
       if (stored === false) return finish(await loadHostFromDatabase(host), "database");
       return finish(loaded, "database");
     } catch (error) {
-      if (platformSubdomainFromHost(host) && error instanceof AppError && error.statusCode === status.NOT_FOUND && generation !== null) {
+      if (error instanceof AppError && error.statusCode === status.NOT_FOUND && generation !== null) {
         const stored = await cacheNotFound(key, host, generation);
         if (stored === false) return finish(await loadHostFromDatabase(host), "database");
       }

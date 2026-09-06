@@ -13,7 +13,7 @@ import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { WebsiteEntitlementService, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
-import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
+import { TenantAccessResolver, tenantAccessValidUntil } from "../Entitlement/tenantAccessResolver.service";
 import { ServiceStatus } from "../../generated/prisma/enums";
 import type { WebsiteEditorStateInput } from "./website.interface";
 
@@ -161,7 +161,7 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
     }),
     TenantAccessResolver.resolve(website.adminId),
   ]);
-  const entitlements = await WebsiteEntitlementService.getForAdminId(website.adminId);
+  const entitlements = await WebsiteEntitlementService.getForAdminId(website.adminId, access);
 
   const averageRating = reviewAggregate._avg.rating;
   return {
@@ -244,12 +244,6 @@ const resolveSafePublishedSnapshot = async (website: ProjectionWebsite): Promise
   // Older PUBLISHED rows may predate publishedRevisionNumber. Search only
   // revisions explicitly created by Publish/Launch; a Draft saved/Restored
   // revision is never eligible because it may contain private edits.
-  if (publishedRevisionNumber !== null) {
-    throw new AppError(status.SERVICE_UNAVAILABLE, "The committed website revision is unavailable", {
-      code: "WEBSITE_PUBLISHED_REVISION_UNAVAILABLE", retryable: true,
-    });
-  }
-
   const historical = await prisma.websiteRevision.findMany({
     where: { websiteId: website.id },
     select: { revisionNumber: true, snapshot: true, reason: true },
@@ -368,7 +362,8 @@ const projectWebsite = (
       id: website.id,
       subdomain: website.subdomain,
       publishedAt: website.publishedAt,
-      publishedRevisionNumber: options.mode === "public" ? website.publishedRevisionNumber : null,
+      publishedRevisionNumber: website.publishedRevisionNumber,
+      accessValidUntil: new Date(tenantAccessValidUntil(source.access)).toISOString(),
       // Preview deliberately uses the public projection contract so the exact
       // Phase-3 renderer is exercised without teaching templates about admin
       // lifecycle states.
@@ -503,22 +498,7 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
         snapshotOverride: publishedSnapshot,
       });
     },
-    access,
   );
-
-  // A slow rebuild may cross an authorization boundary. Fail closed rather
-  // than serve the projection that was authorized before that boundary. With
-  // Redis unavailable a fresh SQL decision is used instead of an old epoch.
-  if (Date.parse(access.validUntil) <= Date.now() ||
-      !await TenantAccessResolver.isCurrentGeneration(adminId, access.generation)) {
-    const currentAccess = await TenantAccessResolver.resolve(adminId);
-    if (!currentAccess.access.publicWebsiteAllowed || Date.parse(currentAccess.validUntil) <= Date.now() ||
-        (access.generation !== null && currentAccess.generation !== access.generation)) {
-      throw new AppError(status.SERVICE_UNAVAILABLE, "Website authorization changed; retry the request", {
-        code: "WEBSITE_AUTHORIZATION_CHANGED", retryable: true,
-      });
-    }
-  }
 
   // Alias information belongs to the current request, not the canonical
   // website projection. Keep one cache entry per website and overlay only the

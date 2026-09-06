@@ -1,0 +1,330 @@
+{
+  "preparedDate": "2026-09-06",
+  "component": "backend",
+  "overallStatus": "LOCAL_MODEL_TESTS_PASS_RELEASE_GATES_UNVERIFIED",
+  "backendModelTests": {
+    "tests": 18,
+    "passed": 18,
+    "failed": 0,
+    "skipped": 0,
+    "cases": [
+      {
+        "name": "an old in-flight access lookup cannot repopulate a deleted entry or return the pre-launch decision",
+        "passed": true
+      },
+      {
+        "name": "routing TTL is clipped to sub-second subscription expiry and denies at the exact deadline",
+        "passed": true
+      },
+      {
+        "name": "override expiry is enforced even with warm host and projection caches",
+        "passed": true
+      },
+      {
+        "name": "suspension and restoration invalidate dependent routing by the tenant generation",
+        "passed": true
+      },
+      {
+        "name": "access fails closed without its database delegate; Redis loss still uses authoritative SQL",
+        "passed": true
+      },
+      {
+        "name": "projection fresh and stale copies share an absolute authorization ceiling",
+        "passed": true
+      },
+      {
+        "name": "a durable old event never warms or resurrects a suspended tenant",
+        "passed": true
+      },
+      {
+        "name": "lifecycle work uses the same durable outbox but cannot collide with publication receipts",
+        "passed": true
+      },
+      {
+        "name": "regression: cached DRAFT access launches and the first canonical-host request resolves the committed website/revision",
+        "passed": true
+      },
+      {
+        "name": "regression: final review, publication and onboarding complete atomically in one launch mutation",
+        "passed": true
+      },
+      {
+        "name": "regression: repeated launch, stale expected revision, old editor payload and a newer draft do not republish",
+        "passed": true
+      },
+      {
+        "name": "regression: a post-commit timeout/lost response is retryable without another website or publication revision",
+        "passed": true
+      },
+      {
+        "name": "outbox insertion failure rolls back publication, revision and onboarding",
+        "passed": true
+      },
+      {
+        "name": "two concurrent launch requests converge on one site, one publication and one outbox row",
+        "passed": true
+      },
+      {
+        "name": "cache delivery timeout is preparing, durably queued, and recoverable by the existing outbox worker path",
+        "passed": true
+      },
+      {
+        "name": "a DB fallback after Redis warming failure is never confirmed readiness",
+        "passed": true
+      },
+      {
+        "name": "mismatched projection revision is never confirmed readiness",
+        "passed": true
+      },
+      {
+        "name": "Redis outage does not masquerade as cache invalidation or readiness",
+        "passed": true
+      }
+    ]
+  },
+  "frontendModelTests": {
+    "tests": 13,
+    "passed": 13,
+    "failed": 0,
+    "skipped": 0,
+    "cases": [
+      {
+        "name": "completion updates session, auth, onboarding bootstrap/status and compact status before exactly one dashboard navigation",
+        "passed": true
+      },
+      {
+        "name": "pre-commit queries are aborted AND awaited before the authoritative cache replacement",
+        "passed": true
+      },
+      {
+        "name": "legacy completion awaits exactly one canonical session request before committing local completion",
+        "passed": true
+      },
+      {
+        "name": "a late completion after switching users/tenants is rejected without cache writes",
+        "passed": true
+      },
+      {
+        "name": "an account logged out and logged back into the same identity cannot consume an old launch response",
+        "passed": true
+      },
+      {
+        "name": "wrong tenant or session identity in a completion response is rejected before writes",
+        "passed": true
+      },
+      {
+        "name": "a canonical session still reporting incomplete onboarding does not navigate or stamp completion",
+        "passed": true
+      },
+      {
+        "name": "bootstrap updates cannot mark a different cached user or website complete",
+        "passed": true
+      },
+      {
+        "name": "same-tick double click submits once; a failure releases the guard for a retry",
+        "passed": true
+      },
+      {
+        "name": "a publication with an authoritative URL but unconfirmed delivery remains preparing",
+        "passed": true
+      },
+      {
+        "name": "Visit website distinguishes loading, draft, preparing, live and temporarily unavailable",
+        "passed": true
+      },
+      {
+        "name": "URL-only, expired, wrong-tenant and malformed status values never enable a public link",
+        "passed": true
+      },
+      {
+        "name": "routing Data Cache options cannot extend an absolute access decision expiry",
+        "passed": true
+      }
+    ]
+  },
+  "frontendExistingWebsiteContractTests": {
+    "tests": 33,
+    "passed": 33,
+    "failed": 0,
+    "skipped": 0,
+    "cases": [
+      {
+        "name": "API error parser preserves server and client revision numbers",
+        "passed": true
+      },
+      {
+        "name": "Website Studio treats only WEBSITE_DRAFT_CONFLICT as an editor concurrency conflict",
+        "passed": true
+      },
+      {
+        "name": "conflicting autosave preserves local work and cannot silently reload it",
+        "passed": true
+      },
+      {
+        "name": "clean publish or restore conflict automatically reloads latest server draft",
+        "passed": true
+      },
+      {
+        "name": "conflict banner shows server and editor revisions",
+        "passed": true
+      },
+      {
+        "name": "Phase 1 serialized save queue remains intact",
+        "passed": true
+      },
+      {
+        "name": "signed revalidation immediately expires the stable websiteId tag",
+        "passed": true
+      },
+      {
+        "name": "canonical tenant and alias identifiers are invalidated with immediate expiry",
+        "passed": true
+      },
+      {
+        "name": "websiteId remains the primary public fetch cache tag",
+        "passed": true
+      },
+      {
+        "name": "rollout example uses a short safety TTL while direct revalidation is being proven",
+        "passed": true
+      },
+      {
+        "name": "Website Studio no longer has browser-local website draft modules",
+        "passed": true
+      },
+      {
+        "name": "Website Studio autosaves configured state to the server and preview reads it",
+        "passed": true
+      },
+      {
+        "name": "frontend exposes the canonical design contract",
+        "passed": true
+      },
+      {
+        "name": "Website Studio mutations synchronously publish an exact snapshot to the save queue",
+        "passed": true
+      },
+      {
+        "name": "Website Studio serializes autosave and immediately trails edits made during an in-flight save",
+        "passed": true
+      },
+      {
+        "name": "autosave patches confirmed editor caches instead of invalidating and refetching them",
+        "passed": true
+      },
+      {
+        "name": "website API contract accepts additive publication fingerprints and delivery metadata",
+        "passed": true
+      },
+      {
+        "name": "studio renders selected vs live fingerprints and truthful cache status",
+        "passed": true
+      },
+      {
+        "name": "publish and launch store returned delivery status for both overview and editor tabs",
+        "passed": true
+      },
+      {
+        "name": "Website Studio exposes stable behavioral hooks for save queue/revision assertions",
+        "passed": true
+      },
+      {
+        "name": "public runtime exposes canonical template/component/style markers",
+        "passed": true
+      },
+      {
+        "name": "staging runner covers all asynchronous races, all templates, custom domain and first-request cache freshness",
+        "passed": true
+      },
+      {
+        "name": "shared template helpers expose templateThemeStyle and templateFontFamily",
+        "passed": true
+      },
+      {
+        "name": "PremiumHomeShell imports templateThemeStyle from shared and applies it as style prop",
+        "passed": true
+      },
+      {
+        "name": "premium-home template contains no hardcoded brand colour hex literals",
+        "passed": true
+      },
+      {
+        "name": "premium-home template references var(--site-primary) in at least 30 places",
+        "passed": true
+      },
+      {
+        "name": "premium-home template references var(--site-secondary) for dark surfaces",
+        "passed": true
+      },
+      {
+        "name": "premium-home template references var(--site-accent) for hover states",
+        "passed": true
+      },
+      {
+        "name": "all template Shells inject tenant brand tokens via style prop",
+        "passed": true
+      },
+      {
+        "name": "public site layout emits data-website-template-id and data-website-template-version on the root wrapper",
+        "passed": true
+      },
+      {
+        "name": "PremiumHomeShell root div carries data-site-template='premium-home' for E2E targeting",
+        "passed": true
+      },
+      {
+        "name": "templateRegistry registers premium-home@1.0.0 and exports requireRuntimeTemplate",
+        "passed": true
+      },
+      {
+        "name": "phase 5 runtime markers contract remains intact after phase 6 changes",
+        "passed": true
+      }
+    ]
+  },
+  "originalBackendBaselineRegressions": {
+    "tests": 4,
+    "passed": 0,
+    "failed": 4,
+    "skipped": 0,
+    "cases": [
+      {
+        "name": "regression: cached DRAFT access launches and the first canonical-host request resolves the committed website/revision",
+        "passed": false
+      },
+      {
+        "name": "regression: final review, publication and onboarding complete atomically in one launch mutation",
+        "passed": false
+      },
+      {
+        "name": "regression: repeated launch, stale expected revision, old editor payload and a newer draft do not republish",
+        "passed": false
+      },
+      {
+        "name": "regression: a post-commit timeout/lost response is retryable without another website or publication revision",
+        "passed": false
+      }
+    ]
+  },
+  "changedFileSyntaxChecks": {
+    "typescriptSyntax": 20,
+    "javascriptSyntax": 6,
+    "json": 3,
+    "errors": [],
+    "diffCheck": "passed"
+  },
+  "workflowYamlParsing": "PASSED",
+  "backendProductionSourceContractGate": "PASSED (source assertions only)",
+  "stagingMissingConfigurationGate": "PASSED: exit 2; no registration attempted",
+  "notVerified": {
+    "backendSemanticTypecheck": "BLOCKED: TS2688 missing Node type package; project dependencies not installed",
+    "frontendSemanticTypecheck": "NOT_RUN: project dependencies unavailable",
+    "dependencyBackedVitestSuites": "NOT_RUN: project dependencies and Prisma generated client unavailable",
+    "productionBuildsAndLint": "NOT_RUN: project dependencies unavailable",
+    "realRedisAndPostgresIntegration": "NOT_RUN: infrastructure not available",
+    "cleanRegistrationStagingTrace": "NOT_RUN: staging credentials/access not available",
+    "failedRegistrationStagingTrace": "NOT_RUN: staging credentials/access not available",
+    "wildcardDnsTlsProvisioningAndExternalPreflight": "NOT_RUN: cloud/ingress access not available"
+  },
+  "testScope": "Actual source modules transpiled and executed with explicit infrastructure/UI doubles. No measured staging latency or production-readiness certification."
+}

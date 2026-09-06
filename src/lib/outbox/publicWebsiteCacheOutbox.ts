@@ -4,19 +4,30 @@ import {
   NEXT_REVALIDATE_URL,
 } from "../../config/ENV";
 import logger from "../logger";
-import { randomUUID } from "node:crypto";
 import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../prisma/prisma";
 import { getTracePropagationMetadata, traceAsyncOperation } from "../monitoring/requestTrace";
 
 export const PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC = Object.freeze({
   INVALIDATION_REQUESTED: "PUBLIC_WEBSITE_CACHE_INVALIDATION_REQUESTED",
+  // A distinct topic in the SAME outbox prevents an older worker from treating
+  // full publication delivery as just a successful Next revalidation callback.
+  DELIVERY_REQUESTED: "PUBLIC_WEBSITE_DELIVERY_REQUESTED",
 } as const);
+
+export interface WebsitePublicationWork {
+  adminId: string;
+  revisionNumber: number;
+}
+
+export const publicationDeliveryDedupeKey = (websiteId: string, revisionNumber: number) =>
+  `website-publication:${websiteId}:${revisionNumber}`;
 
 export interface PublicWebsiteCacheInvalidationPayload {
   websiteId: string;
-  /** Versioned extension of the SAME outbox topic. Legacy callback rows still work. */
-  delivery?: { version: 1; adminId: string; revision: number | null };
+  /** Presence selects full access/routing/projection delivery in the same outbox. */
+  publication?: WebsitePublicationWork;
+  accessChange?: { adminId: string };
   /** Canonical tenant identifier. For Cleaning CRM this is normally the canonical subdomain label. */
   tenantIdentifier?: string | null;
   /** Historical subdomain aliases and routable custom-domain aliases when available. */
@@ -68,6 +79,13 @@ const normalizePayload = (
     throw new Error("Public website cache invalidation payload has an invalid websiteId");
   }
 
+  if (payload.publication && (
+    !payload.publication.adminId || !Number.isSafeInteger(payload.publication.revisionNumber) ||
+    payload.publication.revisionNumber < 1
+  )) throw new Error("Invalid publication delivery metadata");
+
+  if (payload.accessChange && !payload.accessChange.adminId) throw new Error("Invalid access delivery metadata");
+
   const tenantIdentifiers = normalizeTenantIdentifiers(
     payload.tenantIdentifier,
     payload.tenantIdentifiers,
@@ -76,7 +94,8 @@ const normalizePayload = (
 
   return {
     websiteId,
-    ...(payload.delivery ? { delivery: payload.delivery } : {}),
+    ...(payload.publication ? { publication: payload.publication } : {}),
+    ...(payload.accessChange ? { accessChange: payload.accessChange } : {}),
     tenantIdentifier: canonicalTenantIdentifier,
     tenantIdentifiers,
     reason: payload.reason?.trim().slice(0, 120) || "website-projection-invalidated",
@@ -95,19 +114,15 @@ export const parsePublicWebsiteCacheInvalidationPayload = (
   }
 
   const value = payload as Record<string, unknown>;
-  const delivery = value.delivery as PublicWebsiteCacheInvalidationPayload["delivery"];
-  if (delivery && (delivery.version !== 1 || typeof delivery.adminId !== "string" || !delivery.adminId ||
-      !(delivery.revision === null || (Number.isSafeInteger(delivery.revision) && delivery.revision > 0)))) {
-    throw new Error("Invalid publication delivery outbox payload");
-  }
   return normalizePayload({
-    ...(delivery ? { delivery } : {}),
     websiteId: typeof value.websiteId === "string" ? value.websiteId : "",
     tenantIdentifier: value.tenantIdentifier as string | null | undefined,
     tenantIdentifiers: Array.isArray(value.tenantIdentifiers)
       ? value.tenantIdentifiers.filter((item): item is string => typeof item === "string")
       : null,
     reason: typeof value.reason === "string" ? value.reason : null,
+    ...(value.publication ? { publication: value.publication as WebsitePublicationWork } : {}),
+    ...(value.accessChange ? { accessChange: value.accessChange as { adminId: string } } : {}),
   });
 };
 
@@ -221,45 +236,71 @@ const triggerWithFallback = async (
   }
 };
 
-export const publicationDeliveryDedupeKey = (websiteId: string, revision: number) =>
-  `website-publication:${websiteId}:${revision}`;
-
-/** Never catch this error: failure to persist delivery must roll back publication. */
-const enqueueDeliveryTx = async (
+/** Must be called inside the snapshot/onboarding transaction. No network I/O. */
+const enqueuePublicationTx = async (
   tx: Prisma.TransactionClient,
-  input: PublicWebsiteCacheInvalidationPayload & { delivery: NonNullable<PublicWebsiteCacheInvalidationPayload["delivery"]> },
-  dedupeKey = input.delivery.revision === null
-    ? `website-lifecycle:${input.websiteId}:${randomUUID()}`
-    : publicationDeliveryDedupeKey(input.websiteId, input.delivery.revision),
+  payload: PublicWebsiteCacheInvalidationPayload & { publication: WebsitePublicationWork },
 ) => {
-  const payload = withTraceMetadata(normalizePayload(input) as unknown as Record<string, unknown>) as Prisma.InputJsonObject;
-  return traceAsyncOperation("queue", "outbox.enqueue.website-publication", () => tx.outboxEvent.upsert({
-    where: { dedupeKey },
+  const normalized = normalizePayload(payload);
+  return traceAsyncOperation("queue", "outbox.enqueue.publication", () => tx.outboxEvent.upsert({
+    where: { dedupeKey: publicationDeliveryDedupeKey(payload.websiteId, payload.publication.revisionNumber) },
     create: {
-      topic: PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC.INVALIDATION_REQUESTED,
-      dedupeKey, payload, maxAttempts: 8,
-      // Give the immediate path a head start. A crash after COMMIT still leaves
-      // a claimable row for the existing worker, with its normal retry policy.
-      nextAttemptAt: new Date(Date.now() + 15_000),
+      topic: PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC.DELIVERY_REQUESTED,
+      dedupeKey: publicationDeliveryDedupeKey(payload.websiteId, payload.publication.revisionNumber),
+      payload: withTraceMetadata({ ...normalized }) as Prisma.InputJsonValue,
+      maxAttempts: 8,
     },
+    // A duplicate launch must not steal a worker lease or create another row.
     update: {},
-    select: { id: true, payload: true },
+    select: { id: true, status: true },
   }));
 };
 
-const enqueueTenantDeliveryTx = async (tx: Prisma.TransactionClient, adminId: string, reason: string) => {
+/** A lifecycle change is durable with its tenant transaction, even for a draft.
+ * Distinct changes must not deduplicate against a previous publication receipt.
+ */
+const enqueueTenantAccessChangeTx = async (tx: Prisma.TransactionClient, adminId: string, reason: string) => {
   const website = await tx.businessWebsite.findUnique({
     where: { adminId },
-    select: { id: true, subdomain: true, publishedRevisionNumber: true,
-      subdomainAliases: { select: { subdomain: true } }, domains: { select: { domain: true } } },
+    select: { id: true, subdomain: true, subdomainAliases: { select: { subdomain: true } }, domains: { select: { domain: true } } },
   });
   if (!website) return null;
-  return enqueueDeliveryTx(tx, {
-    websiteId: website.id, tenantIdentifier: website.subdomain,
-    tenantIdentifiers: [website.subdomain, ...website.subdomainAliases.map(a => a.subdomain), ...website.domains.map(d => d.domain)],
-    reason, delivery: { version: 1, adminId, revision: website.publishedRevisionNumber },
-  }, `website-lifecycle:${website.id}:${randomUUID()}`);
+  const payload = normalizePayload({
+    websiteId: website.id, accessChange: { adminId }, reason,
+    tenantIdentifier: website.subdomain,
+    tenantIdentifiers: [website.subdomain, ...website.subdomainAliases.map((item) => item.subdomain), ...website.domains.map((item) => item.domain)],
+  });
+  const event = await tx.outboxEvent.create({
+    data: { topic: PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC.DELIVERY_REQUESTED, payload: withTraceMetadata({ ...payload }) as Prisma.InputJsonValue, maxAttempts: 8 },
+    select: { id: true },
+  });
+  return { id: event.id, payload };
 };
 
-export const PublicWebsiteCacheOutbox = { enqueue, enqueueDeliveryTx, enqueueTenantDeliveryTx };
+/** The direct path never takes ownership of a row already leased by a worker. */
+const acknowledgePublication = async (id: string): Promise<boolean> => {
+  try {
+    const result = await prisma.outboxEvent.updateMany({
+      where: { id, status: { in: ["PENDING", "RETRY", "PROCESSED", "DEAD"] }, lockedAt: null },
+      data: { status: "PROCESSED", processedAt: new Date(), lastError: null },
+    });
+    if (result.count > 0) return true;
+    return (await prisma.outboxEvent.findUnique({ where: { id }, select: { status: true } }))?.status === "PROCESSED";
+  } catch { return false; }
+};
+
+const retainPublicationRetry = async (id: string): Promise<boolean> => {
+  try {
+    // Reopen a completed/dead receipt when a later idempotent launch detects a
+    // delivery outage. Never reset a pending attempt or a worker's active lease.
+    await prisma.outboxEvent.updateMany({
+      where: { id, status: { in: ["PROCESSED", "DEAD"] }, lockedAt: null },
+      data: { status: "PENDING", processedAt: null, attempts: 0, nextAttemptAt: new Date(), lastError: null },
+    });
+    const event = await prisma.outboxEvent.findUnique({ where: { id }, select: { status: true } });
+    return Boolean(event && ["PENDING", "RETRY", "PROCESSING"].includes(event.status));
+  } catch { return false; }
+};
+
+export const PublicWebsiteCacheOutbox = { enqueue, enqueuePublicationTx, enqueueTenantAccessChangeTx, acknowledgePublication, retainPublicationRetry };
 export const PublicWebsiteCacheRevalidation = { deliver, triggerWithFallback };
