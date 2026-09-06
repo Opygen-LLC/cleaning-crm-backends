@@ -13,6 +13,7 @@ import { CacheNamespaces, ttlForKey } from "../../lib/cache/cachePolicy";
 import { singleFlight } from "../../lib/utils/singleFlight";
 import { WEBSITE_EDITOR_SURFACES, type WebsiteEditorSurface } from "./website.interface";
 import { prisma } from "../../lib/prisma/prisma";
+import { TenantAccessResolver, type TenantAccessResolution } from "../Entitlement/tenantAccessResolver.service";
 
 const CACHE_VERSION = 10 as const;
 const STALE_KEY_PREFIX = `site-projection-stale:v${CACHE_VERSION}:`;
@@ -30,12 +31,14 @@ interface StudioCacheEnvelope<T> {
   data: T;
 }
 
+type ProjectionAccess = Pick<TenantAccessResolution, "organizationId" | "generation" | "validUntil">;
+
 interface ProjectionCacheEnvelope<T> {
+  access?: ProjectionAccess;
   version: typeof CACHE_VERSION;
   websiteId: string;
   generation: number;
   cachedAt: string;
-  validUntil: string | null;
   data: T;
 }
 
@@ -55,12 +58,14 @@ const jitteredTtl = (base = WEBSITE_PROJECTION_CACHE_TTL_SECONDS) => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const parseEnvelope = <T>(raw: string | null, websiteId: string): T | null => {
+const parseEnvelope = async <T>(raw: string | null, websiteId: string): Promise<T | null> => {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as ProjectionCacheEnvelope<T>;
     if (parsed.version !== CACHE_VERSION || parsed.websiteId !== websiteId) return null;
-    if (parsed.validUntil && (!Number.isFinite(Date.parse(parsed.validUntil)) || Date.parse(parsed.validUntil) <= Date.now())) return null;
+    if (parsed.access && (!Number.isFinite(Date.parse(parsed.access.validUntil)) ||
+        Date.parse(parsed.access.validUntil) <= Date.now() ||
+        !await TenantAccessResolver.isCurrentGeneration(parsed.access.organizationId, parsed.access.generation))) return null;
     return parsed.data;
   } catch {
     return null;
@@ -97,22 +102,21 @@ const getGeneration = async (websiteId: string): Promise<number | null> => {
  * after an explicit mutation, and therefore gives us stale-while-revalidate
  * without sacrificing immediate CRM freshness.
  */
-const setForGeneration = async <T>(websiteId: string, data: T, generation: number): Promise<boolean> => {
-  const accessValidUntil = (data as { website?: { accessValidUntil?: string } })?.website?.accessValidUntil ?? null;
-  const remainingMs = accessValidUntil ? Date.parse(accessValidUntil) - Date.now() : Infinity;
-  if (remainingMs <= 0 || Number.isNaN(remainingMs)) return false;
-  const freshMs = Math.floor(Math.min(jitteredTtl() * 1000, remainingMs));
-  const staleMs = Math.floor(Math.min(jitteredTtl(Math.max(WEBSITE_PROJECTION_STALE_TTL_SECONDS, WEBSITE_PROJECTION_CACHE_TTL_SECONDS + 60)) * 1000, remainingMs));
-  if (freshMs < 1 || staleMs < 1) return false;
+const setForGeneration = async <T>(websiteId: string, data: T, generation: number, access?: ProjectionAccess): Promise<boolean> => {
   const envelope: ProjectionCacheEnvelope<T> = {
     version: CACHE_VERSION,
-    validUntil: accessValidUntil,
     websiteId,
     generation,
+    access,
     cachedAt: new Date().toISOString(),
     data,
   };
   try {
+    const remaining = access ? Math.floor(Date.parse(access.validUntil) - Date.now()) : Number.MAX_SAFE_INTEGER;
+    if (access && (!Number.isFinite(remaining) || remaining <= 0 ||
+        !await TenantAccessResolver.isCurrentGeneration(access.organizationId, access.generation))) return false;
+    const freshTtl = Math.min(jitteredTtl() * 1000, remaining);
+    const staleTtl = Math.min(jitteredTtl(Math.max(WEBSITE_PROJECTION_STALE_TTL_SECONDS, WEBSITE_PROJECTION_CACHE_TTL_SECONDS + 60)) * 1000, remaining);
     const result = await redis.eval(
       `
         local current = redis.call('GET', KEYS[3])
@@ -128,8 +132,8 @@ const setForGeneration = async <T>(websiteId: string, data: T, generation: numbe
       generationKeyFor(websiteId),
       String(generation),
       JSON.stringify(envelope),
-      String(freshMs),
-      String(staleMs),
+      String(freshTtl),
+      String(staleTtl),
     );
     return Number(result) === 1;
   } catch {
@@ -140,7 +144,15 @@ const setForGeneration = async <T>(websiteId: string, data: T, generation: numbe
 const set = async <T>(websiteId: string, data: T): Promise<boolean> => {
   const generation = await getGeneration(websiteId);
   if (generation === null) return false;
-  return setForGeneration(websiteId, data, generation);
+  const adminId = await getAdminIdForWebsite(websiteId);
+  if (!adminId) return false;
+  try {
+    const access = await TenantAccessResolver.resolve(adminId);
+    if (!access.access.publicWebsiteAllowed) return false;
+    return setForGeneration(websiteId, data, generation, access);
+  } catch {
+    return false;
+  }
 };
 
 const acquireRebuildLock = async (websiteId: string): Promise<{ token: string | null; redisAvailable: boolean }> => {
@@ -177,19 +189,19 @@ const releaseRebuildLock = async (websiteId: string, token: string): Promise<voi
   }
 };
 
-const loadAndCacheCurrentGeneration = async <T>(websiteId: string, loader: () => Promise<T>): Promise<T> => {
+const loadAndCacheCurrentGeneration = async <T>(websiteId: string, loader: () => Promise<T>, access?: ProjectionAccess): Promise<T> => {
   let generation = await getGeneration(websiteId);
   if (generation === null) return loader();
 
   let loaded = await loader();
-  if (await setForGeneration(websiteId, loaded, generation)) return loaded;
+  if (await setForGeneration(websiteId, loaded, generation, access)) return loaded;
 
   // A CRM mutation committed while the first DB read was in flight. Reload
   // once from authoritative state and cache only against the new epoch.
   generation = await getGeneration(websiteId);
   if (generation === null) return loader();
   loaded = await loader();
-  await setForGeneration(websiteId, loaded, generation);
+  await setForGeneration(websiteId, loaded, generation, access);
   return loaded;
 };
 
@@ -205,7 +217,7 @@ const waitForFreshFill = async <T>(websiteId: string): Promise<T | null> => {
   return null;
 };
 
-const getOrLoad = async <T>(websiteId: string, loader: () => Promise<T>): Promise<T> => {
+const getOrLoad = async <T>(websiteId: string, loader: () => Promise<T>, access?: ProjectionAccess): Promise<T> => {
   const cached = await get<T>(websiteId);
   if (cached) return cached;
 
@@ -214,7 +226,7 @@ const getOrLoad = async <T>(websiteId: string, loader: () => Promise<T>): Promis
     try {
       const filled = await get<T>(websiteId);
       if (filled) return filled;
-      return await loadAndCacheCurrentGeneration(websiteId, loader);
+      return await loadAndCacheCurrentGeneration(websiteId, loader, access);
     } finally {
       await releaseRebuildLock(websiteId, lock.token);
     }
@@ -234,7 +246,7 @@ const getOrLoad = async <T>(websiteId: string, loader: () => Promise<T>): Promis
   // than making the public request wait for the entire lock TTL.
   const filled = await waitForFreshFill<T>(websiteId);
   if (filled) return filled;
-  return loadAndCacheCurrentGeneration(websiteId, loader);
+  return loadAndCacheCurrentGeneration(websiteId, loader, access);
 };
 
 const studioKeyFor = (adminId: string, surface: WebsiteEditorSurface) =>
@@ -284,14 +296,16 @@ const getOrLoadStudio = async <T>(
 };
 
 const invalidateStudioAdmin = async (adminId: string | null | undefined): Promise<boolean> => {
-  if (!adminId) return false;
+  if (!adminId) return true;
   try {
     await redis.del(
       ...STUDIO_CACHE_SURFACES.map((surface) => studioKeyFor(adminId, surface)),
       CacheNamespaces.websiteStudioOverview(adminId),
     );
     return true;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 };
 
 const rememberAdminWebsite = async (adminId: string | null | undefined, websiteId: string | null | undefined): Promise<void> => {
@@ -338,20 +352,26 @@ export interface WebsiteProjectionInvalidationOptions {
   reason?: string | null;
 }
 
+export interface WebsiteProjectionInvalidationResult {
+  invalidated: boolean;
+  publicProjectionInvalidated: boolean;
+  studioInvalidated: boolean;
+  revalidation: Awaited<ReturnType<typeof PublicWebsiteCacheRevalidation.triggerWithFallback>> | null;
+}
+
 const invalidateWebsite = async (
   websiteId: string | null | undefined,
   knownAdminId?: string | null,
   options: WebsiteProjectionInvalidationOptions = {},
-): Promise<{ projectionInvalidated: boolean; studioInvalidated: boolean; revalidationDelivered: boolean }> => {
-  if (!websiteId) return { projectionInvalidated: false, studioInvalidated: false, revalidationDelivered: false };
-  let projectionInvalidated = false;
-  let revalidationDelivered = false;
+): Promise<WebsiteProjectionInvalidationResult> => {
+  if (!websiteId) return { invalidated: false, publicProjectionInvalidated: false, studioInvalidated: false, revalidation: null };
+  let publicProjectionInvalidated = false;
   const adminId = knownAdminId !== undefined ? knownAdminId : await getAdminIdForWebsite(websiteId);
   try {
     // Generation bump + fresh/stale/lock deletion are atomic. This closes the
     // stale-repopulation race and guarantees CRM writes are visible on the next
     // public request even though natural TTL expiry can use stale-while-rebuild.
-    const outcome = await redis.eval(
+    const result = await redis.eval(
       `
         redis.call('INCR', KEYS[4])
         redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])
@@ -363,55 +383,45 @@ const invalidateWebsite = async (
       lockKeyFor(websiteId),
       generationKeyFor(websiteId),
     );
-    projectionInvalidated = Number(outcome) === 1;
+    publicProjectionInvalidated = Number(result) === 1;
   } catch {
     // Redis remains an acceleration layer. PostgreSQL mutations must succeed
     // even during a cache outage; the Next.js safety TTL still provides eventual refresh.
   }
 
   const studioInvalidated = await invalidateStudioAdmin(adminId);
+  let revalidation: WebsiteProjectionInvalidationResult["revalidation"] = null;
 
   // Every public projection mutation still has a direct Next.js correctness
   // boundary. Publish/Launch defer only this step so routing + Redis can be
   // invalidated first and the richer tenant/alias payload can be sent afterward.
   if (options.revalidateNext !== false) {
-    const revalidation = await PublicWebsiteCacheRevalidation.triggerWithFallback({
+    revalidation = await PublicWebsiteCacheRevalidation.triggerWithFallback({
       websiteId,
       tenantIdentifier: options.tenantIdentifier,
       tenantIdentifiers: options.tenantIdentifiers,
       reason: options.reason ?? "website-projection-invalidated",
     });
-    revalidationDelivered = revalidation.delivered;
   }
-  return { projectionInvalidated, studioInvalidated, revalidationDelivered };
+  return { invalidated: publicProjectionInvalidated && studioInvalidated, publicProjectionInvalidated, studioInvalidated, revalidation };
 };
 
-const invalidateAdminWebsite = async (adminId: string | null | undefined) => {
-  const failed = { projectionInvalidated: false, studioInvalidated: false, revalidationDelivered: false };
-  if (!adminId) return failed;
-  await invalidateStudioAdmin(adminId);
+const invalidateAdminWebsite = async (adminId: string | null | undefined): Promise<boolean> => {
+  if (!adminId) return false;
   try {
-    // The public loader remembers this one-to-one relation. On warm tenants a
-    // CRM mutation therefore invalidates Redis without an extra SQL lookup.
-    const cachedWebsiteId = await redis.get(adminWebsiteKeyFor(adminId));
-    if (cachedWebsiteId) {
-      return await invalidateWebsite(cachedWebsiteId, adminId);
+    let websiteId: string | null = null;
+    try { websiteId = await redis.get(adminWebsiteKeyFor(adminId)); } catch { /* Fall back to SQL. */ }
+    if (!websiteId) {
+      const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
+      if (!website) return invalidateStudioAdmin(adminId);
+      websiteId = website.id;
+      await rememberAdminWebsite(adminId, websiteId);
     }
+    const result = await invalidateWebsite(websiteId, adminId);
+    return result.invalidated && (result.revalidation === null || result.revalidation.delivered);
   } catch {
-    // Fall through to the authoritative DB lookup.
-  }
-
-  try {
-    const website = await prisma.businessWebsite.findUnique({
-      where: { adminId },
-      select: { id: true },
-    });
-    if (!website) return failed;
-    await rememberAdminWebsite(adminId, website.id);
-    return await invalidateWebsite(website.id, adminId);
-  } catch {
-    // Mutation durability is independent; callers can observe failed delivery.
-    return failed;
+    // The database mutation has succeeded, but cleanup has not been confirmed.
+    return false;
   }
 };
 

@@ -14,14 +14,13 @@ const { redisMock, prismaMock, tenantAccessMock } = vi.hoisted(() => ({
   },
   tenantAccessMock: {
     resolve: vi.fn(),
+    isCurrentGeneration: vi.fn(),
   },
 }));
 
 vi.mock("../../config/redis", () => ({ default: redisMock }));
 vi.mock("../Entitlement/tenantAccessResolver.service", () => ({
   TenantAccessResolver: tenantAccessMock,
-  tenantAccessGenerationKey: (id: string) => `tenant-access:generation:${id}`,
-  tenantAccessValidUntil: (access: { cache?: { validUntil: string } }) => Date.parse(access.cache?.validUntil ?? ""),
 }));
 vi.mock("../../config/ENV", () => ({
   WEBSITE_BASE_DOMAIN: "sites.example.com",
@@ -38,7 +37,8 @@ import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 
 const defaultAccess = (overrides: Record<string, any> = {}) => ({
   organizationId: "org-1",
-  cache: { generation: "0", validUntil: new Date(Date.now() + 300_000).toISOString() },
+  generation: "generation-1",
+  validUntil: new Date(Date.now() + 60_000).toISOString(),
   ownerUserId: "user-1",
   platform: {
     status: "ACTIVE",
@@ -107,6 +107,7 @@ beforeEach(() => {
   prismaMock.businessWebsite.findUnique.mockResolvedValue(null);
   prismaMock.websiteSubdomainAlias.findUnique.mockResolvedValue(null);
   prismaMock.websiteDomain.findFirst.mockResolvedValue(null);
+  tenantAccessMock.isCurrentGeneration.mockResolvedValue(true);
   tenantAccessMock.resolve.mockImplementation(async () => defaultAccess());
 });
 
@@ -174,7 +175,8 @@ describe("production tenant host routing", () => {
   });
 
   it("keeps verified domains beyond the downgraded plan limit stored but unroutable", async () => {
-    tenantAccessMock.resolve.mockImplementation(async () =>
+    tenantAccessMock.isCurrentGeneration.mockResolvedValue(true);
+  tenantAccessMock.resolve.mockImplementation(async () =>
       defaultAccess({
         plan: { id: "plan-growth", name: "GROWTH", pricingId: "price-growth", features: [] },
       })
@@ -190,7 +192,7 @@ describe("production tenant host routing", () => {
         subdomain: "sparkle",
         status: "PUBLISHED",
         admin: {
-          id: "org-1", businessName: "Sparkle Cleaning",
+          businessName: "Sparkle Cleaning",
           user: { status: "ACTIVE" },
           subscription: [{
             status: "ACTIVE",
@@ -265,17 +267,20 @@ describe("production tenant host routing", () => {
       expect.stringContaining("current ~= ARGV[1]"),
       2,
       expect.stringContaining("website-host:missing.sites.example.com"),
-      expect.stringContaining("site-route:v9:generation:"),
+      expect.stringContaining("site-route:v10:generation:"),
       "0",
       expect.stringContaining('"notFound":true'),
-      "10",
+      "10000",
     );
   });
 
   it("serves a cached host route without querying the database", async () => {
     redisMock.get.mockResolvedValue(JSON.stringify({
       version: 10,
-          organizationId: "org-1", accessGeneration: "0", accessValidUntil: new Date(Date.now() + 300_000).toISOString(),
+      organizationId: "org-1",
+      accessGeneration: "generation-1",
+      validUntil: new Date(Date.now() + 60_000).toISOString(),
+      publishedRevisionNumber: 1,
       websiteId: "website-1",
       businessName: "Sparkle Cleaning",
       requestedSubdomain: "sparkle",
@@ -327,7 +332,10 @@ describe("production tenant host routing", () => {
       if (key.includes("sparkle.sites.example.com")) {
         return JSON.stringify({
           version: 10,
-          organizationId: "org-1", accessGeneration: "0", accessValidUntil: new Date(Date.now() + 300_000).toISOString(),
+      organizationId: "org-1",
+      accessGeneration: "generation-1",
+      validUntil: new Date(Date.now() + 60_000).toISOString(),
+      publishedRevisionNumber: 1,
           websiteId: "website-a",
           businessName: "Sparkle Cleaning",
           requestedSubdomain: "sparkle",

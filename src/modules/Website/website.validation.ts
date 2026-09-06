@@ -84,9 +84,12 @@ const previewEditorState = z.object({
 }).strict();
 
 const previewSession = z.object({
+  expected: z.object({ websiteId: z.string().uuid(), draftRevisionNumber: z.number().int().min(0), profileVersion: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
   website: websitePatch.optional(),
   pages: z.array(pagePatch.extend({ id: z.string().uuid() })).max(50).optional(),
-}).strict().default({});
+}).strict().refine(value => !value.expected || (!Object.keys(value.website ?? {}).length && !(value.pages?.length)), {
+  message: "A saved preview cannot include editor overrides", path: ["expected"],
+}).default({});
 
 const googleAnalyticsOAuthCallback = z.object({
   code: z.string().trim().min(8).max(4096),

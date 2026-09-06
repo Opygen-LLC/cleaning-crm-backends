@@ -19,7 +19,7 @@ import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
 import AppError from "../../errorHelper/AppError";
 import { WebsiteEntitlementService } from "./websiteEntitlement.service";
 import { adminService, toLegacyOnboardingBootstrap } from "../Admin/admin.service";
-import { authService } from "../Auth/auth.service";
+import authService from "../Auth/auth.service";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { WebsitePublicationDeliveryService } from "./websitePublicationDelivery.service";
 import { getRequestTrace } from "../../lib/monitoring/requestTrace";
@@ -134,6 +134,8 @@ const configureWebsiteBooking = catchAsync(async (req, res) =>
   ok(res, "Website booking setup updated successfully", await WebsiteBookingProvisioningService.configure(req.body, req.user)),
 );
 const previewWebsite = catchAsync(async (req, res) => {
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   res.setHeader("Cache-Control", "private, no-store");
   try {
     return ok(res, "Website preview retrieved successfully", await PublicWebsiteService.getPreviewWebsite(req.user));
@@ -164,17 +166,23 @@ const previewWebsite = catchAsync(async (req, res) => {
   }
 });
 const previewEditorState = catchAsync(async (req, res) => {
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   res.setHeader("Cache-Control", "private, no-store");
   return ok(res, "Website editor preview retrieved successfully", await PublicWebsiteService.getEditorStatePreviewWebsite(req.body, req.user));
 });
 
 
 const createPreviewSession = catchAsync(async (req, res) => {
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   res.setHeader("Cache-Control", "private, no-store");
   return created(res, "Secure website preview created successfully", await WebsitePreviewSessionService.create(req.user, req.body ?? {}));
 });
 const getPreviewSession = catchAsync(async (req, res) => {
-  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+  res.setHeader("Cache-Control", "private, no-store, max-age=0");
   res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   return ok(res, "Secure website preview retrieved successfully", await WebsitePreviewSessionService.get(paramStr(req.params.token)));
 });
@@ -205,6 +213,8 @@ const updatePage = catchAsync(async (req, res) => ok(res, "Website page updated 
 const listRevisions = catchAsync(async (req, res) => ok(res, "Website revisions retrieved successfully", await WebsiteService.listRevisions(req.user)));
 const getRevision = catchAsync(async (req, res) => ok(res, "Website revision retrieved successfully", await WebsiteService.getRevision(paramStr(req.params.revisionId), req.user)));
 const previewRevision = catchAsync(async (req, res) => {
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   res.setHeader("Cache-Control", "private, no-store");
   try {
     return ok(res, "Website revision preview retrieved successfully", await PublicWebsiteService.getRevisionPreviewWebsite(paramStr(req.params.revisionId), req.user));
@@ -288,12 +298,12 @@ const resolvePublicSubdomain = catchAsync(async (req, res) => {
   const data = await WebsiteHostResolverService.resolveSubdomain(paramStr(req.params.subdomain));
   // Redis is the invalidatable routing cache of record. Do not let a browser
   // or CDN retain a stale alias/canonical-host decision after a rename.
-  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.setHeader("Cache-Control", "private, no-store, max-age=0");
   return ok(res, "Website subdomain resolved successfully", data);
 });
 const resolvePublicHost = catchAsync(async (req, res) => {
   const { resolution, diagnostics } = await WebsiteHostResolverService.resolveHostWithDiagnostics(paramStr(req.params.host));
-  res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.setHeader("Cache-Control", "private, no-store, max-age=0");
   res.setHeader("X-Website-Resolver-Source", diagnostics.source);
   res.setHeader("Server-Timing", `website-host-resolver;dur=${diagnostics.durationMs}`);
   return ok(res, "Website host resolved successfully", resolution);

@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "phase": 3,
+  "project": "backend",
+  "apply": "Merge at existing repository root after Phase 1 and Phase 2; deploy backend first. Read docs/phase3-onboarding/README.md.",
+  "changedFileCount": 26,
+  "removedFiles": [],
+  "files": [
+    {
+      "path": "docs/phase3-onboarding/README.md",
+      "action": "add",
+      "beforeSha256": null,
+      "sha256": "61f199e38067856ccee6aa4e8c4feec4ad79e1bd0e96309e392b7da20fa3ab7f",
+      "bytes": 9049
+    },
+    {
+      "path": "docs/phase3-onboarding/native-tests.tap",
+      "action": "add",
+      "beforeSha256": null,
+      "sha256": "1c74e350a493559d36db57f35e743ab043fd60b553bf4e414fd3d310d0c009a1",
+      "bytes": 10655
+    },
+    {
+      "path": "docs/phase3-onboarding/verification.json",
+      "action": "add",
+      "beforeSha256": null,
+      "sha256": "ec9ff0cf636a1f7facd2314d0ea783c671d11266ba43fb86adc6abbe5908c14a",
+      "bytes": 1108
+    },
+    {
+      "path": "package.json",
+      "action": "update",
+      "beforeSha256": "00ec6f3a3f5de3a87b446ac19eb2bdce6a26db4808b8a97e74b6c9dab70f4b4d",
+      "sha256": "29fe99996fb52afc5d7d2bf908587bb88826c6f3d9eca6144ef3dfcc4358e631",
+      "bytes": 14581
+    },
+    {
+      "path": "src/lib/outbox/publicWebsiteCacheOutbox.ts",
+      "action": "update",
+      "beforeSha256": "716304a0f33c3611ab19ae836552cdfa2593821ce8f2d1d43162daa0f1b4aceb",
+      "sha256": "9a5c97e54f2abaffe04bcd29d4cf4364fd8ffd799201367dfb8d69308ca15542",
+      "bytes": 10608
+    },
+    {
+      "path": "src/modules/Admin/admin.service.ts",
+      "action": "update",
+      "beforeSha256": "9528fbb52fed68e3a58a4a56815c322df4ccfbb835b9daf6ef13c21e54a7d881",
+      "sha256": "2c370ed8dbc62ea392f5fe6384d82fbd63041b13cf737da95d0e6adf9f586fa3",
+      "bytes": 43757
+    },
+    {
+      "path": "src/modules/Admin/onboardingProfile.ts",
+      "action": "add",
+      "beforeSha256": null,
+      "sha256": "196c781a1a467a584dbc16e8b8aa27a00042a1093e7926bc14e2cf1cc1fa6766",
+      "bytes": 1040
+    },
+    {
+      "path": "src/modules/Auth/auth.service.ts",
+      "action": "update",
+      "beforeSha256": "88cf77f2dd5a20e968ad51187a03abdba4249443738966b9cd571a3f1169a14b",
+      "sha256": "10b0d93fcc2060b2c892a1441d8023dce099caa90c3627b8b9fc00c2d2c76ae3",
+      "bytes": 37167
+    },
+    {
+      "path": "src/modules/Entitlement/tenantAccessResolver.service.ts",
+      "action": "update",
+      "beforeSha256": "e4d229185ab52ba470bd09676e7e0f53918424326eede9df8162703e1786e60b",
+      "sha256": "bbf25115919fa91b033ffbe81af6b2a728a14821931bb482bbc8ec1e2c107218",
+      "bytes": 18269
+    },
+    {
+      "path": "src/modules/SuperAdmin/tenantAdmin.service.ts",
+      "action": "update",
+      "beforeSha256": "15315b3a3dde7ada7aa5bd66f1f75cb1d09050e3685f865118ae8ca2faa3ca44",
+      "sha256": "edd7339498fc877f36028909f94c7e740a75acd4ea07c2fc4ace85c26c37c6b0",
+      "bytes": 63251
+    },
+    {
+      "path": "src/modules/Website/publicWebsite.service.ts",
+      "action": "update",
+      "beforeSha256": "318f66e12cc8116dd3a2cff8e2de133cf2c4a568eb892b788d655223b21c366f",
+      "sha256": "4691875bf06aaba6e8b20de67ed30f8e36224b1b3fb859ada07fccfc7865b9ac",
+      "bytes": 30511
+    },
+    {
+      "path": "src/modules/Website/website.controller.ts",
+      "action": "update",
+      "beforeSha256": "4bb7aa3f9dd442f65d30a2f87853e3c78efea72655475d3d59e9338354c135af",
+      "sha256": "91fff296f4d68e227dcf875e036eb74025467e32837d7f9916473fdebce479fd",
+      "bytes": 27434
+    },
+    {
+      "path": "src/modules/Website/website.validation.ts",
+      "action": "update",
+      "beforeSha256": "8ae2f1fb6ad24c6b5acc0bee2443c9ec6040fae3cc4d360092c077d07f0f1114",
+      "sha256": "277f8e865f8da3203b3fcc73a333833a958dc1502f3149c58c511ba9618c2b7b",
+      "bytes": 8526
+    },
+    {
+      "path": "src/modules/Website/websiteEntitlement.service.ts",
+      "action": "update",
+      "beforeSha256": "0977892cd63b3567cf217aff048e4988925491f8b176a1788d0908f11be3f3d6",
+      "sha256": "36d30648591f7f01ec86ff6cda4a258857e0af6a0abc4518bd32e0e251098f17",
+      "bytes": 8076
+    },
+    {
+      "path": "src/modules/Website/websiteHostResolver.production.test.ts",
+      "action": "update",
+      "beforeSha256": "469c9018af988ee71fcfc971f424a3a29f2dcbab27c88be79b2f0910f022d74d",
+      "sha256": "20770d10fa6853e58d998100806dcddac25b3368e08b66577d2721ef6dbbd8b8",
+      "bytes": 15909
+    },
+    {
+      "path": "src/modules/Website/websiteHostResolver.service.ts",
+      "action": "update",
+      "beforeSha256": "38d5b17f8ac7c8d6bb2bf29628e182d421424cd01a4ac57cef35b57837e01d62",
+      "sha256": "576d0e0cd5fa203afe132ea59131f2649aa5074f813477ec288d4378aedcd0a0",
+      "bytes": 23953
+    },
+    {
+      "path": "src/modules/Website/websiteLaunch.service.test.ts",
+      "action": "update",
+      "beforeSha256": "da4de81694681a365265a2a5b8991c18770359a274b04d2941385640339418b5",
+      "sha256": "deb0356bca64c0b2bf3e977a34489c2162bd6524ab629a8abfb49095bf9037c3",
+      "bytes": 2724
+    },
+    {
+      "path": "src/modules/Website/websitePreviewContract.test.ts",
+      "action": "add",
+      "beforeSha256": null,
+      "sha256": "a59ccd41199acfc04ca43d2f811e4457f5ac1c5fb5ca01285e12e9f26abfc2ab",
+      "bytes": 1207
+    },
+    {
+      "path": "src/modules/Website/websitePreviewContract.ts",
+      "action": "add",
+      "beforeSha256": null,
+      "sha256": "555c294c45cf2f629f85af3ae60311b92fdc17aba9c47267c48f16fdd94f7894",
+      "bytes": 2373
+    },
+    {
+      "path": "src/modules/Website/websitePreviewSession.service.ts",
+      "action": "update",
+      "beforeSha256": "0ca69a67cb1d574fd3fbec5b4c868dc24da7982de057b7e3e9083ad2668dd6f9",
+      "sha256": "395008b4c44ca9b51664f4941e1ad099a4629ad25bb38e69aba1f469fe57e3ed",
+      "bytes": 4314
+    },
+    {
+      "path": "src/modules/Website/websiteProjectionCache.service.ts",
+      "action": "update",
+      "beforeSha256": "efb7b5b05afa02d82c175c0f84d2f384e48a53473997531de9b5cd8c5e11af73",
+      "sha256": "da176fd620b8ce852fc6a6823140f447c3e436cdd70b179b341be03cdcc85aa9",
+      "bytes": 16330
+    },
+    {
+      "path": "src/modules/Website/websiteProjectionCache.test.ts",
+      "action": "update",
+      "beforeSha256": "40bb1a92ea0dcb564f52c36f7f29aac8d20162485e59c7a7fdf09cdd0b51a829",
+      "sha256": "3c67b3fb3469b9815d775209376d35a50c511cf540d4d4bbd9c339498c07dfa6",
+      "bytes": 4709
+    },
+    {
+      "path": "src/modules/Website/websitePublicationDelivery.service.ts",
+      "action": "update",
+      "beforeSha256": "b24e156b110c7b5b51c754bec6136dbe88c7888b176e9d8e230282693668eabe",
+      "sha256": "16f8609c1df0e4dd28cd8a9f2b64275603c6e626d228a5c731bf17b6487ec6a5",
+      "bytes": 14790
+    },
+    {
+      "path": "src/modules/Website/websitePublishCacheInvalidation.test.ts",
+      "action": "update",
+      "beforeSha256": "8390d17412e10b042dda01406fa333f0904bf75ff2ab16b65a219c354296f586",
+      "sha256": "1b56e8f53256ea06498fa6c46ed89cf11f54ad3b3efc306e1c04e4f3c6850beb",
+      "bytes": 17025
+    },
+    {
+      "path": "src/workers/emailOutbox.worker.ts",
+      "action": "update",
+      "beforeSha256": "e628ab61044c4042530e75db0733e2001ce1ce4ee92c7b272c55ab900656b8eb",
+      "sha256": "fb507f5da1ba93f9a078880d6463699aa2636b27c3472823894e8e27a3759ddc",
+      "bytes": 15122
+    },
+    {
+      "path": "tests/interface/preview-session.behavior.test.cjs",
+      "action": "add",
+      "beforeSha256": null,
+      "sha256": "2465c62e0335d6b1401a02cdd74e42059ff546f3ba0915db789af9f899919d09",
+      "bytes": 6578
+    }
+  ]
+}

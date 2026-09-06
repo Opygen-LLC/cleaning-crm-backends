@@ -109,7 +109,10 @@
     "test:phase1:launch:integration": "vitest run src/modules/Website/websiteLaunch.service.test.ts src/modules/Website/websitePublishCacheInvalidation.test.ts src/modules/Website/websiteProjectionCache.test.ts src/modules/Website/websiteHostResolver.production.test.ts src/workers/emailOutbox.worker.test.ts src/cron/subscriptionExpiry.cron.test.ts",
     "test:phase2:onboarding": "node --test tests/onboarding/*.test.cjs",
     "test:phase2:contracts": "vitest run src/modules/Admin/onboardingSave.contract.test.ts src/modules/Admin/admin.service.onboarding.test.ts src/modules/Admin/admin.service.onboarding.transaction.test.ts src/modules/ServiceCatalog/serviceCatalog.service.phase3.test.ts",
-    "release:phase2": "pnpm run generate && pnpm exec prisma validate && pnpm run test:phase1:launch && pnpm run test:phase2:onboarding && pnpm run test:phase2:contracts && pnpm run typecheck && pnpm run build"
+    "release:phase2": "pnpm run generate && pnpm exec prisma validate && pnpm run test:phase1:launch && pnpm run test:phase2:onboarding && pnpm run test:phase2:contracts && pnpm run typecheck && pnpm run build",
+    "test:phase3:interface": "node --test tests/interface/*.test.cjs",
+    "test:phase3:preview-contract": "vitest run src/modules/Website/websitePreviewContract.test.ts",
+    "release:phase3:onboarding": "pnpm run generate && pnpm exec prisma validate && pnpm run test:phase1:launch && pnpm run test:phase2:onboarding && pnpm run test:phase2:contracts && pnpm run test:phase3:interface && pnpm run test:phase3:preview-contract && pnpm run typecheck && pnpm run build"
   },
   "keywords": [],
   "author": "opygen",

@@ -441,7 +441,6 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
 
     type SessionSnapshotRow = {
         expiresAt: Date;
-        organizationId: string | null;
         id: string;
         name: string;
         email: string;
@@ -452,6 +451,7 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
         needPasswordChange: boolean;
         staffStatus: StaffStatus | null;
         staffManuallyInactive: boolean | null;
+        organizationId: string | null;
         onboardingCompletedAt: Date | null;
         onboardingCompletedSteps: string[] | null;
     };
@@ -472,7 +472,7 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
             u."needPasswordChange",
             sp.status::text AS "staffStatus",
             sp."manuallyInactive" AS "staffManuallyInactive",
-            COALESCE(ap.id, sp."adminId") AS "organizationId",
+            ap.id AS "organizationId",
             ap."onboardingCompletedAt",
             ap."onboardingCompletedSteps"
         FROM "session" s

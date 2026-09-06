@@ -27,6 +27,7 @@ import { Prisma } from "../../generated/prisma/client";
 import { fingerprint, lockServiceCatalogTx } from "../ServiceCatalog/serviceCatalogConcurrency";
 import { REQUIRED_SETUP_KEYS, normalizeCompletedSetupSteps, lockOnboardingOwnerTx, completeStepTx, canonicalOnboardingStep } from "./onboardingProgress";
 import { businessHoursSchema, normalizeBusinessHours, type BusinessHours } from "./businessHours";
+import { onboardingProfile } from "./onboardingProfile";
 import { bumpCacheResourceVersions, CacheResource } from "../../lib/cache/resourceCacheVersion";
 import type {
   GettingStartedStepKey,
@@ -692,8 +693,6 @@ const getOnboardingBootstrap = async (adminId: string, db: Prisma.TransactionCli
   const parsedBusinessHours = admin.businessHours == null
     ? { success: true as const, data: null }
     : businessHoursSchema.safeParse(admin.businessHours);
-  const businessHours = normalizeBusinessHours(admin.businessHours);
-
   if (!parsedBusinessHours.success) {
     logger.warn("onboarding_legacy_business_hours_normalized", {
       event: "onboarding_legacy_business_hours_normalized",
@@ -703,11 +702,7 @@ const getOnboardingBootstrap = async (adminId: string, db: Prisma.TransactionCli
     });
   }
 
-  const profile = {
-    businessName: admin.businessName, businessEmail: admin.businessEmail, mobileNumber: admin.mobileNumber,
-    businessDescription: admin.businessDescription, businessHours, address: admin.address,
-    city: admin.city, postcode: admin.zipcode, currency: admin.currency,
-  };
+  const profile = onboardingProfile(admin);
   return {
     schemaVersion: ONBOARDING_BOOTSTRAP_SCHEMA_VERSION,
     adminId: admin.id,

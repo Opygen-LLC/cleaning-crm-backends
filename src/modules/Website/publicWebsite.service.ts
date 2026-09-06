@@ -13,9 +13,11 @@ import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
 import { buildDefaultWebsiteSeo } from "./websiteSeo";
 import { getCanonicalWebsiteOrigin } from "./websiteCanonicalHost";
 import { WebsiteEntitlementService, websiteEntitlementSubscriptionSelect } from "./websiteEntitlement.service";
-import { TenantAccessResolver, tenantAccessValidUntil } from "../Entitlement/tenantAccessResolver.service";
+import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
 import { ServiceStatus } from "../../generated/prisma/enums";
 import type { WebsiteEditorStateInput } from "./website.interface";
+import { onboardingProfile, onboardingProfileVersion } from "../Admin/onboardingProfile";
+import { WEBSITE_PREVIEW_CONTRACT_VERSION } from "./websitePreviewContract";
 
 const WEBSITE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -94,7 +96,6 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
               onlineBookingEnabled: true,
             },
             orderBy: [{ category: "asc" }, { serviceName: "asc" }],
-            take: 200,
           },
           reviews: {
             // Publication status is the single moderation source of truth.
@@ -161,7 +162,7 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
     }),
     TenantAccessResolver.resolve(website.adminId),
   ]);
-  const entitlements = await WebsiteEntitlementService.getForAdminId(website.adminId, access);
+  const entitlements = await WebsiteEntitlementService.getForAdminId(website.adminId);
 
   const averageRating = reviewAggregate._avg.rating;
   return {
@@ -244,6 +245,12 @@ const resolveSafePublishedSnapshot = async (website: ProjectionWebsite): Promise
   // Older PUBLISHED rows may predate publishedRevisionNumber. Search only
   // revisions explicitly created by Publish/Launch; a Draft saved/Restored
   // revision is never eligible because it may contain private edits.
+  if (publishedRevisionNumber !== null) {
+    throw new AppError(status.SERVICE_UNAVAILABLE, "The committed website revision is unavailable", {
+      code: "WEBSITE_PUBLISHED_REVISION_UNAVAILABLE", retryable: true,
+    });
+  }
+
   const historical = await prisma.websiteRevision.findMany({
     where: { websiteId: website.id },
     select: { revisionNumber: true, snapshot: true, reason: true },
@@ -362,8 +369,12 @@ const projectWebsite = (
       id: website.id,
       subdomain: website.subdomain,
       publishedAt: website.publishedAt,
-      publishedRevisionNumber: website.publishedRevisionNumber,
-      accessValidUntil: new Date(tenantAccessValidUntil(source.access)).toISOString(),
+      publishedRevisionNumber: options.mode === "public" ? website.publishedRevisionNumber : null,
+      ...(options.mode === "preview" ? {
+        previewContractVersion: WEBSITE_PREVIEW_CONTRACT_VERSION,
+        draftRevisionNumber: website.draftRevisionNumber,
+        previewProfileVersion: onboardingProfileVersion(website.admin),
+      } : {}),
       // Preview deliberately uses the public projection contract so the exact
       // Phase-3 renderer is exercised without teaching templates about admin
       // lifecycle states.
@@ -382,14 +393,22 @@ const projectWebsite = (
         premiumTemplates: entitlements.premiumTemplates,
       },
     },
-    business: projectPublicBusiness(website.admin),
+    business: {
+      ...projectPublicBusiness(website.admin),
+      // An intentionally cleared public email/logo must not reveal a login
+      // email or resurrect a different CRM logo in either preview or public.
+      email: website.admin.businessEmail ?? "",
+      logoUrl: config.logo,
+      brandColor: config.primaryColor,
+      businessHours: onboardingProfile(website.admin).businessHours,
+    },
     design: config.websiteDesign,
     theme: {
       primaryColor: config.primaryColor,
       secondaryColor: config.secondaryColor,
       accentColor: config.accentColor,
       font: config.font,
-      logo: config.logo ?? website.admin.businessLogo ?? null,
+      logo: config.logo,
       favicon: config.favicon,
     },
     navigation: pages
@@ -465,7 +484,7 @@ const projectWebsite = (
     },
     googleAnalytics: {
       enabled: options.mode === "public" && config.googleAnalyticsEnabled && Boolean(config.googleAnalyticsMeasurementId),
-      measurementId: config.googleAnalyticsMeasurementId,
+      measurementId: options.mode === "public" ? config.googleAnalyticsMeasurementId : null,
     },
   };
 };
@@ -498,7 +517,22 @@ const getPublicWebsiteById = async (websiteId: string, aliasRedirectSubdomain: s
         snapshotOverride: publishedSnapshot,
       });
     },
+    access,
   );
+
+  // A slow rebuild may cross an authorization boundary. Fail closed rather
+  // than serve the projection that was authorized before that boundary. With
+  // Redis unavailable a fresh SQL decision is used instead of an old epoch.
+  if (Date.parse(access.validUntil) <= Date.now() ||
+      !await TenantAccessResolver.isCurrentGeneration(adminId, access.generation)) {
+    const currentAccess = await TenantAccessResolver.resolve(adminId);
+    if (!currentAccess.access.publicWebsiteAllowed || Date.parse(currentAccess.validUntil) <= Date.now() ||
+        (access.generation !== null && currentAccess.generation !== access.generation)) {
+      throw new AppError(status.SERVICE_UNAVAILABLE, "Website authorization changed; retry the request", {
+        code: "WEBSITE_AUTHORIZATION_CHANGED", retryable: true,
+      });
+    }
+  }
 
   // Alias information belongs to the current request, not the canonical
   // website projection. Keep one cache entry per website and overlay only the

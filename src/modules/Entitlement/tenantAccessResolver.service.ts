@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import redis from "../../config/redis";
@@ -36,8 +37,10 @@ export type PublicWebsiteDeniedReason = TenantAccessDeniedReason | "WEBSITE_UNPU
 
 export interface TenantAccessResolution {
   organizationId: string;
-  /** Absolute authorization deadline, propagated to every dependent cache. */
-  cache?: { generation: string; validUntil: string };
+  /** Absolute authorization horizon; downstream caches must not extend it. */
+  validUntil: string;
+  /** Opaque invalidation epoch. Null means Redis was unavailable: do not cache. */
+  generation: string | null;
   ownerUserId: string;
   platform: {
     status: string;
@@ -99,19 +102,41 @@ export interface TenantAccessResolution {
   };
 }
 
-// A new namespace rejects legacy, unversioned access decisions during rollout.
-const accessCacheKey = (organizationId: string) => `tenant-access:v2:${organizationId}`;
-export const tenantAccessGenerationKey = (organizationId: string) => `tenant-access:generation:${organizationId}`;
-
-export const tenantAccessValidUntil = (access: TenantAccessResolution): number => {
-  const deadline = Date.parse(access.cache?.validUntil ?? "");
-  // An unversioned/test/legacy decision must not be promoted into a routing cache.
-  return Number.isFinite(deadline) ? deadline : 0;
-};
+// A new namespace rejects legacy entries without an epoch/deadline. Epochs do
+// not expire independently of values; random tokens also prevent an ABA race
+// after eviction, FLUSHDB or Redis failover.
+const accessCacheKey = (organizationId: string) => `${CacheNamespaces.tenantAccess(organizationId)}:v2`;
+const generationKey = (organizationId: string) => `${accessCacheKey(organizationId)}:generation`;
 
 const getGeneration = async (organizationId: string): Promise<string | null> => {
-  try { return (await redis.get(tenantAccessGenerationKey(organizationId))) ?? "0"; }
-  catch { return null; }
+  try {
+    const key = generationKey(organizationId);
+    const existing = await redis.get(key);
+    if (existing) return existing;
+    const token = randomUUID();
+    if (await redis.set(key, token, "NX") === "OK") return token;
+    return await redis.get(key);
+  } catch {
+    return null;
+  }
+};
+
+const isCurrentGeneration = async (organizationId: string, generation: string | null): Promise<boolean> =>
+  Boolean(generation && await getGeneration(organizationId) === generation);
+
+const readCached = async (organizationId: string, generation: string | null): Promise<TenantAccessResolution | null> => {
+  if (!generation) return null;
+  try {
+    const raw = await redis.get(accessCacheKey(organizationId));
+    if (!raw) return null;
+    const value = JSON.parse(raw) as TenantAccessResolution;
+    if (value.organizationId !== organizationId || value.generation !== generation ||
+        !Number.isFinite(Date.parse(value.validUntil)) || Date.parse(value.validUntil) <= Date.now()) return null;
+    return await isCurrentGeneration(organizationId, generation) ? value : null;
+  } catch {
+    // A corrupt entry is a miss, not an asynchronous DEL of a newer writer.
+    return null;
+  }
 };
 
 const iso = (date: Date | null | undefined) => date?.toISOString() ?? null;
@@ -204,15 +229,9 @@ function addLimit(base: number | null, extra: number): number | null {
   return base === null ? null : base + Math.max(0, extra);
 }
 
-async function loadTenantAccess(organizationId: string): Promise<TenantAccessResolution> {
+const loadTenantAccess = async (organizationId: string, generation: string | null): Promise<TenantAccessResolution> => {
   const key = accessCacheKey(organizationId);
-  const adminProfileDelegate = prisma.adminProfile;
-  if (!adminProfileDelegate?.findUnique) {
-    throw new AppError(status.SERVICE_UNAVAILABLE, "Tenant access storage is not available.", {
-      code: "TENANT_ACCESS_STORAGE_UNAVAILABLE", retryable: true,
-    });
-  }
-  const tenant = await adminProfileDelegate.findUnique({
+  const tenant = await prisma.adminProfile.findUnique({
     where: { id: organizationId },
     select: {
       id: true,
@@ -251,12 +270,12 @@ async function loadTenantAccess(organizationId: string): Promise<TenantAccessRes
   });
   if (!tenant) throw new AppError(status.NOT_FOUND, "Organization not found.", { code: "ORGANIZATION_NOT_FOUND", retryable: false });
 
-  const now = new Date();
   const subscription = tenant.subscription[0] ?? null;
-  const overrideActive = isOverrideActive(tenant.entitlementOverride, now);
+  const evaluatedAt = Date.now();
+  const overrideActive = isOverrideActive(tenant.entitlementOverride, new Date(evaluatedAt));
   const features = buildFeatureState(subscription?.subscriptionPlan?.features ?? [], tenant.entitlementOverride?.features, overrideActive);
   const accessState = evaluateTenantAccess({
-    now,
+    now: new Date(evaluatedAt),
     lifecycleStatus: tenant.lifecycleStatus,
     ownerStatus: tenant.user.status,
     subscriptionStatus: subscription?.status ?? null,
@@ -297,7 +316,15 @@ async function loadTenantAccess(organizationId: string): Promise<TenantAccessRes
   else if (accessState.dashboardAllowed && !features.effective.website) websiteDeniedReason = "FEATURE_NOT_INCLUDED";
   const publicWebsiteAllowed = accessState.dashboardAllowed && websitePublished && features.effective.website;
 
+  const expiryCandidates = [
+    evaluatedAt + ttlForKey(CacheTtl.tenantAccess, key) * 1000,
+    tenant.entitlementOverride?.expiresAt?.getTime(),
+    subscription?.isTrial ? subscription.trialEndsAt?.getTime() : subscription?.currentPeriodEnd?.getTime(),
+  ].filter((value): value is number => typeof value === "number" && value > evaluatedAt);
+
   const resolution: TenantAccessResolution = {
+    validUntil: new Date(Math.min(...expiryCandidates)).toISOString(),
+    generation,
     organizationId: tenant.id,
     ownerUserId: tenant.userId,
     platform: {
@@ -351,75 +378,53 @@ async function loadTenantAccess(organizationId: string): Promise<TenantAccessRes
     resourceLimits: { base, afterPaidExtras, effective: effectiveResources },
   };
 
-  // Never round an expiry up to the next second. The absolute deadline is also
-  // checked on reads, so Redis/network delay and route jitter cannot extend it.
-  const deadlines = [now.getTime() + ttlForKey(CacheTtl.tenantAccess, key) * 1000];
-  for (const date of [
-    tenant.entitlementOverride?.expiresAt,
-    subscription?.isTrial ? subscription.trialEndsAt : subscription?.currentPeriodEnd,
-  ]) {
-    if (date && date.getTime() > now.getTime()) deadlines.push(date.getTime());
-  }
-  resolution.cache = { generation: "0", validUntil: new Date(Math.min(...deadlines)).toISOString() };
   return resolution;
-}
+};
 
-export async function resolveTenantAccess(
-  organizationId: string,
-  options: { fresh?: boolean } = {},
-): Promise<TenantAccessResolution> {
-  const key = accessCacheKey(organizationId);
-  if (!options.fresh) {
-    try {
-      // One atomic read pairs a cached decision with its current generation.
-      const pair = await redis.eval(
-        "return {redis.call('GET', KEYS[1]), redis.call('GET', KEYS[2]) or '0'}",
-        2, key, tenantAccessGenerationKey(organizationId),
-      ) as [string | null, string];
-      if (pair?.[0]) {
-        const cached = JSON.parse(pair[0]) as TenantAccessResolution;
-        if (cached.organizationId === organizationId && cached.cache?.generation === pair[1] &&
-            tenantAccessValidUntil(cached) > Date.now()) return cached;
-      }
-    } catch { /* No cache availability must ever grant authorization. */ }
-  }
-
+export async function resolveTenantAccess(organizationId: string): Promise<TenantAccessResolution> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    // Capture the epoch BEFORE starting SQL, never after the result arrives.
     const generation = await getGeneration(organizationId);
-    const resolution = await loadTenantAccess(organizationId);
-    if (generation === null) return resolution;
-    resolution.cache!.generation = generation;
-    const ttlMs = Math.floor(tenantAccessValidUntil(resolution) - Date.now());
+    const cached = await readCached(organizationId, generation);
+    if (cached) return cached;
+    const loaded = await loadTenantAccess(organizationId, generation);
+    const ttlMs = Math.floor(Date.parse(loaded.validUntil) - Date.now());
     if (ttlMs <= 0) continue;
+    if (!generation) return loaded; // SQL-only degradation; no unsafe cache fill.
     try {
       const stored = await redis.eval(
-        `local current = redis.call('GET', KEYS[2]) or '0'
-         if current ~= ARGV[1] then return 0 end
+        `-- access:cas
+         if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
          redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
          return 1`,
-        2, key, tenantAccessGenerationKey(organizationId), generation,
-        JSON.stringify(resolution), String(ttlMs),
+        2, accessCacheKey(organizationId), generationKey(organizationId),
+        generation, JSON.stringify(loaded), String(ttlMs),
       );
-      if (Number(stored) === 1) return resolution;
-      // Invalidation won the race. Discard the old result, not just its write.
-    } catch { return resolution; }
+      if (Number(stored) === 1) return loaded;
+      // A lifecycle change raced the query. Retry from SQL under the new epoch.
+    } catch {
+      // Do not hand a potentially pre-invalidation result to the route cache.
+      return loadTenantAccess(organizationId, null);
+    }
   }
-  throw new AppError(status.SERVICE_UNAVAILABLE, "Tenant access changed while being resolved. Retry the request.", {
-    code: "TENANT_ACCESS_CHANGED", retryable: true,
+  throw new AppError(status.SERVICE_UNAVAILABLE, "Organization access is changing; retry the request.", {
+    code: "TENANT_ACCESS_CHANGING", retryable: true,
   });
 }
 
 export async function invalidateTenantAccess(organizationId: string): Promise<boolean> {
   try {
     const result = await redis.eval(
-      `redis.call('INCR', KEYS[2])
-       redis.call('DEL', KEYS[1], KEYS[3])
+      `-- access:invalidate
+       redis.call('SET', KEYS[2], ARGV[1])
+       redis.call('DEL', KEYS[1])
        return 1`,
-      3, accessCacheKey(organizationId), tenantAccessGenerationKey(organizationId),
-      CacheNamespaces.tenantAccess(organizationId),
+      2, accessCacheKey(organizationId), generationKey(organizationId), randomUUID(),
     );
     return Number(result) === 1;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 export const tenantFeatureAllowed = async (organizationId: string, key: FeatureKey) =>
@@ -429,4 +434,5 @@ export const TenantAccessResolver = {
   resolve: resolveTenantAccess,
   invalidate: invalidateTenantAccess,
   featureAllowed: tenantFeatureAllowed,
+  isCurrentGeneration,
 };

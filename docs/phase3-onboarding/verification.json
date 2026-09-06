@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "project": "backend",
+  "scope": "Phase 3 plus retained Phase 1/2 native regressions",
+  "nativeBehaviorTests": {
+    "command": "node --test tests/launch/*.test.cjs tests/onboarding/*.test.cjs tests/interface/*.test.cjs",
+    "adapters": "explicit I/O adapters; real exported TypeScript implementation",
+    "node": "22.16.0",
+    "tests": 42,
+    "pass": 42,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  },
+  "typescriptSyntax": {
+    "modules": 512,
+    "errors": []
+  },
+  "localImportExportCheck": {
+    "missingExports": 0
+  },
+  "cssSyntax": {
+    "checked": false,
+    "parser": null
+  },
+  "fullTypecheck": {
+    "passed": false,
+    "attempted": true,
+    "reason": "project dependencies and type declarations unavailable"
+  },
+  "notExecuted": [
+    "frozen dependency installation",
+    "real-Zod Vitest suites",
+    "production build",
+    "live database/Redis integration",
+    "native CDP staging/browser tests",
+    "real-device keyboard and screen-reader acceptance",
+    "staging registration/launch traces"
+  ],
+  "productionDeploymentVerified": false
+}
