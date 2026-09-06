@@ -45,7 +45,7 @@
 }
 
 # Current raw-IP upstream used by the Next.js BFF.
-http://34.131.56.92 {
+http://34.123.8.185, http://34.131.56.92, http://localhost, http://127.0.0.1 {
     import api_proxy
 }
 
