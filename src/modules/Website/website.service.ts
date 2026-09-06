@@ -1,7 +1,6 @@
 import { randomUUID } from "crypto";
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
-import logger from "../../lib/logger";
 import { WEBSITE_BASE_DOMAIN, WEBSITE_CUSTOM_DOMAINS_ENABLED } from "../../config/ENV";
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
@@ -26,7 +25,6 @@ import { TemplateRegistry } from "./templateRegistry";
 import { buildTemplateSelectionPatch } from "./templateSelection";
 import { WebsiteProvisioningService } from "./websiteProvisioning.service";
 import { WebsiteBookingProvisioningService } from "./websiteBookingProvisioning.service";
-import { PublicWebsiteService } from "./publicWebsite.service";
 import {
   buildPublishedSnapshot,
   buildWebsitePublicationFingerprint,
@@ -41,6 +39,7 @@ import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
 import { presentWebsiteDomain } from "./websiteDomainLifecycle";
 import { WEBSITE_STATUS, statusAfterDraftMutation, type WebsiteLifecycleStatus } from "./websiteLifecycle";
 import { validateWebsitePageContent } from "./websiteContent";
+import { assertOwnedHeroImages, contentImageUrls } from "./websiteContentAssets";
 import { parseWebsiteDesignContract } from "./websiteDesignContract";
 import { assertWebsiteDesignPublishable } from "./websiteComponentRegistry";
 import { WebsiteEntitlementService, type WebsiteEntitlements } from "./websiteEntitlement.service";
@@ -837,6 +836,7 @@ const updatePage = async (pageId: string, payload: WebsitePageUpdateInput, user:
     const normalizedPayload = payload.content === undefined
       ? payload
       : { ...payload, content: validateWebsitePageContent(page.kind, payload.content) };
+    await assertOwnedHeroImages(tx, website.id, [{ kind: page.kind, content: normalizedPayload.content }]);
     const updated = await tx.websitePage.update({ where: { id: pageId }, data: normalizedPayload as any });
     await createRevisionSnapshotTx(tx, website.id, user.id, `Page updated: ${pageId}`);
     return updated;
@@ -971,6 +971,7 @@ const applyDraftPayloadTx = async (
         : { ...data, content: validateWebsitePageContent(pageKind, data.content) }),
     };
   });
+  await assertOwnedHeroImages(tx, lockedCurrent.id, normalizedPagePatches.map(page => ({ kind: ownedPageKinds.get(page.id)!, content: page.content })));
   await applyPagePatchesBatch(tx, lockedCurrent.id, normalizedPagePatches);
   return lockedCurrent;
 };
@@ -1054,7 +1055,8 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
 
     const draft = normalizeDraftPageContent(await loadDraftSnapshot(current.id, tx));
     assertLifecycleAllowsPublish(draft.status as WebsiteLifecycleStatus);
-    const publishTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
+    await assertOwnedHeroImages(tx, current.id, draft.pages ?? []);
+    const publishTemplate = TemplateRegistry.requirePublishable(draft.templateId, draft.templateVersion);
     WebsiteEntitlementService.assertTemplateAllowed(publishTemplate, entitlements);
     // Publish is the only boundary that can make configured design public.
     // Re-validate stable component IDs, slot assignments, animation/style slots
@@ -1299,7 +1301,8 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
         ? { ...preflightDraft, primaryBookingFormId: bookingFormId }
         : preflightDraft,
     );
-    const launchTemplate = TemplateRegistry.requireTemplate(draft.templateId, draft.templateVersion);
+    await assertOwnedHeroImages(tx, current.id, draft.pages ?? []);
+    const launchTemplate = TemplateRegistry.requirePublishable(draft.templateId, draft.templateVersion);
     WebsiteEntitlementService.assertTemplateAllowed(launchTemplate, entitlements);
     assertWebsiteDesignPublishable(draft.websiteDesign, entitlements);
     if ((draft.socialImageUrl || draft.metaKeywords?.length || draft.pages.some((page: any) => page.seoKeywords?.length || page.socialImageUrl)) && !entitlements.advancedSeo) {
@@ -1738,7 +1741,7 @@ const uploadBrandAsset = async (
   return result.asset;
 };
 
-const CONTENT_ASSET_SLOTS = new Set(["about-image"]);
+const CONTENT_ASSET_SLOTS = new Set(["about-image", "hero-image"]);
 
 const uploadContentAsset = async (
   file: Express.Multer.File,
@@ -1791,7 +1794,7 @@ const uploadContentAsset = async (
       width,
       height,
       bytes,
-      altText: "About the business",
+      altText: normalizedSlot === "hero-image" ? "" : "About the business",
       folder,
       metadata: { provider: "cloudinary", kind: "content", slot: normalizedSlot, immutable: true },
     },
@@ -1810,19 +1813,20 @@ const deleteAsset = async (assetId: string, user: IRequestUser) => {
       favicon: true,
       socialImageUrl: true,
       publishedSnapshot: true,
+      pages: { select: { kind: true, content: true } },
     },
   });
   if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
   const asset = await prisma.websiteAsset.findFirst({
     where: { id: assetId, websiteId: website.id },
-    select: { id: true, url: true },
+    select: { id: true, url: true, metadata: true },
   });
   if (!asset) throw new AppError(status.NOT_FOUND, "Website asset not found");
 
   const published = parsePublishedSnapshot(website.publishedSnapshot);
-  const referencedByDraft = [website.logo, website.favicon, website.socialImageUrl].includes(asset.url);
+  const referencedByDraft = [website.logo, website.favicon, website.socialImageUrl, ...contentImageUrls(website.pages)].includes(asset.url);
   const referencedByPublished = published
-    ? [published.website.logo, published.website.favicon, published.website.socialImageUrl].includes(asset.url)
+    ? [published.website.logo, published.website.favicon, published.website.socialImageUrl, ...contentImageUrls(published.pages)].includes(asset.url)
     : false;
   if (referencedByDraft || referencedByPublished) {
     throw new AppError(status.CONFLICT, "Remove or replace this image in Website Studio and publish the change before deleting the asset", {
@@ -1831,6 +1835,10 @@ const deleteAsset = async (assetId: string, user: IRequestUser) => {
     });
   }
 
+  const metadata = asset.metadata && typeof asset.metadata === "object" && !Array.isArray(asset.metadata) ? asset.metadata as Record<string, unknown> : {};
+  if (metadata.kind === "content" && metadata.immutable === true) {
+    throw new AppError(status.CONFLICT, "This image is retained for saved website revisions. Remove it from the page instead.", { code: "WEBSITE_ASSET_RETAINED", retryable: false });
+  }
   await prisma.websiteAsset.delete({ where: { id: assetId } });
   await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
   return { id: assetId, deleted: true };

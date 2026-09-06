@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "phase": 4,
+  "repository": "backend",
+  "archiveLayout": "Repo-relative changed/new files only. Extract into the matching repository after the completed Phase 1-3 patches.",
+  "requires": [
+    "Phase 1 patch",
+    "Phase 2 patch",
+    "Phase 3 patch"
+  ],
+  "fileCountExcludingThisManifest": 22,
+  "deletions": [],
+  "files": [
+    {
+      "path": ".env.example",
+      "operation": "replace",
+      "sha256": "307e3a4dd9d6dae05f6e81906c69d12f18ac504582fe1b20d48461d65014fce7",
+      "baselineSha256": "19d73eab711395620e6564eae523c3963929824759f8560dab002f118a17da19",
+      "bytes": 3370
+    },
+    {
+      "path": "README-PHASE4.md",
+      "operation": "add",
+      "sha256": "e152f49f055c7318759cdc175cc952407d4660c0b5c560c7e8c0d6aab31fb3a9",
+      "baselineSha256": null,
+      "bytes": 5894
+    },
+    {
+      "path": "docs/phase4-verification.json",
+      "operation": "add",
+      "sha256": "6103c24ea628c3fab06834450e5d3ce5d44c53336593a67ca635c515d2a4127b",
+      "baselineSha256": null,
+      "bytes": 2724
+    },
+    {
+      "path": "package.json",
+      "operation": "replace",
+      "sha256": "5e29cc55bc2342ae60c8bfa8adfcdb7da9c65fbc71c3b27e43af65991a4932dd",
+      "baselineSha256": "29fe99996fb52afc5d7d2bf908587bb88826c6f3d9eca6144ef3dfcc4358e631",
+      "bytes": 15292
+    },
+    {
+      "path": "src/modules/Website/publicWebsite.service.ts",
+      "operation": "replace",
+      "sha256": "5189b70da9d30db86c52de75f282e85978dcb38eba1f4828775c9ccf57adb2aa",
+      "baselineSha256": "4691875bf06aaba6e8b20de67ed30f8e36224b1b3fb859ada07fccfc7865b9ac",
+      "bytes": 29783
+    },
+    {
+      "path": "src/modules/Website/templateRegistry.test.ts",
+      "operation": "replace",
+      "sha256": "073e5843671bb253e53f595cc64bcf09751abe983522360c9203fdc61ffc1b85",
+      "baselineSha256": "c371601663e36cbd1e5f1b5f51f3d862de06a8f291e16e6e30f3f4c52da7bdec",
+      "bytes": 2318
+    },
+    {
+      "path": "src/modules/Website/templateRegistry.ts",
+      "operation": "replace",
+      "sha256": "14160306c60faf87b2a019ba774076279375657bfd69a8d012d51ea9108a1824",
+      "baselineSha256": "3b7c3ed1099ac00ffcc3157a5607e08229990cb93c2d76c30c7d5b9c0ab173a2",
+      "bytes": 8372
+    },
+    {
+      "path": "src/modules/Website/templateSelection.ts",
+      "operation": "replace",
+      "sha256": "068fdf88a518db9465df10c7c7a6ab0c7b33d9b1d2f9447e0380c15cee344924",
+      "baselineSha256": "f1a0617976eb9265dea55985daabfda36b22bea2a6a96a60db755a07684e2dde",
+      "bytes": 1393
+    },
+    {
+      "path": "src/modules/Website/website.controller.ts",
+      "operation": "replace",
+      "sha256": "37b3dcd8934916811f96ac3758329469cebea7f0c7aa47c5297ff2b7b01059af",
+      "baselineSha256": "91fff296f4d68e227dcf875e036eb74025467e32837d7f9916473fdebce479fd",
+      "bytes": 27444
+    },
+    {
+      "path": "src/modules/Website/website.service.ts",
+      "operation": "replace",
+      "sha256": "43d88e345512e73c333b8f8b6347ceaa620766953893e84fc3e736c1d0969048",
+      "baselineSha256": "53c7435f65897e0910490479034ea246c76bbf00e3ab38b7b9c472ef7f12e5f4",
+      "bytes": 80668
+    },
+    {
+      "path": "src/modules/Website/websiteComponentRegistry.ts",
+      "operation": "replace",
+      "sha256": "2e0179b517570c4de188aa9dc56b4ca26e4b658583fc435b5f7dbeac4d2b7811",
+      "baselineSha256": "214887d6a1ee07f6ef5f6b2ed9d20dfb96ebf2d0ef08fc1cf26c51fb4d70c75b",
+      "bytes": 7193
+    },
+    {
+      "path": "src/modules/Website/websiteContent.ts",
+      "operation": "replace",
+      "sha256": "8746a02b6baf5aa7ad446a1e02325a3bc4b29fbe1994e73e683f6e5f4719c212",
+      "baselineSha256": "4989ba964056ecc8cdcca52f64889a988249f556fc2887b53ba945bd6da0fd68",
+      "bytes": 6062
+    },
+    {
+      "path": "src/modules/Website/websiteContentAssets.ts",
+      "operation": "add",
+      "sha256": "e3b2e59f448f666ae2e8360dcda7a49d8c3edb97ce863c19dc87a25f24ac3113",
+      "baselineSha256": null,
+      "bytes": 1505
+    },
+    {
+      "path": "src/modules/Website/websiteProvisioning.service.ts",
+      "operation": "replace",
+      "sha256": "0af662c5e1fefab0af73aa182cfcdad9a51fcb11e3b941c77198ce1c2f1be264",
+      "baselineSha256": "a51c10a8c0d4ba34182d53e3df5ede3e45551ef1360be0021d28425f9049d8c2",
+      "bytes": 11988
+    },
+    {
+      "path": "src/modules/Website/websitePublishCacheInvalidation.test.ts",
+      "operation": "replace",
+      "sha256": "4eeacdb232b51fc57b8ff3a54435276a5540fb915922d3431e8a34254327ddaa",
+      "baselineSha256": "1b56e8f53256ea06498fa6c46ed89cf11f54ad3b3efc306e1c04e4f3c6850beb",
+      "bytes": 17058
+    },
+    {
+      "path": "src/modules/Website/websiteReleaseMigration.service.ts",
+      "operation": "replace",
+      "sha256": "cb10e8593b67ab70b52be0c223b7d894b6b5d17ed328d27491d35c39af89a97f",
+      "baselineSha256": "610b9b27b45353b038d0406e142b8e21cccbce66fdae53e37219bdcbe1987e8f",
+      "bytes": 12486
+    },
+    {
+      "path": "src/modules/Website/websiteStudio.service.test.ts",
+      "operation": "replace",
+      "sha256": "80f318f40b36277fe830bd80eb11f5a9f95855ab46c77ce00bf2ccfbd8cb3257",
+      "baselineSha256": "1ea445557a77c6a5828cbecfd92cbf4d20400c516e044e8b47844dd7fae76342",
+      "bytes": 3322
+    },
+    {
+      "path": "src/modules/Website/websiteStudio.service.ts",
+      "operation": "replace",
+      "sha256": "32f3024f73ff802c584fd8e34f4eb6adc40577f085041f84fadbfdb85b9cadd4",
+      "baselineSha256": "0658228d700e80715f51272a9ce220621b5cdd7e66da95424b75e2a30721f074",
+      "bytes": 12350
+    },
+    {
+      "path": "src/modules/Website/websiteTemplateCompatibility.ts",
+      "operation": "add",
+      "sha256": "17d186902ac69c5bec2deea1cd013ea3a15042fd82c64ea277be587db594f537",
+      "baselineSha256": null,
+      "bytes": 1559
+    },
+    {
+      "path": "src/modules/Website/websiteTemplateRelease.ts",
+      "operation": "add",
+      "sha256": "bdc78f22da734343cefb0d7c4d53927579bb764bf152cce583129e9eff1e9542",
+      "baselineSha256": null,
+      "bytes": 928
+    },
+    {
+      "path": "tests/design/template-release.test.cjs",
+      "operation": "add",
+      "sha256": "287cbfa6fe0caedaeb277102b9b03b4906075fe590ec68eb8e359cd1cb9d10a6",
+      "baselineSha256": null,
+      "bytes": 8879
+    },
+    {
+      "path": "tests/helpers/launch-fixture.cjs",
+      "operation": "replace",
+      "sha256": "c427872c81c920cee9eed1932b72fc04a574430931cac5de4e382afe2e36b2fb",
+      "baselineSha256": "62cabe79424362b47097e9a1c296cfb82b4131ec4e7bc64bc5e265bc5928d921",
+      "bytes": 15693
+    }
+  ]
+}

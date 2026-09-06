@@ -18,9 +18,12 @@ export const buildTemplateSelectionPatch = (
 ): Record<string, never> | { templateId: string; templateVersion: string; schemaVersion: number } => {
   if (payload.templateId === undefined && payload.templateVersion === undefined) return {};
 
-  const template = TemplateRegistry.requireTemplate(
+  const template = TemplateRegistry.requireSelectable(
     payload.templateId ?? current.templateId,
-    payload.templateVersion ?? (payload.templateId ? undefined : current.templateVersion),
+    // Legacy versionless writes must not upgrade a tenant merely because a
+    // newer renderer was registered. Current Studio always sends both fields.
+    payload.templateVersion ?? (!payload.templateId || payload.templateId === current.templateId ? current.templateVersion : "1.0.0"),
+    current,
   );
 
   return {

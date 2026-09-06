@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "phase": 4,
+  "repository": "backend",
+  "verificationDate": "2026-09-06",
+  "releaseApproval": false,
+  "baseline": "Original supplied repository with completed Phase 1, Phase 2 and Phase 3 patches applied. Overlay this delta after those phases.",
+  "executed": {
+    "dependencyLightRegressionSuite": {
+      "command": "node --test tests/launch/*.test.cjs tests/onboarding/*.test.cjs tests/interface/*.test.cjs tests/design/*.test.cjs",
+      "nodeVersion": "22.16.0",
+      "passed": 52,
+      "failed": 0,
+      "skipped": 0,
+      "note": "Executed against actual exported application functions with explicit dependency/I/O adapters where required. Source-contract tests do not run their referenced staging browser scenarios."
+    },
+    "typescriptSyntaxTranspile": {
+      "changedFilesChecked": 16,
+      "errors": 0,
+      "note": "TypeScript transpileModule syntax diagnostics only; not whole-project semantic type checking."
+    },
+    "javaScriptSyntax": {
+      "command": "node --check <each changed .cjs/.mjs file>",
+      "changedFilesChecked": 2,
+      "errors": 0
+    }
+  },
+  "limitations": [
+    "Full application type checking, linting and production builds were not run: the pinned project dependency trees were not installed and package-network access was unavailable.",
+    "No authenticated staging browser session, deployment, DNS/TLS operation, production database or external storage operation was performed.",
+    "Dependency-light tests use explicit I/O adapters; they are not a substitute for real React/Next, Zod, Prisma or provider integration tests.",
+    "The lightweight design registry test adapter does not validate the real Zod runtime contract. The supplied Vitest contract suite remains a release gate.",
+    "No Prisma validation, real transaction/outbox integration, asset upload or authenticated tenant authorization against a running deployment was executed."
+  ],
+  "requiredBeforeProduction": [
+    "Install pinned dependencies with pnpm install --frozen-lockfile.",
+    "Run pnpm run release:phase4:design, pnpm run test:phase1:launch:integration, pnpm run test:phase2:contracts and pnpm run test:phase3:preview-contract against the intended dependencies/infrastructure.",
+    "Keep WEBSITE_TEMPLATE_V2_ENABLED=false and WEBSITE_DEFAULT_TEMPLATE_VERSION=1.0.0 until matching frontend renderers are deployed.",
+    "Verify v1 preservation, explicit v2 selection/publication, same-release entitlement downgrade/restoration, incorrect tenant image ownership, unknown versions/components and publication recovery in staging.",
+    "Enable explicit v2 selections first; change the new-registration default to 2.0.0 only after canary verification."
+  ]
+}

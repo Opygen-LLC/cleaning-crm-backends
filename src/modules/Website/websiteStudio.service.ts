@@ -293,7 +293,7 @@ const getStudio = async (user: IRequestUser) => {
       publishedEstimateFormId: publishedEstimateForm?.id ?? null,
       publishedEstimateFormHeadline: publishedEstimateForm?.headline ?? null,
     },
-    templates: TemplateRegistry.list().map((template) => ({
+    templates: TemplateRegistry.listSelectable().map((template) => ({
       ...template,
       available: template.tier === "FREE" || entitlements.premiumTemplates,
       lockedReason: template.tier === "PRO" && !entitlements.premiumTemplates

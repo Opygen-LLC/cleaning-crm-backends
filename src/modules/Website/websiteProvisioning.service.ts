@@ -137,10 +137,9 @@ const createWebsiteRecordTx = async (
   createdByUserId: string | null,
   initialRevisionReason = "Website provisioned",
 ) => {
-  const template = TemplateRegistry.requireTemplate(
-    payload.templateId ?? DEFAULT_WEBSITE_SETTINGS.templateId,
-    payload.templateVersion,
-  );
+  const template = payload.templateId || payload.templateVersion
+    ? TemplateRegistry.requireSelectable(payload.templateId ?? DEFAULT_WEBSITE_SETTINGS.templateId, payload.templateVersion ?? "1.0.0")
+    : TemplateRegistry.defaultTemplate();
 
   const website = await db.businessWebsite.create({
     data: {

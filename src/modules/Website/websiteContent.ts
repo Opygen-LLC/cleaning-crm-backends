@@ -38,6 +38,12 @@ const homeContentSchema = z.object({
   eyebrow: optionalText(120),
   heroTitle: optionalText(180),
   heroSubtitle: optionalText(600),
+  heroImageUrl: nullableUrl,
+  heroImageAlt: optionalText(240),
+  announcement: optionalText(240),
+  howItWorksHeading: optionalText(180),
+  howItWorksIntro: optionalText(600),
+  howItWorksSteps: z.array(featureItemSchema).max(6).optional(),
   primaryCtaLabel: optionalText(80),
   secondaryCtaLabel: optionalText(80),
 

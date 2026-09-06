@@ -1,4 +1,5 @@
 import status from "http-status";
+import { readWebsiteTemplateRelease } from "./websiteTemplateRelease";
 import AppError from "../../errorHelper/AppError";
 import type { WebsiteEntitlements } from "./websiteEntitlement.service";
 import {
@@ -39,7 +40,7 @@ const component = (
  * API contract, not display labels, so Publish must validate them server-side
  * even though Website Studio only offers known choices.
  */
-const REGISTRY: readonly ComponentDefinition[] = [
+const LEGACY_REGISTRY: readonly ComponentDefinition[] = [
   component("shared.header.modern-glass.v1", "shared.header", "premiumTemplates"),
   component("shared.header.minimal.v1", "shared.header"),
   component("shared.header.local-business.v1", "shared.header"),
@@ -65,6 +66,9 @@ const REGISTRY: readonly ComponentDefinition[] = [
   component("home.cta.free-estimate.v1", "home.cta"),
   component("home.cta.contact-team.v1", "home.cta"),
 ];
+
+// Each refreshed component has its own stored ID. No existing design is rewritten.
+const REGISTRY: readonly ComponentDefinition[] = [...LEGACY_REGISTRY, ...LEGACY_REGISTRY.map(item => ({ ...item, id: item.id.replace(/\.v1$/, ".v2") }))];
 
 const byId = new Map(REGISTRY.map((definition) => [definition.id, definition]));
 const slotSet = new Set<string>(WEBSITE_COMPONENT_SLOTS);
@@ -128,6 +132,9 @@ export const assertWebsiteDesignPublishable = (
         retryable: false,
       });
     }
+    if (definition.id.endsWith(".v2") && !readWebsiteTemplateRelease().refreshedEnabled) {
+      throw new AppError(status.CONFLICT, "Refreshed sections are not available for publication yet.", { code: "WEBSITE_TEMPLATE_RELEASE_UNAVAILABLE", retryable: false });
+    }
     if (definition.status !== "ACTIVE") {
       throw new AppError(status.CONFLICT, `Website component ${componentId} is not currently active`, {
         code: "WEBSITE_COMPONENT_INACTIVE",
@@ -151,6 +158,6 @@ export const assertWebsiteDesignPublishable = (
 
 export const WebsiteComponentRegistry = {
   list: () => REGISTRY.map((definition) => ({ ...definition })),
-  find: (id: string) => byId.get(id),
+  find: (id: string) => { const definition = byId.get(id); return definition ? { ...definition } : undefined; },
   assertWebsiteDesignPublishable,
 };

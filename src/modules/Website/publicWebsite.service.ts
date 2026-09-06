@@ -6,7 +6,7 @@ import { projectCanonicalService, projectPublicBusiness } from "../../lib/utils/
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
-import { TemplateRegistry } from "./templateRegistry";
+import { resolveCompatibleBackendTemplate, resolveTemplateDowngradeFallback } from "./websiteTemplateCompatibility";
 import { buildPublishedSnapshot, parsePublishedSnapshot, parseRevisionSnapshotAsPublished, type WebsitePublishedSnapshotV1 } from "./websiteSnapshot";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { readyWebsiteDomainWhere } from "./websiteDomainReadiness";
@@ -273,20 +273,6 @@ const resolveSafePublishedSnapshot = async (website: ProjectionWebsite): Promise
   });
 };
 
-const resolveCompatibleBackendTemplate = (config: WebsitePublishedSnapshotV1["website"]) => {
-  const exact = TemplateRegistry.get(config.templateId, config.templateVersion);
-  if (exact) return exact;
-
-  // Rolling deploy/rollback compatibility: presentation may fall back only to
-  // a renderer that declares the same content schema. Never render schema v2
-  // content through a v1 template merely to avoid a 503.
-  const sameFamily = TemplateRegistry.get(config.templateId);
-  if (sameFamily?.schemaVersion === config.schemaVersion) return sameFamily;
-
-  const safeDefault = TemplateRegistry.get("clean-modern");
-  return safeDefault?.schemaVersion === config.schemaVersion ? safeDefault : null;
-};
-
 const projectWebsite = (
   source: Awaited<ReturnType<typeof loadProjectionSource>>,
   options: { mode: "public" | "preview"; aliasRedirectSubdomain?: string | null; snapshotOverride?: WebsitePublishedSnapshotV1 | null },
@@ -328,8 +314,7 @@ const projectWebsite = (
   // Subscription downgrade changes presentation only; CRM/content/domain rows are
   // never destroyed. Upgrading restores the selected premium template. The
   // fallback must support the same schema as the published content.
-  const defaultTemplate = TemplateRegistry.get("clean-modern");
-  const downgradeFallback = defaultTemplate?.schemaVersion === config.schemaVersion ? defaultTemplate : null;
+  const downgradeFallback = resolveTemplateDowngradeFallback(config, requestedTemplate);
   if (requestedTemplate.tier === "PRO" && !entitlements.premiumTemplates && !downgradeFallback) {
     throw new AppError(status.SERVICE_UNAVAILABLE, "Website template schema is unavailable", {
       code: "WEBSITE_TEMPLATE_SCHEMA_UNAVAILABLE",

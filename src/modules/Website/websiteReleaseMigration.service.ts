@@ -34,7 +34,7 @@ export interface WebsiteReleaseRepairResult extends WebsiteReleaseAudit {
 }
 
 const releaseLock = (adminId: string) => `phase10-website-release:${adminId}`;
-const DEFAULT_TEMPLATE = TemplateRegistry.requireTemplate(DEFAULT_WEBSITE_SETTINGS.templateId);
+const DEFAULT_TEMPLATE = TemplateRegistry.requireTemplate(DEFAULT_WEBSITE_SETTINGS.templateId, "1.0.0");
 
 const cloneJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 

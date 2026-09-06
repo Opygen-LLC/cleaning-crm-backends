@@ -175,7 +175,7 @@ function fixture() {
     './websiteDomainReadiness': { readyWebsiteDomainWhere: {}, isWebsiteDomainRoutingReady: () => false },
     './websiteDomainLifecycle': { presentWebsiteDomain: v => v },
     './websiteCanonicalHost': { getCanonicalWebsiteHost: (subdomain, primaryCustomHost) => primaryCustomHost || `${subdomain}.sites.example.com` },
-    './templateRegistry': { TemplateRegistry: { requireTemplate: () => ({ id: 'clean-modern', version: '1.0.0', schemaVersion: 1, tier: 'FREE' }) } },
+    './templateRegistry': { TemplateRegistry: { requireTemplate: () => ({ id: 'clean-modern', version: '1.0.0', schemaVersion: 1, tier: 'FREE' }), requirePublishable: () => ({ id: 'clean-modern', version: '1.0.0', schemaVersion: 1, tier: 'FREE' }) } },
     './templateSelection': {}, './websiteProvisioning.service': { WebsiteProvisioningService: {} },
     './websiteBookingProvisioning.service': { WebsiteBookingProvisioningService: { ensureAttachedForLaunchTx: async tx => {
       controls.bookingCalls++; await tx.businessWebsite.update({ where: { id: websiteId }, data: { primaryBookingFormId: 'booking-1' } }); return 'booking-1';

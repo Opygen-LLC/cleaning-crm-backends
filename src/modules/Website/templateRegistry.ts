@@ -1,5 +1,6 @@
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
+import { readWebsiteTemplateRelease } from "./websiteTemplateRelease";
 
 export type WebsiteTemplateTier = "FREE" | "PRO";
 
@@ -87,6 +88,25 @@ const rawDefinitions: RawWebsiteTemplateDefinition[] = [
   },
 ];
 
+// Version 1 remains immutable. Version 2 uses the same projection schema, but
+// has independent renderers/assets. Nothing here rewrites an existing tenant.
+for (const original of [...rawDefinitions]) {
+  original.thumbnail = `/website-catalog/templates/${original.id}/1.0.0/home.webp`;
+  const descriptions: Record<string, string> = {
+    "clean-modern": "A bright residential layout with a photo-led introduction and clear service cards.",
+    "premium-home": "An editorial home-care layout with generous spacing and refined typography.",
+    "commercial-pro": "A practical business layout for service scope, sectors, process and enquiries.",
+    "local-cleaning": "An approachable local layout with coverage, contact details and easy booking.",
+  };
+  rawDefinitions.push({
+    ...original,
+    version: "2.0.0",
+    description: descriptions[original.id],
+    thumbnail: `/website-catalog/templates/${original.id}/2.0.0/home.webp`,
+    highlights: ["Accessible navigation", "Responsive service and contact pages", "Your photos, reviews and brand"],
+  });
+}
+
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 const parseVersion = (version: string): readonly [number, number, number] => {
@@ -169,8 +189,27 @@ const requireTemplate = (templateId: string, version?: string) => {
   return template;
 };
 
+/** Selection is enabled only after all public frontend instances know v2.
+ * Reads deliberately ignore the flag: rollback must not remove a live renderer. */
+const listSelectable = () => {
+  const release = readWebsiteTemplateRelease();
+  return list().filter((template) => template.version === "1.0.0" || release.refreshedEnabled);
+};
+
+const requireSelectable = (id: string, version: string, current?: { templateId: string; templateVersion: string }) => {
+  const template = requireTemplate(id, version);
+  const unchanged = current?.templateId === id && current.templateVersion === version;
+  if (!unchanged && version === "2.0.0" && !readWebsiteTemplateRelease().refreshedEnabled) {
+    throw new AppError(status.CONFLICT, "This template release is not available yet. Reload the template library.", {
+      code: "WEBSITE_TEMPLATE_RELEASE_UNAVAILABLE", retryable: false,
+    });
+  }
+  return template;
+};
+
+const requirePublishable = (id: string, version: string) => requireSelectable(id, version);
+const defaultTemplate = () => requireSelectable("clean-modern", readWebsiteTemplateRelease().defaultVersion);
+
 export const TemplateRegistry = {
-  list,
-  get,
-  requireTemplate,
+  list, listSelectable, get, requireTemplate, requireSelectable, requirePublishable, defaultTemplate,
 };

@@ -114,6 +114,7 @@ vi.mock("../../lib/cache/resourceCacheVersion", () => ({
 }));
 vi.mock("./templateRegistry", () => ({
   TemplateRegistry: {
+    requirePublishable: vi.fn(),
     requireTemplate: vi.fn().mockReturnValue({ id: "clean-modern", version: "1.0.0", tier: "FREE", schemaVersion: 1 }),
   },
 }));

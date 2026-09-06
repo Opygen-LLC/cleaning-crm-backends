@@ -8,7 +8,7 @@ const { prismaMock, websiteServiceMock, getAdminIdMock, templateRegistryMock, en
   },
   websiteServiceMock: { getWebsiteForAdmin: vi.fn() },
   getAdminIdMock: vi.fn(),
-  templateRegistryMock: { list: vi.fn(), requireTemplate: vi.fn() },
+  templateRegistryMock: { listSelectable: vi.fn(), requireTemplate: vi.fn() },
   entitlementMock: { getForAdminId: vi.fn() },
   overviewMock: { getForAdminId: vi.fn() },
 }));
@@ -57,7 +57,7 @@ beforeEach(() => {
     premiumTemplates: false,
   });
   overviewMock.getForAdminId.mockResolvedValue({});
-  templateRegistryMock.list.mockReturnValue([{ id: "clean-modern", version: "1.0.0", tier: "FREE" }]);
+  templateRegistryMock.listSelectable.mockReturnValue([{ id: "clean-modern", version: "1.0.0", tier: "FREE" }]);
 });
 
 describe("WebsiteStudioService.getStudio", () => {

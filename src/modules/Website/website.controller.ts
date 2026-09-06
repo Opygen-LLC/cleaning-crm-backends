@@ -274,7 +274,7 @@ const uploadContentAsset = catchAsync(async (req, res) => {
 const deleteAsset = catchAsync(async (req, res) => ok(res, "Website asset deleted successfully", await WebsiteService.deleteAsset(paramStr(req.params.assetId), req.user)));
 const listTemplates = catchAsync(async (req, res) => {
   const entitlements = await WebsiteEntitlementService.getForUser(req.user);
-  return ok(res, "Website templates retrieved successfully", TemplateRegistry.list().map((template) => ({
+  return ok(res, "Website templates retrieved successfully", TemplateRegistry.listSelectable().map((template) => ({
     ...template,
     available: template.tier === "FREE" || entitlements.premiumTemplates,
     lockedReason: template.tier === "PRO" && !entitlements.premiumTemplates
