@@ -451,6 +451,7 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
         needPasswordChange: boolean;
         staffStatus: StaffStatus | null;
         staffManuallyInactive: boolean | null;
+        organizationId: string | null;
         onboardingCompletedAt: Date | null;
         onboardingCompletedSteps: string[] | null;
     };
@@ -471,6 +472,7 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
             u."needPasswordChange",
             sp.status::text AS "staffStatus",
             sp."manuallyInactive" AS "staffManuallyInactive",
+            ap.id AS "organizationId",
             ap."onboardingCompletedAt",
             ap."onboardingCompletedSteps"
         FROM "session" s
@@ -523,6 +525,7 @@ const session = async (user: IRequestUser, sessionToken?: string | null) => {
 
     return {
         authenticated: true as const,
+        organizationId: account.organizationId,
         user: {
             id: account.id,
             name: account.name,

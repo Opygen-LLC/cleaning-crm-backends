@@ -35,7 +35,8 @@ import {
 } from "./websiteSnapshot";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
-import { PublicWebsiteCacheRevalidation } from "../../lib/outbox/publicWebsiteCacheOutbox";
+import { PublicWebsiteCacheOutbox } from "../../lib/outbox/publicWebsiteCacheOutbox";
+import { WebsitePublicationDeliveryService } from "./websitePublicationDelivery.service";
 import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
 import { presentWebsiteDomain } from "./websiteDomainLifecycle";
 import { WEBSITE_STATUS, statusAfterDraftMutation, type WebsiteLifecycleStatus } from "./websiteLifecycle";
@@ -451,53 +452,12 @@ const publicCacheTenantIdentifiers = (website: PublicCacheWebsiteIdentity): stri
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean)));
 
-/**
- * Next.js is intentionally invalidated only after the publication transaction,
- * Redis projection and host resolver caches have crossed their commit boundary.
- * The direct signed callback is the normal path; the durable outbox is queued
- * by PublicWebsiteCacheRevalidation only when direct delivery fails.
- */
-const revalidatePublishedWebsite = async (
-  website: PublicCacheWebsiteIdentity,
-  reason: "website-published" | "website-launched",
-) => {
-  const tenantIdentifiers = publicCacheTenantIdentifiers(website);
-  return PublicWebsiteCacheRevalidation.triggerWithFallback({
-    websiteId: website.id,
-    tenantIdentifier: website.subdomain,
-    tenantIdentifiers,
-    reason,
+const enqueuePublicationTx = (tx: Prisma.TransactionClient, adminId: string, website: PublicCacheWebsiteIdentity, revision: number, reason: string) =>
+  PublicWebsiteCacheOutbox.enqueueDeliveryTx(tx, {
+    websiteId: website.id, tenantIdentifier: website.subdomain,
+    tenantIdentifiers: publicCacheTenantIdentifiers(website), reason,
+    delivery: { version: 1, adminId, revision },
   });
-};
-
-const warmPublishedProjection = async (websiteId: string, reason: string) => {
-  try {
-    await PublicWebsiteService.getPublicWebsiteById(websiteId);
-    return true;
-  } catch (error) {
-    logger.warn(`[${reason}] projection warm failed for ${websiteId}: ${error instanceof Error ? error.message : String(error)}`);
-    return false;
-  }
-};
-
-type WebsitePublicationDelivery = {
-  cacheInvalidated: boolean;
-  revalidationTriggered: boolean;
-  revalidationDelivered: boolean;
-  revalidationQueued: boolean;
-  projectionWarmed: boolean;
-};
-
-const publishDeliveryStatus = (
-  revalidation: Awaited<ReturnType<typeof revalidatePublishedWebsite>>,
-  projectionWarmed: boolean,
-): WebsitePublicationDelivery => ({
-  cacheInvalidated: true,
-  revalidationTriggered: revalidation.configured,
-  revalidationDelivered: revalidation.delivered,
-  revalidationQueued: revalidation.queued,
-  projectionWarmed,
-});
 
 const loadWebsiteDetailsWhere = async (
   where: { id: string } | { adminId: string },
@@ -1058,7 +1018,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
     WebsiteEntitlementService.getForAdminId(adminId),
   ]);
 
-  const website = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
     const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
 
@@ -1121,41 +1081,29 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
         publishedRevisionNumber: revision.revisionNumber,
       },
     });
-    return presentDraftSnapshot(draft, {
+    const website = presentDraftSnapshot(draft, {
       status: WEBSITE_STATUS.PUBLISHED,
       publishedAt,
       publishedRevisionNumber: revision.revisionNumber,
       draftRevisionNumber: revision.revisionNumber,
       publishedSnapshot,
     });
+    const deliveryEvent = await enqueuePublicationTx(tx, adminId, website, revision.revisionNumber, "website-published");
+    return { website, deliveryEvent };
   });
 
-  // Publication is already committed. First invalidate every server-side cache
-  // that could rebuild/route the public projection. Next.js revalidation is
-  // deliberately deferred until these invalidations finish so its next cache
-  // miss cannot observe a stale Redis/host projection.
-  await Promise.all([
-    WebsiteHostResolverService.invalidateSubdomains([
-      website.subdomain,
-      ...website.subdomainAliases.map((alias: any) => alias.subdomain),
-    ]),
-    WebsiteHostResolverService.invalidateHosts(website.domains.map((domain: any) => domain.domain)),
-    WebsiteProjectionCacheService.invalidateWebsite(website.id, adminId, {
-      revalidateNext: false,
-      reason: "website-published",
-    }),
-  ]);
-
-  const revalidation = await revalidatePublishedWebsite(website, "website-published");
-  const projectionWarmed = await warmPublishedProjection(website.id, "website-publish");
-  const publicationDelivery = publishDeliveryStatus(revalidation, projectionWarmed);
-
+  const publicationDelivery = WebsitePublicationDeliveryService.bindToRevision(
+    await WebsitePublicationDeliveryService.attemptImmediate(result.deliveryEvent), result.website.publishedRevisionNumber,
+  );
   void bumpCacheResourceVersions(adminId, [CacheResource.website]);
-  return { ...website, publicationDelivery };
+  return { ...result.website, publicUrl: publicationDelivery.publicUrl ?? result.website.publicUrl, publicationDelivery };
 };
 
 
-const REQUIRED_ONBOARDING_STEPS = ONBOARDING_STEPS.map((step) => step.key);
+// Review is the launch action, not a separate HTTP precondition. Legacy callers
+// may still complete `review_launch` (or `template`) before invoking launch.
+const REQUIRED_ONBOARDING_STEPS = ONBOARDING_STEPS.map((step) => step.key)
+  .filter((step) => step !== "review_launch" && (step as string) !== "template");
 
 /**
  * First-time launch is deliberately stronger than a normal Website Studio
@@ -1272,26 +1220,28 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
     }
 
     assertLifecycleAllowsPublish(owner.businessWebsite.status as WebsiteLifecycleStatus);
-    const latestRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
 
     // Idempotent retry path: the first launch committed completely and there
-    // are no newer draft revisions. Do not create a duplicate publish revision.
+    // may be newer drafts. Never republish them implicitly on a lost-response retry.
     if (
       owner.onboardingCompletedAt &&
       owner.businessWebsite.status === WEBSITE_STATUS.PUBLISHED &&
       owner.businessWebsite.publishedAt &&
       owner.businessWebsite.publishedSnapshot &&
       owner.businessWebsite.publishedRevisionNumber !== null &&
-      latestRevisionNumber <= owner.businessWebsite.publishedRevisionNumber &&
-      !payload.website &&
-      !payload.pages?.length
+      owner.businessWebsite.publishedRevisionNumber > 0
     ) {
+      const website = await loadWebsiteDetails(current.id, tx);
+      const deliveryEvent = await enqueuePublicationTx(tx, adminId, website, owner.businessWebsite.publishedRevisionNumber, "website-launched");
       return {
-        businessName: owner.businessName,
-        alreadyLive: true,
-        website: await loadWebsiteDetails(current.id, tx),
+        businessName: owner.businessName, alreadyLive: true, website, deliveryEvent,
+        onboardingCompletedAt: owner.onboardingCompletedAt,
       };
     }
+
+    // Check optimistic concurrency only for the first commit. A lost-response
+    // retry necessarily carries the OLD expected revision and must be accepted.
+    const latestRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
 
     // Rolling-deploy callers may still send editor fields with first launch.
     // Apply them under this same transaction before booking provisioning and
@@ -1389,54 +1339,46 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
         publishedRevisionNumber: revision.revisionNumber,
       },
     });
-    if (!owner.onboardingCompletedAt) {
+    if (!owner.onboardingCompletedAt || !completed.has("review_launch")) {
       await tx.adminProfile.update({
         where: { id: adminId },
-        data: { onboardingCompletedAt: launchedAt },
+        data: {
+          onboardingCompletedAt: owner.onboardingCompletedAt ?? launchedAt,
+          onboardingCompletedSteps: [...new Set([...completed, "review_launch"])],
+        },
       });
     }
 
-    return {
-      businessName: owner.businessName,
-      alreadyLive: false,
-      website: presentDraftSnapshot(draft, {
+    const website = presentDraftSnapshot(draft, {
         status: WEBSITE_STATUS.PUBLISHED,
         publishedAt: launchedAt,
         publishedRevisionNumber: revision.revisionNumber,
         draftRevisionNumber: revision.revisionNumber,
         publishedSnapshot,
-      }),
+      });
+    const deliveryEvent = await enqueuePublicationTx(tx, adminId, website, revision.revisionNumber, "website-launched");
+    return {
+      businessName: owner.businessName, alreadyLive: false, website, deliveryEvent,
+      onboardingCompletedAt: owner.onboardingCompletedAt ?? launchedAt,
     };
   }, PROVISIONING_TRANSACTION_OPTIONS);
 
-  // Drop both routing and projection caches only after the database commit, so
-  // no process can rebuild Redis from a half-published transaction. Historical
-  // subdomain aliases are invalidated as well because they may carry a cached
-  // canonical-host decision for this website.
-  await Promise.all([
-    WebsiteHostResolverService.invalidateSubdomains([
-      result.website.subdomain,
-      ...result.website.subdomainAliases.map((alias: any) => alias.subdomain),
-    ]),
-    WebsiteHostResolverService.invalidateHosts(result.website.domains.map((domain: any) => domain.domain)),
-    WebsiteProjectionCacheService.invalidateWebsite(result.website.id, adminId, {
-      revalidateNext: false,
-      reason: "website-launched",
-    }),
-  ]);
-
-  const revalidation = await revalidatePublishedWebsite(result.website, "website-launched");
-  const projectionWarmed = await warmPublishedProjection(result.website.id, "website-launch");
-  const publicationDelivery = publishDeliveryStatus(revalidation, projectionWarmed);
-  const publishedWebsite = { ...result.website, publicationDelivery };
-
+  const publicationDelivery = WebsitePublicationDeliveryService.bindToRevision(
+    await WebsitePublicationDeliveryService.attemptImmediate(result.deliveryEvent), result.website.publishedRevisionNumber,
+  );
+  const publishedWebsite = { ...result.website, publicUrl: publicationDelivery.publicUrl ?? result.website.publicUrl, publicationDelivery };
+  void bumpCacheResourceVersions(adminId, [CacheResource.website]);
   return {
+    userId: user.id,
+    organizationId: adminId,
+    onboardingCompletedAt: result.onboardingCompletedAt,
     businessName: result.businessName,
     alreadyLive: result.alreadyLive,
     launchedAt: publishedWebsite.publishedAt,
     publicUrl: publishedWebsite.publicUrl,
     website: publishedWebsite,
     publicationDelivery,
+    websiteStatus: WebsitePublicationDeliveryService.compactStatus(adminId, publishedWebsite.id, publishedWebsite.publishedRevisionNumber, publicationDelivery),
   };
 };
 

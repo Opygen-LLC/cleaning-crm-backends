@@ -21,10 +21,14 @@ vi.mock("../../lib/outbox/publicWebsiteCacheOutbox", () => ({
   PublicWebsiteCacheRevalidation: publicCacheRevalidationMock,
 }));
 
+vi.mock("../Entitlement/tenantAccessResolver.service", () => ({
+  TenantAccessResolver: { isCurrentGeneration: vi.fn(async () => true) },
+}));
+
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 
 const envelope = (data: unknown) => JSON.stringify({
-  version: 9,
+  version: 10,
   websiteId: "website-1",
   generation: 0,
   cachedAt: new Date().toISOString(),
@@ -36,6 +40,7 @@ beforeEach(() => {
   redisMock.get.mockResolvedValue(null);
   redisMock.set.mockResolvedValue("OK");
   redisMock.eval.mockResolvedValue(1);
+  redisMock.del.mockResolvedValue(1);
 });
 
 describe("Phase 23 public website projection cache", () => {
@@ -74,12 +79,12 @@ describe("Phase 23 public website projection cache", () => {
       expect.stringContaining("redis.call('SET', KEYS[2]"),
       3,
       "website-projection:website-1",
-      "site-projection-stale:v9:website-1",
-      "site-projection-generation:v9:website-1",
+      "site-projection-stale:v10:website-1",
+      "site-projection-generation:v10:website-1",
       "0",
-      expect.stringContaining('"version":9'),
-      "180",
-      "900",
+      expect.stringContaining('"version":10'),
+      "180000",
+      "900000",
     );
   });
 
@@ -89,9 +94,9 @@ describe("Phase 23 public website projection cache", () => {
       expect.stringContaining("INCR"),
       4,
       "website-projection:website-1",
-      "site-projection-stale:v9:website-1",
-      "site-projection-lock:v9:website-1",
-      "site-projection-generation:v9:website-1",
+      "site-projection-stale:v10:website-1",
+      "site-projection-lock:v10:website-1",
+      "site-projection-generation:v10:website-1",
     );
     expect(publicCacheRevalidationMock.triggerWithFallback).toHaveBeenCalledWith({
       websiteId: "website-1",

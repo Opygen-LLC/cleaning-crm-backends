@@ -8,7 +8,7 @@
  *      passed -> status = EXPIRED.
  *   2. Expire ACTIVE trial subscriptions whose trialEndsAt has passed ->
  *      status = EXPIRED.
- * Both branches use the findMany -> updateMany({ id: { in: [...] } })
+ * Both branches use findMany -> conditional per-record updateMany in a transaction;
  * pattern (not a blind updateMany) specifically so a live notification can
  * be pushed per affected admin — see the BUGFIX comment in the source file.
  * These tests assert that behaviour directly rather than just "some update
@@ -20,16 +20,17 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../lib/prisma/prisma", () => ({
-    prisma: {
-        subscription: {
-            findMany: vi.fn(),
-            updateMany: vi.fn(),
-        },
-        pendingPlanChange: {
-            findMany: vi.fn().mockResolvedValue([]),
-        },
-    },
+const state = vi.hoisted(() => ({ findMany: vi.fn(), updateMany: vi.fn(), enqueue: vi.fn(), deliver: vi.fn() }));
+vi.mock("../lib/prisma/prisma", () => {
+    const tx = { subscription: { findMany: state.findMany, updateMany: state.updateMany } };
+    return { prisma: { ...tx, $transaction: async (fn: (value: typeof tx) => unknown) => fn(tx) } };
+});
+vi.mock("../modules/SuperAdmin/tenantAdmin.service", () => ({ applyDueAdministrativePlanChanges: vi.fn(async () => undefined) }));
+vi.mock("../lib/outbox/publicWebsiteCacheOutbox", () => ({ PublicWebsiteCacheOutbox: { enqueueTenantDeliveryTx: state.enqueue } }));
+vi.mock("../modules/Website/websitePublicationDelivery.service", () => ({ WebsitePublicationDeliveryService: { attemptImmediate: state.deliver } }));
+vi.mock("../lib/cache/authRuntimeCache", () => ({
+    invalidateRuntimeAdminAccessContext: vi.fn(async () => undefined),
+    invalidateRuntimeSubscriptionForAdmin: vi.fn(async () => undefined),
 }));
 
 vi.mock("../lib/utils/createNotification", () => ({
@@ -73,6 +74,9 @@ const mockCreateNotification = createNotification as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
     vi.clearAllMocks();
+    state.updateMany.mockResolvedValue({ count: 1 });
+    state.enqueue.mockResolvedValue({ id: "event-1", payload: {} });
+    state.deliver.mockResolvedValue({ delivered: true });
 });
 
 describe("runSubscriptionExpiryJob", () => {
@@ -95,7 +99,7 @@ describe("runSubscriptionExpiryJob", () => {
         await runSubscriptionExpiryJob();
 
         expect(mockPrisma.subscription.updateMany).toHaveBeenCalledWith({
-            where: { id: { in: ["sub-1"] } },
+            where: { id: "sub-1", status: "ACTIVE", isTrial: false, currentPeriodEnd: { lte: expect.any(Date) } },
             data: { status: "EXPIRED" },
         });
         expect(mockCreateNotification).toHaveBeenCalledTimes(1);
@@ -117,7 +121,7 @@ describe("runSubscriptionExpiryJob", () => {
         await runSubscriptionExpiryJob();
 
         expect(mockPrisma.subscription.updateMany).toHaveBeenCalledWith({
-            where: { id: { in: ["sub-2"] } },
+            where: { id: "sub-2", status: "ACTIVE", isTrial: true, trialEndsAt: { lte: expect.any(Date) } },
             data: { status: "EXPIRED" },
         });
         expect(mockCreateNotification).toHaveBeenCalledWith(
@@ -139,15 +143,15 @@ describe("runSubscriptionExpiryJob", () => {
 
         await runSubscriptionExpiryJob();
 
-        // Two separate updateMany calls — one per branch — each scoped to its
-        // own id set, never a single call mixing paid + trial subscription ids.
-        expect(mockPrisma.subscription.updateMany).toHaveBeenCalledTimes(2);
+        // Separate conditional updateMany calls — one per branch — each scoped to its
+        // own record, never a blind update that can expire a concurrent renewal.
+        expect(mockPrisma.subscription.updateMany).toHaveBeenCalledTimes(3);
         expect(mockPrisma.subscription.updateMany).toHaveBeenNthCalledWith(1, {
-            where: { id: { in: ["sub-paid-1", "sub-paid-2"] } },
+            where: { id: "sub-paid-1", status: "ACTIVE", isTrial: false, currentPeriodEnd: { lte: expect.any(Date) } },
             data: { status: "EXPIRED" },
         });
-        expect(mockPrisma.subscription.updateMany).toHaveBeenNthCalledWith(2, {
-            where: { id: { in: ["sub-trial-1"] } },
+        expect(mockPrisma.subscription.updateMany).toHaveBeenNthCalledWith(3, {
+            where: { id: "sub-trial-1", status: "ACTIVE", isTrial: true, trialEndsAt: { lte: expect.any(Date) } },
             data: { status: "EXPIRED" },
         });
         expect(mockCreateNotification).toHaveBeenCalledTimes(3);
@@ -162,7 +166,7 @@ describe("runSubscriptionExpiryJob", () => {
             where: {
                 status: "ACTIVE",
                 isTrial: false,
-                currentPeriodEnd: { lt: expect.any(Date) },
+                currentPeriodEnd: { lte: expect.any(Date) },
             },
             select: { id: true, adminId: true, admin: { select: { userId: true } } },
         });
@@ -177,7 +181,7 @@ describe("runSubscriptionExpiryJob", () => {
             where: {
                 status: "ACTIVE",
                 isTrial: true,
-                trialEndsAt: { lt: expect.any(Date) },
+                trialEndsAt: { lte: expect.any(Date) },
             },
             select: { id: true, adminId: true, admin: { select: { userId: true } } },
         });
@@ -194,6 +198,14 @@ describe("runSubscriptionExpiryJob", () => {
 
         await expect(runSubscriptionExpiryJob()).resolves.toBeUndefined();
         expect(mockPrisma.subscription.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not notify or enqueue a subscription that was concurrently renewed", async () => {
+        state.findMany.mockResolvedValueOnce([{ id: "renewed", adminId: "admin-1", admin: { userId: "user-1" } }]).mockResolvedValueOnce([]);
+        state.updateMany.mockResolvedValue({ count: 0 });
+        await runSubscriptionExpiryJob();
+        expect(state.enqueue).not.toHaveBeenCalled();
+        expect(mockCreateNotification).not.toHaveBeenCalled();
     });
 
     it("propagates a database error instead of silently swallowing it", async () => {

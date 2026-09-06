@@ -19,6 +19,10 @@ import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
 import AppError from "../../errorHelper/AppError";
 import { WebsiteEntitlementService } from "./websiteEntitlement.service";
 import { adminService } from "../Admin/admin.service";
+import { authService } from "../Auth/auth.service";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { WebsitePublicationDeliveryService } from "./websitePublicationDelivery.service";
+import { getRequestTrace } from "../../lib/monitoring/requestTrace";
 import logger from "../../lib/logger";
 import { RELEASE_VERSION } from "../../config/ENV";
 import { recordProductReliabilitySignal } from "../../lib/monitoring/productReliabilityMetrics";
@@ -77,20 +81,51 @@ const publishWebsite = catchAsync(async (req, res) => {
   }
 });
 const launchWebsite = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
   recordWebsitePublishAttempt();
   try {
     const launch = await WebsiteService.launchWebsite(req.body ?? {}, req.user);
-    const onboarding = await adminService.getOnboardingStatus(req.user.id);
+    const [onboarding, bootstrap, session] = await Promise.all([
+      adminService.getOnboardingStatus(req.user.id),
+      adminService.getOnboardingBootstrap(launch.organizationId),
+      authService.session(req.user, req.cookies?.["better-auth.session_token"]),
+    ]);
+    if (session.user.id !== launch.userId || session.organizationId !== launch.organizationId ||
+        !session.onboarding.completed || !onboarding.isComplete || !bootstrap.onboarding.isComplete ||
+        bootstrap.user.id !== launch.userId || bootstrap.website.id !== launch.website.id) {
+      throw new AppError(status.CONFLICT, "Launch completion identity changed; retry with the current account", {
+        code: "LAUNCH_COMPLETION_IDENTITY_MISMATCH", retryable: true,
+      });
+    }
     recordWebsitePublishResult(true);
-    return ok(res, "Website launched successfully", {
-      ...launch,
-      onboarding,
+    const trace = getRequestTrace();
+    logger.info("website_launch_completion", {
+      requestId: trace?.requestId, traceId: trace?.traceId,
+      websiteId: launch.website.id, organizationId: launch.organizationId,
+      publicationRevision: launch.website.publishedRevisionNumber,
+      ready: launch.publicationDelivery.ready, delivery: launch.publicationDelivery,
+      dbQueryCount: trace?.dbQueryCount, dbDurationMs: trace?.dbDurationMs,
+      redisDurationMs: trace?.redisDurationMs,
+      // No credentials, email, tokens or cookies in traces.
+      sessionResponse: { userId: session.user.id, onboarding: session.onboarding },
+    });
+    return ok(res, launch.publicationDelivery.ready ? "Website launched successfully" : "Website published; delivery is being prepared", {
+      ...launch, onboarding,
+      completion: {
+        schemaVersion: 1, userId: launch.userId, organizationId: launch.organizationId,
+        onboardingCompletedAt: launch.onboardingCompletedAt,
+        session, onboarding, bootstrap, websiteStatus: launch.websiteStatus,
+      },
     });
   } catch (error) {
     recordWebsitePublishResult(false);
     if (error instanceof WebsiteDraftConflictError) return sendWebsiteDraftConflict(res, error);
     throw error;
   }
+});
+const getWebsiteStatus = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return ok(res, "Website publication status", await WebsitePublicationDeliveryService.getStatus(await getAdminId(req.user)));
 });
 const getWebsiteBookingSetup = catchAsync(async (req, res) =>
   ok(res, "Website booking setup retrieved successfully", await WebsiteBookingProvisioningService.getSetup(req.user)),
@@ -462,6 +497,7 @@ export const websiteController = {
   saveEditorState,
   publishWebsite,
   launchWebsite,
+  getWebsiteStatus,
   previewWebsite,
   previewEditorState,
   createPreviewSession,

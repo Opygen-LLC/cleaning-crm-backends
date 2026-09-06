@@ -34,6 +34,8 @@ const {
   revalidationMock,
   publicWebsiteMock,
   entitlementMock,
+  accessMock,
+  deliveryOutboxMock,
   order,
 } = vi.hoisted(() => {
   const events: string[] = [];
@@ -51,6 +53,7 @@ const {
     txMock: tx,
     prismaMock: {
       businessWebsite: { findUnique: vi.fn() },
+      outboxEvent: { updateMany: vi.fn(async () => ({ count: 1 })) },
       $transaction: vi.fn(async (callback: (transaction: WebsiteTransactionMock) => unknown) => {
         events.push("transaction:start");
         const result = await callback(tx);
@@ -59,14 +62,26 @@ const {
       }),
     },
     hostResolverMock: {
-      invalidateSubdomains: vi.fn(async () => { events.push("host:subdomains"); }),
-      invalidateHosts: vi.fn(async () => { events.push("host:hosts"); }),
+      resolveHost: vi.fn(),
+      invalidateSubdomains: vi.fn(async () => { events.push("host:subdomains"); return true; }),
+      invalidateHosts: vi.fn(async () => { events.push("host:hosts"); return true; }),
     },
     projectionCacheMock: {
-      invalidateWebsite: vi.fn(async () => { events.push("redis:public"); }),
-      invalidateStudioAdmin: vi.fn(async () => { events.push("redis:studio"); }),
+      get: vi.fn(),
+      invalidateWebsite: vi.fn(async () => { events.push("redis:public"); return { invalidated: true }; }),
+      invalidateStudioAdmin: vi.fn(async () => { events.push("redis:studio"); return true; }),
+    },
+    accessMock: {
+      invalidate: vi.fn(async () => { events.push("access:epoch"); return true; }),
+      resolve: vi.fn(), isCurrentGeneration: vi.fn(async () => true),
+    },
+    deliveryOutboxMock: {
+      enqueueDeliveryTx: vi.fn(async (_tx: unknown, payload: unknown) => {
+        events.push("outbox:write"); return { id: "event-1", payload };
+      }),
     },
     revalidationMock: {
+      deliver: vi.fn(async () => { events.push("next:direct"); }),
       triggerWithFallback: vi.fn(async () => {
         events.push("next:direct");
         return { configured: true, delivered: true, queued: false };
@@ -87,7 +102,8 @@ const {
 
 vi.mock("../../config/ENV", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../config/ENV")>();
-  return { ...actual, WEBSITE_BASE_DOMAIN: "sites.example.com", WEBSITE_CUSTOM_DOMAINS_ENABLED: true };
+  return { ...actual, WEBSITE_BASE_DOMAIN: "sites.example.com", WEBSITE_CUSTOM_DOMAINS_ENABLED: true,
+    NEXT_REVALIDATE_URL: "https://frontend.invalid/revalidate", NEXT_REVALIDATE_SECRET: "test-secret" };
 });
 vi.mock("../../lib/prisma/prisma", () => ({ prisma: prismaMock }));
 vi.mock("../../lib/prisma/advisoryLock", () => ({ acquireTextTransactionAdvisoryLock: vi.fn() }));
@@ -104,7 +120,13 @@ vi.mock("./templateRegistry", () => ({
 vi.mock("./websiteEntitlement.service", () => ({ WebsiteEntitlementService: entitlementMock }));
 vi.mock("./websiteHostResolver.service", () => ({ WebsiteHostResolverService: hostResolverMock }));
 vi.mock("./websiteProjectionCache.service", () => ({ WebsiteProjectionCacheService: projectionCacheMock }));
-vi.mock("../../lib/outbox/publicWebsiteCacheOutbox", () => ({ PublicWebsiteCacheRevalidation: revalidationMock }));
+vi.mock("../../lib/outbox/publicWebsiteCacheOutbox", () => ({
+  PublicWebsiteCacheRevalidation: revalidationMock,
+  PublicWebsiteCacheOutbox: deliveryOutboxMock,
+  parsePublicWebsiteCacheInvalidationPayload: (value: unknown) => value,
+  publicationDeliveryDedupeKey: (id: string, revision: number) => `website-publication:${id}:${revision}`,
+}));
+vi.mock("../Entitlement/tenantAccessResolver.service", () => ({ TenantAccessResolver: accessMock }));
 vi.mock("./publicWebsite.service", () => ({ PublicWebsiteService: publicWebsiteMock }));
 vi.mock("./websiteProvisioning.service", () => ({ WebsiteProvisioningService: {} }));
 vi.mock("./websiteBookingProvisioning.service", () => ({ WebsiteBookingProvisioningService: {} }));
@@ -211,7 +233,21 @@ beforeEach(() => {
   order.splice(0, order.length);
   resetDraft();
   entitlementMock.getForAdminId.mockResolvedValue({ ...defaultEntitlements });
-  prismaMock.businessWebsite.findUnique.mockResolvedValue({ id: "website-1" });
+  prismaMock.businessWebsite.findUnique.mockImplementation(async () => draft);
+  accessMock.resolve.mockImplementation(async () => ({
+    organizationId: "admin-1", generation: "epoch-1", validUntil: new Date(Date.now() + 60_000).toISOString(),
+    access: { publicWebsiteAllowed: true }, website: { deniedReason: "ACTIVE" },
+  }));
+  hostResolverMock.resolveHost.mockImplementation(async (host: string) => ({
+    websiteId: draft.id, publishedRevisionNumber: draft.publishedRevisionNumber,
+    organizationId: "admin-1", accessGeneration: "epoch-1", validUntil: new Date(Date.now() + 60_000).toISOString(),
+    canonicalHost: host, isAlias: false, availability: "live",
+  }));
+  projectionCacheMock.get.mockImplementation(async () => ({ website: { id: draft.id, publishedRevisionNumber: draft.publishedRevisionNumber } }));
+  publicWebsiteMock.getPublicWebsiteById.mockImplementation(async () => {
+    order.push("projection:warm");
+    return { website: { id: draft.id, publishedRevisionNumber: draft.publishedRevisionNumber } };
+  });
   txMock.businessWebsite.findUnique.mockImplementation(async () => draft);
   txMock.businessWebsite.findFirst.mockImplementation(async () => ({
     id: draft.id,
@@ -294,6 +330,10 @@ describe("Website Studio publication regression boundary", () => {
     const next = order.indexOf("next:direct");
     const warm = order.indexOf("projection:warm");
     expect(commit).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("outbox:write")).toBeLessThan(commit);
+    expect(order.indexOf("access:epoch")).toBeGreaterThan(commit);
+    expect(subdomain).toBeGreaterThan(order.indexOf("access:epoch"));
+    expect(redis).toBeGreaterThan(order.indexOf("access:epoch"));
     expect(subdomain).toBeGreaterThan(commit);
     expect(hosts).toBeGreaterThan(commit);
     expect(redis).toBeGreaterThan(commit);
@@ -307,12 +347,12 @@ describe("Website Studio publication regression boundary", () => {
       "admin-1",
       expect.objectContaining({ revalidateNext: false, reason: "website-published" }),
     );
-    expect(revalidationMock.triggerWithFallback).toHaveBeenCalledWith({
+    expect(revalidationMock.deliver).toHaveBeenCalledWith(expect.objectContaining({
       websiteId: "website-1",
       tenantIdentifier: "sparkle",
       tenantIdentifiers: ["sparkle"],
       reason: "website-published",
-    });
+    }));
   });
 
   it("a draft conflict changes nothing public and returns both revision numbers", async () => {

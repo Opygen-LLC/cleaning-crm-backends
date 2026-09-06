@@ -1,7 +1,7 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import { normalizeSubscriptionPlanFeatures, type SubscriptionPlanFeature } from "../../lib/utils/subscriptionPlanFeatures";
-import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
+import { TenantAccessResolver, type TenantAccessResolution } from "../Entitlement/tenantAccessResolver.service";
 import type { FeatureKey } from "../Entitlement/featureCatalog";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
@@ -64,8 +64,8 @@ const planDefaults = (planNameRaw: string | null | undefined): Omit<WebsiteEntit
 const hasActivePaidOrTrialAccess = (source: SubscriptionEntitlementSource): boolean => {
   if (!source || source.status !== "ACTIVE") return false;
   const now = Date.now();
-  if (source.isTrial && source.trialEndsAt && new Date(source.trialEndsAt).getTime() < now) return false;
-  if (!source.isTrial && source.currentPeriodEnd && new Date(source.currentPeriodEnd).getTime() < now) return false;
+  if (source.isTrial && source.trialEndsAt && new Date(source.trialEndsAt).getTime() <= now) return false;
+  if (!source.isTrial && source.currentPeriodEnd && new Date(source.currentPeriodEnd).getTime() <= now) return false;
   return true;
 };
 
@@ -117,8 +117,7 @@ export const websiteEntitlementSubscriptionSelect = {
   subscriptionPlan: { select: { name: true, features: true } },
 } as const;
 
-const getForAdminId = async (adminId: string): Promise<WebsiteEntitlements> => {
-  const access = await TenantAccessResolver.resolve(adminId);
+const fromAccess = (access: TenantAccessResolution): WebsiteEntitlements => {
   const defaults = planDefaults(access.plan.name);
   const planFeatures = access.plan.features;
   const customFeature = featureByKey(planFeatures, "custom_domain");
@@ -174,7 +173,11 @@ const assertAnalyticsWindow = (days: number, entitlements: WebsiteEntitlements) 
   }
 };
 
+const getForAdminId = async (adminId: string): Promise<WebsiteEntitlements> =>
+  fromAccess(await TenantAccessResolver.resolve(adminId));
+
 export const WebsiteEntitlementService = {
+  fromAccess,
   getForAdminId,
   getForUser,
   assertTemplateAllowed,

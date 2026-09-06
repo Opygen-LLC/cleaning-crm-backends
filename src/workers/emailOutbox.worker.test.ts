@@ -27,7 +27,7 @@ vi.mock("../lib/prisma/prisma", () => ({
   prisma: {
     $queryRaw: mocks.queryRaw,
     user: { findUnique: mocks.userFindUnique },
-    outboxEvent: { update: mocks.outboxUpdate },
+    outboxEvent: { updateMany: mocks.outboxUpdate },
     notificationDelivery: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   },
 }));
@@ -38,6 +38,10 @@ vi.mock("../lib/monitoring/emailOutboxHealth", () => ({
   recordEmailOutboxWorkerHeartbeat: mocks.heartbeat,
 }));
 vi.mock("../lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } }));
+
+vi.mock("../modules/Website/websitePublicationDelivery.service", () => ({
+  WebsitePublicationDeliveryService: { deliver: vi.fn() },
+}));
 
 import { processEmailOutboxOnce } from "./emailOutbox.worker";
 
@@ -54,7 +58,7 @@ describe("email outbox worker durable verification delivery", () => {
     vi.clearAllMocks();
     mocks.userFindUnique.mockResolvedValue({ email: "owner@example.com", emailVerified: false });
     mocks.successfulDelivery.mockResolvedValue(undefined);
-    mocks.outboxUpdate.mockResolvedValue({});
+    mocks.outboxUpdate.mockResolvedValue({ count: 1 });
   });
 
   it("delivers OTP through Better Auth and marks the outbox processed", async () => {
@@ -66,7 +70,7 @@ describe("email outbox worker durable verification delivery", () => {
       body: { email: "owner@example.com", type: "email-verification" },
     });
     expect(mocks.outboxUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "event-1" },
+      where: { id: "event-1", status: "PROCESSING", attempts: 1 },
       data: expect.objectContaining({ status: "PROCESSED" }),
     }));
   });
@@ -77,7 +81,7 @@ describe("email outbox worker durable verification delivery", () => {
 
     await expect(processEmailOutboxOnce()).resolves.toEqual({ claimed: 1 });
     expect(mocks.outboxUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "event-1" },
+      where: { id: "event-1", status: "PROCESSING", attempts: 1 },
       data: expect.objectContaining({ status: "RETRY" }),
     }));
   });
@@ -88,7 +92,7 @@ describe("email outbox worker durable verification delivery", () => {
 
     await expect(processEmailOutboxOnce()).resolves.toEqual({ claimed: 1 });
     expect(mocks.outboxUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "event-3" },
+      where: { id: "event-3", status: "PROCESSING", attempts: 3 },
       data: expect.objectContaining({ status: "DEAD" }),
     }));
   });

@@ -1,0 +1,242 @@
+{
+  "schemaVersion": 1,
+  "repository": "backend",
+  "createdAt": "2026-09-06T14:09:23.209536+00:00",
+  "archiveType": "changed-and-new-files-only-overlay",
+  "originalArchive": "cleaning-crm-backends-master (1)(1).zip",
+  "originalArchiveSha256": "0ae8f903564658cd5c5e7c3ba90100afb5a9ac7cb72abfe8fce616d5d9e9395e",
+  "applyAt": "corresponding original repository root",
+  "deletions": [],
+  "files": [
+    {
+      "path": "PHASE1_LAUNCH_README.md",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "b32149fcf99074c288590c5755d7df736561fb5722849ea2c63499963433aea3"
+    },
+    {
+      "path": "docs/phase1-launch/verification/README.md",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "e54e7f86219d3d50b0c578ac6bf1bde7758d1510930d59acfd547a78f49821f2"
+    },
+    {
+      "path": "docs/phase1-launch/verification/baseline-backend.tap",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "9f38f8f642d8ebba047b82430d98e1313425a86acd639112fe2ca9eb662d14b2"
+    },
+    {
+      "path": "docs/phase1-launch/verification/baseline-frontend.tap",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "b1b81375b85b529c2ff8e5d197050751e0fb169787ba0d4c5fabc959b30fdabc"
+    },
+    {
+      "path": "docs/phase1-launch/verification/combined-typescript-syntax.json",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "c77c9a8223034e81e0c1665cb11a37360e684b04f282699b2db7ec6c4112b858"
+    },
+    {
+      "path": "docs/phase1-launch/verification/patched-behavior.tap",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "aff7d1bedd34d3fecba2e14b56d6241d546e62f5cd3ebcfcec120f9fc06ea164"
+    },
+    {
+      "path": "docs/phase1-launch/verification/repository-hygiene.txt",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "9ecde60cc68fbfe2dea790fe670e670629f8cc8d4acc186d5861d0e86cc7fa63"
+    },
+    {
+      "path": "docs/phase1-launch/verification/typecheck-blocked.txt",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "22d754e33e5e414d820e237c9e477c81ec8db495c45ab51f7665351a89a3c783"
+    },
+    {
+      "path": "docs/phase1-launch/verification/verification.json",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "b9edcf93220a79be25c9f14974085147932abe156be47cd7a287d99a7e7f137c"
+    },
+    {
+      "path": "package.json",
+      "operation": "updated",
+      "originalSha256": "8c8c7323f7174cf17ec5bf82431f231c3e06872a233002f0db732463c2e85243",
+      "sha256": "a7544c85a8c93e82de4452728ad2f9f90e91e4d0540f1203c18affd8643fd82e"
+    },
+    {
+      "path": "scripts/release/provisionPlatformWildcard.mjs",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "a1573cc1f38e189de935981c098cb049f862068f34b36f0dce13523cc99ed1da"
+    },
+    {
+      "path": "src/cron/subscriptionExpiry.cron.test.ts",
+      "operation": "updated",
+      "originalSha256": "e505d6a3551084e19411f42fb4db794345bcd788ac9330e1496ac9c0999d1109",
+      "sha256": "84feaa84ac117c56786054bb70bd7a5a8b0a4fd6ec5c6e3e35d769a665c3dbe1"
+    },
+    {
+      "path": "src/cron/subscriptionExpiry.cron.ts",
+      "operation": "updated",
+      "originalSha256": "391f979a9bf343549971440344eb9c92092b75d95cb37c7c6a909376ab3a7772",
+      "sha256": "1d161ce41d438802a227c810b91b28a31f81910e473fe1d61e1af191091b4cd5"
+    },
+    {
+      "path": "src/lib/outbox/publicWebsiteCacheOutbox.ts",
+      "operation": "updated",
+      "originalSha256": "61a57340ea6c83351ffff520745d7337d7eddce0b2fc51af7b663262adde3d63",
+      "sha256": "9a5c97e54f2abaffe04bcd29d4cf4364fd8ffd799201367dfb8d69308ca15542"
+    },
+    {
+      "path": "src/middlewares/checkSubscription.ts",
+      "operation": "updated",
+      "originalSha256": "e0babbbd4598bb0c15495352a54fe16268cff6dc275655f9b5f1fba861b9a5d3",
+      "sha256": "bca1ee2f5fba65337381a510ebd0d5937aa8ddce8a448cd78eafdb1711456dee"
+    },
+    {
+      "path": "src/modules/Auth/auth.service.ts",
+      "operation": "updated",
+      "originalSha256": "dc88a3660b40dfdfaa8bbae682cb7ad0b23c2a8cf419bbf1d6a2e4dcbfc0b15c",
+      "sha256": "10b0d93fcc2060b2c892a1441d8023dce099caa90c3627b8b9fc00c2d2c76ae3"
+    },
+    {
+      "path": "src/modules/Entitlement/tenantAccessResolver.service.ts",
+      "operation": "updated",
+      "originalSha256": "c0505ba485fcaab215c55890c739fa8e20a70e3714137f18830af61e62b817e3",
+      "sha256": "bbf25115919fa91b033ffbe81af6b2a728a14821931bb482bbc8ec1e2c107218"
+    },
+    {
+      "path": "src/modules/SuperAdmin/tenantAdmin.service.ts",
+      "operation": "updated",
+      "originalSha256": "7a13b7420ec00a25291dc4df68bc0424a29db0aaf3630c3ac62b13b228f60ad2",
+      "sha256": "edd7339498fc877f36028909f94c7e740a75acd4ea07c2fc4ace85c26c37c6b0"
+    },
+    {
+      "path": "src/modules/Website/publicWebsite.service.ts",
+      "operation": "updated",
+      "originalSha256": "cc27bd7320eb1c5f255a524ef72623c4557768735df0e41cb5794994ce45d10d",
+      "sha256": "af2bc3b4ac4a0433665d30cc5a652cd2d2890242ba0613278139f424498be382"
+    },
+    {
+      "path": "src/modules/Website/website.controller.ts",
+      "operation": "updated",
+      "originalSha256": "bafb835a9796aa6a8dbdf78345da0822df468866a8bd0982271df82f1100c868",
+      "sha256": "c9669c361677e344cfe46ae37c8263a1b1e26277da9e08d0e27e145fde3fdda3"
+    },
+    {
+      "path": "src/modules/Website/website.routes.ts",
+      "operation": "updated",
+      "originalSha256": "ffd92ba13cc83655d6f09fcbad4d7faa718184dd7b6e9e33d80c638072d5d73f",
+      "sha256": "796c34a394ae9732832ee0c94e80686e88e5fe944fd16a8834adfe3616d95a15"
+    },
+    {
+      "path": "src/modules/Website/website.service.ts",
+      "operation": "updated",
+      "originalSha256": "b475f404f24c8a111c1f866e831d7e0ae276d751b7819f180da569c6473523e3",
+      "sha256": "9776b960c7a69fd934364f1b494defa3dea262f9f25d22c43fa50b63a47d3ce6"
+    },
+    {
+      "path": "src/modules/Website/websiteEntitlement.service.ts",
+      "operation": "updated",
+      "originalSha256": "ff923c1cb2be1bdf592a41f756e365b77919ad50b00ae588e8aac44f479ecf3c",
+      "sha256": "36d30648591f7f01ec86ff6cda4a258857e0af6a0abc4518bd32e0e251098f17"
+    },
+    {
+      "path": "src/modules/Website/websiteHostResolver.production.test.ts",
+      "operation": "updated",
+      "originalSha256": "6e6552a2b1852219ed165d7244a9fe7ddb5d5dc7857b7a5c6eebd5a8ee8d1fd6",
+      "sha256": "20770d10fa6853e58d998100806dcddac25b3368e08b66577d2721ef6dbbd8b8"
+    },
+    {
+      "path": "src/modules/Website/websiteHostResolver.service.ts",
+      "operation": "updated",
+      "originalSha256": "760139b1771e3a75c39c160ffdeaf069e6bf1bea3adc5ee8d4ab5de04373747c",
+      "sha256": "576d0e0cd5fa203afe132ea59131f2649aa5074f813477ec288d4378aedcd0a0"
+    },
+    {
+      "path": "src/modules/Website/websiteLaunch.service.test.ts",
+      "operation": "updated",
+      "originalSha256": "144db200a7cbdb408c6c948f37e96b7d178951d2b4dcb343c0afe2492798e950",
+      "sha256": "deb0356bca64c0b2bf3e977a34489c2162bd6524ab629a8abfb49095bf9037c3"
+    },
+    {
+      "path": "src/modules/Website/websiteProjectionCache.service.ts",
+      "operation": "updated",
+      "originalSha256": "123335c411923c4c0a6e356197479d9ec42ca2a503fe1dbe41fdf620219781cf",
+      "sha256": "da176fd620b8ce852fc6a6823140f447c3e436cdd70b179b341be03cdcc85aa9"
+    },
+    {
+      "path": "src/modules/Website/websiteProjectionCache.test.ts",
+      "operation": "updated",
+      "originalSha256": "2d141c2ea0fb8a909d1a315b1265589bf038ad69888adf9ee3279ad506103fbc",
+      "sha256": "3c67b3fb3469b9815d775209376d35a50c511cf540d4d4bbd9c339498c07dfa6"
+    },
+    {
+      "path": "src/modules/Website/websitePublicationDelivery.service.ts",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "16f8609c1df0e4dd28cd8a9f2b64275603c6e626d228a5c731bf17b6487ec6a5"
+    },
+    {
+      "path": "src/modules/Website/websitePublishCacheInvalidation.test.ts",
+      "operation": "updated",
+      "originalSha256": "e5c2db17d42577419e9f41835590208b0c73eb0a36e0b19a2917f251a5068f40",
+      "sha256": "1b56e8f53256ea06498fa6c46ed89cf11f54ad3b3efc306e1c04e4f3c6850beb"
+    },
+    {
+      "path": "src/workers/emailOutbox.worker.test.ts",
+      "operation": "updated",
+      "originalSha256": "8af40bd33fbc05146a63714cd93ec4b4108cd52de54034f2e44c07eb6c5fb87f",
+      "sha256": "f01173733f2584f31039328970f7dab36a7886f82065b252b6e40b024d9333ce"
+    },
+    {
+      "path": "src/workers/emailOutbox.worker.ts",
+      "operation": "updated",
+      "originalSha256": "8b00d3b9fa8748dc502ba5f3a2d2bb704147fbbee255b7db2123feb17a38e57e",
+      "sha256": "fb507f5da1ba93f9a078880d6463699aa2636b27c3472823894e8e27a3759ddc"
+    },
+    {
+      "path": "tests/helpers/launch-fixture.cjs",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "62cabe79424362b47097e9a1c296cfb82b4131ec4e7bc64bc5e265bc5928d921"
+    },
+    {
+      "path": "tests/helpers/load-typescript.cjs",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "2d38f9072db2e8157ecb24c4c6a624bb45f1a781339007d999b33257275cc1e4"
+    },
+    {
+      "path": "tests/launch/access.behavior.test.cjs",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "d43c27a2e9a8d9178ff38c087f4d4770b9e335179fa503b0f9ffca5558aaa7ba"
+    },
+    {
+      "path": "tests/launch/launch-regressions.test.cjs",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "a932bad2675437b2512e81f939954cc99f63cb9c98e970df29b540b4f1b2cefd"
+    },
+    {
+      "path": "tests/launch/publication.behavior.test.cjs",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "fc6852753752ba66a945d1d106a5063da341bcf04e730b7e922c828a36b2299d"
+    },
+    {
+      "path": "tests/launch/worker.behavior.test.cjs",
+      "operation": "added",
+      "originalSha256": null,
+      "sha256": "0f946c539b87f4dcadb86cda30eb0441df47f0b95441da59cb6d8d44de128286"
+    }
+  ],
+  "manifestSelfHashExcluded": true,
+  "releaseGate": "Not certified production-ready; read PHASE1_LAUNCH_README.md and verification.json."
+}

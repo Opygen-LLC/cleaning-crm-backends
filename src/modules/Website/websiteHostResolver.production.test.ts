@@ -14,6 +14,7 @@ const { redisMock, prismaMock, tenantAccessMock } = vi.hoisted(() => ({
   },
   tenantAccessMock: {
     resolve: vi.fn(),
+    isCurrentGeneration: vi.fn(),
   },
 }));
 
@@ -36,6 +37,8 @@ import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 
 const defaultAccess = (overrides: Record<string, any> = {}) => ({
   organizationId: "org-1",
+  generation: "generation-1",
+  validUntil: new Date(Date.now() + 60_000).toISOString(),
   ownerUserId: "user-1",
   platform: {
     status: "ACTIVE",
@@ -104,6 +107,7 @@ beforeEach(() => {
   prismaMock.businessWebsite.findUnique.mockResolvedValue(null);
   prismaMock.websiteSubdomainAlias.findUnique.mockResolvedValue(null);
   prismaMock.websiteDomain.findFirst.mockResolvedValue(null);
+  tenantAccessMock.isCurrentGeneration.mockResolvedValue(true);
   tenantAccessMock.resolve.mockImplementation(async () => defaultAccess());
 });
 
@@ -113,7 +117,7 @@ describe("production tenant host routing", () => {
       id: "website-1",
       subdomain: "sparkle",
       status: "PUBLISHED",
-      admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
+      admin: { id: "org-1", businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
       domains: [],
     });
 
@@ -132,7 +136,7 @@ describe("production tenant host routing", () => {
       website: {
         subdomain: "sparkle-london",
         status: "PUBLISHED",
-        admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
+        admin: { id: "org-1", businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
         domains: [],
       },
     });
@@ -155,7 +159,7 @@ describe("production tenant host routing", () => {
       website: {
         subdomain: "sparkle",
         status: "PUBLISHED",
-        admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [{ status: "ACTIVE", isTrial: false, currentPeriodEnd: new Date(Date.now() + 86_400_000), subscriptionPlan: { name: "PRO", features: [] } }] },
+        admin: { id: "org-1", businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [{ status: "ACTIVE", isTrial: false, currentPeriodEnd: new Date(Date.now() + 86_400_000), subscriptionPlan: { name: "PRO", features: [] } }] },
         domains: [
           { id: "domain-primary", domain: "www.example.com", isPrimary: true, createdAt: new Date("2026-01-01T00:00:00.000Z") },
           { id: "domain-old", domain: "old.example.com", isPrimary: false, createdAt: new Date("2026-01-02T00:00:00.000Z") },
@@ -171,7 +175,8 @@ describe("production tenant host routing", () => {
   });
 
   it("keeps verified domains beyond the downgraded plan limit stored but unroutable", async () => {
-    tenantAccessMock.resolve.mockImplementation(async () =>
+    tenantAccessMock.isCurrentGeneration.mockResolvedValue(true);
+  tenantAccessMock.resolve.mockImplementation(async () =>
       defaultAccess({
         plan: { id: "plan-growth", name: "GROWTH", pricingId: "price-growth", features: [] },
       })
@@ -214,7 +219,7 @@ describe("production tenant host routing", () => {
       domain: "unverified.example.com",
       status: "PENDING",
       isPrimary: false,
-      website: { subdomain: "sparkle", status: "PUBLISHED", admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] }, domains: [] },
+      website: { subdomain: "sparkle", status: "PUBLISHED", admin: { id: "org-1", businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] }, domains: [] },
     });
 
     await expect(WebsiteHostResolverService.resolveHost("unverified.example.com")).rejects.toMatchObject({
@@ -227,7 +232,7 @@ describe("production tenant host routing", () => {
       id: "website-1",
       subdomain: "sparkle",
       status: "PUBLISHED",
-      admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [{ status: "ACTIVE", isTrial: false, currentPeriodEnd: new Date(Date.now() + 86_400_000), subscriptionPlan: { name: "GROWTH", features: [] } }] },
+      admin: { id: "org-1", businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [{ status: "ACTIVE", isTrial: false, currentPeriodEnd: new Date(Date.now() + 86_400_000), subscriptionPlan: { name: "GROWTH", features: [] } }] },
       domains: [{ domain: "www.example.com" }],
     });
 
@@ -242,7 +247,7 @@ describe("production tenant host routing", () => {
       id: "website-1",
       subdomain: "bio-cleaning",
       status: "PUBLISHED",
-      admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
+      admin: { id: "org-1", businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
       domains: [],
     });
 
@@ -262,16 +267,20 @@ describe("production tenant host routing", () => {
       expect.stringContaining("current ~= ARGV[1]"),
       2,
       expect.stringContaining("website-host:missing.sites.example.com"),
-      expect.stringContaining("site-route:v9:generation:"),
+      expect.stringContaining("site-route:v10:generation:"),
       "0",
       expect.stringContaining('"notFound":true'),
-      "10",
+      "10000",
     );
   });
 
   it("serves a cached host route without querying the database", async () => {
     redisMock.get.mockResolvedValue(JSON.stringify({
-      version: 9,
+      version: 10,
+      organizationId: "org-1",
+      accessGeneration: "generation-1",
+      validUntil: new Date(Date.now() + 60_000).toISOString(),
+      publishedRevisionNumber: 1,
       websiteId: "website-1",
       businessName: "Sparkle Cleaning",
       requestedSubdomain: "sparkle",
@@ -322,7 +331,11 @@ describe("production tenant host routing", () => {
     redisMock.get.mockImplementation(async (key: string) => {
       if (key.includes("sparkle.sites.example.com")) {
         return JSON.stringify({
-          version: 9,
+          version: 10,
+      organizationId: "org-1",
+      accessGeneration: "generation-1",
+      validUntil: new Date(Date.now() + 60_000).toISOString(),
+      publishedRevisionNumber: 1,
           websiteId: "website-a",
           businessName: "Sparkle Cleaning",
           requestedSubdomain: "sparkle",
@@ -343,7 +356,7 @@ describe("production tenant host routing", () => {
       id: "website-b",
       subdomain: "fresh",
       status: "PUBLISHED",
-      admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
+      admin: { id: "org-1", businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
       domains: [],
     });
 
@@ -373,7 +386,7 @@ describe("production tenant host routing", () => {
       id: "website-draft",
       subdomain: "draft-cleaner",
       status: "DRAFT",
-      admin: { businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
+      admin: { id: "org-1", businessName: "Sparkle Cleaning", user: { status: "ACTIVE" }, subscription: [] },
       domains: [],
     });
 
@@ -399,7 +412,7 @@ describe("production tenant host routing", () => {
       id: "website-suspended",
       subdomain: "paused-cleaner",
       status: "PUBLISHED",
-      admin: { businessName: "Paused Cleaning", user: { status: "SUSPENDED" }, subscription: [] },
+      admin: { id: "org-1", businessName: "Paused Cleaning", user: { status: "SUSPENDED" }, subscription: [] },
       domains: [],
     });
 

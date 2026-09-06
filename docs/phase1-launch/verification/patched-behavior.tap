@@ -1,0 +1,124 @@
+TAP version 13
+# Subtest: regression 1: an in-flight DRAFT lookup cannot refill access after launch invalidation
+ok 1 - regression 1: an in-flight DRAFT lookup cannot refill access after launch invalidation
+  ---
+  duration_ms: 362.66906
+  type: 'test'
+  ...
+# Subtest: authorization expires at the exact trial/period boundary, not a second later
+ok 2 - authorization expires at the exact trial/period boundary, not a second later
+  ---
+  duration_ms: 197.636355
+  type: 'test'
+  ...
+# Subtest: Redis invalidation failure is reported as failure, never confirmed delivery
+ok 3 - Redis invalidation failure is reported as failure, never confirmed delivery
+  ---
+  duration_ms: 158.982996
+  type: 'test'
+  ...
+# Subtest: R1: cached DRAFT access -> launch -> FIRST canonical host resolves the published website
+ok 4 - R1: cached DRAFT access -> launch -> FIRST canonical host resolves the published website
+  ---
+  duration_ms: 1171.253627
+  type: 'test'
+  ...
+# Subtest: R3: concurrent same-revision launch requests return one site and one publication revision
+ok 5 - R3: concurrent same-revision launch requests return one site and one publication revision
+  ---
+  duration_ms: 662.438721
+  type: 'test'
+  ...
+# Subtest: R4: response lost AFTER commit -> retry ORIGINAL expected revision without republishing
+ok 6 - R4: response lost AFTER commit -> retry ORIGINAL expected revision without republishing
+  ---
+  duration_ms: 485.037906
+  type: 'test'
+  ...
+# Subtest: regression 1: cached DRAFT -> launch -> first canonical host serves the committed site/revision
+ok 7 - regression 1: cached DRAFT -> launch -> first canonical host serves the committed site/revision
+  ---
+  duration_ms: 1243.386368
+  type: 'test'
+  ...
+# Subtest: regression 3: simultaneous double-clicks, stale expected revision and later retries create one publication
+ok 8 - regression 3: simultaneous double-clicks, stale expected revision and later retries create one publication
+  ---
+  duration_ms: 566.648808
+  type: 'test'
+  ...
+# Subtest: regression 4: post-COMMIT timeout is safely retried with the original expected revision
+ok 9 - regression 4: post-COMMIT timeout is safely retried with the original expected revision
+  ---
+  duration_ms: 538.868584
+  type: 'test'
+  ...
+# Subtest: durable outbox insert failure rolls back snapshot, review milestone and onboarding completion
+ok 10 - durable outbox insert failure rolls back snapshot, review milestone and onboarding completion
+  ---
+  duration_ms: 315.5922
+  type: 'test'
+  ...
+# Subtest: a failed warm is preparing, never confirmed ready; the same durable event can recover
+ok 11 - a failed warm is preparing, never confirmed ready; the same durable event can recover
+  ---
+  duration_ms: 235.82643
+  type: 'test'
+  ...
+# Subtest: access invalidation must succeed before any host/projection fill or Next callback
+ok 12 - access invalidation must succeed before any host/projection fill or Next callback
+  ---
+  duration_ms: 253.618476
+  type: 'test'
+  ...
+# Subtest: the existing worker delivery path recovers a committed publication after callback failure
+ok 13 - the existing worker delivery path recovers a committed publication after callback failure
+  ---
+  duration_ms: 229.174642
+  type: 'test'
+  ...
+# Subtest: subscription horizon caps routing/projection TTL even with jitter, including stale copies
+ok 14 - subscription horizon caps routing/projection TTL even with jitter, including stale copies
+  ---
+  duration_ms: 252.204623
+  type: 'test'
+  ...
+# Subtest: cached routes reject an expired override even when Redis TTL has not elapsed
+ok 15 - cached routes reject an expired override even when Redis TTL has not elapsed
+  ---
+  duration_ms: 171.619173
+  type: 'test'
+  ...
+# Subtest: suspension and restoration rotate access before warming, using the existing durable topic
+ok 16 - suspension and restoration rotate access before warming, using the existing durable topic
+  ---
+  duration_ms: 194.335776
+  type: 'test'
+  ...
+# Subtest: actual outbox worker recovers the same transactional publication row and persists a truthful receipt
+ok 17 - actual outbox worker recovers the same transactional publication row and persists a truthful receipt
+  ---
+  duration_ms: 1156.133583
+  type: 'test'
+  ...
+# Subtest: actual worker keeps a warming failure retryable rather than acknowledging readiness
+ok 18 - actual worker keeps a warming failure retryable rather than acknowledging readiness
+  ---
+  duration_ms: 387.769272
+  type: 'test'
+  ...
+# Subtest: an expired worker lease cannot acknowledge, overwrite or emit success for the newer claimant
+ok 19 - an expired worker lease cannot acknowledge, overwrite or emit success for the newer claimant
+  ---
+  duration_ms: 314.08721
+  type: 'test'
+  ...
+1..19
+# tests 19
+# suites 0
+# pass 19
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4864.99866

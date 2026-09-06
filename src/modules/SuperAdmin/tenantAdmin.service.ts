@@ -23,6 +23,8 @@ import {
 import { invalidateSubscriptionAccessCache } from "../../middlewares/checkSubscription";
 import { invalidatePrivateResponseCacheForUser } from "../../middlewares/privateResponseCache";
 import { createNotification } from "../../lib/utils/createNotification";
+import { PublicWebsiteCacheOutbox } from "../../lib/outbox/publicWebsiteCacheOutbox";
+import { WebsitePublicationDeliveryService } from "../Website/websitePublicationDelivery.service";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { WebsiteHostResolverService } from "../Website/websiteHostResolver.service";
 import { deleteFileFromCloudinary } from "../../config/cloudinary";
@@ -117,42 +119,30 @@ export const resolveOrganizationIdByOwnerUserId = async (ownerUserId: string, db
   return tenant.id;
 };
 
-const invalidateTenantCaches = async (tenant: { id: string; userId: string }) => {
+const invalidateTenantCaches = async (
+  tenant: { id: string; userId: string },
+  deliveryEvent?: { id: string; payload: unknown } | null,
+) => {
   invalidateRuntimeAuth(tenant.userId);
   invalidateRuntimeTenantOwnerStatus(tenant.id);
   Organization360Service.invalidateOrganization360Cache(tenant.id);
+  // Publication/lifecycle delivery has its own durable recovery. Never race an
+  // old access decision with a host/projection rebuild.
+  if (deliveryEvent) {
+    await WebsitePublicationDeliveryService.attemptImmediate(deliveryEvent);
+  } else {
+    await invalidateSubscriptionAccessCache(tenant.userId);
+  }
   await Promise.all([
     invalidateRuntimeSubscriptionForAdmin(tenant.id),
-    invalidateSubscriptionAccessCache(tenant.userId).catch(() => undefined),
     invalidatePrivateResponseCacheForUser(tenant.userId).catch(() => undefined),
-    WebsiteProjectionCacheService.invalidateAdminWebsite(tenant.id).catch(() => undefined),
-    TenantAccessResolver.invalidate(tenant.id).catch(() => undefined),
     createNotification({
-      adminId: tenant.id,
-      type: NotificationType.SUBSCRIPTION,
+      adminId: tenant.id, type: NotificationType.SUBSCRIPTION,
       title: "Subscription entitlements updated",
       message: "Your subscription entitlements and features have been updated by administration.",
       relatedId: tenant.id,
     }).catch(() => undefined),
   ]);
-
-  const website = await prisma.businessWebsite.findUnique({
-    where: { adminId: tenant.id },
-    select: {
-      subdomain: true,
-      subdomainAliases: { select: { subdomain: true } },
-      domains: { select: { domain: true } },
-    },
-  }).catch(() => null);
-  if (website) {
-    await Promise.all([
-      WebsiteHostResolverService.invalidateSubdomains([
-        website.subdomain,
-        ...website.subdomainAliases.map((item) => item.subdomain),
-      ]).catch(() => undefined),
-      WebsiteHostResolverService.invalidateHosts(website.domains.map((item) => item.domain)).catch(() => undefined),
-    ]);
-  }
 };
 
 const tenantUserIds = async (adminId: string) => {
@@ -416,7 +406,7 @@ const mutateLifecycle = async (identifier: string, target: TenantLifecycleStatus
     throw new AppError(status.CONFLICT, "Archived tenants must be restored before reactivation.");
   }
   const now = new Date();
-  const updated = await prisma.$transaction(async (tx) => {
+  const { updated, deliveryEvent } = await prisma.$transaction(async (tx) => {
     const admin = await tx.adminProfile.update({
       where: { id: tenant.id },
       data: target === TenantLifecycleStatus.SUSPENDED
@@ -425,10 +415,11 @@ const mutateLifecycle = async (identifier: string, target: TenantLifecycleStatus
     });
     await tx.user.update({ where: { id: tenant.userId }, data: { status: target === TenantLifecycleStatus.ACTIVE ? AccountStatus.ACTIVE : AccountStatus.SUSPENDED } });
     await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: target === TenantLifecycleStatus.ACTIVE ? "TENANT_REACTIVATED" : "TENANT_SUSPENDED", reason, before: { lifecycleStatus: tenant.lifecycleStatus, ownerStatus: tenant.user.status }, after: { lifecycleStatus: target, ownerStatus: target === TenantLifecycleStatus.ACTIVE ? AccountStatus.ACTIVE : AccountStatus.SUSPENDED }, ...auditHttpContext(context) }, tx);
-    return admin;
+    const deliveryEvent = await PublicWebsiteCacheOutbox.enqueueTenantDeliveryTx(tx, tenant.id, "tenant-lifecycle");
+    return { updated: admin, deliveryEvent };
   });
   if (target !== TenantLifecycleStatus.ACTIVE) await revokeTenantSessions(tenant.id);
-  await invalidateTenantCaches(tenant);
+  await invalidateTenantCaches(tenant, deliveryEvent);
   return updated;
 };
 
@@ -441,14 +432,15 @@ export const archiveTenant = async (identifier: string, context: TenantMutationC
   assertTenantMutable(tenant);
   if (tenant.lifecycleStatus === TenantLifecycleStatus.ARCHIVED) return tenant;
   const now = new Date();
-  const updated = await prisma.$transaction(async (tx) => {
+  const { updated, deliveryEvent } = await prisma.$transaction(async (tx) => {
     const admin = await tx.adminProfile.update({ where: { id: tenant.id }, data: { lifecycleStatus: TenantLifecycleStatus.ARCHIVED, preArchiveLifecycleStatus: tenant.lifecycleStatus, archivedAt: now, archivedReason: reason } });
     await tx.user.update({ where: { id: tenant.userId }, data: { status: AccountStatus.SUSPENDED } });
     await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_ARCHIVED", reason, before: { lifecycleStatus: tenant.lifecycleStatus }, after: { lifecycleStatus: TenantLifecycleStatus.ARCHIVED }, ...auditHttpContext(context) }, tx);
-    return admin;
+    const deliveryEvent = await PublicWebsiteCacheOutbox.enqueueTenantDeliveryTx(tx, tenant.id, "tenant-archived");
+    return { updated: admin, deliveryEvent };
   });
   await revokeTenantSessions(tenant.id);
-  await invalidateTenantCaches(tenant);
+  await invalidateTenantCaches(tenant, deliveryEvent);
   return updated;
 };
 
@@ -458,13 +450,14 @@ export const restoreTenant = async (identifier: string, context: TenantMutationC
   assertTenantMutable(tenant);
   if (tenant.lifecycleStatus !== TenantLifecycleStatus.ARCHIVED) throw new AppError(status.CONFLICT, "Tenant is not archived.");
   const restoredStatus = tenant.preArchiveLifecycleStatus === TenantLifecycleStatus.SUSPENDED ? TenantLifecycleStatus.SUSPENDED : TenantLifecycleStatus.ACTIVE;
-  const updated = await prisma.$transaction(async (tx) => {
+  const { updated, deliveryEvent } = await prisma.$transaction(async (tx) => {
     const admin = await tx.adminProfile.update({ where: { id: tenant.id }, data: { lifecycleStatus: restoredStatus, restoredAt: new Date(), restoredReason: reason, preArchiveLifecycleStatus: null } });
     await tx.user.update({ where: { id: tenant.userId }, data: { status: restoredStatus === TenantLifecycleStatus.ACTIVE ? AccountStatus.ACTIVE : AccountStatus.SUSPENDED } });
     await writeSuperAdminAudit({ actorUserId: context.actorUserId, tenantAdminId: tenant.id, targetUserId: tenant.userId, action: "TENANT_RESTORED", reason, metadata: { restoredStatus }, before: { lifecycleStatus: TenantLifecycleStatus.ARCHIVED }, after: { lifecycleStatus: restoredStatus }, ...auditHttpContext(context) }, tx);
-    return admin;
+    const deliveryEvent = await PublicWebsiteCacheOutbox.enqueueTenantDeliveryTx(tx, tenant.id, "tenant-restored");
+    return { updated: admin, deliveryEvent };
   });
-  await invalidateTenantCaches(tenant);
+  await invalidateTenantCaches(tenant, deliveryEvent);
   return updated;
 };
 

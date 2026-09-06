@@ -4,6 +4,8 @@ import {
   NEXT_REVALIDATE_URL,
 } from "../../config/ENV";
 import logger from "../logger";
+import { randomUUID } from "node:crypto";
+import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../prisma/prisma";
 import { getTracePropagationMetadata, traceAsyncOperation } from "../monitoring/requestTrace";
 
@@ -13,6 +15,8 @@ export const PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC = Object.freeze({
 
 export interface PublicWebsiteCacheInvalidationPayload {
   websiteId: string;
+  /** Versioned extension of the SAME outbox topic. Legacy callback rows still work. */
+  delivery?: { version: 1; adminId: string; revision: number | null };
   /** Canonical tenant identifier. For Cleaning CRM this is normally the canonical subdomain label. */
   tenantIdentifier?: string | null;
   /** Historical subdomain aliases and routable custom-domain aliases when available. */
@@ -72,6 +76,7 @@ const normalizePayload = (
 
   return {
     websiteId,
+    ...(payload.delivery ? { delivery: payload.delivery } : {}),
     tenantIdentifier: canonicalTenantIdentifier,
     tenantIdentifiers,
     reason: payload.reason?.trim().slice(0, 120) || "website-projection-invalidated",
@@ -90,7 +95,13 @@ export const parsePublicWebsiteCacheInvalidationPayload = (
   }
 
   const value = payload as Record<string, unknown>;
+  const delivery = value.delivery as PublicWebsiteCacheInvalidationPayload["delivery"];
+  if (delivery && (delivery.version !== 1 || typeof delivery.adminId !== "string" || !delivery.adminId ||
+      !(delivery.revision === null || (Number.isSafeInteger(delivery.revision) && delivery.revision > 0)))) {
+    throw new Error("Invalid publication delivery outbox payload");
+  }
   return normalizePayload({
+    ...(delivery ? { delivery } : {}),
     websiteId: typeof value.websiteId === "string" ? value.websiteId : "",
     tenantIdentifier: value.tenantIdentifier as string | null | undefined,
     tenantIdentifiers: Array.isArray(value.tenantIdentifiers)
@@ -210,5 +221,45 @@ const triggerWithFallback = async (
   }
 };
 
-export const PublicWebsiteCacheOutbox = { enqueue };
+export const publicationDeliveryDedupeKey = (websiteId: string, revision: number) =>
+  `website-publication:${websiteId}:${revision}`;
+
+/** Never catch this error: failure to persist delivery must roll back publication. */
+const enqueueDeliveryTx = async (
+  tx: Prisma.TransactionClient,
+  input: PublicWebsiteCacheInvalidationPayload & { delivery: NonNullable<PublicWebsiteCacheInvalidationPayload["delivery"]> },
+  dedupeKey = input.delivery.revision === null
+    ? `website-lifecycle:${input.websiteId}:${randomUUID()}`
+    : publicationDeliveryDedupeKey(input.websiteId, input.delivery.revision),
+) => {
+  const payload = withTraceMetadata(normalizePayload(input) as unknown as Record<string, unknown>) as Prisma.InputJsonObject;
+  return traceAsyncOperation("queue", "outbox.enqueue.website-publication", () => tx.outboxEvent.upsert({
+    where: { dedupeKey },
+    create: {
+      topic: PUBLIC_WEBSITE_CACHE_OUTBOX_TOPIC.INVALIDATION_REQUESTED,
+      dedupeKey, payload, maxAttempts: 8,
+      // Give the immediate path a head start. A crash after COMMIT still leaves
+      // a claimable row for the existing worker, with its normal retry policy.
+      nextAttemptAt: new Date(Date.now() + 15_000),
+    },
+    update: {},
+    select: { id: true, payload: true },
+  }));
+};
+
+const enqueueTenantDeliveryTx = async (tx: Prisma.TransactionClient, adminId: string, reason: string) => {
+  const website = await tx.businessWebsite.findUnique({
+    where: { adminId },
+    select: { id: true, subdomain: true, publishedRevisionNumber: true,
+      subdomainAliases: { select: { subdomain: true } }, domains: { select: { domain: true } } },
+  });
+  if (!website) return null;
+  return enqueueDeliveryTx(tx, {
+    websiteId: website.id, tenantIdentifier: website.subdomain,
+    tenantIdentifiers: [website.subdomain, ...website.subdomainAliases.map(a => a.subdomain), ...website.domains.map(d => d.domain)],
+    reason, delivery: { version: 1, adminId, revision: website.publishedRevisionNumber },
+  }, `website-lifecycle:${website.id}:${randomUUID()}`);
+};
+
+export const PublicWebsiteCacheOutbox = { enqueue, enqueueDeliveryTx, enqueueTenantDeliveryTx };
 export const PublicWebsiteCacheRevalidation = { deliver, triggerWithFallback };

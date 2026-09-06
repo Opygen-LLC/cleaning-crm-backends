@@ -17,10 +17,11 @@ import { prisma } from "../lib/prisma/prisma";
 import { log, fail } from "./index.cron";
 import { createNotification } from "../lib/utils/createNotification";
 import { NotificationType } from "../generated/prisma/enums";
-import { invalidateSubscriptionAccessCache } from "../middlewares/checkSubscription";
-import { applyDueAdministrativePlanChanges } from "../modules/SuperAdmin/tenantAdmin.service";
+import { invalidateRuntimeAdminAccessContext, invalidateRuntimeSubscriptionForAdmin } from "../lib/cache/authRuntimeCache";
 import { TenantAccessResolver } from "../modules/Entitlement/tenantAccessResolver.service";
-import { WebsiteProjectionCacheService } from "../modules/Website/websiteProjectionCache.service";
+import { applyDueAdministrativePlanChanges } from "../modules/SuperAdmin/tenantAdmin.service";
+import { PublicWebsiteCacheOutbox } from "../lib/outbox/publicWebsiteCacheOutbox";
+import { WebsitePublicationDeliveryService } from "../modules/Website/websitePublicationDelivery.service";
 
 const JOB_NAME = "subscriptionExpiry";
 
@@ -30,6 +31,8 @@ const JOB_NAME = "subscriptionExpiry";
 // cron.schedule(...) callback which swallows its own promise via .catch().
 export async function runSubscriptionExpiryJob(): Promise<void> {
     const now = new Date();
+    let expiredPaid = 0;
+    let expiredTrials = 0;
     // Apply approved administrative downgrades whose billing-boundary time has arrived.
     await applyDueAdministrativePlanChanges(now);
 
@@ -46,18 +49,31 @@ export async function runSubscriptionExpiryJob(): Promise<void> {
         where: {
             status: "ACTIVE",
             isTrial: false,
-            currentPeriodEnd: { lt: now },
+            currentPeriodEnd: { lte: now },
         },
         select: { id: true, adminId: true, admin: { select: { userId: true } } },
     });
 
     if (paidToExpire.length > 0) {
-        await prisma.subscription.updateMany({
-            where: { id: { in: paidToExpire.map((s) => s.id) } },
-            data: { status: "EXPIRED" },
+        const deliveries = await prisma.$transaction(async (tx) => {
+            const events: Array<{ event: { id: string; payload: unknown } | null; subscription: { id: string; adminId: string; admin: { userId: string } } }> = [];
+            for (const subscription of paidToExpire) {
+                const changed = await tx.subscription.updateMany({
+                    where: { id: subscription.id, status: "ACTIVE", isTrial: false, currentPeriodEnd: { lte: now } },
+                    data: { status: "EXPIRED" },
+                });
+                if (changed.count) {
+                    const event = await PublicWebsiteCacheOutbox.enqueueTenantDeliveryTx(tx, subscription.adminId, "subscription-expired");
+                    events.push({ event, subscription });
+                }
+            }
+            return events;
         });
-
-        for (const { id, adminId, admin } of paidToExpire) {
+        expiredPaid = deliveries.length;
+        for (const { event, subscription: { id, adminId, admin } } of deliveries) {
+            if (event) await WebsitePublicationDeliveryService.attemptImmediate(event);
+            else await TenantAccessResolver.invalidate(adminId);
+            await Promise.all([invalidateRuntimeAdminAccessContext(admin.userId), invalidateRuntimeSubscriptionForAdmin(adminId)]);
             createNotification({
                 adminId,
                 type: NotificationType.SUBSCRIPTION,
@@ -66,11 +82,6 @@ export async function runSubscriptionExpiryJob(): Promise<void> {
                     "Your billing period has ended and your subscription has expired. Renew to restore access.",
                 relatedId: id,
             }).catch(() => {});
-            await Promise.all([
-                invalidateSubscriptionAccessCache(admin.userId),
-                TenantAccessResolver.invalidate(adminId),
-                WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
-            ]).catch(() => {});
         }
     }
 
@@ -79,18 +90,31 @@ export async function runSubscriptionExpiryJob(): Promise<void> {
         where: {
             status: "ACTIVE",
             isTrial: true,
-            trialEndsAt: { lt: now },
+            trialEndsAt: { lte: now },
         },
         select: { id: true, adminId: true, admin: { select: { userId: true } } },
     });
 
     if (trialsToExpire.length > 0) {
-        await prisma.subscription.updateMany({
-            where: { id: { in: trialsToExpire.map((s) => s.id) } },
-            data: { status: "EXPIRED" },
+        const deliveries = await prisma.$transaction(async (tx) => {
+            const events: Array<{ event: { id: string; payload: unknown } | null; subscription: { id: string; adminId: string; admin: { userId: string } } }> = [];
+            for (const subscription of trialsToExpire) {
+                const changed = await tx.subscription.updateMany({
+                    where: { id: subscription.id, status: "ACTIVE", isTrial: true, trialEndsAt: { lte: now } },
+                    data: { status: "EXPIRED" },
+                });
+                if (changed.count) {
+                    const event = await PublicWebsiteCacheOutbox.enqueueTenantDeliveryTx(tx, subscription.adminId, "subscription-expired");
+                    events.push({ event, subscription });
+                }
+            }
+            return events;
         });
-
-        for (const { id, adminId, admin } of trialsToExpire) {
+        expiredTrials = deliveries.length;
+        for (const { event, subscription: { id, adminId, admin } } of deliveries) {
+            if (event) await WebsitePublicationDeliveryService.attemptImmediate(event);
+            else await TenantAccessResolver.invalidate(adminId);
+            await Promise.all([invalidateRuntimeAdminAccessContext(admin.userId), invalidateRuntimeSubscriptionForAdmin(adminId)]);
             createNotification({
                 adminId,
                 type: NotificationType.SUBSCRIPTION,
@@ -99,19 +123,14 @@ export async function runSubscriptionExpiryJob(): Promise<void> {
                     "Your free trial has ended. Upgrade to a paid plan to keep using the platform.",
                 relatedId: id,
             }).catch(() => {});
-            await Promise.all([
-                invalidateSubscriptionAccessCache(admin.userId),
-                TenantAccessResolver.invalidate(adminId),
-                WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
-            ]).catch(() => {});
         }
     }
 
-    const total = paidToExpire.length + trialsToExpire.length;
+    const total = expiredPaid + expiredTrials;
 
     if (total > 0) {
         log(
-            `${JOB_NAME}: expired ${paidToExpire.length} paid subscription(s) and ${trialsToExpire.length} trial(s).`,
+            `${JOB_NAME}: expired ${expiredPaid} paid subscription(s) and ${expiredTrials} trial(s).`,
         );
     } else {
         log(`${JOB_NAME}: no subscriptions to expire.`);

@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06T14:09:23.209536+00:00",
+  "repository": "backend",
+  "source": "local-container-validation-with-external-IO-fixtures",
+  "nodeVersion": "22.16.0",
+  "behavioralTests": {
+    "command": "node --test tests/launch/*.test.cjs",
+    "environmentNote": "NODE_PATH pointed to the preinstalled global TypeScript package because project dependencies were absent. The project already declares TypeScript; normal installed runs need no NODE_PATH override.",
+    "passed": 19,
+    "failed": 0,
+    "evidence": "patched-behavior.tap",
+    "limitations": "Real production module exports run with explicit in-memory I/O and runtime adapters; not real service/browser integration."
+  },
+  "preservedOriginalSourceRegressions": {
+    "backend": {
+      "failed": 3,
+      "ids": [
+        "R1",
+        "R3",
+        "R4"
+      ],
+      "evidence": "baseline-backend.tap"
+    },
+    "frontend": {
+      "failed": 1,
+      "ids": [
+        "R2"
+      ],
+      "evidence": "baseline-frontend.tap"
+    }
+  },
+  "typescriptSyntaxOnly": {
+    "filesAcrossBothRepositories": 1166,
+    "syntacticErrors": 0,
+    "semanticTypecheck": false
+  },
+  "sourceChecks": [
+    "repository hygiene: PASS"
+  ],
+  "scriptSyntaxChecks": [
+    "scripts/release/provisionPlatformWildcard.mjs: PASS"
+  ],
+  "notVerified": [
+    "Full semantic TypeScript typechecking (project dependencies/generated client unavailable)",
+    "Dependency-backed full Vitest/React/RTK integration suites",
+    "Production application build and full release:check",
+    "Real PostgreSQL transactions/advisory locks and Redis Lua/network behavior",
+    "Real registration-to-launch staging traces and live first canonical-host request",
+    "Platform wildcard DNS/TLS provisioning or external infrastructure readiness"
+  ],
+  "productionReadinessCertified": false,
+  "stagingTracesCaptured": false,
+  "infrastructureChangesApplied": false
+}

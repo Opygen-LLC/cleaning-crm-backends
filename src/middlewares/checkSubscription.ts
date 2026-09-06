@@ -61,40 +61,43 @@ function accessError(reason: TenantAccessDeniedReason): AppError {
 }
 
 /** Clear all cached access snapshots after a subscription mutation. */
-export async function invalidateSubscriptionAccessCache(userId: string) {
-  const accessContext = await getRuntimeAdminAccessContext(userId).catch(() => null);
-  const adminId = accessContext?.adminId ?? null;
+export async function invalidateSubscriptionAccessCache(userId: string): Promise<boolean> {
+  const context = await getRuntimeAdminAccessContext(userId).catch(() => null);
+  const adminId = context?.adminId ?? (await prisma.adminProfile.findUnique({
+    where: { userId }, select: { id: true },
+  }))?.id;
   await Promise.all([
     invalidateRuntimeAdminAccessContext(userId),
     adminId ? invalidateRuntimeSubscriptionForAdmin(adminId) : Promise.resolve(),
-    adminId ? TenantAccessResolver.invalidate(adminId) : Promise.resolve(),
   ]);
-
-  // Public routing/projection caches also depend on the canonical access state.
+  if (!adminId) return true;
+  // A failed epoch rotation is NOT permission to rebuild with stale access.
+  if (!await TenantAccessResolver.invalidate(adminId)) return false;
   try {
-    if (!adminId) return;
     const website = await prisma.businessWebsite.findUnique({
-      where: { adminId },
-      select: {
-        id: true,
-        subdomain: true,
-        subdomainAliases: { select: { subdomain: true } },
-        domains: { select: { domain: true } },
-      },
+      where: { adminId }, select: { id: true, subdomain: true,
+        subdomainAliases: { select: { subdomain: true } }, domains: { select: { domain: true } } },
     });
-    if (!website) return;
-    const [{ WebsiteProjectionCacheService }, { WebsiteHostResolverService }] = await Promise.all([
+    if (!website) return true;
+    const [{ WebsiteProjectionCacheService }, { WebsiteHostResolverService }, { PublicWebsiteCacheRevalidation }] = await Promise.all([
       import("../modules/Website/websiteProjectionCache.service"),
       import("../modules/Website/websiteHostResolver.service"),
+      import("../lib/outbox/publicWebsiteCacheOutbox"),
     ]);
-    await Promise.all([
-      WebsiteProjectionCacheService.invalidateWebsite(website.id),
-      WebsiteHostResolverService.invalidateSubdomains([website.subdomain, ...website.subdomainAliases.map((alias) => alias.subdomain)]),
-      WebsiteHostResolverService.invalidateHosts(website.domains.map((domain) => domain.domain)),
+    const [projection, labels, hosts] = await Promise.all([
+      WebsiteProjectionCacheService.invalidateWebsite(website.id, adminId, { revalidateNext: false }),
+      WebsiteHostResolverService.invalidateSubdomains([website.subdomain, ...website.subdomainAliases.map(a => a.subdomain)]),
+      WebsiteHostResolverService.invalidateHosts(website.domains.map(d => d.domain)),
     ]);
+    if (!projection.invalidated || !labels || !hosts) return false;
+    const callback = await PublicWebsiteCacheRevalidation.triggerWithFallback({
+      websiteId: website.id, tenantIdentifier: website.subdomain,
+      tenantIdentifiers: [website.subdomain, ...website.subdomainAliases.map(a => a.subdomain), ...website.domains.map(d => d.domain)],
+      reason: "subscription-access-changed",
+    });
+    return callback.delivered;
   } catch {
-    // PostgreSQL remains authoritative; these caches are short-lived and
-    // explicit mutation invalidation is best effort when Redis is unavailable.
+    return false;
   }
 }
 
