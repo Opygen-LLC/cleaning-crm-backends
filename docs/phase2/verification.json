@@ -1,0 +1,43 @@
+{
+  "phase": 2,
+  "project": "backend",
+  "validatedAtUtc": "2026-09-06T14:55:50.400890+00:00",
+  "base": "Original uploaded repository with the delivered Phase 1 delta applied",
+  "nativeBehavioralTests": {
+    "status": "passed",
+    "command": "node --test tests/launch/*.test.cjs tests/onboarding/*.test.cjs",
+    "tests": 35,
+    "phase1": 19,
+    "phase2": 16,
+    "failed": 0,
+    "skipped": 0,
+    "testReport": "native-regressions.tap",
+    "scope": "Production functions executed through explicit in-memory I/O adapters; not a live database or browser test"
+  },
+  "typescriptSyntax": {
+    "status": "passed",
+    "modules": 504,
+    "errors": 0,
+    "method": "TypeScript transpileModule with diagnostics; not semantic typechecking"
+  },
+  "typecheck": {
+    "status": "not_passed",
+    "attemptedCommand": "tsc --noEmit --pretty false",
+    "blocker": "Repository dependencies are absent; package retrieval was unavailable. Missing Node type definitions; generated Prisma client unavailable."
+  },
+  "notVerified": [
+    "dependency-installed Vitest/Zod contract tests",
+    "dependency-aware typecheck",
+    "production build",
+    "real PostgreSQL transaction/concurrency behavior",
+    "browser save/reload/back-navigation",
+    "staging end-to-end launch/publication and monitoring traces"
+  ],
+  "requiredBeforeDeployment": [
+    "pnpm install --frozen-lockfile",
+    "pnpm run release:phase2",
+    "pnpm run release:check",
+    "staging acceptance described in README.md"
+  ],
+  "wireFixtureSha256": "4ded456c695a2e22c51fceb302fecdcc6d874833addf494722afca2ab706d7fe"
+}

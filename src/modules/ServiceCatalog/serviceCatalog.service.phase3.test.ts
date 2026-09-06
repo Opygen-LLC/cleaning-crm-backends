@@ -23,7 +23,7 @@ const makeTx = () => {
     create: vi.fn(),
     updateMany: vi.fn(async () => ({ count: 0 })),
   };
-  return { tx: { serviceCatalog } as never, serviceCatalog };
+  return { tx: { serviceCatalog, $queryRaw: vi.fn(async () => []) } as never, serviceCatalog };
 };
 
 const payload = {

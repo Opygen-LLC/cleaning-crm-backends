@@ -3,13 +3,14 @@ import AppError from "../../errorHelper/AppError";
 import { FormFieldType, ServiceCategory, ServiceStatus, ServiceType } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
-import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
+import { acquireExtendedTextTransactionAdvisoryLock, acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { statusAfterDraftMutation, WEBSITE_STATUS, type WebsiteLifecycleStatus } from "./websiteLifecycle";
 import { parsePublishedSnapshot } from "./websiteSnapshot";
 import { allocateServiceSlugTx } from "../ServiceCatalog/serviceCatalog.slug";
+import { lockServiceCatalogTx } from "../ServiceCatalog/serviceCatalogConcurrency";
 
 export interface WebsiteBookingSetupPayload {
   enabled: boolean;
@@ -176,8 +177,8 @@ type BookingSetupQueryRow = {
  * implementation issued four independent Prisma reads after every mutation,
  * which made the endpoint especially sensitive to cross-region DB latency.
  */
-const getSetupByAdminId = async (adminId: string): Promise<WebsiteBookingSetupResult> => {
-  const rows = await prisma.$queryRaw<BookingSetupQueryRow[]>`
+const getSetupByAdminId = async (adminId: string, db: Prisma.TransactionClient | typeof prisma = prisma): Promise<WebsiteBookingSetupResult> => {
+  const rows = await db.$queryRaw<BookingSetupQueryRow[]>`
     SELECT
       bw."status"::text AS "status",
       bw."publishedSnapshot" AS "publishedSnapshot",
@@ -310,6 +311,7 @@ const getSetup = async (user: IRequestUser): Promise<WebsiteBookingSetupResult> 
 };
 
 const ensureAtLeastOneBookableService = async (tx: Prisma.TransactionClient, adminId: string) => {
+  await lockServiceCatalogTx(tx, adminId);
   let services = await tx.serviceCatalog.findMany({
     where: {
       adminId,
@@ -740,8 +742,11 @@ const configure = async (
 ): Promise<WebsiteBookingSetupResult> => {
   const adminId = await getAdminId(user);
   await prisma.$transaction(async (tx) => {
+    const website = await tx.businessWebsite.findUniqueOrThrow({ where: { adminId }, select: { id: true } });
+    await acquireTextTransactionAdvisoryLock(tx, website.id);
     await acquireExtendedTextTransactionAdvisoryLock(tx, `website-booking-provision:${adminId}`);
     await configureForAdminTx(tx, adminId, payload);
+    await tx.businessWebsite.update({ where: { id: website.id }, data: { draftRevisionNumber: { increment: 1 } } });
   });
   await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
   return getSetupByAdminId(adminId);

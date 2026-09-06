@@ -10,6 +10,7 @@ import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WEBSITE_SUBDOMAIN_RESERVATION_LOCK } from "./websiteProvisioning.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { WebsiteDomainStatus } from "../../generated/prisma/enums";
+import type { Prisma } from "../../generated/prisma/client";
 
 const platformUrl = (subdomain: string) =>
   WEBSITE_BASE_DOMAIN ? `https://${subdomain}.${WEBSITE_BASE_DOMAIN}` : null;
@@ -84,34 +85,23 @@ const warmRenamedRoutes = async (previousSubdomain: string, subdomain: string) =
   ]);
 };
 
-const rename = async (input: string, user: IRequestUser) => {
-  const owned = await getOwnedWebsite(user);
+/** Reusable atomic canonical-label/alias mutation. The onboarding command
+ * supplies its own transaction and creates the revision together with progress. */
+const renameForWebsiteTx = async (
+  tx: Prisma.TransactionClient, websiteId: string, input: string, advanceRevision = true,
+) => {
   const nextSubdomain = normalizeSubdomain(input);
-  if (nextSubdomain === owned.subdomain) {
-    return {
-      subdomain: owned.subdomain,
-      previousSubdomain: owned.subdomain,
-      changed: false,
-      aliasCreated: false,
-      alias: null,
-      redirectCode: null,
-      publicUrl: platformUrl(owned.subdomain),
-      previousPublicUrl: platformUrl(owned.subdomain),
-    };
-  }
-
-  const result = await prisma.$transaction(async (tx) => {
     // Lock this website first, then the shared reservation namespace. All
     // subdomain mutations in this service use the same ordering so concurrent
     // retries cannot interleave the canonical row and alias history.
-    await acquireTextTransactionAdvisoryLock(tx, owned.id);
+    await acquireTextTransactionAdvisoryLock(tx, websiteId);
     await acquireTextTransactionAdvisoryLock(tx, WEBSITE_SUBDOMAIN_RESERVATION_LOCK);
 
     // Re-read after both locks; another request may have renamed this website
     // while this request was waiting.
     const current = await tx.businessWebsite.findUnique({
-      where: { id: owned.id },
-      select: { id: true, subdomain: true },
+      where: { id: websiteId },
+      select: { id: true, subdomain: true, draftRevisionNumber: true },
     });
     if (!current) throw new AppError(status.NOT_FOUND, "Business website not found");
     if (nextSubdomain === current.subdomain) {
@@ -119,6 +109,7 @@ const rename = async (input: string, user: IRequestUser) => {
         previousSubdomain: current.subdomain,
         subdomain: current.subdomain,
         changed: false,
+        draftRevisionNumber: current.draftRevisionNumber,
         aliasCreated: false,
         alias: null,
       };
@@ -171,27 +162,31 @@ const rename = async (input: string, user: IRequestUser) => {
           },
         });
 
-    await tx.businessWebsite.update({
+    const updated = await tx.businessWebsite.update({
       where: { id: current.id },
-      data: { subdomain: nextSubdomain },
+      data: { subdomain: nextSubdomain, ...(advanceRevision ? { draftRevisionNumber: { increment: 1 } } : {}) },
     });
 
     return {
       previousSubdomain: current.subdomain,
       subdomain: nextSubdomain,
       changed: true,
+      draftRevisionNumber: updated.draftRevisionNumber,
       aliasCreated: !currentAlias,
       alias,
     };
-  });
+};
 
+type RenameResult = Awaited<ReturnType<typeof renameForWebsiteTx>>;
+
+const deliverRename = async (websiteId: string, result: RenameResult) => {
   const [customDomains, aliases] = await Promise.all([
     prisma.websiteDomain.findMany({
-      where: { websiteId: owned.id, status: WebsiteDomainStatus.VERIFIED },
+      where: { websiteId: websiteId, status: WebsiteDomainStatus.VERIFIED },
       select: { domain: true },
     }),
     prisma.websiteSubdomainAlias.findMany({
-      where: { websiteId: owned.id },
+      where: { websiteId: websiteId },
       select: { subdomain: true },
     }),
   ]);
@@ -207,7 +202,7 @@ const rename = async (input: string, user: IRequestUser) => {
       ...aliases.map((item) => item.subdomain),
     ]),
     WebsiteHostResolverService.invalidateHosts(customDomains.map((item) => item.domain)),
-    WebsiteProjectionCacheService.invalidateWebsite(owned.id),
+    WebsiteProjectionCacheService.invalidateWebsite(websiteId),
   ]);
 
   await warmRenamedRoutes(result.previousSubdomain, result.subdomain);
@@ -220,4 +215,10 @@ const rename = async (input: string, user: IRequestUser) => {
   };
 };
 
-export const SubdomainService = { checkAvailability, rename };
+const rename = async (input: string, user: IRequestUser) => {
+  const owned = await getOwnedWebsite(user);
+  const result = await prisma.$transaction(tx => renameForWebsiteTx(tx, owned.id, input));
+  return deliverRename(owned.id, result);
+};
+
+export const SubdomainService = { checkAvailability, rename, renameForWebsiteTx, deliverRename };

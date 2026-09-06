@@ -3,6 +3,7 @@ import { Currency, ServiceCategory } from "../../generated/prisma/enums";
 import { ONBOARDING_STEPS, SKIPPABLE_ONBOARDING_STEPS } from "./admin.constant";
 import { businessHoursInputSchema, jsonArrayInput, nullableMultipartInput } from "./businessHours";
 import { e164PhoneSchema } from "../../lib/validation/phone";
+import { onboardingServicesSaveSchema, onboardingStepSaveSchema } from "./onboardingSave.contract";
 
 const businessWebsiteUrlSchema = z
   .string()
@@ -165,5 +166,6 @@ export const adminValidation = {
   completeOnboardingStep: completeOnboardingStepSchema,
   skipOnboardingStep: skipOnboardingStepSchema,
   onboardingClientError: onboardingClientErrorSchema,
-  saveOnboardingServices: saveOnboardingServicesSchema,
+  saveOnboardingServices: z.union([onboardingServicesSaveSchema, saveOnboardingServicesSchema]),
+  saveOnboardingStep: onboardingStepSaveSchema,
 };

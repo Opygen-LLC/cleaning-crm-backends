@@ -1,0 +1,147 @@
+{
+  "phase": 2,
+  "project": "backend",
+  "applyAt": "repository root after the Phase 1 patch",
+  "deletions": [],
+  "files": [
+    {
+      "path": "docs/phase2/README.md",
+      "baselineSha256": null,
+      "sha256": "2e273394811e5eebdc526fa53ad9cc1cdf94e0f666d212ac987cf291860c51f5",
+      "operation": "add"
+    },
+    {
+      "path": "docs/phase2/native-regressions.tap",
+      "baselineSha256": null,
+      "sha256": "f8ca26695569b9471eb207adfaef5f21d8158a741ba49aa50162f959490cb9e5",
+      "operation": "add"
+    },
+    {
+      "path": "docs/phase2/verification.json",
+      "baselineSha256": null,
+      "sha256": "58fa14d171f5abc0574bd89210f42a93812d97eaa1b4854685dbe9584f0941bd",
+      "operation": "add"
+    },
+    {
+      "path": "package.json",
+      "baselineSha256": "a7544c85a8c93e82de4452728ad2f9f90e91e4d0540f1203c18affd8643fd82e",
+      "sha256": "00ec6f3a3f5de3a87b446ac19eb2bdce6a26db4808b8a97e74b6c9dab70f4b4d",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Admin/admin.controller.ts",
+      "baselineSha256": "9007b24913b1443f781e985ddd7407ba3a82730c21bbc89506d4b493d5fe1350",
+      "sha256": "7ed688e38277bda11b10e7af7d215f08f82582768ae7234929eab4adccb3f0e5",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Admin/admin.routes.ts",
+      "baselineSha256": "01bac61d386f05f77e87e8cd1c35525da211b9dc095ca24a17fae7479cca8c3e",
+      "sha256": "2e7053224bd0bde0e204036c7d085fad2c07afcb9b6b220480b60e83b1d0f705",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Admin/admin.service.onboarding.test.ts",
+      "baselineSha256": "f51c753ce8f21658d8d9ebf8434aca9bcf9a48dd430a4ed92e69367f60038dd1",
+      "sha256": "a67dffe2e6f74f972b82b3052254e7d034b2cb739dd2c7bba3c5f50eab8881c9",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Admin/admin.service.ts",
+      "baselineSha256": "c85ea1db8cc1635774b1b5688b4f2c1585b66832479626b70b636f99b9cfcb75",
+      "sha256": "9528fbb52fed68e3a58a4a56815c322df4ccfbb835b9daf6ef13c21e54a7d881",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Admin/admin.validation.ts",
+      "baselineSha256": "5adac75a50953926ca571152f33f635d10ea84af3ba208f0c95dcc0528e45486",
+      "sha256": "08d702c097d115e665cb663c4e342f17547067c45c41ecfd314cb9ebad4a418f",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Admin/onboardingProgress.ts",
+      "baselineSha256": null,
+      "sha256": "f3636f0657ae3ac9bd2b7bc65319d41144cc9945040694a7f99bc3732a5d5470",
+      "operation": "add"
+    },
+    {
+      "path": "src/modules/Admin/onboardingSave.contract.test.ts",
+      "baselineSha256": null,
+      "sha256": "40aa1ae64328c709c16989bf63d9cf0d863bfebcfdd7a847d532b6818fe0dd03",
+      "operation": "add"
+    },
+    {
+      "path": "src/modules/Admin/onboardingSave.contract.ts",
+      "baselineSha256": null,
+      "sha256": "e5f73627d6399ed7acd5984094c708ab5cfda83f31744c74ebe1e28571f61c63",
+      "operation": "add"
+    },
+    {
+      "path": "src/modules/Admin/onboardingSave.service.ts",
+      "baselineSha256": null,
+      "sha256": "e19fbc7c7bde67a684b7cf2db81f0ec1d812d0c0a266c1f976ee35a335113586",
+      "operation": "add"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/serviceCatalog.service.phase3.test.ts",
+      "baselineSha256": "189f6c0d97ef0a7a4437f1791a1aa68d6ee2959911c672be42cb333cdc32ba61",
+      "sha256": "5feb1a97a3c7acf20afefbe149095c6f9548a8e61b3340d578e423808572ec49",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/serviceCatalog.service.ts",
+      "baselineSha256": "462a6c559bee2e701bf7ce32971ecdaa7de5b85fc3ed61e0b5f36df6f0d52f59",
+      "sha256": "e53077a7bcbd6f735ec29344a04ddf60ff5141d646bae5db0c7b5c5a03028e53",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/serviceCatalogConcurrency.ts",
+      "baselineSha256": null,
+      "sha256": "cecacd33f54bc1f5ca8dca870e3935e42f07ad7de3c3ace608f013bc440dc32d",
+      "operation": "add"
+    },
+    {
+      "path": "src/modules/Website/subdomain.service.ts",
+      "baselineSha256": "4cde902a2ad89a2aaaee2aa2670d961f296a3177c58dbe26a72860d877724142",
+      "sha256": "5eb539f27119cea986b390ed9eaa3d08bc6134dffd28fa36a96c0c8264265790",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Website/website.controller.ts",
+      "baselineSha256": "c9669c361677e344cfe46ae37c8263a1b1e26277da9e08d0e27e145fde3fdda3",
+      "sha256": "4bb7aa3f9dd442f65d30a2f87853e3c78efea72655475d3d59e9338354c135af",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Website/website.service.ts",
+      "baselineSha256": "9776b960c7a69fd934364f1b494defa3dea262f9f25d22c43fa50b63a47d3ce6",
+      "sha256": "53c7435f65897e0910490479034ea246c76bbf00e3ab38b7b9c472ef7f12e5f4",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Website/websiteBookingProvisioning.service.ts",
+      "baselineSha256": "e26181ec600b9bc093058e0cfbb7f9fc49870d3bad24e37205b03e49e6c3a575",
+      "sha256": "c8ca7939d421c8a344930f6afc1d382ff46ef3d96ec3f2769e0686cb2717ec7a",
+      "operation": "update"
+    },
+    {
+      "path": "tests/fixtures/onboarding-v2.json",
+      "baselineSha256": null,
+      "sha256": "4ded456c695a2e22c51fceb302fecdcc6d874833addf494722afca2ab706d7fe",
+      "operation": "add"
+    },
+    {
+      "path": "tests/helpers/onboarding-fixture.cjs",
+      "baselineSha256": null,
+      "sha256": "0c6772124c2f7a7a4666b056c1b8fde45474323760ae5e1e8ea270ccde67a73c",
+      "operation": "add"
+    },
+    {
+      "path": "tests/onboarding/save-behavior.test.cjs",
+      "baselineSha256": null,
+      "sha256": "2bee80a2d302acb9b76f0410b05bebdd353e401ca7f5a4b6a5729e8d28fbfd7b",
+      "operation": "add"
+    }
+  ],
+  "note": "The manifest itself is not included in its own hash list."
+}

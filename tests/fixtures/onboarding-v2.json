@@ -1,0 +1,575 @@
+{
+  "contract": "onboarding-step-save",
+  "schemaVersion": 2,
+  "profileRequest": {
+    "schemaVersion": 2,
+    "websiteId": "10000000-0000-4000-8000-000000000001",
+    "step": "business_profile",
+    "expectedRevisionNumber": 5,
+    "expectedProfileVersion": "e417fcd4ca1d3c3ce3dc25fc4f162cddf1903e92ed0bed47d6e6ee989c533c61",
+    "profile": {
+      "businessEmail": null,
+      "postcode": null,
+      "businessHours": null
+    }
+  },
+  "profileResponse": {
+    "schemaVersion": 2,
+    "userId": "user-1",
+    "adminId": "20000000-0000-4000-8000-000000000002",
+    "step": "business_profile",
+    "replayed": false,
+    "draftRevisionNumber": 6,
+    "bootstrap": {
+      "schemaVersion": 2,
+      "adminId": "20000000-0000-4000-8000-000000000002",
+      "profileVersion": "e0735c5e8ac2d29af43581ea861aef999a8a2955e786b4d847d46e8f35e346cc",
+      "user": {
+        "id": "user-1",
+        "role": "ADMIN",
+        "status": "ACTIVE"
+      },
+      "onboarding": {
+        "currentStep": 3,
+        "completedSteps": [
+          "business_profile",
+          "branding"
+        ],
+        "isComplete": false,
+        "savedAt": "2026-09-06T14:50:11.181Z"
+      },
+      "profile": {
+        "businessName": "Launch Test Cleaning",
+        "businessEmail": null,
+        "mobileNumber": "+447700900123",
+        "businessDescription": "Existing description",
+        "businessHours": null,
+        "address": "Existing address",
+        "city": "London",
+        "postcode": null,
+        "currency": "GBP"
+      },
+      "website": {
+        "id": "10000000-0000-4000-8000-000000000001",
+        "subdomain": "cleaning-test",
+        "publicUrl": "https://cleaning-test.sites.example.com",
+        "status": "DRAFT",
+        "logo": null,
+        "favicon": null,
+        "draftRevisionNumber": 6,
+        "publishedRevisionNumber": null,
+        "templateVersion": "1.0.0",
+        "primaryColor": "#000000",
+        "secondaryColor": "#ffffff",
+        "accentColor": "#112233",
+        "font": null,
+        "bookingEnabled": true,
+        "templateId": "clean-modern"
+      }
+    },
+    "onboarding": {
+      "isComplete": false,
+      "completedCount": 2,
+      "totalCount": 5,
+      "skippedCount": 0,
+      "currentStep": 3,
+      "resumeStep": "services",
+      "savedAt": "2026-09-06T14:50:11.181Z",
+      "steps": [
+        {
+          "key": "business_profile",
+          "label": "Business",
+          "status": "completed",
+          "completed": true
+        },
+        {
+          "key": "branding",
+          "label": "Brand",
+          "status": "completed",
+          "completed": true
+        },
+        {
+          "key": "services",
+          "label": "Services + Booking",
+          "status": "pending",
+          "completed": false
+        },
+        {
+          "key": "website_address",
+          "label": "Website Address",
+          "status": "pending",
+          "completed": false
+        },
+        {
+          "key": "review_launch",
+          "label": "Review + Launch",
+          "status": "pending",
+          "completed": false
+        }
+      ],
+      "gettingStarted": {
+        "isComplete": false,
+        "completedCount": 2,
+        "totalCount": 10,
+        "steps": [
+          {
+            "key": "business_profile",
+            "label": "Business",
+            "completed": true
+          },
+          {
+            "key": "branding",
+            "label": "Brand",
+            "completed": true
+          },
+          {
+            "key": "services",
+            "label": "Services + Booking",
+            "completed": false
+          },
+          {
+            "key": "website_address",
+            "label": "Website Address",
+            "completed": false
+          },
+          {
+            "key": "review_launch",
+            "label": "Review + Launch",
+            "completed": false
+          },
+          {
+            "key": "service_area",
+            "label": "Add a service area",
+            "completed": false
+          },
+          {
+            "key": "team",
+            "label": "Invite your team",
+            "completed": false
+          },
+          {
+            "key": "client",
+            "label": "Add your first client",
+            "completed": false
+          },
+          {
+            "key": "booking",
+            "label": "Create your first booking",
+            "completed": false
+          },
+          {
+            "key": "online_booking",
+            "label": "Publish online booking",
+            "completed": false
+          }
+        ]
+      },
+      "websiteSetupOffer": null
+    },
+    "catalog": null,
+    "bookingSetup": null,
+    "nextStep": "services"
+  },
+  "brandingRequest": {
+    "schemaVersion": 2,
+    "websiteId": "10000000-0000-4000-8000-000000000001",
+    "step": "branding",
+    "expectedRevisionNumber": 6,
+    "branding": {
+      "primaryColor": "#102030",
+      "secondaryColor": "#405060",
+      "accentColor": "#708090",
+      "font": null,
+      "logo": null,
+      "favicon": null
+    }
+  },
+  "brandingResponse": {
+    "schemaVersion": 2,
+    "userId": "user-1",
+    "adminId": "20000000-0000-4000-8000-000000000002",
+    "step": "branding",
+    "replayed": false,
+    "draftRevisionNumber": 7,
+    "bootstrap": {
+      "schemaVersion": 2,
+      "adminId": "20000000-0000-4000-8000-000000000002",
+      "profileVersion": "e0735c5e8ac2d29af43581ea861aef999a8a2955e786b4d847d46e8f35e346cc",
+      "user": {
+        "id": "user-1",
+        "role": "ADMIN",
+        "status": "ACTIVE"
+      },
+      "onboarding": {
+        "currentStep": 3,
+        "completedSteps": [
+          "business_profile",
+          "branding"
+        ],
+        "isComplete": false,
+        "savedAt": "2026-09-06T14:50:11.181Z"
+      },
+      "profile": {
+        "businessName": "Launch Test Cleaning",
+        "businessEmail": null,
+        "mobileNumber": "+447700900123",
+        "businessDescription": "Existing description",
+        "businessHours": null,
+        "address": "Existing address",
+        "city": "London",
+        "postcode": null,
+        "currency": "GBP"
+      },
+      "website": {
+        "id": "10000000-0000-4000-8000-000000000001",
+        "subdomain": "cleaning-test",
+        "publicUrl": "https://cleaning-test.sites.example.com",
+        "status": "DRAFT",
+        "logo": null,
+        "favicon": null,
+        "draftRevisionNumber": 7,
+        "publishedRevisionNumber": null,
+        "templateVersion": "1.0.0",
+        "primaryColor": "#102030",
+        "secondaryColor": "#405060",
+        "accentColor": "#708090",
+        "font": null,
+        "bookingEnabled": true,
+        "templateId": "clean-modern"
+      }
+    },
+    "onboarding": {
+      "isComplete": false,
+      "completedCount": 2,
+      "totalCount": 5,
+      "skippedCount": 0,
+      "currentStep": 3,
+      "resumeStep": "services",
+      "savedAt": "2026-09-06T14:50:11.181Z",
+      "steps": [
+        {
+          "key": "business_profile",
+          "label": "Business",
+          "status": "completed",
+          "completed": true
+        },
+        {
+          "key": "branding",
+          "label": "Brand",
+          "status": "completed",
+          "completed": true
+        },
+        {
+          "key": "services",
+          "label": "Services + Booking",
+          "status": "pending",
+          "completed": false
+        },
+        {
+          "key": "website_address",
+          "label": "Website Address",
+          "status": "pending",
+          "completed": false
+        },
+        {
+          "key": "review_launch",
+          "label": "Review + Launch",
+          "status": "pending",
+          "completed": false
+        }
+      ],
+      "gettingStarted": {
+        "isComplete": false,
+        "completedCount": 2,
+        "totalCount": 10,
+        "steps": [
+          {
+            "key": "business_profile",
+            "label": "Business",
+            "completed": true
+          },
+          {
+            "key": "branding",
+            "label": "Brand",
+            "completed": true
+          },
+          {
+            "key": "services",
+            "label": "Services + Booking",
+            "completed": false
+          },
+          {
+            "key": "website_address",
+            "label": "Website Address",
+            "completed": false
+          },
+          {
+            "key": "review_launch",
+            "label": "Review + Launch",
+            "completed": false
+          },
+          {
+            "key": "service_area",
+            "label": "Add a service area",
+            "completed": false
+          },
+          {
+            "key": "team",
+            "label": "Invite your team",
+            "completed": false
+          },
+          {
+            "key": "client",
+            "label": "Add your first client",
+            "completed": false
+          },
+          {
+            "key": "booking",
+            "label": "Create your first booking",
+            "completed": false
+          },
+          {
+            "key": "online_booking",
+            "label": "Publish online booking",
+            "completed": false
+          }
+        ]
+      },
+      "websiteSetupOffer": null
+    },
+    "catalog": null,
+    "bookingSetup": null,
+    "nextStep": "services"
+  },
+  "servicesRequest": {
+    "schemaVersion": 2,
+    "websiteId": "10000000-0000-4000-8000-000000000001",
+    "step": "services",
+    "expectedRevisionNumber": 7,
+    "catalogVersion": "dedb87d760793339cfaeaed83e2049e300d2a053957a5a705503fa1428cc0d33",
+    "services": [],
+    "deactivateServiceCatalogIds": [],
+    "booking": {
+      "showNavigation": true,
+      "showHeaderCta": true,
+      "showServiceCtas": true,
+      "showHomeCta": true,
+      "showAvailableSlots": false,
+      "showPrices": true,
+      "showStartingPrices": true,
+      "showServiceDuration": true,
+      "ctaLabel": "Book Now",
+      "enabled": true,
+      "bookingFormId": null
+    }
+  },
+  "servicesResponse": {
+    "schemaVersion": 2,
+    "userId": "user-1",
+    "adminId": "20000000-0000-4000-8000-000000000002",
+    "step": "services",
+    "replayed": false,
+    "draftRevisionNumber": 8,
+    "bootstrap": {
+      "schemaVersion": 2,
+      "adminId": "20000000-0000-4000-8000-000000000002",
+      "profileVersion": "e0735c5e8ac2d29af43581ea861aef999a8a2955e786b4d847d46e8f35e346cc",
+      "user": {
+        "id": "user-1",
+        "role": "ADMIN",
+        "status": "ACTIVE"
+      },
+      "onboarding": {
+        "currentStep": 4,
+        "completedSteps": [
+          "business_profile",
+          "branding",
+          "services"
+        ],
+        "isComplete": false,
+        "savedAt": "2026-09-06T14:50:11.181Z"
+      },
+      "profile": {
+        "businessName": "Launch Test Cleaning",
+        "businessEmail": null,
+        "mobileNumber": "+447700900123",
+        "businessDescription": "Existing description",
+        "businessHours": null,
+        "address": "Existing address",
+        "city": "London",
+        "postcode": null,
+        "currency": "GBP"
+      },
+      "website": {
+        "id": "10000000-0000-4000-8000-000000000001",
+        "subdomain": "cleaning-test",
+        "publicUrl": "https://cleaning-test.sites.example.com",
+        "status": "DRAFT",
+        "logo": null,
+        "favicon": null,
+        "draftRevisionNumber": 8,
+        "publishedRevisionNumber": null,
+        "templateVersion": "1.0.0",
+        "primaryColor": "#102030",
+        "secondaryColor": "#405060",
+        "accentColor": "#708090",
+        "font": null,
+        "bookingEnabled": true,
+        "templateId": "clean-modern"
+      }
+    },
+    "onboarding": {
+      "isComplete": false,
+      "completedCount": 3,
+      "totalCount": 5,
+      "skippedCount": 0,
+      "currentStep": 4,
+      "resumeStep": "website_address",
+      "savedAt": "2026-09-06T14:50:11.181Z",
+      "steps": [
+        {
+          "key": "business_profile",
+          "label": "Business",
+          "status": "completed",
+          "completed": true
+        },
+        {
+          "key": "branding",
+          "label": "Brand",
+          "status": "completed",
+          "completed": true
+        },
+        {
+          "key": "services",
+          "label": "Services + Booking",
+          "status": "completed",
+          "completed": true
+        },
+        {
+          "key": "website_address",
+          "label": "Website Address",
+          "status": "pending",
+          "completed": false
+        },
+        {
+          "key": "review_launch",
+          "label": "Review + Launch",
+          "status": "pending",
+          "completed": false
+        }
+      ],
+      "gettingStarted": {
+        "isComplete": false,
+        "completedCount": 3,
+        "totalCount": 10,
+        "steps": [
+          {
+            "key": "business_profile",
+            "label": "Business",
+            "completed": true
+          },
+          {
+            "key": "branding",
+            "label": "Brand",
+            "completed": true
+          },
+          {
+            "key": "services",
+            "label": "Services + Booking",
+            "completed": true
+          },
+          {
+            "key": "website_address",
+            "label": "Website Address",
+            "completed": false
+          },
+          {
+            "key": "review_launch",
+            "label": "Review + Launch",
+            "completed": false
+          },
+          {
+            "key": "service_area",
+            "label": "Add a service area",
+            "completed": false
+          },
+          {
+            "key": "team",
+            "label": "Invite your team",
+            "completed": false
+          },
+          {
+            "key": "client",
+            "label": "Add your first client",
+            "completed": false
+          },
+          {
+            "key": "booking",
+            "label": "Create your first booking",
+            "completed": false
+          },
+          {
+            "key": "online_booking",
+            "label": "Publish online booking",
+            "completed": false
+          }
+        ]
+      },
+      "websiteSetupOffer": null
+    },
+    "catalog": {
+      "version": "dedb87d760793339cfaeaed83e2049e300d2a053957a5a705503fa1428cc0d33",
+      "complete": true,
+      "services": [
+        {
+          "id": "30000000-0000-4000-8000-000000000001",
+          "serviceName": "Service 1",
+          "description": "Description 1",
+          "basePrice": 51,
+          "duration": "2h",
+          "category": "RESIDENTIAL",
+          "status": "ACTIVE",
+          "onlineBookingEnabled": true,
+          "addOns": [
+            {
+              "name": "Oven",
+              "price": 15
+            }
+          ]
+        }
+      ]
+    },
+    "bookingSetup": {
+      "enabled": true,
+      "live": false,
+      "primaryBookingFormId": null,
+      "primaryBookingForm": null,
+      "publishedForms": [],
+      "publishedFormCount": 0,
+      "bookableServiceCount": 1,
+      "requiresSelection": false,
+      "canCreateDefault": true,
+      "websitePath": "/book",
+      "estimate": {
+        "enabled": false,
+        "live": false,
+        "primaryEstimateFormId": null,
+        "primaryEstimateForm": null,
+        "publishedForms": [],
+        "websitePath": "/estimate"
+      },
+      "settings": {
+        "showNavigation": true,
+        "showHeaderCta": true,
+        "showServiceCtas": true,
+        "showHomeCta": true,
+        "showAvailableSlots": false,
+        "showPrices": true,
+        "showStartingPrices": true,
+        "showServiceDuration": true,
+        "ctaLabel": "Book Now"
+      }
+    },
+    "nextStep": "website_address"
+  }
+}

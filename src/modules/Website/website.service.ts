@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
+import logger from "../../lib/logger";
 import { WEBSITE_BASE_DOMAIN, WEBSITE_CUSTOM_DOMAINS_ENABLED } from "../../config/ENV";
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
@@ -25,6 +26,7 @@ import { TemplateRegistry } from "./templateRegistry";
 import { buildTemplateSelectionPatch } from "./templateSelection";
 import { WebsiteProvisioningService } from "./websiteProvisioning.service";
 import { WebsiteBookingProvisioningService } from "./websiteBookingProvisioning.service";
+import { PublicWebsiteService } from "./publicWebsite.service";
 import {
   buildPublishedSnapshot,
   buildWebsitePublicationFingerprint,
@@ -33,9 +35,8 @@ import {
 } from "./websiteSnapshot";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
-import { PublicWebsiteCacheOutbox, type PublicWebsiteCacheInvalidationPayload, type WebsitePublicationWork } from "../../lib/outbox/publicWebsiteCacheOutbox";
+import { PublicWebsiteCacheOutbox } from "../../lib/outbox/publicWebsiteCacheOutbox";
 import { WebsitePublicationDeliveryService } from "./websitePublicationDelivery.service";
-import { buildCompactWebsiteStatus } from "./websiteStatus.service";
 import { isWebsiteDomainRoutingReady } from "./websiteDomainReadiness";
 import { presentWebsiteDomain } from "./websiteDomainLifecycle";
 import { WEBSITE_STATUS, statusAfterDraftMutation, type WebsiteLifecycleStatus } from "./websiteLifecycle";
@@ -147,6 +148,24 @@ const assertManagedBrandReferences = async (
       });
     }
   }
+};
+
+/** Narrow transaction primitive used by atomic onboarding saves. No public
+ * cache work and no separate transaction; the caller owns revision/progress. */
+const saveOnboardingBrandingTx = async (
+  tx: Prisma.TransactionClient,
+  adminId: string,
+  websiteId: string,
+  patch: Pick<WebsiteUpdateInput, "primaryColor" | "secondaryColor" | "accentColor" | "font" | "logo" | "favicon">,
+) => {
+  const website = await tx.businessWebsite.findFirst({ where: { id: websiteId, adminId }, select: { status: true } });
+  if (!website) throw new AppError(status.NOT_FOUND, "Business website not found");
+  if (website.status === WEBSITE_STATUS.SUSPENDED) throw new AppError(status.CONFLICT, "Suspended websites cannot be edited", { code: "WEBSITE_SUSPENDED", retryable: false });
+  // Deliberately validate even unchanged non-null references: a URL alone is
+  // not proof that this immutable managed asset belongs to the tenant/slot.
+  await assertManagedBrandReferences(websiteId, patch, {}, tx);
+  await ensurePublishedSnapshotBeforeDraftMutationTx(tx, websiteId);
+  await tx.businessWebsite.update({ where: { id: websiteId }, data: { ...patch, ...draftLifecyclePatch(website.status as WebsiteLifecycleStatus) } });
 };
 
 const assertManagedPageSocialReferences = async (
@@ -451,18 +470,12 @@ const publicCacheTenantIdentifiers = (website: PublicCacheWebsiteIdentity): stri
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean)));
 
-const publicationWork = (
-  website: PublicCacheWebsiteIdentity & { publishedRevisionNumber: number | null },
-  adminId: string,
-  reason: "website-published" | "website-launched",
-): PublicWebsiteCacheInvalidationPayload & { publication: WebsitePublicationWork } => {
-  if (!website.publishedRevisionNumber) throw new Error("A publication delivery requires a committed revision");
-  return {
+const enqueuePublicationTx = (tx: Prisma.TransactionClient, adminId: string, website: PublicCacheWebsiteIdentity, revision: number, reason: string) =>
+  PublicWebsiteCacheOutbox.enqueueDeliveryTx(tx, {
     websiteId: website.id, tenantIdentifier: website.subdomain,
     tenantIdentifiers: publicCacheTenantIdentifiers(website), reason,
-    publication: { adminId, revisionNumber: website.publishedRevisionNumber },
-  };
-};
+    delivery: { version: 1, adminId, revision },
+  });
 
 const loadWebsiteDetailsWhere = async (
   where: { id: string } | { adminId: string },
@@ -589,7 +602,6 @@ const assertExpectedRevision = async (
   const currentRevisionNumber = await getLatestRevisionNumber(db, websiteId);
   if (
     expectedRevisionNumber !== undefined &&
-    expectedRevisionNumber > 0 &&
     expectedRevisionNumber !== currentRevisionNumber
   ) {
     // A rejected configured-state mutation did not change either the private
@@ -1023,7 +1035,7 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
     WebsiteEntitlementService.getForAdminId(adminId),
   ]);
 
-  const committed = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await acquireTextTransactionAdvisoryLock(tx, current.id);
     const baseRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
 
@@ -1093,18 +1105,22 @@ const publishWebsite = async (payload: WebsitePublishInput, user: IRequestUser) 
       draftRevisionNumber: revision.revisionNumber,
       publishedSnapshot,
     });
-    const deliveryWork = publicationWork(website, adminId, "website-published");
-    const deliveryEvent = await PublicWebsiteCacheOutbox.enqueuePublicationTx(tx, deliveryWork);
-    return { website, deliveryWork, deliveryEvent };
-  }, PROVISIONING_TRANSACTION_OPTIONS);
+    const deliveryEvent = await enqueuePublicationTx(tx, adminId, website, revision.revisionNumber, "website-published");
+    return { website, deliveryEvent };
+  });
 
-  const publicationDelivery = await WebsitePublicationDeliveryService.deliverImmediate(committed.deliveryEvent.id, committed.deliveryWork);
-  await bumpCacheResourceVersions(adminId, [CacheResource.website]);
-  return { ...committed.website, publicationDelivery };
+  const publicationDelivery = WebsitePublicationDeliveryService.bindToRevision(
+    await WebsitePublicationDeliveryService.attemptImmediate(result.deliveryEvent), result.website.publishedRevisionNumber,
+  );
+  void bumpCacheResourceVersions(adminId, [CacheResource.website]);
+  return { ...result.website, publicUrl: publicationDelivery.publicUrl ?? result.website.publicUrl, publicationDelivery };
 };
 
 
-const REQUIRED_ONBOARDING_STEPS = ONBOARDING_STEPS.map((step) => step.key).filter((key) => key !== "review_launch");
+// Review is the launch action, not a separate HTTP precondition. Legacy callers
+// may still complete `review_launch` (or `template`) before invoking launch.
+const REQUIRED_ONBOARDING_STEPS = ONBOARDING_STEPS.map((step) => step.key)
+  .filter((step) => step !== "review_launch" && (step as string) !== "template");
 
 /**
  * First-time launch is deliberately stronger than a normal Website Studio
@@ -1221,29 +1237,28 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
     }
 
     assertLifecycleAllowsPublish(owner.businessWebsite.status as WebsiteLifecycleStatus);
-    const latestRevisionNumber = await assertExpectedRevision(tx, current.id, undefined);
 
-    // Idempotent completion: a retry must not publish again, even when another
-    // tab has saved a newer draft since the original launch.
+    // Idempotent retry path: the first launch committed completely and there
+    // may be newer drafts. Never republish them implicitly on a lost-response retry.
     if (
       owner.onboardingCompletedAt &&
       owner.businessWebsite.status === WEBSITE_STATUS.PUBLISHED &&
       owner.businessWebsite.publishedAt &&
       owner.businessWebsite.publishedSnapshot &&
-      owner.businessWebsite.publishedRevisionNumber !== null
+      owner.businessWebsite.publishedRevisionNumber !== null &&
+      owner.businessWebsite.publishedRevisionNumber > 0
     ) {
-      // Launch is a one-time completion command, not Studio Publish. A retry
-      // with old expectedRevisionNumber or legacy editor fields cannot publish
-      // a second revision, including when a newer draft exists in another tab.
       const website = await loadWebsiteDetails(current.id, tx);
-      const deliveryWork = publicationWork(website, adminId, "website-launched");
-      const deliveryEvent = await PublicWebsiteCacheOutbox.enqueuePublicationTx(tx, deliveryWork);
-      return { businessName: owner.businessName, alreadyLive: true, website, deliveryWork, deliveryEvent,
-        onboardingCompletedAt: owner.onboardingCompletedAt };
+      const deliveryEvent = await enqueuePublicationTx(tx, adminId, website, owner.businessWebsite.publishedRevisionNumber, "website-launched");
+      return {
+        businessName: owner.businessName, alreadyLive: true, website, deliveryEvent,
+        onboardingCompletedAt: owner.onboardingCompletedAt,
+      };
     }
-    if (payload.expectedRevisionNumber !== undefined && payload.expectedRevisionNumber > 0 && payload.expectedRevisionNumber !== latestRevisionNumber) {
-      throw new WebsiteDraftConflictError(payload.expectedRevisionNumber, latestRevisionNumber);
-    }
+
+    // Check optimistic concurrency only for the first commit. A lost-response
+    // retry necessarily carries the OLD expected revision and must be accepted.
+    const latestRevisionNumber = await assertExpectedRevision(tx, current.id, payload.expectedRevisionNumber);
 
     // Rolling-deploy callers may still send editor fields with first launch.
     // Apply them under this same transaction before booking provisioning and
@@ -1341,15 +1356,15 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
         publishedRevisionNumber: revision.revisionNumber,
       },
     });
-    // Review is acknowledged by this command, in the SAME transaction as the
-    // snapshot. Callers that marked review separately remain compatible.
-    await tx.adminProfile.update({
-      where: { id: adminId },
-      data: {
-        onboardingCompletedAt: owner.onboardingCompletedAt ?? launchedAt,
-        onboardingCompletedSteps: [...new Set([...completed, "review_launch"])],
-      },
-    });
+    if (!owner.onboardingCompletedAt || !completed.has("review_launch")) {
+      await tx.adminProfile.update({
+        where: { id: adminId },
+        data: {
+          onboardingCompletedAt: owner.onboardingCompletedAt ?? launchedAt,
+          onboardingCompletedSteps: [...new Set([...completed, "review_launch"])],
+        },
+      });
+    }
 
     const website = presentDraftSnapshot(draft, {
         status: WEBSITE_STATUS.PUBLISHED,
@@ -1357,27 +1372,30 @@ const launchWebsite = async (payload: WebsitePublishInput, user: IRequestUser) =
         publishedRevisionNumber: revision.revisionNumber,
         draftRevisionNumber: revision.revisionNumber,
         publishedSnapshot,
-    });
-    const deliveryWork = publicationWork(website, adminId, "website-launched");
-    const deliveryEvent = await PublicWebsiteCacheOutbox.enqueuePublicationTx(tx, deliveryWork);
-    return { businessName: owner.businessName, alreadyLive: false, website, deliveryWork, deliveryEvent,
-      onboardingCompletedAt: owner.onboardingCompletedAt ?? launchedAt };
+      });
+    const deliveryEvent = await enqueuePublicationTx(tx, adminId, website, revision.revisionNumber, "website-launched");
+    return {
+      businessName: owner.businessName, alreadyLive: false, website, deliveryEvent,
+      onboardingCompletedAt: owner.onboardingCompletedAt ?? launchedAt,
+    };
   }, PROVISIONING_TRANSACTION_OPTIONS);
 
-  const publicationDelivery = await WebsitePublicationDeliveryService.deliverImmediate(result.deliveryEvent.id, result.deliveryWork);
-  await bumpCacheResourceVersions(adminId, [CacheResource.website, CacheResource.onboarding, CacheResource.profile]);
-  const publicUrl = publicationDelivery.canonicalUrl ?? result.website.platformUrl;
-  const publishedWebsite = { ...result.website, publicUrl, publicationDelivery };
+  const publicationDelivery = WebsitePublicationDeliveryService.bindToRevision(
+    await WebsitePublicationDeliveryService.attemptImmediate(result.deliveryEvent), result.website.publishedRevisionNumber,
+  );
+  const publishedWebsite = { ...result.website, publicUrl: publicationDelivery.publicUrl ?? result.website.publicUrl, publicationDelivery };
+  void bumpCacheResourceVersions(adminId, [CacheResource.website]);
   return {
-    schemaVersion: 1 as const,
-    completion: { userId: user.id, organizationId: adminId, onboardingCompletedAt: result.onboardingCompletedAt },
+    userId: user.id,
+    organizationId: adminId,
+    onboardingCompletedAt: result.onboardingCompletedAt,
     businessName: result.businessName,
     alreadyLive: result.alreadyLive,
     launchedAt: publishedWebsite.publishedAt,
-    publicUrl,
+    publicUrl: publishedWebsite.publicUrl,
     website: publishedWebsite,
-    websiteStatus: buildCompactWebsiteStatus(publishedWebsite, user.id, adminId, publicationDelivery.state, publicUrl, publicationDelivery.validUntil ?? undefined),
     publicationDelivery,
+    websiteStatus: WebsitePublicationDeliveryService.compactStatus(adminId, publishedWebsite.id, publishedWebsite.publishedRevisionNumber, publicationDelivery),
   };
 };
 
@@ -1819,6 +1837,8 @@ const deleteAsset = async (assetId: string, user: IRequestUser) => {
 };
 
 export const WebsiteService = {
+  saveOnboardingBrandingTx,
+  assertExpectedRevisionTx: assertExpectedRevision,
   createRevisionSnapshotTx,
   ensurePublishedSnapshotBeforeDraftMutationTx,
   createWebsite,

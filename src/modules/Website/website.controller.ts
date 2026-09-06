@@ -1,6 +1,3 @@
-import { authService } from "../Auth/auth.service";
-import { WebsiteStatusService } from "./websiteStatus.service";
-import { getTracePropagationMetadata } from "../../lib/monitoring/requestTrace";
 import status from "http-status";
 import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
@@ -21,7 +18,11 @@ import { WEBSITE_ANALYTICS_EVENT, WebsiteAnalyticsService } from "./websiteAnaly
 import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
 import AppError from "../../errorHelper/AppError";
 import { WebsiteEntitlementService } from "./websiteEntitlement.service";
-import { adminService } from "../Admin/admin.service";
+import { adminService, toLegacyOnboardingBootstrap } from "../Admin/admin.service";
+import { authService } from "../Auth/auth.service";
+import { getAdminId } from "../../lib/utils/resolveAdminId";
+import { WebsitePublicationDeliveryService } from "./websitePublicationDelivery.service";
+import { getRequestTrace } from "../../lib/monitoring/requestTrace";
 import logger from "../../lib/logger";
 import { RELEASE_VERSION } from "../../config/ENV";
 import { recordProductReliabilitySignal } from "../../lib/monitoring/productReliabilityMetrics";
@@ -48,10 +49,6 @@ const getWebsiteEditor = catchAsync(async (req, res) => {
     "Website editor projection retrieved successfully",
     await WebsiteService.getWebsiteEditor(req.user, surface as import("./website.interface").WebsiteEditorSurface),
   );
-});
-const getWebsiteStatus = catchAsync(async (req, res) => {
-  res.setHeader("Cache-Control", "private, no-store");
-  return ok(res, "Website status retrieved successfully", await WebsiteStatusService.getForUser(req.user));
 });
 const getStudioOverview = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
@@ -85,35 +82,50 @@ const publishWebsite = catchAsync(async (req, res) => {
 });
 const launchWebsite = catchAsync(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
-  res.vary("Cookie");
   recordWebsitePublishAttempt();
   try {
     const launch = await WebsiteService.launchWebsite(req.body ?? {}, req.user);
-    const [onboarding, session] = await Promise.all([
+    const [onboarding, bootstrap, session] = await Promise.all([
       adminService.getOnboardingStatus(req.user.id),
-      authService.session(req.user, req.cookies["better-auth.session_token"]),
+      adminService.getOnboardingBootstrap(launch.organizationId),
+      authService.session(req.user, req.cookies?.["better-auth.session_token"]),
     ]);
-    if (session.user.id !== launch.completion.userId || session.organizationId !== launch.completion.organizationId ||
-        !session.onboarding.completed || !onboarding.isComplete) {
-      throw new AppError(status.CONFLICT, "Launch committed; refresh the authenticated session before continuing.", {
+    if (session.user.id !== launch.userId || session.organizationId !== launch.organizationId ||
+        !session.onboarding.completed || !onboarding.isComplete || !bootstrap.onboarding.isComplete ||
+        bootstrap.user.id !== launch.userId || bootstrap.website.id !== launch.website.id) {
+      throw new AppError(status.CONFLICT, "Launch completion identity changed; retry with the current account", {
         code: "LAUNCH_COMPLETION_IDENTITY_MISMATCH", retryable: true,
       });
     }
-    logger.info("website_launch_completion", {
-      ...getTracePropagationMetadata(), websiteId: launch.website.id,
-      publicationRevision: launch.website.publishedRevisionNumber,
-      alreadyLive: launch.alreadyLive, readiness: launch.publicationDelivery.state,
-      onboardingCompleted: session.onboarding.completed,
-    });
     recordWebsitePublishResult(true);
-    return ok(res, launch.publicationDelivery.ready ? "Website launched successfully" : "Website published; delivery is preparing", {
-      ...launch, onboarding, session,
+    const trace = getRequestTrace();
+    logger.info("website_launch_completion", {
+      requestId: trace?.requestId, traceId: trace?.traceId,
+      websiteId: launch.website.id, organizationId: launch.organizationId,
+      publicationRevision: launch.website.publishedRevisionNumber,
+      ready: launch.publicationDelivery.ready, delivery: launch.publicationDelivery,
+      dbQueryCount: trace?.dbQueryCount, dbDurationMs: trace?.dbDurationMs,
+      redisDurationMs: trace?.redisDurationMs,
+      // No credentials, email, tokens or cookies in traces.
+      sessionResponse: { userId: session.user.id, onboarding: session.onboarding },
+    });
+    return ok(res, launch.publicationDelivery.ready ? "Website launched successfully" : "Website published; delivery is being prepared", {
+      ...launch, onboarding,
+      completion: {
+        schemaVersion: 1, userId: launch.userId, organizationId: launch.organizationId,
+        onboardingCompletedAt: launch.onboardingCompletedAt,
+        session, onboarding, bootstrap: req.query.onboardingSchemaVersion === "2" ? bootstrap : toLegacyOnboardingBootstrap(bootstrap), websiteStatus: launch.websiteStatus,
+      },
     });
   } catch (error) {
     recordWebsitePublishResult(false);
     if (error instanceof WebsiteDraftConflictError) return sendWebsiteDraftConflict(res, error);
     throw error;
   }
+});
+const getWebsiteStatus = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  return ok(res, "Website publication status", await WebsitePublicationDeliveryService.getStatus(await getAdminId(req.user)));
 });
 const getWebsiteBookingSetup = catchAsync(async (req, res) =>
   ok(res, "Website booking setup retrieved successfully", await WebsiteBookingProvisioningService.getSetup(req.user)),
@@ -474,7 +486,6 @@ const getPublicWebsite = catchAsync(async (req, res) => {
 });
 
 export const websiteController = {
-  getWebsiteStatus,
   createWebsite,
   getWebsite,
   getWebsiteEditor,
@@ -486,6 +497,7 @@ export const websiteController = {
   saveEditorState,
   publishWebsite,
   launchWebsite,
+  getWebsiteStatus,
   previewWebsite,
   previewEditorState,
   createPreviewSession,

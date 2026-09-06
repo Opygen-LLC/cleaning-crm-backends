@@ -23,7 +23,9 @@ import { RELEASE_VERSION } from "../../config/ENV";
 import { ErrorMonitor } from "../../lib/monitoring/errorMonitor";
 import { recordClientReliabilitySignals, recordProductReliabilitySignal } from "../../lib/monitoring/productReliabilityMetrics";
 import { AccountStatus, ServiceStatus, SubscriptionStatus } from "../../generated/prisma/enums";
-import type { Prisma } from "../../generated/prisma/client";
+import { Prisma } from "../../generated/prisma/client";
+import { fingerprint, lockServiceCatalogTx } from "../ServiceCatalog/serviceCatalogConcurrency";
+import { REQUIRED_SETUP_KEYS, normalizeCompletedSetupSteps, lockOnboardingOwnerTx, completeStepTx, canonicalOnboardingStep } from "./onboardingProgress";
 import { businessHoursSchema, normalizeBusinessHours, type BusinessHours } from "./businessHours";
 import { bumpCacheResourceVersions, CacheResource } from "../../lib/cache/resourceCacheVersion";
 import type {
@@ -145,11 +147,12 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
 
   const data: Record<string, unknown> = {
     ...scalarFields,
+    ...(scalarFields.businessHours === null ? { businessHours: Prisma.DbNull } : {}),
     ...(scalarFields.mobileNumber !== undefined
       ? { mobileNumber: normalizeOptionalE164Phone(scalarFields.mobileNumber, "mobileNumber") ?? null }
       : {}),
     ...(postcode !== undefined || zipcode !== undefined
-      ? { zipcode: postcode ?? zipcode }
+      ? { zipcode: postcode !== undefined ? postcode : zipcode }
       : {}),
   };
 
@@ -401,25 +404,10 @@ export interface OnboardingStatusResult {
   websiteSetupOffer: WebsiteSetupOffer | null;
 }
 
-const REQUIRED_SETUP_KEYS = ONBOARDING_STEPS.map((step) => step.key);
-
 const isLegacySkippable = (
   step: string,
 ): step is LegacySkippableOnboardingStepKey =>
   (SKIPPABLE_ONBOARDING_STEPS as readonly string[]).includes(step);
-
-const normalizeCompletedSetupSteps = (
-  persisted: string[],
-  onboardingCompletedAt: Date | null,
-): Set<OnboardingStepKey> => {
-  if (onboardingCompletedAt) return new Set(REQUIRED_SETUP_KEYS);
-  const allowed = new Set<string>(REQUIRED_SETUP_KEYS);
-  return new Set(
-    persisted
-      .map((step) => (step === "template" ? "review_launch" : step))
-      .filter((step): step is OnboardingStepKey => allowed.has(step)),
-  );
-};
 
 /**
  * Compact source of truth for the five-step website-first setup and the
@@ -428,8 +416,9 @@ const normalizeCompletedSetupSteps = (
  */
 const getOnboardingStatus = async (
   userId: string,
+  db: Prisma.TransactionClient | typeof prisma = prisma,
 ): Promise<OnboardingStatusResult> => {
-  const admin = await prisma.adminProfile.findUnique({
+  const admin = await db.adminProfile.findUnique({
     where: { userId },
     select: {
       id: true,
@@ -470,7 +459,7 @@ const getOnboardingStatus = async (
     hasPublishedBookingForm: boolean;
   };
   const optionalRow = admin.onboardingCompletedAt
-    ? (await prisma.$queryRaw<OptionalOnboardingFlagsRow[]>`
+    ? (await db.$queryRaw<OptionalOnboardingFlagsRow[]>`
         SELECT
           EXISTS (SELECT 1 FROM "WorkLocation" wl WHERE wl."adminId" = ${admin.id}) AS "hasServiceArea",
           EXISTS (SELECT 1 FROM "StaffProfile" sp WHERE sp."adminId" = ${admin.id} AND sp.status = 'ACTIVE') AS "hasTeam",
@@ -558,9 +547,12 @@ const getOnboardingStatus = async (
   };
 };
 
-export const ONBOARDING_BOOTSTRAP_SCHEMA_VERSION = 1 as const;
+export const ONBOARDING_BOOTSTRAP_SCHEMA_VERSION = 2 as const;
 
 export interface OnboardingBootstrapResult {
+  schemaVersion: 2;
+  adminId: string;
+  profileVersion: string;
   user: {
     id: string;
     role: string;
@@ -589,6 +581,10 @@ export interface OnboardingBootstrapResult {
     publicUrl: string | null;
     status: string;
     logo: string | null;
+    favicon: string | null;
+    draftRevisionNumber: number;
+    publishedRevisionNumber: number | null;
+    templateVersion: string;
     primaryColor: string;
     secondaryColor: string;
     accentColor: string;
@@ -604,8 +600,8 @@ export interface OnboardingBootstrapResult {
  * domains, forms or analytics. It also validates the registration invariants
  * that must exist before a verified ADMIN can enter onboarding.
  */
-const getOnboardingBootstrap = async (adminId: string): Promise<OnboardingBootstrapResult> => {
-  const admin = await prisma.adminProfile.findUnique({
+const getOnboardingBootstrap = async (adminId: string, db: Prisma.TransactionClient | typeof prisma = prisma): Promise<OnboardingBootstrapResult> => {
+  const admin = await db.adminProfile.findUnique({
     where: { id: adminId },
     select: {
       id: true,
@@ -630,6 +626,10 @@ const getOnboardingBootstrap = async (adminId: string): Promise<OnboardingBootst
           subdomain: true,
           status: true,
           logo: true,
+          favicon: true,
+          draftRevisionNumber: true,
+          publishedRevisionNumber: true,
+          templateVersion: true,
           primaryColor: true,
           secondaryColor: true,
           accentColor: true,
@@ -703,7 +703,15 @@ const getOnboardingBootstrap = async (adminId: string): Promise<OnboardingBootst
     });
   }
 
+  const profile = {
+    businessName: admin.businessName, businessEmail: admin.businessEmail, mobileNumber: admin.mobileNumber,
+    businessDescription: admin.businessDescription, businessHours, address: admin.address,
+    city: admin.city, postcode: admin.zipcode, currency: admin.currency,
+  };
   return {
+    schemaVersion: ONBOARDING_BOOTSTRAP_SCHEMA_VERSION,
+    adminId: admin.id,
+    profileVersion: fingerprint(profile),
     user: {
       id: admin.user.id,
       role: admin.user.role,
@@ -715,23 +723,17 @@ const getOnboardingBootstrap = async (adminId: string): Promise<OnboardingBootst
       isComplete,
       savedAt,
     },
-    profile: {
-      businessName: admin.businessName,
-      businessEmail: admin.businessEmail,
-      mobileNumber: admin.mobileNumber,
-      businessDescription: admin.businessDescription,
-      businessHours,
-      address: admin.address,
-      city: admin.city,
-      postcode: admin.zipcode,
-      currency: admin.currency,
-    },
+    profile,
     website: {
       id: website.id,
       subdomain: website.subdomain,
       publicUrl: getCanonicalWebsiteOrigin(website.subdomain),
       status: website.status,
       logo: website.logo,
+      favicon: website.favicon,
+      draftRevisionNumber: website.draftRevisionNumber,
+      publishedRevisionNumber: website.publishedRevisionNumber,
+      templateVersion: website.templateVersion,
       primaryColor: website.primaryColor,
       secondaryColor: website.secondaryColor,
       accentColor: website.accentColor,
@@ -744,6 +746,13 @@ const getOnboardingBootstrap = async (adminId: string): Promise<OnboardingBootst
 
 const hashTelemetryId = (value: string | null | undefined): string | null =>
   value ? createHash("sha256").update(value).digest("hex").slice(0, 24) : null;
+
+/** v1 had strict clients: do not add fields to their payload during rollout. */
+export const toLegacyOnboardingBootstrap = (value: OnboardingBootstrapResult) => {
+  const { schemaVersion: _schemaVersion, adminId: _adminId, profileVersion: _profileVersion, ...legacy } = value;
+  const { favicon: _favicon, draftRevisionNumber: _draft, publishedRevisionNumber: _published, templateVersion: _template, ...website } = value.website;
+  return { ...legacy, website };
+};
 
 const reportOnboardingClientError = async (
   userId: string,
@@ -918,12 +927,12 @@ const saveOnboardingServices = async (
     }
     adminId = admin.id;
 
-    await acquireExtendedTextTransactionAdvisoryLock(tx, `onboarding-services:${admin.id}`);
-    await acquireExtendedTextTransactionAdvisoryLock(tx, `website-booking-provision:${admin.id}`);
+
     // Serialize this atomic onboarding write with Website Studio draft mutations too.
     // pg_advisory_xact_lock is re-entrant for the same transaction, so the
     // revision helper can safely acquire this lock again later.
     await acquireTextTransactionAdvisoryLock(tx, admin.businessWebsite.id);
+    await acquireExtendedTextTransactionAdvisoryLock(tx, `website-booking-provision:${admin.id}`);
 
     const refreshed = await tx.adminProfile.findUnique({
       where: { id: admin.id },
@@ -969,7 +978,9 @@ const saveOnboardingServices = async (
         ...service,
         status: ServiceStatus.ACTIVE,
       })),
-      { authoritativeSelection: true },
+      // Legacy clients cannot prove that their page contains the full catalog.
+      // Keep omissions untouched; v2 uses explicit guarded removals.
+      {},
     );
 
     await WebsiteBookingProvisioningService.configureForAdminTx(tx, admin.id, payload.booking);
@@ -1071,85 +1082,27 @@ const completeOnboardingStep = async (
   userId: string,
   step: OnboardingStepKey | LegacyOnboardingStepKey,
 ): Promise<OnboardingMutationResult> => {
-  const canonicalStep: OnboardingStepKey = step === "template" ? "review_launch" : step;
-  const admin = await prisma.adminProfile.findUnique({
-    where: { userId },
-    select: {
-      id: true,
-      onboardingCompletedAt: true,
-      onboardingCompletedSteps: true,
-    },
-  });
-
-  if (!admin) {
-    throw new AppError(status.NOT_FOUND, "Admin profile not found", {
-      code: "ADMIN_PROFILE_NOT_FOUND",
-      retryable: false,
-    });
-  }
-
-  if (admin.onboardingCompletedAt) return buildOnboardingMutationResult(userId, admin.id);
-
-  const stepIndex = REQUIRED_SETUP_KEYS.indexOf(canonicalStep);
-  if (stepIndex === -1) {
-    throw new AppError(status.BAD_REQUEST, "Unknown onboarding step", {
-      code: "INVALID_ONBOARDING_STEP",
-      retryable: false,
-    });
-  }
-
-  const completed = normalizeCompletedSetupSteps(
-    admin.onboardingCompletedSteps,
-    admin.onboardingCompletedAt,
-  );
-
-  const missingPrevious = REQUIRED_SETUP_KEYS
-    .slice(0, stepIndex)
-    .find((key) => !completed.has(key));
-  if (missingPrevious) {
-    throw new AppError(status.CONFLICT, "Complete the previous setup step first.", {
-      code: "ONBOARDING_STEP_OUT_OF_ORDER",
-      retryable: false,
-      fieldErrors: { [missingPrevious]: "Complete this step first" },
-    });
-  }
-
-  if (canonicalStep === "services") {
-    const service = await prisma.serviceCatalog.findFirst({
-      where: { adminId: admin.id },
-      select: { id: true },
-    });
-    if (!service) {
-      throw new AppError(status.CONFLICT, "Add at least one service before continuing.", {
-        code: "ONBOARDING_SERVICE_REQUIRED",
-        retryable: false,
-        fieldErrors: { services: "Add at least one service" },
+  const canonicalStep = canonicalOnboardingStep(step);
+  const adminId = await prisma.$transaction(async tx => {
+    const owner = await lockOnboardingOwnerTx(tx, userId);
+    if (canonicalStep === "services") {
+      await lockServiceCatalogTx(tx, owner.id);
+      const service = await tx.serviceCatalog.findFirst({
+        where: { adminId: owner.id, status: ServiceStatus.ACTIVE }, select: { id: true },
+      });
+      if (!service) throw new AppError(status.CONFLICT, "Add at least one service before continuing.", {
+        code: "ONBOARDING_SERVICE_REQUIRED", retryable: false,
+        fieldErrors: { services: "Add at least one active service" },
       });
     }
-  }
-
-  if (canonicalStep === "business_profile" && !completed.has(canonicalStep)) {
-    logger.info("onboarding_started", { event: "onboarding_started", tenantHash: hashTelemetryId(admin.id), releaseSha: RELEASE_VERSION });
-  }
-
-  await prisma.$transaction(async (tx) => {
-    if (!completed.has(canonicalStep)) {
-      await tx.adminProfile.update({
-        where: { id: admin.id },
-        data: { onboardingCompletedSteps: { push: canonicalStep } },
-      });
-    }
-
-    // Registration creates a PROVISIONED website. As soon as onboarding makes
-    // progress it becomes an explicit draft, even when Step 1 only changed CRM
-    // business fields rather than website fields directly.
+    await completeStepTx(tx, owner, canonicalStep);
     await tx.businessWebsite.updateMany({
-      where: { adminId: admin.id, status: WEBSITE_STATUS.PROVISIONED },
+      where: { id: owner.websiteId, status: WEBSITE_STATUS.PROVISIONED },
       data: { status: WEBSITE_STATUS.DRAFT },
     });
+    return owner.id;
   }, { maxWait: 10_000, timeout: 25_000 });
-
-  return buildOnboardingMutationResult(userId, admin.id);
+  return buildOnboardingMutationResult(userId, adminId);
 };
 
 /**
@@ -1161,32 +1114,23 @@ const completeOnboardingStep = async (
 const skipWebsiteOnboardingSetup = async (
   userId: string,
 ): Promise<OnboardingMutationResult> => {
-  const admin = await prisma.adminProfile.findUnique({
-    where: { userId },
-    select: { id: true, onboardingCompletedAt: true },
-  });
-  if (!admin) {
-    throw new AppError(status.NOT_FOUND, "Admin profile not found", {
-      code: "ADMIN_PROFILE_NOT_FOUND",
-      retryable: false,
-    });
-  }
-
-  if (!admin.onboardingCompletedAt) {
-    await prisma.adminProfile.update({
-      where: { id: admin.id },
-      data: { onboardingCompletedSteps: [...REQUIRED_SETUP_KEYS] },
-    });
-  }
-
-  return buildOnboardingMutationResult(userId, admin.id);
+  const adminId = await prisma.$transaction(async tx => {
+    const owner = await lockOnboardingOwnerTx(tx, userId);
+    if (!owner.onboardingCompletedAt) {
+      await tx.adminProfile.update({ where: { id: owner.id }, data: { onboardingCompletedSteps: [...REQUIRED_SETUP_KEYS] } });
+    }
+    return owner.id;
+  }, { maxWait: 10_000, timeout: 25_000 });
+  return buildOnboardingMutationResult(userId, adminId);
 };
 
 /** Called only after the website has successfully published. */
 const finalizeOnboardingSetup = async (
   userId: string,
 ): Promise<OnboardingMutationResult> => {
-  const admin = await prisma.adminProfile.findUnique({
+  const adminId = await prisma.$transaction(async tx => {
+    const owner = await lockOnboardingOwnerTx(tx, userId);
+    const admin = await tx.adminProfile.findUnique({
     where: { userId },
     select: {
       id: true,
@@ -1226,14 +1170,16 @@ const finalizeOnboardingSetup = async (
       });
     }
 
-    await prisma.adminProfile.update({
+    await tx.adminProfile.update({
       where: { id: admin.id },
       data: { onboardingCompletedAt: new Date() },
     });
     logger.info("onboarding_completed", { event: "onboarding_completed", tenantHash: hashTelemetryId(admin.id), releaseSha: RELEASE_VERSION });
   }
 
-  return buildOnboardingMutationResult(userId, admin.id);
+    return owner.id;
+  }, { maxWait: 10_000, timeout: 25_000 });
+  return buildOnboardingMutationResult(userId, adminId);
 };
 
 // ─── Legacy skip endpoints ───────────────────────────────────────────────────
@@ -1251,24 +1197,12 @@ const skipOnboardingStep = async (
     });
   }
 
-  const admin = await prisma.adminProfile.findUnique({
-    where: { userId },
-    select: { id: true, skippedSteps: true },
-  });
-
-  if (!admin) {
-    throw new AppError(status.NOT_FOUND, "Admin profile not found", {
-      code: "ADMIN_PROFILE_NOT_FOUND",
-      retryable: false,
-    });
-  }
-
-  if (!admin.skippedSteps.includes(step)) {
-    await prisma.adminProfile.update({
-      where: { id: admin.id },
-      data: { skippedSteps: { push: step } },
-    });
-  }
+  await prisma.$transaction(async tx => {
+    const owner = await lockOnboardingOwnerTx(tx, userId);
+    const admin = await tx.adminProfile.findUniqueOrThrow({ where: { id: owner.id }, select: { skippedSteps: true } });
+    const skippedSteps = [...new Set([...admin.skippedSteps, step])];
+    await tx.adminProfile.update({ where: { id: owner.id }, data: { skippedSteps } });
+  }, { maxWait: 10_000, timeout: 25_000 });
 
   return { step, skipped: true, deprecated: true };
 };
@@ -1276,28 +1210,12 @@ const skipOnboardingStep = async (
 const skipAllOnboarding = async (
   userId: string,
 ): Promise<OnboardingStatusResult> => {
-  const admin = await prisma.adminProfile.findUnique({
-    where: { userId },
-    select: { id: true, skippedSteps: true },
-  });
-
-  if (!admin) {
-    throw new AppError(status.NOT_FOUND, "Admin profile not found", {
-      code: "ADMIN_PROFILE_NOT_FOUND",
-      retryable: false,
-    });
-  }
-
-  const newlySkipped = SKIPPABLE_ONBOARDING_STEPS.filter(
-    (step) => !admin.skippedSteps.includes(step),
-  );
-
-  if (newlySkipped.length > 0) {
-    await prisma.adminProfile.update({
-      where: { id: admin.id },
-      data: { skippedSteps: { push: [...newlySkipped] } },
-    });
-  }
+  await prisma.$transaction(async tx => {
+    const owner = await lockOnboardingOwnerTx(tx, userId);
+    const admin = await tx.adminProfile.findUniqueOrThrow({ where: { id: owner.id }, select: { skippedSteps: true } });
+    const skippedSteps = [...new Set([...admin.skippedSteps, ...SKIPPABLE_ONBOARDING_STEPS])];
+    await tx.adminProfile.update({ where: { id: owner.id }, data: { skippedSteps } });
+  }, { maxWait: 10_000, timeout: 25_000 });
 
   return getOnboardingStatus(userId);
 };

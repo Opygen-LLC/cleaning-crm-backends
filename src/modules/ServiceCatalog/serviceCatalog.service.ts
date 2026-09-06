@@ -18,6 +18,7 @@ import { invalidateBookingFormsForAdmin } from "../BookingForm/bookingForm.cache
 import { ServiceStatus } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { allocateServiceSlugTx } from "./serviceCatalog.slug";
+import { lockServiceCatalogTx } from "./serviceCatalogConcurrency";
 
 
 const toAddOnsJson = (addOns: IServiceCatalogCreate["addOns"] | IServiceCatalogUpdate["addOns"]): Prisma.InputJsonValue =>
@@ -65,9 +66,10 @@ export const syncServiceCatalogSelectionTx = async (
   tx: Prisma.TransactionClient,
   adminId: string,
   payloads: IServiceCatalogSync[],
-  options: { authoritativeSelection?: boolean } = {},
+  options: { /** @deprecated Omission is never deletion. */ authoritativeSelection?: boolean; deactivateServiceCatalogIds?: readonly string[]; requireIdentityForExisting?: boolean } = {},
 ) => {
-  const normalized = payloads.map((payload) => ({
+  await lockServiceCatalogTx(tx, adminId);
+  const normalized = payloads.map(({ addOns, ...payload }) => ({
     ...payload,
     serviceName: payload.serviceName.trim(),
     description: payload.description.trim(),
@@ -76,7 +78,7 @@ export const syncServiceCatalogSelectionTx = async (
     legacyServiceType: payload.legacyServiceType === undefined
       ? inferLegacyServiceType(payload.serviceName)
       : payload.legacyServiceType,
-    addOns: toAddOnsJson(payload.addOns),
+    ...(addOns !== undefined ? { addOns: toAddOnsJson(addOns) } : {}),
   }));
 
   const seen = new Set<string>();
@@ -134,7 +136,7 @@ export const syncServiceCatalogSelectionTx = async (
       // Backward compatibility for older onboarding clients. New clients always
       // send serviceCatalogId for existing rows, so mutable names are no longer
       // the primary identity for edits/renames.
-      current = existingByName.get(targetNameKey);
+      current = options.requireIdentityForExisting ? undefined : existingByName.get(targetNameKey);
     }
 
     const nameOwner = existingByName.get(targetNameKey);
@@ -155,9 +157,9 @@ export const syncServiceCatalogSelectionTx = async (
       duration: payload.duration,
       category: payload.category,
       ...(payload.status !== undefined ? { status: payload.status } : {}),
-      onlineBookingEnabled: payload.onlineBookingEnabled ?? true,
+      ...(payload.onlineBookingEnabled !== undefined ? { onlineBookingEnabled: payload.onlineBookingEnabled } : {}),
       legacyServiceType: payload.legacyServiceType,
-      addOns: payload.addOns,
+      ...(payload.addOns !== undefined ? { addOns: payload.addOns } : {}),
     };
     if (current) {
       const updated = await tx.serviceCatalog.update({ where: { id: current.id }, data });
@@ -180,18 +182,21 @@ export const syncServiceCatalogSelectionTx = async (
     }
   }
 
-  // The onboarding command sends the complete selected set, so omitted active
-  // catalog entries must become inactive. This makes deselection durable while
-  // preserving historical records referenced by bookings/invoices. Other bulk
-  // callers keep the legacy non-destructive upsert behavior by default.
-  if (options.authoritativeSelection) {
-    const selectedIds = result.map((service: { id: string }) => service.id);
+  // Explicit removals only. A paginated client (including legacy clients) can
+  // never deactivate unseen rows by omitting them from an upsert request.
+  const deactivateIds = [...new Set(options.deactivateServiceCatalogIds ?? [])];
+  const selectedIds = new Set(result.map(service => service.id));
+  for (const id of deactivateIds) {
+    if (!existingById.has(id) || selectedIds.has(id)) {
+      throw new AppError(status.UNPROCESSABLE_ENTITY, "Invalid service deselection", {
+        code: "SERVICE_CATALOG_ID_INVALID", retryable: false,
+        fieldErrors: { deactivateServiceCatalogIds: "Use only unselected services belonging to this business." },
+      });
+    }
+  }
+  if (deactivateIds.length) {
     await tx.serviceCatalog.updateMany({
-      where: {
-        adminId,
-        status: ServiceStatus.ACTIVE,
-        ...(selectedIds.length > 0 ? { id: { notIn: selectedIds } } : {}),
-      },
+      where: { adminId, id: { in: deactivateIds }, status: ServiceStatus.ACTIVE },
       data: { status: ServiceStatus.INACTIVE },
     });
   }
@@ -209,6 +214,7 @@ const createServiceCatalog = async (
     : payload.legacyServiceType;
 
   const created = await prisma.$transaction(async (tx) => {
+    await lockServiceCatalogTx(tx, adminId);
     const slug = await allocateServiceSlugTx(tx, adminId, payload.serviceName);
     return tx.serviceCatalog.create({
       data: {
@@ -270,22 +276,22 @@ const updateServiceCatalog = async (
   user: IRequestUser,
 ) => {
   const adminId = await getAdminId(user);
-  const service = await prisma.serviceCatalog.findFirst({ where: { id, adminId } });
-  if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
-
-  const legacyServiceType = payload.legacyServiceType !== undefined
-    ? payload.legacyServiceType
-    : payload.serviceName
-      ? inferLegacyServiceType(payload.serviceName)
-      : undefined;
-
-  const updated = await prisma.serviceCatalog.update({
-    where: { id },
-    data: {
-      ...payload,
-      ...(legacyServiceType !== undefined ? { legacyServiceType } : {}),
-      addOns: payload.addOns ? toAddOnsJson(payload.addOns) : undefined,
-    },
+  const updated = await prisma.$transaction(async tx => {
+    await lockServiceCatalogTx(tx, adminId);
+    const service = await tx.serviceCatalog.findFirst({ where: { id, adminId } });
+    if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
+    const legacyServiceType = payload.legacyServiceType !== undefined
+      ? payload.legacyServiceType
+      : payload.serviceName ? inferLegacyServiceType(payload.serviceName) : undefined;
+    const { addOns, ...fields } = payload;
+    return tx.serviceCatalog.update({
+      where: { id },
+      data: {
+        ...fields,
+        ...(legacyServiceType !== undefined ? { legacyServiceType } : {}),
+        ...(addOns !== undefined ? { addOns: toAddOnsJson(addOns) } : {}),
+      },
+    });
   });
   await invalidateServiceCatalogReadModels(adminId);
   return normalizeServiceForApi(updated);
@@ -293,14 +299,11 @@ const updateServiceCatalog = async (
 
 const deleteServiceCatalog = async (id: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
-  const service = await prisma.serviceCatalog.findFirst({
-    where: { id, adminId },
-    select: { id: true },
-  });
-  if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
-  const deleted = await prisma.serviceCatalog.delete({
-    where: { id },
-    select: { id: true },
+  const deleted = await prisma.$transaction(async tx => {
+    await lockServiceCatalogTx(tx, adminId);
+    const service = await tx.serviceCatalog.findFirst({ where: { id, adminId }, select: { id: true } });
+    if (!service) throw new AppError(status.NOT_FOUND, "Service not found");
+    return tx.serviceCatalog.delete({ where: { id }, select: { id: true } });
   });
   await invalidateServiceCatalogReadModels(adminId);
   return { id: deleted.id };

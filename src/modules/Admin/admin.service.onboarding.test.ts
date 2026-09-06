@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../lib/prisma/prisma", () => ({
   prisma: {
-    adminProfile: { findUnique: vi.fn(), update: vi.fn() },
+    adminProfile: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
     serviceCatalog: { findFirst: vi.fn() },
     $queryRaw: vi.fn(),
+    $transaction: vi.fn(),
+    businessWebsite: { updateMany: vi.fn() },
   },
 }));
 
@@ -23,9 +25,10 @@ import { prisma } from "../../lib/prisma/prisma";
 import { adminService } from "./admin.service";
 
 const db = prisma as unknown as {
-  adminProfile: { findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+  adminProfile: { findUnique: ReturnType<typeof vi.fn>; findUniqueOrThrow: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
   serviceCatalog: { findFirst: ReturnType<typeof vi.fn> };
   $queryRaw: ReturnType<typeof vi.fn>;
+  $transaction: ReturnType<typeof vi.fn>;
 };
 
 const USER_ID = "user-1";
@@ -37,6 +40,7 @@ const statusRow = (completed: string[] = [], finished: Date | null = null) => ({
   updatedAt: new Date("2026-08-18T00:00:00Z"),
   onboardingCompletedAt: finished,
   onboardingCompletedSteps: completed,
+  businessWebsite: { id: "website-1", status: finished ? "PUBLISHED" : "DRAFT", subdomain: "bio-cleaning", publishedAt: finished },
 });
 
 
@@ -59,7 +63,7 @@ const bootstrapRow = (overrides: Record<string, unknown> = {}) => ({
     id: "website-1",
     subdomain: "bio-cleaning",
     status: "PROVISIONED",
-    logo: null,
+    logo: null, favicon: null, draftRevisionNumber: 1, publishedRevisionNumber: null, templateVersion: "1.0.0",
     primaryColor: "#0F766E",
     secondaryColor: "#0F172A",
     accentColor: "#14B8A6",
@@ -85,6 +89,8 @@ const optionalCounts = () => {
 beforeEach(() => {
   vi.clearAllMocks();
   optionalCounts();
+  db.$transaction.mockImplementation(async (fn: (tx: typeof db) => unknown) => fn(db));
+  db.adminProfile.findUniqueOrThrow.mockImplementation((args: unknown) => db.adminProfile.findUnique(args));
   db.serviceCatalog.findFirst.mockResolvedValue({ id: "service-1" });
 });
 
@@ -236,8 +242,9 @@ describe("website-first onboarding status", () => {
 
   it("marks every setup step for skip without stamping completion before publish", async () => {
     db.adminProfile.findUnique
-      .mockResolvedValueOnce({ id: ADMIN_ID, onboardingCompletedAt: null })
-      .mockResolvedValueOnce(statusRow(STEPS));
+      .mockResolvedValueOnce(statusRow([]))
+      .mockResolvedValueOnce(statusRow([]))
+      .mockResolvedValue(statusRow(STEPS));
     db.adminProfile.update.mockResolvedValue({});
 
     const result = await adminService.skipWebsiteOnboardingSetup(USER_ID);
