@@ -1,11 +1,13 @@
 import {
-  OUTBOX_WORKER_ENABLED,
   OUTBOX_WORKER_POLL_MS,
+  OUTBOX_WORKER_REQUIRED,
   SMTP_EMAIL,
+  SMTP_HEALTHCHECK_INTERVAL_MS,
   SMTP_HOST,
   SMTP_PASSWORD,
   SMTP_PORT,
   SMTP_SECURE,
+  SMTP_VERIFY_ON_STARTUP,
 } from "../../config/ENV";
 import redis from "../../config/redis";
 import { AUTH_EMAIL_OUTBOX_TOPIC } from "../outbox/authEmailOutbox";
@@ -15,17 +17,30 @@ export const EMAIL_OUTBOX_WORKER_HEARTBEAT_KEY =
   "ops:email-outbox-worker:heartbeat:v1";
 export const EMAIL_OUTBOX_LAST_SUCCESS_KEY =
   "ops:email-outbox-worker:last-success:v1";
+export const SMTP_TRANSPORT_HEALTH_KEY =
+  "ops:smtp-transport:health:v1";
 
 const heartbeatTtlSeconds = Math.max(
   30,
   Math.ceil((OUTBOX_WORKER_POLL_MS * 6) / 1000),
 );
 const heartbeatFreshnessMs = heartbeatTtlSeconds * 1000;
+const smtpHealthTtlSeconds = Math.max(
+  180,
+  Math.ceil((SMTP_HEALTHCHECK_INTERVAL_MS * 3) / 1000),
+);
+const smtpHealthFreshnessMs = smtpHealthTtlSeconds * 1000;
 
 interface WorkerHeartbeat {
   at: string;
   pid: number;
   processRole: "worker";
+}
+
+interface SmtpTransportHealth {
+  at: string;
+  ok: boolean;
+  error: string | null;
 }
 
 export async function recordEmailOutboxWorkerHeartbeat(): Promise<void> {
@@ -49,6 +64,25 @@ export async function recordEmailOutboxSuccessfulDelivery(): Promise<void> {
   await redis.set(EMAIL_OUTBOX_LAST_SUCCESS_KEY, new Date().toISOString());
 }
 
+export async function recordSmtpTransportHealth(
+  ok: boolean,
+  error?: string | null,
+): Promise<void> {
+  const payload: SmtpTransportHealth = {
+    at: new Date().toISOString(),
+    ok,
+    // Store only the already-sanitized transport error from verifyEmailTransport.
+    // Never persist credentials, recipients, or message bodies in the health key.
+    error: ok ? null : String(error || "SMTP transport verification failed").slice(0, 500),
+  };
+  await redis.set(
+    SMTP_TRANSPORT_HEALTH_KEY,
+    JSON.stringify(payload),
+    "EX",
+    smtpHealthTtlSeconds,
+  );
+}
+
 const readHeartbeat = async (): Promise<WorkerHeartbeat | null> => {
   const raw = await redis.get(EMAIL_OUTBOX_WORKER_HEARTBEAT_KEY).catch(() => null);
   if (!raw) return null;
@@ -63,6 +97,22 @@ const readHeartbeat = async (): Promise<WorkerHeartbeat | null> => {
       return null;
     }
     return parsed as WorkerHeartbeat;
+  } catch {
+    return null;
+  }
+};
+
+const readSmtpHealth = async (): Promise<SmtpTransportHealth | null> => {
+  const raw = await redis.get(SMTP_TRANSPORT_HEALTH_KEY).catch(() => null);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<SmtpTransportHealth>;
+    if (typeof parsed.at !== "string" || typeof parsed.ok !== "boolean") return null;
+    return {
+      at: parsed.at,
+      ok: parsed.ok,
+      error: typeof parsed.error === "string" ? parsed.error : null,
+    };
   } catch {
     return null;
   }
@@ -95,6 +145,13 @@ const smtpConfiguration = () => {
   };
 };
 
+const ageMs = (value?: string | null): number | null => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return Math.max(0, Date.now() - date.getTime());
+};
+
 export async function getEmailOutboxHealth() {
   const topic = AUTH_EMAIL_OUTBOX_TOPIC.EMAIL_VERIFICATION_REQUESTED;
 
@@ -105,6 +162,7 @@ export async function getEmailOutboxHealth() {
     oldestPending,
     lastSuccessfulDeliveryAt,
     heartbeat,
+    smtpTransport,
   ] = await Promise.all([
     prisma.outboxEvent.count({
       where: {
@@ -126,31 +184,43 @@ export async function getEmailOutboxHealth() {
     }),
     redis.get(EMAIL_OUTBOX_LAST_SUCCESS_KEY).catch(() => null),
     readHeartbeat(),
+    readSmtpHealth(),
   ]);
 
   const smtp = smtpConfiguration();
-  const heartbeatAt = heartbeat?.at ? new Date(heartbeat.at) : null;
-  const heartbeatAgeMs =
-    heartbeatAt && Number.isFinite(heartbeatAt.getTime())
-      ? Math.max(0, Date.now() - heartbeatAt.getTime())
-      : null;
-  const workerAlive =
-    OUTBOX_WORKER_ENABLED &&
-    heartbeatAgeMs !== null &&
-    heartbeatAgeMs <= heartbeatFreshnessMs;
+  const heartbeatAgeMs = ageMs(heartbeat?.at);
+  const workerAlive = heartbeatAgeMs !== null && heartbeatAgeMs <= heartbeatFreshnessMs;
+
+  const smtpCheckAgeMs = ageMs(smtpTransport?.at);
+  const smtpCheckFresh = smtpCheckAgeMs !== null && smtpCheckAgeMs <= smtpHealthFreshnessMs;
+  const smtpConnectivityHealthy = SMTP_VERIFY_ON_STARTUP
+    ? Boolean(smtpTransport?.ok && smtpCheckFresh)
+    : null;
 
   const oldestPendingAgeMs = oldestPending
     ? Math.max(0, Date.now() - oldestPending.createdAt.getTime())
     : null;
 
-  const healthy = smtp.configured && workerAlive && deadLetterCount === 0;
+  const workerHealthy = !OUTBOX_WORKER_REQUIRED || workerAlive;
+  const smtpHealthy = smtp.configured && (smtpConnectivityHealthy !== false);
+  const healthy = smtpHealthy && workerHealthy && deadLetterCount === 0;
 
   return {
     healthy,
     status: healthy ? "ok" : "degraded",
-    smtp,
+    smtp: {
+      ...smtp,
+      verifyOnStartup: SMTP_VERIFY_ON_STARTUP,
+      healthcheckIntervalMs: SMTP_HEALTHCHECK_INTERVAL_MS,
+      connectivity: {
+        healthy: smtpConnectivityHealthy,
+        checkedAt: smtpTransport?.at ?? null,
+        ageMs: smtpCheckAgeMs,
+        error: smtpTransport?.error ?? null,
+      },
+    },
     worker: {
-      enabled: OUTBOX_WORKER_ENABLED,
+      required: OUTBOX_WORKER_REQUIRED,
       alive: workerAlive,
       heartbeatAt: heartbeat?.at ?? null,
       heartbeatAgeMs,

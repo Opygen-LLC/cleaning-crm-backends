@@ -27,6 +27,15 @@ const productionEnvSchema = z.object({
   SMTP_PASSWORD: nonEmpty,
   SMTP_HOST: nonEmpty,
   SMTP_PORT: port,
+  SMTP_SECURE: z.enum(["true", "false"]).optional(),
+  SMTP_FROM: z.string().trim().email().optional(),
+  SMTP_VERIFY_ON_STARTUP: z.enum(["true", "false"]).optional(),
+  SMTP_HEALTHCHECK_INTERVAL_MS: z.coerce.number().int().min(60_000).max(3_600_000).optional(),
+  OUTBOX_WORKER_ENABLED: z.enum(["true", "false"]).optional(),
+  OUTBOX_WORKER_REQUIRED: z.enum(["true", "false"]).optional(),
+  OUTBOX_WORKER_POLL_MS: z.coerce.number().int().min(500).max(60_000).optional(),
+  OUTBOX_WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).optional(),
+  OUTBOX_LOCK_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(15 * 60_000).optional(),
   CLOUDINARY_CLOUD_NAME: nonEmpty,
   CLOUDINARY_API_KEY: nonEmpty,
   CLOUDINARY_API_SECRET: nonEmpty,
@@ -141,5 +150,19 @@ export const assertRuntimeEnvironment = (): void => {
       .join("; ");
     throw new Error(`Invalid production environment for ${PROCESS_ROLE}: ${details}`);
   }
+
+  // Production must have one unambiguous durable-outbox owner. API processes
+  // enqueue only; the dedicated worker consumes. This fails fast if a shared
+  // env file accidentally turns queue polling back on in the web process.
+  if (PROCESS_ROLE === "api" && process.env.OUTBOX_WORKER_ENABLED !== "false") {
+    throw new Error("Invalid production environment for api: OUTBOX_WORKER_ENABLED must be false; run the dedicated worker process instead.");
+  }
+  if (PROCESS_ROLE === "api" && process.env.OUTBOX_WORKER_REQUIRED === "false") {
+    throw new Error("Invalid production environment for api: OUTBOX_WORKER_REQUIRED cannot be false because registration verification depends on the dedicated worker.");
+  }
+  if (PROCESS_ROLE === "worker" && process.env.OUTBOX_WORKER_ENABLED === "false") {
+    throw new Error("Invalid production environment for worker: OUTBOX_WORKER_ENABLED must not be false.");
+  }
+
   validated = true;
 };

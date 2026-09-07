@@ -242,6 +242,32 @@ describe("complete auth lifecycle service regression", () => {
     expect(mocks.signInEmail).not.toHaveBeenCalled();
   });
 
+  it("queues a fresh verification event when an unverified account requests resend", async () => {
+    mocks.userFindUnique.mockResolvedValue({
+      id: "user-1",
+      email: "jamie@example.com",
+      emailVerified: false,
+    });
+
+    await expect(authService.resendOtp("jamie@example.com")).resolves.toBeUndefined();
+
+    expect(mocks.enqueueEmailVerification).toHaveBeenCalledWith(
+      { userId: "user-1", email: "jamie@example.com" },
+      { dedupeKey: expect.stringMatching(/^resend-email-verification:user-1:/) },
+    );
+  });
+
+  it("keeps resend enumeration-safe and does not queue for an already verified account", async () => {
+    mocks.userFindUnique.mockResolvedValue({
+      id: "user-1",
+      email: "jamie@example.com",
+      emailVerified: true,
+    });
+
+    await expect(authService.resendOtp("jamie@example.com")).resolves.toBeUndefined();
+    expect(mocks.enqueueEmailVerification).not.toHaveBeenCalled();
+  });
+
   it("does not return onboarding/password routing authority from login", async () => {
     const result = await authService.login({ email: "jamie@example.com", password: "correct-password" });
     expect(result).not.toHaveProperty("isOnboardingComplete");

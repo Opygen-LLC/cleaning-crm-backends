@@ -95,6 +95,19 @@ describe("verifyEmail optimized ADMIN activation", () => {
     expect(mocks.userUpdate).not.toHaveBeenCalled();
   });
 
+  it("does not activate the account when Better Auth rejects an invalid or expired OTP", async () => {
+    mocks.verifyEmailOTP.mockRejectedValue(Object.assign(new Error("Invalid or expired OTP"), {
+      statusCode: 400,
+      code: "INVALID_OTP",
+    }));
+
+    await expect(authService.verifyEmail("jamie@example.com", "000000")).rejects.toMatchObject({
+      code: "INVALID_OTP",
+    });
+    expect(mocks.userUpdate).not.toHaveBeenCalled();
+    expect(mocks.bindRefreshCredentialToSession).not.toHaveBeenCalled();
+  });
+
   it("creates a server-side fallback session when Better Auth omits the auto-sign-in token", async () => {
     mocks.verifyEmailOTP.mockResolvedValue({ user: { ...verifiedAdmin } });
     const result = await authService.verifyEmail("jamie@example.com", "123456");

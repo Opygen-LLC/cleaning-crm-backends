@@ -108,10 +108,14 @@ export const REDIS_CIRCUIT_OPEN_MS: number = Math.min(60_000, Math.max(1_000, Nu
 export const DB_KEEPALIVE_ENABLED: boolean = process.env.DB_KEEPALIVE_ENABLED !== "false";
 export const DB_KEEPALIVE_CRON: string = process.env.DB_KEEPALIVE_CRON?.trim() || "*/2 * * * *";
 
-// Phase 2 durable transactional outbox. The web process may run the worker
-// in-process (safe across multiple replicas via FOR UPDATE SKIP LOCKED), or a
-// dedicated worker process can enable the same poller independently.
+// Durable transactional outbox. Production delivery is owned by the dedicated
+// worker process; API instances must set OUTBOX_WORKER_ENABLED=false so process
+// ownership is explicit. OUTBOX_WORKER_REQUIRED controls the API health gate and
+// defaults to true only in production.
 export const OUTBOX_WORKER_ENABLED: boolean = process.env.OUTBOX_WORKER_ENABLED !== "false";
+export const OUTBOX_WORKER_REQUIRED: boolean = process.env.OUTBOX_WORKER_REQUIRED === undefined
+    ? NODE_ENV === "production"
+    : process.env.OUTBOX_WORKER_REQUIRED === "true";
 export const OUTBOX_WORKER_POLL_MS: number = Math.min(60_000, Math.max(500, Number(process.env.OUTBOX_WORKER_POLL_MS) || 1_000));
 export const OUTBOX_WORKER_BATCH_SIZE: number = Math.min(100, Math.max(1, Math.trunc(Number(process.env.OUTBOX_WORKER_BATCH_SIZE) || 10)));
 export const OUTBOX_LOCK_TIMEOUT_MS: number = Math.min(15 * 60_000, Math.max(30_000, Number(process.env.OUTBOX_LOCK_TIMEOUT_MS) || 120_000));
@@ -167,6 +171,7 @@ export const SMTP_SECURE: string | undefined = process.env.SMTP_SECURE;
 export const SMTP_FROM: string | undefined = process.env.SMTP_FROM?.trim() || undefined;
 export const SMTP_FROM_NAME: string = process.env.SMTP_FROM_NAME?.trim() || "Opygen Cleaning CRM";
 export const SMTP_VERIFY_ON_STARTUP: boolean = process.env.SMTP_VERIFY_ON_STARTUP !== "false";
+export const SMTP_HEALTHCHECK_INTERVAL_MS: number = Math.min(60 * 60_000, Math.max(60_000, Number(process.env.SMTP_HEALTHCHECK_INTERVAL_MS) || 5 * 60_000));
 export const LOG_SQL_DETAILS: boolean = process.env.LOG_SQL_DETAILS === "true";
 export const VAPID_PUBLIC_KEY: string | undefined = process.env.VAPID_PUBLIC_KEY;
 export const VAPID_PRIVATE_KEY: string | undefined = process.env.VAPID_PRIVATE_KEY;

@@ -4,6 +4,7 @@ export default defineConfig({
     entry: [
         "src/index.ts",
         "src/processes/worker.ts",
+        "src/processes/workerHealthcheck.ts",
         "src/processes/scheduler.ts",
         "src/processes/bootstrap.ts",
         "src/scripts/backfillBusinessWebsites.ts",

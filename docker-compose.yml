@@ -53,7 +53,15 @@ services:
       PROCESS_ROLE: api
       PORT: 3000
       BACKEND_IP: 0.0.0.0
-      OUTBOX_WORKER_ENABLED: "true"
+      # Delivery ownership is intentionally worker-only. The API health endpoint
+      # still requires a fresh worker heartbeat through OUTBOX_WORKER_REQUIRED.
+      OUTBOX_WORKER_ENABLED: "false"
+      OUTBOX_WORKER_REQUIRED: "true"
+    depends_on:
+      redis:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
     ports:
       - "127.0.0.1:3000:3000"
     healthcheck:
@@ -63,12 +71,45 @@ services:
       start_period: 30s
       retries: 5
 
+  # Dedicated durable-outbox consumer. Registration, resend and unverified-login
+  # verification emails are queued transactionally and delivered only here.
+  worker:
+    <<: *app-common
+    container_name: cleaning_crm_worker
+    command: ["node", "dist/worker.js"]
+    environment:
+      <<: *common-environment
+      PROCESS_ROLE: worker
+      OUTBOX_WORKER_ENABLED: "true"
+      OUTBOX_WORKER_REQUIRED: "true"
+    healthcheck:
+      test: ["CMD", "node", "dist/workerHealthcheck.js"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+
+  # Scheduled subscription/booking/invoice/reminder/retention jobs. Cron modules
+  # are imported only by this process, preventing duplicate schedules in the API.
+  scheduler:
+    <<: *app-common
+    container_name: cleaning_crm_scheduler
+    command: ["node", "dist/scheduler.js"]
+    environment:
+      <<: *common-environment
+      PROCESS_ROLE: scheduler
+      OUTBOX_WORKER_ENABLED: "false"
+    # The production image's default healthcheck targets the API HTTP server;
+    # scheduler has no HTTP listener, so explicitly disable that inherited probe.
+    healthcheck:
+      disable: true
+
   # Explicit one-shot seed/bootstrap task. Never runs with normal compose up.
   bootstrap:
     <<: *app-common
     profiles: ["bootstrap"]
     restart: "no"
-    command: ["node", "dist/processes/bootstrap.js"]
+    command: ["node", "dist/bootstrap.js"]
     environment:
       <<: *common-environment
       PROCESS_ROLE: bootstrap

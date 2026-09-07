@@ -45,10 +45,18 @@ const assertSmtpConfiguration = () => {
     if (!normalizedHost) missing.push("SMTP_HOST");
     if (!smtpUser) missing.push("SMTP_EMAIL");
     if (!smtpPassword) missing.push("SMTP_PASSWORD");
-    if (!Number.isFinite(portNumber) || portNumber <= 0) missing.push("SMTP_PORT");
+    if (!Number.isFinite(portNumber) || portNumber <= 0 || portNumber > 65_535) missing.push("SMTP_PORT");
 
     if (missing.length > 0) {
         throw new Error(`Email delivery is not configured. Missing: ${missing.join(", ")}.`);
+    }
+
+    const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!looksLikeEmail.test(smtpUser)) {
+        throw new Error("SMTP_EMAIL must be a valid email address.");
+    }
+    if (!looksLikeEmail.test(fromAddress)) {
+        throw new Error("SMTP_FROM must be a valid email address when provided.");
     }
 };
 
@@ -81,6 +89,12 @@ export const transporter = nodemailer.createTransport({
     host: SMTP_HOST,
     port: portNumber,
     secure: isSecure,
+    // Port 587 is the standard SMTP submission port. Requiring STARTTLS avoids
+    // silently continuing in clear text if a custom relay is misconfigured.
+    requireTLS: portNumber === 587,
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
     auth: {
         user: smtpUser,
         pass: smtpPassword,
@@ -90,7 +104,7 @@ export const transporter = nodemailer.createTransport({
     },
 });
 
-export const verifyEmailTransport = async () => {
+export const verifyEmailTransport = async (options: { logSuccess?: boolean } = {}) => {
     assertSmtpConfiguration();
     if (SMTP_SECURE !== undefined && configuredSecure !== isSecure) {
         logger.warn(
@@ -99,9 +113,11 @@ export const verifyEmailTransport = async () => {
     }
     try {
         await transporter.verify();
-        logger.info(
-            `Email service ready — ${SMTP_HOST}:${portNumber} as ${maskEmail(smtpUser)}.`,
-        );
+        if (options.logSuccess !== false) {
+            logger.info(
+                `Email service ready — ${SMTP_HOST}:${portNumber} as ${maskEmail(smtpUser)}.`,
+            );
+        }
     } catch (error) {
         const message = readableSmtpError(error);
         logger.error(`Email service unavailable — ${message}`);
