@@ -10,22 +10,24 @@ async function main() {
         port: Number(process.env.REDIS_PORT) || 6379,
         password: process.env.REDIS_PASSWORD || undefined,
         db: Number(process.env.REDIS_DB) || 0,
-        lazyConnect: false,
-        enableOfflineQueue: false,
-        maxRetriesPerRequest: 0,
-        connectTimeout: 1_500,
-        commandTimeout: 1_000,
+        lazyConnect: true,
+        enableOfflineQueue: true,
+        maxRetriesPerRequest: 1,
+        connectTimeout: 2_000,
+        commandTimeout: 2_000,
     });
     redis.on("error", () => undefined);
 
     try {
+        await redis.connect();
         const raw = await redis.get(HEARTBEAT_KEY);
-        if (!raw) process.exitCode = 1;
-        else {
+        if (!raw) {
+            process.exitCode = 1;
+        } else {
             const parsed = JSON.parse(raw) as { at?: unknown; processRole?: unknown };
             const at = typeof parsed.at === "string" ? new Date(parsed.at) : null;
             const age = at && Number.isFinite(at.getTime()) ? Date.now() - at.getTime() : Number.POSITIVE_INFINITY;
-            process.exitCode = parsed.processRole === "worker" && age >= 0 && age <= freshnessMs ? 0 : 1;
+            process.exitCode = parsed.processRole === "worker" && age >= -5_000 && age <= freshnessMs ? 0 : 1;
         }
     } catch {
         process.exitCode = 1;
@@ -34,4 +36,7 @@ async function main() {
     }
 }
 
-void main();
+main().catch(() => {
+    process.exitCode = 1;
+});
+
