@@ -32,6 +32,22 @@ test('all four immutable v1, v2 and v3 renderer contracts are registered',()=>wi
     assert.throws(()=>TemplateRegistry.requirePublishable(id,'3.0.0'),{code:'WEBSITE_TEMPLATE_RELEASE_UNAVAILABLE'});
   }
 }));
+test('v3 catalog metadata exposes four distinct design families without tenant claims',()=>{
+  const expected={
+    'clean-modern':['Split photo hero','Service-first grid','Strong dark footer'],
+    'premium-home':['Editorial typography','Asymmetric service layout','Review-led proof band'],
+    'commercial-pro':['Estimate-first hero','Operational service scope','Structured coverage'],
+    'local-cleaning':['Phone and booking emphasis','Visible real prices','Local coverage focus'],
+  };
+  for(const [id,highlights] of Object.entries(expected)) {
+    const template=TemplateRegistry.requireTemplate(id,'3.0.0');
+    assert.deepEqual(template.highlights,highlights);
+    assert.match(template.thumbnail,new RegExp(`/website-catalog/templates/${id}/3\\.0\\.0/home\\.webp$`));
+  }
+  const descriptions=new Set(Object.keys(expected).map(id=>TemplateRegistry.requireTemplate(id,'3.0.0').description));
+  assert.equal(descriptions.size,4);
+  assert.doesNotMatch(JSON.stringify([...descriptions]),/insured|certified|guarantee|years? of experience|5,?000|eco[- ]friendly/i);
+});
 test('v2 and v3 gates are independent and the default is configured separately',()=>{
   withRelease(true,false,'1.0.0',()=>{assert.equal(TemplateRegistry.listSelectable().length,8);assert.equal(TemplateRegistry.requireSelectable('clean-modern','2.0.0').version,'2.0.0');});
   withRelease(false,true,'1.0.0',()=>{assert.equal(TemplateRegistry.listSelectable().length,8);assert.equal(TemplateRegistry.requireSelectable('clean-modern','3.0.0').version,'3.0.0');});

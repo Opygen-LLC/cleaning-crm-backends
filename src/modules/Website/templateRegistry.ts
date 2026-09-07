@@ -100,10 +100,16 @@ for (const original of [...rawDefinitions]) {
     "local-cleaning": "An approachable local layout with coverage, contact details and easy booking.",
   };
   const foundationDescriptions: Record<string, string> = {
-    "clean-modern": "A restrained service-first foundation with Urbanist typography, real catalog data and tenant-owned media.",
-    "premium-home": "A refined home-service foundation with Urbanist typography, generous whitespace and real business content.",
-    "commercial-pro": "A structured commercial foundation focused on real service scope, estimates and published business details.",
-    "local-cleaning": "A direct local-services foundation centered on current services, coverage, contact details and booking availability.",
+    "clean-modern": "A bright service-first residential layout with a clear split hero, structured service browsing and a strong dark footer.",
+    "premium-home": "An editorial monochrome home-care layout with oversized Urbanist typography, asymmetric content and restrained image-led storytelling.",
+    "commercial-pro": "An operational deep-green commercial layout with estimate-first conversion, structured service scope and coverage information.",
+    "local-cleaning": "A direct local-conversion layout that keeps phone contact, current service details, booking and service areas easy to reach.",
+  };
+  const foundationHighlights: Record<string, readonly string[]> = {
+    "clean-modern": ["Split photo hero", "Service-first grid", "Strong dark footer"],
+    "premium-home": ["Editorial typography", "Asymmetric service layout", "Review-led proof band"],
+    "commercial-pro": ["Estimate-first hero", "Operational service scope", "Structured coverage"],
+    "local-cleaning": ["Phone and booking emphasis", "Visible real prices", "Local coverage focus"],
   };
   rawDefinitions.push({
     ...original,
@@ -117,7 +123,7 @@ for (const original of [...rawDefinitions]) {
     version: "3.0.0",
     description: foundationDescriptions[original.id],
     thumbnail: `/website-catalog/templates/${original.id}/3.0.0/home.webp`,
-    highlights: ["Urbanist typography", "Restrained responsive geometry", "Only real CRM content and tenant media"],
+    highlights: foundationHighlights[original.id],
   });
 }
 

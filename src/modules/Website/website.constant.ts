@@ -53,6 +53,22 @@ export const DEFAULT_WEBSITE_PAGES = [
       secondaryCtaLabel: "Request an estimate",
       servicesHeading: "Current cleaning services",
       servicesIntro: "Service details shown on the website come from the business service catalog.",
+      howItWorksHeading: "A straightforward place to start",
+      howItWorksIntro: "",
+      howItWorksSteps: [
+        {
+          title: "Explore services",
+          description: "Review the services currently published by the business.",
+        },
+        {
+          title: "Choose how to get in touch",
+          description: "Use the booking, estimate or contact option that is available on this website.",
+        },
+        {
+          title: "Review your details",
+          description: "Check the information you have entered before you submit it.",
+        },
+      ],
       aboutHeading: "About the business",
       aboutBody: "",
       whyHeading: "Business information",

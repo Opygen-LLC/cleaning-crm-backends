@@ -41,6 +41,21 @@ describe("TemplateRegistry", () => {
     expect(local.highlights).toContain("Visible service prices");
   });
 
+  it("keeps the four 3.0.0 design families intentionally distinct", () => {
+    expect(TemplateRegistry.requireTemplate("clean-modern", "3.0.0").highlights).toEqual([
+      "Split photo hero", "Service-first grid", "Strong dark footer",
+    ]);
+    expect(TemplateRegistry.requireTemplate("premium-home", "3.0.0").highlights).toEqual([
+      "Editorial typography", "Asymmetric service layout", "Review-led proof band",
+    ]);
+    expect(TemplateRegistry.requireTemplate("commercial-pro", "3.0.0").highlights).toEqual([
+      "Estimate-first hero", "Operational service scope", "Structured coverage",
+    ]);
+    expect(TemplateRegistry.requireTemplate("local-cleaning", "3.0.0").highlights).toEqual([
+      "Phone and booking emphasis", "Visible real prices", "Local coverage focus",
+    ]);
+  });
+
   it("rejects unknown versions rather than silently upgrading tenants", () => {
     expect(() => TemplateRegistry.requireTemplate("clean-modern", "9.9.9")).toThrow();
   });
