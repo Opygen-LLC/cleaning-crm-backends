@@ -1,18 +1,18 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-    entry: [
-        "src/index.ts",
-        "src/processes/worker.ts",
-        "src/processes/workerHealthcheck.ts",
-        "src/processes/scheduler.ts",
-        "src/processes/bootstrap.ts",
-        "src/scripts/backfillBusinessWebsites.ts",
-        "src/scripts/migrateWebsiteRelease.ts",
-        "src/scripts/phase2/reconcileAdminProvisioning.ts",
-        "src/scripts/phase1/reconcilePublicationDelivery.ts",
-        "src/scripts/performance/websitePreflight.ts",
-    ],
+    entry: {
+        index: "src/index.ts",
+        worker: "src/processes/worker.ts",
+        workerHealthcheck: "src/processes/workerHealthcheck.ts",
+        scheduler: "src/processes/scheduler.ts",
+        bootstrap: "src/processes/bootstrap.ts",
+        backfillBusinessWebsites: "src/scripts/backfillBusinessWebsites.ts",
+        migrateWebsiteRelease: "src/scripts/migrateWebsiteRelease.ts",
+        reconcileAdminProvisioning: "src/scripts/phase2/reconcileAdminProvisioning.ts",
+        reconcilePublicationDelivery: "src/scripts/phase1/reconcilePublicationDelivery.ts",
+        websitePreflight: "src/scripts/performance/websitePreflight.ts",
+    },
     format: ["esm"],
     target: "esnext",
     outDir: "dist",
