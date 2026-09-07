@@ -11,19 +11,23 @@ describe("TemplateRegistry", () => {
   });
 
   it("resolves a versionless template deterministically", () => {
-    expect(TemplateRegistry.requireTemplate("clean-modern").version).toBe("2.0.0");
+    expect(TemplateRegistry.requireTemplate("clean-modern").version).toBe("3.0.0");
   });
 
-  it("retains all original versions alongside the refreshed runtime contracts", () => {
+  it("retains all original versions alongside the refreshed and foundation runtime contracts", () => {
     expect(TemplateRegistry.list().map((template) => template.key).sort()).toEqual([
       "clean-modern@1.0.0",
       "clean-modern@2.0.0",
+      "clean-modern@3.0.0",
       "commercial-pro@1.0.0",
       "commercial-pro@2.0.0",
+      "commercial-pro@3.0.0",
       "local-cleaning@1.0.0",
       "local-cleaning@2.0.0",
+      "local-cleaning@3.0.0",
       "premium-home@1.0.0",
       "premium-home@2.0.0",
+      "premium-home@3.0.0",
     ]);
   });
 

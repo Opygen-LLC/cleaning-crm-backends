@@ -88,22 +88,36 @@ const rawDefinitions: RawWebsiteTemplateDefinition[] = [
   },
 ];
 
-// Version 1 remains immutable. Version 2 uses the same projection schema, but
-// has independent renderers/assets. Nothing here rewrites an existing tenant.
+// Version 1 remains immutable. Versions 2 and 3 use the same public projection
+// schema but independent renderer identities/assets. Persisted tenants keep the
+// explicit version they already selected; this registry never rewrites them.
 for (const original of [...rawDefinitions]) {
   original.thumbnail = `/website-catalog/templates/${original.id}/1.0.0/home.webp`;
-  const descriptions: Record<string, string> = {
+  const refreshedDescriptions: Record<string, string> = {
     "clean-modern": "A bright residential layout with a photo-led introduction and clear service cards.",
     "premium-home": "An editorial home-care layout with generous spacing and refined typography.",
     "commercial-pro": "A practical business layout for service scope, sectors, process and enquiries.",
     "local-cleaning": "An approachable local layout with coverage, contact details and easy booking.",
   };
+  const foundationDescriptions: Record<string, string> = {
+    "clean-modern": "A restrained service-first foundation with Urbanist typography, real catalog data and tenant-owned media.",
+    "premium-home": "A refined home-service foundation with Urbanist typography, generous whitespace and real business content.",
+    "commercial-pro": "A structured commercial foundation focused on real service scope, estimates and published business details.",
+    "local-cleaning": "A direct local-services foundation centered on current services, coverage, contact details and booking availability.",
+  };
   rawDefinitions.push({
     ...original,
     version: "2.0.0",
-    description: descriptions[original.id],
+    description: refreshedDescriptions[original.id],
     thumbnail: `/website-catalog/templates/${original.id}/2.0.0/home.webp`,
     highlights: ["Accessible navigation", "Responsive service and contact pages", "Your photos, reviews and brand"],
+  });
+  rawDefinitions.push({
+    ...original,
+    version: "3.0.0",
+    description: foundationDescriptions[original.id],
+    thumbnail: `/website-catalog/templates/${original.id}/3.0.0/home.webp`,
+    highlights: ["Urbanist typography", "Restrained responsive geometry", "Only real CRM content and tenant media"],
   });
 }
 
@@ -189,17 +203,25 @@ const requireTemplate = (templateId: string, version?: string) => {
   return template;
 };
 
-/** Selection is enabled only after all public frontend instances know v2.
- * Reads deliberately ignore the flag: rollback must not remove a live renderer. */
+/** Selection is enabled only after matching frontend runtimes are deployed.
+ * Reads deliberately ignore gates: rollback must not remove a live renderer. */
 const listSelectable = () => {
   const release = readWebsiteTemplateRelease();
-  return list().filter((template) => template.version === "1.0.0" || release.refreshedEnabled);
+  return list().filter((template) =>
+    template.version === "1.0.0" ||
+    (template.version === "2.0.0" && release.refreshedEnabled) ||
+    (template.version === "3.0.0" && release.foundationEnabled),
+  );
 };
 
 const requireSelectable = (id: string, version: string, current?: { templateId: string; templateVersion: string }) => {
   const template = requireTemplate(id, version);
   const unchanged = current?.templateId === id && current.templateVersion === version;
-  if (!unchanged && version === "2.0.0" && !readWebsiteTemplateRelease().refreshedEnabled) {
+  const release = readWebsiteTemplateRelease();
+  const unavailable =
+    (version === "2.0.0" && !release.refreshedEnabled) ||
+    (version === "3.0.0" && !release.foundationEnabled);
+  if (!unchanged && unavailable) {
     throw new AppError(status.CONFLICT, "This template release is not available yet. Reload the template library.", {
       code: "WEBSITE_TEMPLATE_RELEASE_UNAVAILABLE", retryable: false,
     });

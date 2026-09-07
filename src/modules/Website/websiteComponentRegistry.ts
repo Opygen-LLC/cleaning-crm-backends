@@ -132,8 +132,13 @@ export const assertWebsiteDesignPublishable = (
         retryable: false,
       });
     }
-    if (definition.id.endsWith(".v2") && !readWebsiteTemplateRelease().refreshedEnabled) {
-      throw new AppError(status.CONFLICT, "Refreshed sections are not available for publication yet.", { code: "WEBSITE_TEMPLATE_RELEASE_UNAVAILABLE", retryable: false });
+    if (definition.id.endsWith(".v2")) {
+      const release = readWebsiteTemplateRelease();
+      if (!release.refreshedEnabled && !release.foundationEnabled) {
+        throw new AppError(status.CONFLICT, "Modern website sections are not available for publication yet.", {
+          code: "WEBSITE_TEMPLATE_RELEASE_UNAVAILABLE", retryable: false,
+        });
+      }
     }
     if (definition.status !== "ACTIVE") {
       throw new AppError(status.CONFLICT, `Website component ${componentId} is not currently active`, {

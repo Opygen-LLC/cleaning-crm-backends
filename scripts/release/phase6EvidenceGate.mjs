@@ -51,10 +51,10 @@ export function evaluateEvidence({ directory, expected, baseDomain, stage = 'pre
   }
   requireValue(Number.isSafeInteger(interfaceReport.checks?.completeCatalogRowsRetained) && interfaceReport.checks.completeCatalogRowsRetained >= 101, 'Interface evidence must retain a complete catalog above the UI page limit');
   requireValue([390,768,1440].every(width => interfaceReport.viewports?.some(v => v.width === width && v.overflow === false && v.unlabeled?.length === 0 && v.primaryCount === 1)), 'Interface evidence needs phone/tablet/desktop labels and stable geometry');
-  const studioReports = ['studio/studio-1.0.0.json','studio/studio-2.0.0.json', ...(customDomains ? ['studio/studio-2.0.0-custom.json'] : [])];
+  const studioReports = ['studio/studio-1.0.0.json','studio/studio-2.0.0.json','studio/studio-3.0.0.json', ...(customDomains ? ['studio/studio-3.0.0-custom.json'] : [])];
   for(const name of studioReports) {
     const report=read(name); validateReleases(report,expected,name);
-    const version=name.includes('1.0.0') ? '1.0.0' : '2.0.0';
+    const version=name.includes('1.0.0') ? '1.0.0' : name.includes('2.0.0') ? '2.0.0' : '3.0.0';
     requireValue(report.suite === 'website-studio' && report.templateVersion === version, `${name}: wrong renderer version`);
     requireValue(['clean-modern','premium-home','commercial-pro','local-cleaning'].every(id=>report.checks?.templates?.includes(id)), `${name}: incomplete template matrix`);
     for(const check of ['immediatePublish','rapidSelection','trailingSave','immediatePublicRevision']) requireValue(report.checks?.[check] === true,`${name}: missing ${check}`);

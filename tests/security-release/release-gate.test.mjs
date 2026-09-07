@@ -15,7 +15,7 @@ function evidence() {
  const directory=mkdtempSync(join(tmpdir(),'phase6-test-evidence-'));
  const write=(name,value)=>{const path=join(directory,name);mkdirSync(dirname(path),{recursive:true});writeFileSync(path,JSON.stringify(value));};
  for(const [folder,expectedOtp] of [['otp-enabled',true],['otp-disabled',false]]) for(const scenario of ['clean','lost-response-retry']) write(`${folder}/${scenario}.json`,{...base(),scenario,expectedOtp,firstCanonicalRequest:{status:200},checks:{dashboardNavigations:1,savedFieldsRoundTrip:true,cachedDraftPrimed:true,unpublishedForgeryDenied:true,firstCanonicalWebsiteAndRevision:true,liveForgeryCannotChangeIdentity:true,repeatCreatesNoRevision:true}});
- for(const templateVersion of ['1.0.0','2.0.0']) write(`studio/studio-${templateVersion}.json`,{...base(),suite:'website-studio',templateVersion,checks:{immediatePublish:true,rapidSelection:true,trailingSave:true,immediatePublicRevision:true,templates:['clean-modern','premium-home','commercial-pro','local-cleaning']}});
+ for(const templateVersion of ['1.0.0','2.0.0','3.0.0']) write(`studio/studio-${templateVersion}.json`,{...base(),suite:'website-studio',templateVersion,checks:{immediatePublish:true,rapidSelection:true,trailingSave:true,immediatePublicRevision:true,templates:['clean-modern','premium-home','commercial-pro','local-cleaning']}});
  write('interface/interface-evidence.json',{...base(),checks:{localPreviewWithoutKeystrokeRequests:true,inlineErrorAndFailedSavePreserveInput:true,savedBrandingReloadAndAccessibleNames:true,reviewRequiresExplicitLaunch:true,completeCatalogRowsRetained:205},viewports:[390,768,1440].map(width=>({width,overflow:false,unlabeled:[],primaryCount:1}))});
  const audit={...base(),source:'database-snapshot',sourceRevision:expected.backend,readOnly:true,mode:'read-only',isolation:'repeatable read',complete:true,websites:{total:2,scanned:2},safeToProceed:true,summary:{errors:0,warnings:0}};
  write('reconciliation.json',audit);
@@ -23,7 +23,7 @@ function evidence() {
  return {directory,write,audit,options:{directory,expected,baseDomain:'sites.example.test'},cleanup:()=>rmSync(directory,{recursive:true,force:true})};
 }
 test('complete version-bound OTP/renderer/reconciliation/wildcard evidence approves only predeploy',()=>{
- const f=evidence();try{const result=evaluateEvidence(f.options);assert.equal(result.approved,true);assert.equal(result.files.length,9);assert.throws(()=>evaluateEvidence({...f.options,stage:'activate'}),/ENOENT/);}finally{f.cleanup();}
+ const f=evidence();try{const result=evaluateEvidence(f.options);assert.equal(result.approved,true);assert.equal(result.files.length,10);assert.throws(()=>evaluateEvidence({...f.options,stage:'activate'}),/ENOENT/);}finally{f.cleanup();}
 });
 test('stale, placeholder, failed and missing-cleanup reports cannot satisfy release approval',()=>{
  const f=evidence();try{

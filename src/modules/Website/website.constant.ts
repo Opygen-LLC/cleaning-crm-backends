@@ -33,10 +33,10 @@ export const RESERVED_WEBSITE_SUBDOMAINS = new Set([
 ]);
 
 /**
- * Default content is intentionally generic and contains no tenant data.
- * The public runtime overlays dynamic CRM data (business profile, services,
- * reviews and service areas) so a newly provisioned website is useful without
- * duplicating those records into website JSON.
+ * Default page copy is deliberately factual and claim-free. New websites must
+ * not imply experience, reliability, certifications, insurance, ratings or
+ * pricing that the tenant has not supplied. Public renderers overlay live CRM
+ * services, prices, reviews, service areas and business details.
  */
 export const DEFAULT_WEBSITE_PAGES = [
   {
@@ -46,31 +46,26 @@ export const DEFAULT_WEBSITE_PAGES = [
     showInNavigation: true,
     sortOrder: 0,
     content: {
-      eyebrow: "Professional cleaning services",
-      heroTitle: "A cleaner space, without the stress.",
-      heroSubtitle: "Reliable local cleaning with simple online booking and friendly support.",
-      primaryCtaLabel: "Book Cleaning",
-      secondaryCtaLabel: "Get free estimate",
-      servicesHeading: "Cleaning services built around your space",
-      servicesIntro: "Choose from services maintained in our live cleaning catalog.",
-      aboutHeading: "Professional, dependable and easy to book",
-      aboutBody: "We focus on clear communication, dependable service and a consistently high standard of cleaning.",
-      whyHeading: "Why customers choose us",
-      whyIntro: "A straightforward cleaning experience from first enquiry to finished job.",
-      whyItems: [
-        { title: "Reliable service", description: "Clear communication and dependable scheduling from a professional cleaning team." },
-        { title: "Live service information", description: "Services and pricing stay connected to the same CRM catalog used by the business." },
-        { title: "Customer feedback", description: "Published testimonials come from moderated CRM reviews rather than copied website content." },
-        { title: "Easy online access", description: "Eligible services can flow directly into the business online booking experience." },
-      ],
-      reviewsHeading: "What customers say",
-      reviewsIntro: "Recent published customer feedback from our cleaning CRM.",
-      areasHeading: "Areas we cover",
-      contactHeading: "Questions before you book?",
-      contactBody: "Contact our team and we will help you choose the right cleaning service.",
-      finalCtaHeading: "A cleaner space is a few clicks away.",
-      footerDescription: "Professional cleaning services with clear communication, current service information and simple online access.",
-      footerTrustText: "Service information is maintained directly by the cleaning business.",
+      eyebrow: "Cleaning services",
+      heroTitle: "Cleaning services for your space.",
+      heroSubtitle: "Browse the current service catalog and service areas, or contact the business with a question.",
+      primaryCtaLabel: "Book online",
+      secondaryCtaLabel: "Request an estimate",
+      servicesHeading: "Current cleaning services",
+      servicesIntro: "Service details shown on the website come from the business service catalog.",
+      aboutHeading: "About the business",
+      aboutBody: "",
+      whyHeading: "Business information",
+      whyIntro: "",
+      whyItems: [],
+      reviewsHeading: "Customer reviews",
+      reviewsIntro: "Published customer feedback from this business.",
+      areasHeading: "Service areas",
+      contactHeading: "Contact the business",
+      contactBody: "Ask about services, availability or whether an address is covered.",
+      finalCtaHeading: "Ready to get in touch?",
+      footerDescription: "",
+      footerTrustText: "",
       socialLinks: {},
     },
   },
@@ -81,9 +76,9 @@ export const DEFAULT_WEBSITE_PAGES = [
     showInNavigation: true,
     sortOrder: 10,
     content: {
-      eyebrow: "Our services",
-      heading: "Cleaning services for homes and businesses",
-      intro: "Choose the service that fits your space. Pricing and availability come directly from our live service catalog.",
+      eyebrow: "Services",
+      heading: "Current cleaning services",
+      intro: "Service details are shown from the business service catalog; pricing and duration appear only when published.",
     },
   },
   {
@@ -93,12 +88,12 @@ export const DEFAULT_WEBSITE_PAGES = [
     showInNavigation: true,
     sortOrder: 20,
     content: {
-      eyebrow: "About us",
-      heading: "Cleaning you can feel confident booking",
-      body: "We make professional cleaning straightforward: clear services, reliable scheduling and a team focused on doing the job properly.",
-      values: ["Reliable service", "Clear communication", "Attention to detail"],
+      eyebrow: "About",
+      heading: "About the business",
+      body: "",
+      values: [],
       imageUrl: null,
-      imageAlt: "Professional cleaning team",
+      imageAlt: "",
       yearsExperience: null,
     },
   },
@@ -110,8 +105,8 @@ export const DEFAULT_WEBSITE_PAGES = [
     sortOrder: 30,
     content: {
       eyebrow: "Customer reviews",
-      heading: "Trusted by the people we clean for",
-      intro: "Published reviews shown here come directly from our customer feedback in the CRM.",
+      heading: "Published customer reviews",
+      intro: "Reviews appear here only after they have been published by the business.",
     },
   },
   {
@@ -122,8 +117,8 @@ export const DEFAULT_WEBSITE_PAGES = [
     sortOrder: 40,
     content: {
       eyebrow: "Contact",
-      heading: "How can we help?",
-      intro: "Call or email us with a question, or use online booking when you are ready to arrange a clean.",
+      heading: "Contact the business",
+      intro: "Use the published contact details or enquiry form to ask about services and availability.",
     },
   },
   {

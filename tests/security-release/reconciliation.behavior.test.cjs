@@ -4,7 +4,7 @@ const path=require('node:path');
 const {loadTypeScript}=require('../helpers/load-typescript.cjs');
 const {inspectWebsiteForRelease,auditReferencedValues}=loadTypeScript(path.join(__dirname,'../../src/scripts/release/websiteReleaseChecks.ts'));
 const {readAuditOptions,reconcileWebsiteRelease}=loadTypeScript(path.join(__dirname,'../../src/scripts/release/websiteReleaseAudit.ts'));
-const registry={templates:[{id:'clean-modern',version:'1.0.0',schemaVersion:1},{id:'clean-modern',version:'2.0.0',schemaVersion:1}],components:[{id:'shared.header.minimal.v1',slot:'shared.header',status:'ACTIVE'}],parseSnapshot:v=>v?.version===1&&v.website&&Array.isArray(v.pages)?v:null,validDesign:v=>v?.schemaVersion===1};
+const registry={templates:[{id:'clean-modern',version:'1.0.0',schemaVersion:1},{id:'clean-modern',version:'2.0.0',schemaVersion:1},{id:'clean-modern',version:'3.0.0',schemaVersion:1}],components:[{id:'shared.header.minimal.v1',slot:'shared.header',status:'ACTIVE'}],parseSnapshot:v=>v?.version===1&&v.website&&Array.isArray(v.pages)?v:null,validDesign:v=>v?.schemaVersion===1};
 const make=()=>{
  const row={id:'website',adminId:'owner',status:'PUBLISHED',templateId:'clean-modern',templateVersion:'1.0.0',schemaVersion:1,websiteDesign:{schemaVersion:1,componentOverrides:{}},draftRevisionNumber:12,publishedRevisionNumber:5,publishedAt:'2026-01-01T00:00:00Z',maximumRevision:5,revisionCount:3,publicationRevisionExists:true,onboardingCompletedSteps:['business_profile','branding','services','website_address','review_launch'],onboardingCompletedAt:'2026-01-01T00:00:00Z',activeServices:205,publicationDeliveryEventId:'event',publicationDeliveryReceipt:{ready:true,delivered:true,revision:2,projectionWarmed:true,projectionRevisionVerified:true,revalidationDelivered:true,canonicalHostVerified:true},pages:[]};
  row.publicationDeliveryReceipt.revision=row.publishedRevisionNumber;
@@ -14,6 +14,7 @@ const codes=row=>inspectWebsiteForRelease(row,registry).map(i=>i.code);
 test('read-only rules accept retained old renderers and legitimate autosave counters ahead of history',()=>{
  const row=make(),before=structuredClone(row);assert.deepEqual(codes(row),[]);assert.deepEqual(row,before);
  row.templateVersion='2.0.0';assert.deepEqual(codes(row),[]);
+ row.templateVersion='3.0.0';assert.deepEqual(codes(row),[]);
 });
 test('reports broken publication, completed-without-publication, missing initial revision and regressed counters',()=>{
  const row=make();row.publishedSnapshot=null;row.publicationRevisionExists=false;row.revisionCount=0;row.draftRevisionNumber=1;
