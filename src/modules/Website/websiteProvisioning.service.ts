@@ -1,16 +1,16 @@
-import { randomUUID } from "node:crypto";
 import status from "http-status";
 import type { Prisma } from "../../generated/prisma/client";
 import AppError from "../../errorHelper/AppError";
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { PROVISIONING_TRANSACTION_OPTIONS } from "../../lib/prisma/transactionPolicy";
-import { DEFAULT_WEBSITE_PAGES, DEFAULT_WEBSITE_SETTINGS, RESERVED_WEBSITE_SUBDOMAINS } from "./website.constant";
+import { DEFAULT_WEBSITE_SETTINGS, RESERVED_WEBSITE_SUBDOMAINS } from "./website.constant";
 import type { WebsiteCreateInput } from "./website.interface";
 import { normalizeSubdomain } from "./websiteIdentity";
 import { TemplateRegistry } from "./templateRegistry";
 import { WebsiteHostResolverService } from "./websiteHostResolver.service";
 import { WEBSITE_STATUS } from "./websiteLifecycle";
+import { buildInitialWebsitePages } from "./websiteProvisioningDefaults";
 
 export const WEBSITE_SUBDOMAIN_RESERVATION_LOCK = "business-website-subdomain-reservation-v1";
 const adminProvisioningLock = (adminId: string) => `business-website-provision:${adminId}`;
@@ -179,19 +179,7 @@ const createWebsiteRecordTx = async (
   // entirely from returned writes. This removes the previous website + pages +
   // domains + assets reread from the registration transaction.
   const pageTimestamp = new Date();
-  const pageRows = DEFAULT_WEBSITE_PAGES.map((page) => ({
-    id: randomUUID(),
-    websiteId: website.id,
-    ...page,
-    content: JSON.parse(JSON.stringify(page.content ?? {})),
-    seoTitle: null,
-    seoDescription: null,
-    seoKeywords: [],
-    socialImageUrl: null,
-    isEnabled: true,
-    createdAt: pageTimestamp,
-    updatedAt: pageTimestamp,
-  }));
+  const pageRows = buildInitialWebsitePages(website.id, pageTimestamp);
   await db.websitePage.createMany({ data: pageRows });
 
   const initialSnapshot: WebsiteProvisioningSnapshot = {

@@ -115,7 +115,7 @@
     "release:phase3:onboarding": "pnpm run generate && pnpm exec prisma validate && pnpm run test:phase1:launch && pnpm run test:phase2:onboarding && pnpm run test:phase2:contracts && pnpm run test:phase3:interface && pnpm run test:phase3:preview-contract && pnpm run typecheck && pnpm run build",
     "test:phase4:design": "node --test tests/design/*.test.cjs",
     "test:phase4:design:contracts": "vitest run src/modules/Website/templateRegistry.test.ts src/modules/Website/templateSelection.test.ts src/modules/Website/websiteComponentRegistry.test.ts src/modules/Website/websiteStudio.service.test.ts src/modules/Website/websitePublishCacheInvalidation.test.ts src/modules/Website/websitePreviewContract.test.ts",
-    "release:phase4:design": "pnpm run generate && pnpm exec prisma validate && pnpm run test:phase1:launch && pnpm run test:phase2:onboarding && pnpm run test:phase3:interface && pnpm run test:phase4:design && pnpm run test:phase4:design:contracts && pnpm run typecheck && pnpm run build",
+    "release:phase4:design": "pnpm run generate && pnpm exec prisma validate && pnpm run test:phase1:launch && pnpm run test:phase2:onboarding && pnpm run test:phase3:interface && pnpm run test:phase4:design && pnpm run test:phase4:website-release && pnpm run test:phase4:design:contracts && pnpm run typecheck && pnpm run build",
     "test:phase5:performance": "node --test tests/performance/*.test.cjs",
     "perf:website:reconcile": "tsx src/scripts/performance/websitePreflight.ts",
     "perf:website:explain": "tsx src/scripts/performance/websitePreflight.ts --explain",
@@ -128,7 +128,9 @@
     "website:release:reconcile": "tsx src/scripts/release/reconcileWebsiteRelease.ts",
     "website:release:canary": "node scripts/release/phase6Canary.mjs",
     "website:release:gate": "node scripts/release/phase6EvidenceGate.mjs",
-    "release:phase6": "pnpm run test:phase6:regressions && pnpm run test:phase1:launch:integration && pnpm run test:phase3:preview-contract && pnpm run test:phase4:design:contracts && pnpm run release:check"
+    "release:phase6": "pnpm run test:phase6:regressions && pnpm run test:phase4:website-release && pnpm run test:phase1:launch:integration && pnpm run test:phase3:preview-contract && pnpm run test:phase4:design:contracts && pnpm run release:check",
+    "test:phase4:website-release": "node --test tests/release/websiteV3FrontendActivation.test.mjs",
+    "verify:website-v3-frontend": "node scripts/release/verifyWebsiteV3Frontend.mjs"
   },
   "keywords": [],
   "author": "opygen",

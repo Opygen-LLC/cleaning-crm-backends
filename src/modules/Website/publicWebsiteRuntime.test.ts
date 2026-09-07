@@ -73,8 +73,11 @@ describe("Phase 3 public website runtime contract", () => {
       estimateEnabled: false,
       metaTitle: null,
       metaDescription: null,
+      metaKeywords: [],
       socialImageUrl: null,
       indexSite: true,
+      googleAnalyticsEnabled: false,
+      googleAnalyticsMeasurementId: null,
     });
   });
 
@@ -84,6 +87,16 @@ describe("Phase 3 public website runtime contract", () => {
     expect(book).toMatchObject({
       slug: "/book",
       title: "Book Online",
+      isEnabled: false,
+      showInNavigation: false,
+    });
+  });
+
+  it("keeps Estimate provisioned but disabled until an estimate form is configured", () => {
+    const estimate = DEFAULT_WEBSITE_PAGES.find((page) => page.kind === "ESTIMATE");
+    expect(estimate).toMatchObject({
+      slug: "/estimate",
+      title: "Estimate",
       isEnabled: false,
       showInNavigation: false,
     });

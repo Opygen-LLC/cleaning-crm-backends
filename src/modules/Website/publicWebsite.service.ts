@@ -18,6 +18,7 @@ import { ServiceStatus } from "../../generated/prisma/enums";
 import type { WebsiteEditorStateInput } from "./website.interface";
 import { onboardingProfile, onboardingProfileVersion } from "../Admin/onboardingProfile";
 import { WEBSITE_PREVIEW_CONTRACT_VERSION } from "./websitePreviewContract";
+import { publicIntegrationHeadline } from "./websitePublicIntegration";
 
 const WEBSITE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -445,7 +446,7 @@ const projectWebsite = (
       ? {
           formId: selectedBookingForm.id,
           legacySlug: selectedBookingForm.slug,
-          headline: selectedBookingForm.headline,
+          headline: publicIntegrationHeadline("booking", selectedBookingForm.headline),
           subheading: selectedBookingForm.subheading,
           path: "/book" as const,
         }
@@ -454,7 +455,7 @@ const projectWebsite = (
       ? {
           formId: selectedEstimateForm.id,
           legacySlug: selectedEstimateForm.slug,
-          headline: selectedEstimateForm.headline,
+          headline: publicIntegrationHeadline("estimate", selectedEstimateForm.headline),
           subheading: selectedEstimateForm.subheading,
           path: "/estimate" as const,
         }

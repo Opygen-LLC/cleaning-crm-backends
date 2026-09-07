@@ -63,6 +63,9 @@ health_json() {
 echo '[phase6] verify reviewed staging, wildcard and production reconciliation evidence before any production mutation'
 ( cd "$ROOT" && node scripts/release/phase6EvidenceGate.mjs --stage=predeploy )
 
+echo '[phase6] verify the currently deployed frontend can render every v3 website before backend deployment'
+( cd "$ROOT" && WEBSITE_FRONTEND_RUNTIME_URL="$FRONTEND_ORIGIN" pnpm run verify:website-v3-frontend )
+
 echo '[release] qualify frontend/backend source before touching production data' 
 ( cd "$CLIENT_DIR" && pnpm install --frozen-lockfile && node "$ROOT/scripts/release/withoutE2E.mjs" pnpm run release:phase6 )
 ( cd "$ROOT" && pnpm install --frozen-lockfile && pnpm prisma validate && node "$ROOT/scripts/release/withoutE2E.mjs" pnpm run release:phase6 )
@@ -204,6 +207,9 @@ echo '[12/21] notification and Website Studio backend reliability smoke'
 
 echo '[13/21] deploy frontend / same-origin BFF'
 bash -lc "$FRONTEND_DEPLOY_CMD"
+
+echo '[13b/21] verify deployed frontend release SHA and all four v3 website renderers'
+( cd "$ROOT" && WEBSITE_FRONTEND_RUNTIME_URL="$FRONTEND_ORIGIN" RELEASE_FRONTEND_SHA="$RELEASE_FRONTEND_SHA" pnpm run verify:website-v3-frontend )
 
 echo '[14/21] production browser smoke: Notifications -> Website tabs -> public tenant site -> Cache Storage gate'
 ( cd "$CLIENT_DIR" && \
