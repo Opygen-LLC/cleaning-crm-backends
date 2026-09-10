@@ -6,6 +6,7 @@
 # Secrets and explicit region labels are loaded from .env.runtime.
 
 x-app-common: &app-common
+  image: cleaning-crm-backends:production
   build:
     context: .
     target: production
