@@ -66,7 +66,7 @@ const requestBrandUploadSignature = async (input: WebsiteBrandUploadSignatureInp
 };
 
 const finalizeBrandUpload = async (input: WebsiteBrandUploadFinalizeInput, user: IRequestUser) => {
-  const { website } = await assertWebsiteCanUpload(input.kind, user);
+  const { adminId, website } = await assertWebsiteCanUpload(input.kind, user);
   const asset = await mediaService.bindReadyAsset(input.mediaAssetId, user, "WEBSITE_BRAND", website.id);
   if (!asset.publicUrl) throw new AppError(status.CONFLICT, "Website image is not publicly available yet.", { code: "MEDIA_NOT_READY", retryable: true });
   assertDimensions(input.kind, asset);
@@ -86,7 +86,7 @@ const finalizeBrandUpload = async (input: WebsiteBrandUploadFinalizeInput, user:
     }, user);
     return result.asset;
   } catch (error) {
-    await mediaService.deleteAssetIfUnreferencedForTenant(asset.id, website.adminId).catch(() => undefined);
+    await mediaService.deleteAssetIfUnreferencedForTenant(asset.id, adminId).catch(() => undefined);
     throw error;
   }
 };
