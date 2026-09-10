@@ -1,0 +1,38 @@
+model MediaAsset {
+  id                 String       @id @default(uuid())
+  adminId            String
+  createdByUserId    String?
+  bucket             String
+  objectKey          String       @unique
+  temporaryObjectKey String?      @unique
+  purpose            String
+  visibility         String
+  entityType         String?
+  entityId           String?
+  originalFilename   String
+  originalMimeType   String
+  mimeType           String
+  originalBytes      Int
+  storedBytes        Int?
+  width              Int?
+  height             Int?
+  checksum           String?
+  etag               String?
+  publicUrl          String?
+  variants           Json         @default("{}")
+  status             String       @default("INITIATED")
+  expiresAt          DateTime?
+  finalizedAt        DateTime?
+  deletedAt          DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  admin              AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  createdBy          User?        @relation("MediaAssetCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([adminId, createdAt(sort: Desc)])
+  @@index([adminId, purpose, createdAt(sort: Desc)])
+  @@index([adminId, entityType, entityId])
+  @@index([status, expiresAt])
+  @@map("media_asset")
+}

@@ -284,3 +284,19 @@ export const NEXT_REVALIDATE_SECRET: string | undefined = process.env.NEXT_REVAL
 export const NEXT_REVALIDATE_TIMEOUT_MS: number = Math.min(10_000, Math.max(500,
     Number(process.env.NEXT_REVALIDATE_TIMEOUT_MS) || 2_500,
 ));
+
+// Cloudflare R2 media storage. Credentials are backend-only and must never be
+// exposed through NEXT_PUBLIC_* variables or serialized API configuration.
+export const STORAGE_PROVIDER: string = process.env.STORAGE_PROVIDER?.trim().toLowerCase() || "r2";
+export const R2_ACCOUNT_ID: string | undefined = process.env.R2_ACCOUNT_ID?.trim() || undefined;
+export const R2_ACCESS_KEY_ID: string | undefined = process.env.R2_ACCESS_KEY_ID?.trim() || undefined;
+export const R2_SECRET_ACCESS_KEY: string | undefined = process.env.R2_SECRET_ACCESS_KEY?.trim() || undefined;
+export const R2_PUBLIC_BUCKET: string = process.env.R2_PUBLIC_BUCKET?.trim() || "cleaning-crm-public";
+export const R2_PRIVATE_BUCKET: string = process.env.R2_PRIVATE_BUCKET?.trim() || "cleaning-crm-private";
+export const R2_ENDPOINT: string | undefined = process.env.R2_ENDPOINT?.trim() || (R2_ACCOUNT_ID ? `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : undefined);
+export const R2_REGION: string = process.env.R2_REGION?.trim() || "auto";
+export const R2_PUBLIC_BASE_URL: string | undefined = process.env.R2_PUBLIC_BASE_URL?.trim()?.replace(/\/+$/, "") || undefined;
+export const R2_UPLOAD_URL_TTL_SECONDS: number = Math.min(900, Math.max(60, Math.trunc(Number(process.env.R2_UPLOAD_URL_TTL_SECONDS) || 300)));
+export const R2_PRIVATE_DOWNLOAD_TTL_SECONDS: number = Math.min(3600, Math.max(60, Math.trunc(Number(process.env.R2_PRIVATE_DOWNLOAD_TTL_SECONDS) || 300)));
+export const R2_MAX_IMAGE_SIZE_MB: number = Math.min(25, Math.max(1, Number(process.env.R2_MAX_IMAGE_SIZE_MB) || 10));
+export const R2_MAX_DOCUMENT_SIZE_MB: number = Math.min(100, Math.max(R2_MAX_IMAGE_SIZE_MB, Number(process.env.R2_MAX_DOCUMENT_SIZE_MB) || 25));

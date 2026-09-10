@@ -88,6 +88,7 @@ model AdminProfile {
   businessWebsite       BusinessWebsite?
   websiteSubmissions    WebsiteSubmission[]
   entitlementOverride   TenantEntitlementOverride?
+  mediaAssets            MediaAsset[]
 
   /// Ignored relations keep pre-migration tables represented without exposing
   /// them through Prisma Client or deleting historical data.

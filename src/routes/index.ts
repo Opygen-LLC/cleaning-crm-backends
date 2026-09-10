@@ -38,6 +38,7 @@ import express from "express";
 import { telemetryRoutes } from "../modules/Telemetry/telemetry.routes";
 import { dataExportRoutes } from "../modules/DataExport/dataExport.routes";
 import { NODE_ENV } from "../config/ENV";
+import { mediaRoutes } from "../modules/Media/media.routes";
 
 const router = Router();
 
@@ -86,6 +87,7 @@ const gatedRoutes: { path: string; route: Router }[] = [
     { path: "/payment",           route: paymentRoutes },
     { path: "/push",              route: pushRoutes },
     { path: "/website",           route: websiteRoutes },
+    { path: "/media",             route: mediaRoutes },
 ];
 
 

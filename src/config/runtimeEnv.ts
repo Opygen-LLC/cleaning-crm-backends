@@ -36,9 +36,26 @@ const productionEnvSchema = z.object({
   OUTBOX_WORKER_POLL_MS: z.coerce.number().int().min(500).max(60_000).optional(),
   OUTBOX_WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).optional(),
   OUTBOX_LOCK_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(15 * 60_000).optional(),
-  CLOUDINARY_CLOUD_NAME: nonEmpty,
-  CLOUDINARY_API_KEY: nonEmpty,
-  CLOUDINARY_API_SECRET: nonEmpty,
+  // R2 is the canonical media foundation. Cloudinary variables may remain
+  // temporarily during Phase 1 so legacy feature routes keep working until
+  // Phase 2 migrates each caller, but production no longer depends on them.
+  STORAGE_PROVIDER: z.literal("r2"),
+  R2_ACCOUNT_ID: nonEmpty,
+  R2_ACCESS_KEY_ID: nonEmpty,
+  R2_SECRET_ACCESS_KEY: nonEmpty,
+  R2_PUBLIC_BUCKET: nonEmpty,
+  R2_PRIVATE_BUCKET: nonEmpty,
+  R2_ENDPOINT: absoluteUrl,
+  R2_REGION: z.literal("auto").default("auto"),
+  R2_PUBLIC_BASE_URL: absoluteUrl,
+  R2_UPLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(900).optional(),
+  R2_PRIVATE_DOWNLOAD_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).optional(),
+  R2_MAX_IMAGE_SIZE_MB: z.coerce.number().positive().max(25).optional(),
+  R2_MAX_DOCUMENT_SIZE_MB: z.coerce.number().positive().max(100).optional(),
+  R2_IMAGE_PROCESSING_CONCURRENCY: z.coerce.number().int().min(1).max(8).optional(),
+  CLOUDINARY_CLOUD_NAME: z.string().trim().optional(),
+  CLOUDINARY_API_KEY: z.string().trim().optional(),
+  CLOUDINARY_API_SECRET: z.string().trim().optional(),
   APP_VERSION: nonEmpty.default("1.0.0"),
   GIT_SHA: nonEmpty.default("production"),
   BUILD_DATE: nonEmpty.default(new Date().toISOString()),
@@ -76,6 +93,29 @@ const productionEnvSchema = z.object({
     if (!val.startsWith("https://") && !isIpHost && process.env.ALLOW_HTTP_API_PROXY !== "true") {
       ctx.addIssue({ code: "custom", path: [key], message: "must use https:// in production" });
     }
+  }
+
+  if (!/^[a-f0-9]{32}$/i.test(env.R2_ACCOUNT_ID)) {
+    ctx.addIssue({ code: "custom", path: ["R2_ACCOUNT_ID"], message: "must be the 32-character Cloudflare account ID" });
+  }
+  try {
+    const endpoint = new URL(env.R2_ENDPOINT);
+    if (endpoint.protocol !== "https:" || endpoint.hostname !== `${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com` || (endpoint.pathname !== "/" && endpoint.pathname !== "")) {
+      ctx.addIssue({ code: "custom", path: ["R2_ENDPOINT"], message: "must be the account-scoped Cloudflare R2 S3 endpoint" });
+    }
+  } catch {
+    ctx.addIssue({ code: "custom", path: ["R2_ENDPOINT"], message: "must be the account-scoped Cloudflare R2 S3 endpoint" });
+  }
+  try {
+    const publicBase = new URL(env.R2_PUBLIC_BASE_URL);
+    if (publicBase.protocol !== "https:" || /(?:\.r2\.dev|\.r2\.cloudflarestorage\.com)$/i.test(publicBase.hostname)) {
+      ctx.addIssue({ code: "custom", path: ["R2_PUBLIC_BASE_URL"], message: "must use an https production custom media domain, not r2.dev or the S3 API endpoint" });
+    }
+  } catch {
+    ctx.addIssue({ code: "custom", path: ["R2_PUBLIC_BASE_URL"], message: "must use an https production custom media domain" });
+  }
+  if (env.R2_PUBLIC_BUCKET === env.R2_PRIVATE_BUCKET) {
+    ctx.addIssue({ code: "custom", path: ["R2_PRIVATE_BUCKET"], message: "must be different from R2_PUBLIC_BUCKET" });
   }
 
   const baseDomain = env.WEBSITE_BASE_DOMAIN.toLowerCase().replace(/^\.+|\.+$/g, "");
