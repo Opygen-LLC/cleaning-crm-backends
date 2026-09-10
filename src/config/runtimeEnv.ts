@@ -51,6 +51,7 @@ const productionEnvSchema = z.object({
   R2_MAX_IMAGE_SIZE_MB: z.coerce.number().positive().max(25).optional(),
   R2_MAX_DOCUMENT_SIZE_MB: z.coerce.number().positive().max(100).optional(),
   R2_IMAGE_PROCESSING_CONCURRENCY: z.coerce.number().int().min(1).max(8).optional(),
+  ALLOW_R2_DEV_DOMAIN: z.enum(["true", "false"]).optional(),
   APP_VERSION: nonEmpty.default("1.0.0"),
   GIT_SHA: nonEmpty.default("production"),
   BUILD_DATE: nonEmpty.default(new Date().toISOString()),
@@ -103,7 +104,8 @@ const productionEnvSchema = z.object({
   }
   try {
     const publicBase = new URL(env.R2_PUBLIC_BASE_URL);
-    if (publicBase.protocol !== "https:" || /(?:\.r2\.dev|\.r2\.cloudflarestorage\.com)$/i.test(publicBase.hostname)) {
+    const allowR2Dev = process.env.ALLOW_R2_DEV_DOMAIN === "true";
+    if (publicBase.protocol !== "https:" || (!allowR2Dev && /(?:\.r2\.dev|\.r2\.cloudflarestorage\.com)$/i.test(publicBase.hostname)) || (allowR2Dev && /\.r2\.cloudflarestorage\.com$/i.test(publicBase.hostname))) {
       ctx.addIssue({ code: "custom", path: ["R2_PUBLIC_BASE_URL"], message: "must use an https production custom media domain, not r2.dev or the S3 API endpoint" });
     }
   } catch {
