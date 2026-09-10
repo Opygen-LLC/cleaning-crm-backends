@@ -33,6 +33,7 @@ const workLocationSchema = z
 const updateAdminSchema = z
   .object({
     businessName: z.string().trim().min(1).max(160).optional(),
+    businessLogoAssetId: z.string().uuid("Upload a valid business logo first.").optional(),
     brandColor: z.string().optional(),
     businessType: nullableMultipartInput(z.string().trim().min(1).max(120)),
     licenseNumber: nullableMultipartInput(z.string().trim().min(1).max(80)),

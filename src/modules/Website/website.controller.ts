@@ -261,14 +261,18 @@ const finalizeBrandUpload = catchAsync(async (req, res) =>
 );
 const registerAsset = catchAsync(async (req, res) => created(res, "Website asset registered successfully", await WebsiteService.registerAsset(req.body, req.user)));
 const uploadBrandAsset = catchAsync(async (req, res) => {
-  if (!req.file) throw new AppError(status.BAD_REQUEST, "Image file is required");
   const kind = req.body.kind === "favicon" ? "favicon" : req.body.kind === "logo" ? "logo" : null;
   if (!kind) throw new AppError(status.BAD_REQUEST, "Asset kind must be logo or favicon");
+  const mediaAssetId = typeof req.body.mediaAssetId === "string" ? req.body.mediaAssetId : undefined;
+  if (mediaAssetId) return created(res, "Website brand asset uploaded successfully", await WebsiteAssetService.finalizeBrandUpload({ kind, mediaAssetId }, req.user));
+  if (!req.file) throw new AppError(status.BAD_REQUEST, "Image file is required");
   return created(res, "Website brand asset uploaded successfully", await WebsiteService.uploadBrandAsset(req.file, kind, req.user));
 });
 const uploadContentAsset = catchAsync(async (req, res) => {
-  if (!req.file) throw new AppError(status.BAD_REQUEST, "Image file is required");
   const slot = typeof req.body.slot === "string" ? req.body.slot : "";
+  const mediaAssetId = typeof req.body.mediaAssetId === "string" ? req.body.mediaAssetId : undefined;
+  if (mediaAssetId) return created(res, "Website content asset uploaded successfully", await WebsiteService.attachContentAsset(mediaAssetId, slot, req.user));
+  if (!req.file) throw new AppError(status.BAD_REQUEST, "Image file is required");
   return created(res, "Website content asset uploaded successfully", await WebsiteService.uploadContentAsset(req.file, slot, req.user));
 });
 const deleteAsset = catchAsync(async (req, res) => ok(res, "Website asset deleted successfully", await WebsiteService.deleteAsset(paramStr(req.params.assetId), req.user)));

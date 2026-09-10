@@ -4,6 +4,8 @@ import type { BusinessHours } from "./businessHours";
 export interface UpdateAdminPayload {
   businessName?: string;
   businessLogo?: string;
+  businessLogoMediaAssetId?: string | null;
+  businessLogoAssetId?: string;
   businessType?: string | null;
   licenseNumber?: string | null;
   businessEmail?: string | null;

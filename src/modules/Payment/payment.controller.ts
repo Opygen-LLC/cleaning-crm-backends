@@ -102,13 +102,11 @@ const deletePayment = catchAsync(async (req, res) => {
 });
 
 const uploadReceipt = catchAsync(async (req, res) => {
-  if (!req.file) {
-    throw new AppError(httpStatus.BAD_REQUEST, "Receipt file is required");
-  }
-
+  const mediaAssetId = typeof req.body?.mediaAssetId === "string" ? req.body.mediaAssetId : undefined;
+  if (!req.file && !mediaAssetId) throw new AppError(httpStatus.BAD_REQUEST, "Receipt file is required");
   const result = await paymentService.uploadReceipt(
     req.params.id as string,
-    req.file,
+    { file: req.file, mediaAssetId },
     req.user,
   );
 

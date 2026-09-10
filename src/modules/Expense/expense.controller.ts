@@ -47,7 +47,7 @@ const getAllExpenses = catchAsync(async (req, res) => {
 
 const getExpenseById = catchAsync(async (req, res) => {
   const { id } = req.params;
-  const result = await expenseService.getExpenseById(id as string);
+  const result = await expenseService.getExpenseById(id as string, req.user);
 
   sendResponse(res, {
     httpStatusCode: status.OK,
@@ -59,7 +59,7 @@ const getExpenseById = catchAsync(async (req, res) => {
 
 const updateExpense = catchAsync(async (req, res) => {
   const { id } = req.params;
-  const result = await expenseService.updateExpense(id as string, req.body);
+  const result = await expenseService.updateExpense(id as string, req.body, req.user);
 
   sendResponse(res, {
     httpStatusCode: status.OK,
@@ -71,7 +71,7 @@ const updateExpense = catchAsync(async (req, res) => {
 
 const deleteExpense = catchAsync(async (req, res) => {
   const { id } = req.params;
-  const result = await expenseService.deleteExpense(id as string);
+  const result = await expenseService.deleteExpense(id as string, req.user);
 
   sendResponse(res, {
     httpStatusCode: status.OK,

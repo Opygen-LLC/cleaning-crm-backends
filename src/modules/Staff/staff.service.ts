@@ -21,7 +21,7 @@ import { staffFilterableFields, staffSearchableFields } from "./staff.constant";
 import { QueryBuilder } from "../../lib/utils/QueryBuilder";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { assertWithinLimit } from "../../lib/utils/checkPlanLimits";
-import { uploadToCloudinary } from "../../lib/utils/cloudinary";
+import { mediaService } from "../Media/media.service";
 import { geocodeAddressSafely } from "../../lib/utils/geocoding";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { revokeAllSessionsForUser } from "../Auth/sessionSecurity.service";
@@ -628,43 +628,52 @@ const updateMyProfile = async (
 /**
  * POST /staff/me/avatar
  *
- * Staff members can upload a profile photo. The file buffer is streamed
- * to Cloudinary under the "opygen/staff-avatars" folder and the resulting
- * secure_url is saved to user.image. Returns the new avatar URL.
+ * Staff members can upload a profile photo. Multipart remains as a compatibility
+ * fallback; the normal client uploads directly through the tenant-owned R2 media
+ * flow and this service persists the finalized public asset URL.
  */
 const uploadMyAvatar = async (
-    userId: string,
+    requester: IRequestUser,
     fileBuffer: Buffer,
     mimeType: string,
+    filename = "avatar",
 ) => {
-    const profile = await prisma.staffProfile.findFirst({ where: { userId } });
-    if (!profile)
-        throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
+    const profile = await prisma.staffProfile.findFirst({ where: { userId: requester.id } });
+    if (!profile) throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
 
-    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-    if (!allowedTypes.includes(mimeType)) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "Only JPEG, PNG, WEBP, and GIF images are allowed",
-        );
+    const currentUser = await prisma.user.findUnique({ where: { id: requester.id }, select: { imageMediaAssetId: true } });
+    const asset = await mediaService.uploadFromServer({
+        purpose: "STAFF_AVATAR", entityId: profile.id, filename, contentType: mimeType, buffer: fileBuffer,
+    }, requester);
+    if (!asset.publicUrl) throw new AppError(status.CONFLICT, "Avatar is not publicly available yet.", { code: "MEDIA_NOT_READY", retryable: true });
+    try {
+        await prisma.user.update({ where: { id: requester.id }, data: { image: asset.publicUrl, imageMediaAssetId: asset.id } });
+    } catch (error) {
+        await mediaService.deleteAssetIfUnreferencedForTenant(asset.id, profile.adminId).catch(() => undefined);
+        throw error;
     }
+    if (currentUser?.imageMediaAssetId && currentUser.imageMediaAssetId !== asset.id) {
+        await mediaService.deleteAssetForTenant(currentUser.imageMediaAssetId, profile.adminId).catch(() => undefined);
+    }
+    return { avatarUrl: asset.publicUrl };
+};
 
-    const result = await uploadToCloudinary(fileBuffer, {
-        folder: "opygen/staff-avatars",
-        public_id: `staff_${profile.id}`,
-        overwrite: true,
-        transformation: [
-            { width: 400, height: 400, crop: "fill", gravity: "face" },
-            { quality: "auto" },
-        ],
-    });
-
-    await prisma.user.update({
-        where: { id: userId },
-        data: { image: result.secure_url },
-    });
-
-    return { avatarUrl: result.secure_url as string };
+const attachMyAvatarAsset = async (requester: IRequestUser, assetId: string) => {
+    const profile = await prisma.staffProfile.findFirst({ where: { userId: requester.id } });
+    if (!profile) throw new AppError(status.NOT_FOUND, "Staff profile not found", { code: "STAFF_PROFILE_MISSING", retryable: false, kind: "TENANT_INVARIANT" });
+    const currentUser = await prisma.user.findUnique({ where: { id: requester.id }, select: { imageMediaAssetId: true } });
+    const asset = await mediaService.bindReadyAsset(assetId, requester, "STAFF_AVATAR", profile.id);
+    if (!asset.publicUrl) throw new AppError(status.CONFLICT, "Avatar is not publicly available yet.", { code: "MEDIA_NOT_READY", retryable: true });
+    try {
+        await prisma.user.update({ where: { id: requester.id }, data: { image: asset.publicUrl, imageMediaAssetId: asset.id } });
+    } catch (error) {
+        await mediaService.deleteAssetIfUnreferencedForTenant(asset.id, profile.adminId).catch(() => undefined);
+        throw error;
+    }
+    if (currentUser?.imageMediaAssetId && currentUser.imageMediaAssetId !== asset.id) {
+        await mediaService.deleteAssetForTenant(currentUser.imageMediaAssetId, profile.adminId).catch(() => undefined);
+    }
+    return { avatarUrl: asset.publicUrl };
 };
 
 /**
@@ -708,5 +717,6 @@ export const staffService = {
     getMyProfile,
     updateMyProfile,
     uploadMyAvatar,
+    attachMyAvatarAsset,
     updateMyAvailability,
 };

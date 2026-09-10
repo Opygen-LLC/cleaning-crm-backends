@@ -154,14 +154,10 @@ const sendInvoice = catchAsync(async (req, res) => {
 const submitPaymentProof = catchAsync(async (req, res) => {
     const { id, paymentId } = req.params;
 
-    if (!req.file) {
-        throw new AppError(status.BAD_REQUEST, "Proof image file is required");
-    }
-
+    const mediaAssetId = typeof req.body?.mediaAssetId === "string" ? req.body.mediaAssetId : undefined;
+    if (!req.file && !mediaAssetId) throw new AppError(status.BAD_REQUEST, "Proof image file is required");
     const result = await invoiceService.submitPaymentProof(
-        id as string,
-        paymentId as string,
-        req.file,
+        id as string, paymentId as string, { file: req.file, mediaAssetId },
         { user: req.user, portalClient: req.portalClient },
     );
     if (req.user) {
@@ -173,6 +169,51 @@ const submitPaymentProof = catchAsync(async (req, res) => {
         success: true,
         message: "Payment proof submitted — awaiting admin approval",
         data: result,
+    });
+});
+
+const initiatePaymentProofUpload = catchAsync(async (req, res) => {
+    const result = await invoiceService.initiatePaymentProofUpload(
+        req.params.id as string,
+        req.params.paymentId as string,
+        req.body,
+        { user: req.user, portalClient: req.portalClient },
+    );
+    sendResponse(res, {
+        httpStatusCode: status.CREATED,
+        success: true,
+        message: "Payment proof upload session created",
+        data: result,
+    });
+});
+
+const finalizePaymentProofUpload = catchAsync(async (req, res) => {
+    const result = await invoiceService.finalizePaymentProofUpload(
+        req.params.id as string,
+        req.params.paymentId as string,
+        req.params.uploadId as string,
+        { user: req.user, portalClient: req.portalClient },
+    );
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Payment proof upload finalized",
+        data: result,
+    });
+});
+
+const discardPaymentProofUpload = catchAsync(async (req, res) => {
+    await invoiceService.discardPaymentProofUpload(
+        req.params.id as string,
+        req.params.paymentId as string,
+        req.params.uploadId as string,
+        { user: req.user, portalClient: req.portalClient },
+    );
+    sendResponse(res, {
+        httpStatusCode: status.OK,
+        success: true,
+        message: "Payment proof upload discarded",
+        data: { id: req.params.uploadId },
     });
 });
 
@@ -211,5 +252,8 @@ export const invoiceController = {
     recordPayment,
     sendInvoice,
     submitPaymentProof,
+    initiatePaymentProofUpload,
+    finalizePaymentProofUpload,
+    discardPaymentProofUpload,
     approvePayment,
 };

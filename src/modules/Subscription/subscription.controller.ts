@@ -73,7 +73,7 @@ const getMyBillingHistory = catchAsync(async (req, res) => {
 
 const submitPaymentProof = catchAsync(async (req, res) => {
   const result = await subscriptionService.submitPaymentProof(req.user!, {
-    paymentProofUrl: req.body.paymentProofUrl,
+    paymentProofAssetId: req.body.paymentProofAssetId,
     amount:          req.body.amount,
     method:          req.body.method,
     note:            req.body.note,

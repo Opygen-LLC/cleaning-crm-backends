@@ -183,6 +183,7 @@ model WebsiteAsset {
   id                 String          @id @default(uuid())
   websiteId          String
   publicId           String
+  mediaAssetId       String?         @unique
   url                String
   mimeType           String
   width              Int?

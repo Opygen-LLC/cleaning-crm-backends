@@ -99,6 +99,28 @@ router.post(
 // transfer screenshot) as well as admin auth (admin uploads on the client's
 // behalf). Ownership is enforced inside invoiceService.submitPaymentProof.
 router.post(
+    "/:id/payments/:paymentId/proof/uploads/initiate",
+    checkAuthOrPortalClient(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    zodValidate(invoiceValidation.paymentProofUploadParams, ValidationProperty.PARAMS),
+    zodValidate(invoiceValidation.paymentProofUpload, ValidationProperty.BODY),
+    invoiceController.initiatePaymentProofUpload,
+);
+
+router.post(
+    "/:id/payments/:paymentId/proof/uploads/:uploadId/complete",
+    checkAuthOrPortalClient(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    zodValidate(invoiceValidation.paymentProofFinalizeParams, ValidationProperty.PARAMS),
+    invoiceController.finalizePaymentProofUpload,
+);
+
+router.delete(
+    "/:id/payments/:paymentId/proof/uploads/:uploadId",
+    checkAuthOrPortalClient(UserRole.ADMIN, UserRole.SUPER_ADMIN),
+    zodValidate(invoiceValidation.paymentProofFinalizeParams, ValidationProperty.PARAMS),
+    invoiceController.discardPaymentProofUpload,
+);
+
+router.post(
     "/:id/payments/:paymentId/proof",
     checkAuthOrPortalClient(UserRole.ADMIN, UserRole.SUPER_ADMIN),
     multerMemory.single("proof"),

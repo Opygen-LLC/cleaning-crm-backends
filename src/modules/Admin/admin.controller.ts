@@ -12,8 +12,9 @@ import { catchAsync } from "../../shared/catchAsync";
 import { sendResponse } from "../../shared/sendResponse";
 import { adminService, toLegacyOnboardingBootstrap } from "./admin.service";
 import { OnboardingSaveService } from "./onboardingSave.service";
-import { uploadToCloudinary } from "../../lib/utils/cloudinary";
+import { mediaService } from "../Media/media.service";
 import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
+import { prisma } from "../../lib/prisma/prisma";
 
 // ─── Existing handlers (unchanged) ───────────────────────────────────────────
 
@@ -30,16 +31,47 @@ const getAdmin = catchAsync(async (req, res) => {
 
 const updateAdmin = catchAsync(async (req, res) => {
   const userId = req.user.id;
-  const payload = req.body;
-  if (req.file) {
-    const uploadResult = await uploadToCloudinary(req.file.buffer, {
-      folder: "Cleaning-CRM/business-logos",
-      public_id: `admin_${userId}_logo`,
-      overwrite: true,
-    });
-    payload.businessLogo = uploadResult.secure_url;
+  const adminId = req.user.adminId;
+  if (!adminId) throw new AppError(status.UNAUTHORIZED, "Authenticated admin context is missing");
+  const payload = { ...req.body };
+  const requestedAssetId = typeof payload.businessLogoAssetId === "string" ? payload.businessLogoAssetId : undefined;
+  delete payload.businessLogoAssetId;
+  const replacingLogo = Boolean(requestedAssetId || req.file);
+  const previousLogo = replacingLogo
+    ? await prisma.adminProfile.findUnique({ where: { id: adminId }, select: { businessLogoMediaAssetId: true } })
+    : null;
+  let replacementAssetId: string | null = null;
+
+  if (requestedAssetId) {
+    const asset = await mediaService.bindReadyAsset(requestedAssetId, req.user, "BUSINESS_LOGO");
+    if (!asset.publicUrl) throw new AppError(status.CONFLICT, "Business logo is not publicly available yet.", { code: "MEDIA_NOT_READY", retryable: true });
+    payload.businessLogo = asset.publicUrl;
+    payload.businessLogoMediaAssetId = asset.id;
+    replacementAssetId = asset.id;
+  } else if (req.file) {
+    const asset = await mediaService.uploadFromServer({
+      purpose: "BUSINESS_LOGO",
+      filename: req.file.originalname,
+      contentType: req.file.mimetype,
+      buffer: req.file.buffer,
+    }, req.user);
+    if (!asset.publicUrl) throw new AppError(status.CONFLICT, "Business logo is not publicly available yet.", { code: "MEDIA_NOT_READY", retryable: true });
+    payload.businessLogo = asset.publicUrl;
+    payload.businessLogoMediaAssetId = asset.id;
+    replacementAssetId = asset.id;
   }
-  const result = await adminService.updateAdmin(userId, payload);
+  let result;
+  try {
+    result = await adminService.updateAdmin(userId, payload);
+  } catch (error) {
+    if (replacementAssetId) {
+      await mediaService.deleteAssetIfUnreferencedForTenant(replacementAssetId, adminId).catch(() => undefined);
+    }
+    throw error;
+  }
+  if (previousLogo?.businessLogoMediaAssetId && previousLogo.businessLogoMediaAssetId !== replacementAssetId) {
+    await mediaService.deleteAssetIfUnreferencedForTenant(previousLogo.businessLogoMediaAssetId, adminId).catch(() => undefined);
+  }
   await bumpCacheResourcesForUser(req.user, [CacheResource.profile, CacheResource.dashboard]);
   sendResponse(res, {
     httpStatusCode: status.OK,

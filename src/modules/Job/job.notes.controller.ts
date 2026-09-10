@@ -131,22 +131,14 @@ const getAttachments = catchAsync(async (req, res) => {
  */
 const uploadAttachment = catchAsync(async (req, res) => {
     const file = req.file;
-    if (!file) {
-        throw new AppError(status.BAD_REQUEST, "No file uploaded", {
-            code: "VALIDATION_ERROR",
-            retryable: false,
-            fieldErrors: { file: "Use multipart/form-data with field name 'file'." },
-        });
+    const mediaAssetId = typeof req.body?.mediaAssetId === "string" ? req.body.mediaAssetId : undefined;
+    if (!file && !mediaAssetId) {
+        throw new AppError(status.BAD_REQUEST, "No file uploaded", { code: "VALIDATION_ERROR", retryable: false, fieldErrors: { file: "Upload a file first." } });
     }
-
     const photoType = req.body?.photoType as "BEFORE" | "AFTER" | "ISSUE" | undefined;
-
-    const result = await jobNotesService.uploadAttachment(
-        req.params.id as string,
-        file,
-        req.user,
-        photoType,
-    );
+    const result = mediaAssetId
+        ? await jobNotesService.createAttachmentFromAsset(req.params.id as string, mediaAssetId, req.user, photoType)
+        : await jobNotesService.uploadAttachment(req.params.id as string, file!, req.user, photoType);
     await bumpCacheResourcesForUser(req.user, [CacheResource.jobs]);
 
     sendResponse(res, {

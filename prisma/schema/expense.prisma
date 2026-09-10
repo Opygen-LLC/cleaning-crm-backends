@@ -12,7 +12,8 @@ model Expense {
   /// Retained legacy bookkeeping columns. Current expense UX no longer writes
   /// them, but migration history must not erase historical values.
   legacyCurrency           Currency           @default(USD) @map("currency") @ignore
-  legacyReceipt            String?            @map("receipt") @ignore
+  receiptUrl               String?            @map("receipt")
+  receiptMediaAssetId      String?            @unique
   legacyRecurringFrequency ExpenseFrequency?  @map("recurringFrequency") @ignore
   
   adminId            String

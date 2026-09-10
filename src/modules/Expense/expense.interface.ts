@@ -8,6 +8,7 @@ export interface IExpenseCreate {
   paidBy: string;
   isRecurring?: boolean;
   notes?: string;
+  receiptMediaAssetId?: string;
 }
 
 export interface IExpenseUpdate {
@@ -18,6 +19,7 @@ export interface IExpenseUpdate {
   paidBy?: string;
   isRecurring?: boolean;
   notes?: string;
+  receiptMediaAssetId?: string | null;
 }
 
 export interface IExpenseFilters {

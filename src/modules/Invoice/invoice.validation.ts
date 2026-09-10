@@ -65,9 +65,27 @@ const recordPaymentSchema = z.object({
   paidAt:        z.string().optional(),
 });
 
+const paymentProofUploadSchema = z.object({
+  filename: z.string().trim().min(1).max(255),
+  contentType: z.string().trim().min(3).max(100).transform((value) => value.toLowerCase()),
+  size: z.number().int().positive().max(25 * 1024 * 1024),
+}).strict();
+
+const paymentProofUploadParamsSchema = z.object({
+  id: z.string().uuid(),
+  paymentId: z.union([z.literal("new"), z.string().uuid()]),
+}).strict();
+
+const paymentProofFinalizeParamsSchema = paymentProofUploadParamsSchema.extend({
+  uploadId: z.string().uuid(),
+});
+
 export const invoiceValidation = {
   createInvoice: createInvoiceSchema,
   updateInvoice: updateInvoiceSchema,
   updateStatus: updateStatusSchema,
   recordPayment: recordPaymentSchema,
+  paymentProofUpload: paymentProofUploadSchema,
+  paymentProofUploadParams: paymentProofUploadParamsSchema,
+  paymentProofFinalizeParams: paymentProofFinalizeParamsSchema,
 };

@@ -10,7 +10,7 @@ const changePlanSchema = z.object({
 }).strict();
 
 const submitPaymentProofSchema = z.object({
-    paymentProofUrl: z.string().url("Upload a valid payment proof first.").max(2000),
+    paymentProofAssetId: z.string().uuid("Upload a valid payment proof first."),
     // Phase-6 checkouts derive the amount on the server. `amount` remains
     // optional only for backward compatibility with pre-Phase-6 pending rows.
     amount: z.number().finite().positive().max(10_000_000).optional(),

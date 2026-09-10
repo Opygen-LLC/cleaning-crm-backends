@@ -11,7 +11,7 @@
  *
  *   POST   /job/:id/attachments            upload a file (multipart/form-data)
  *   GET    /job/:id/attachments            list attachments for a job
- *   DELETE /job/:id/attachments/:attachId  delete a file (removes from Cloudinary)
+ *   DELETE /job/:id/attachments/:attachId  delete a file (R2; legacy Cloudinary cleanup retained until Phase 3)
  */
 
 import { prisma } from "../../lib/prisma/prisma";
@@ -20,10 +20,8 @@ import status from "http-status";
 import { NoteType } from "../../generated/prisma/enums";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
-import {
-    uploadFileToCloudinary,
-    deleteFileFromCloudinary,
-} from "../../config/cloudinary";
+import { deleteFileFromCloudinary } from "../../config/cloudinary"; // Phase-3 legacy cleanup only
+import { mediaService } from "../Media/media.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -231,10 +229,45 @@ const getAttachments = async (jobId: string, user: IRequestUser) => {
     const { adminId } = await resolveAdminIdForJob(user, jobId);
     await assertJobOwnership(jobId, adminId);
 
-    return prisma.jobAttachment.findMany({
+    const rows = await prisma.jobAttachment.findMany({
         where: { jobId, adminId },
         orderBy: { createdAt: "desc" },
     });
+    return Promise.all(rows.map(async (row) => {
+        if (!row.mediaAssetId) return row;
+        const fileUrl = await mediaService.getReadUrlForTenant(row.mediaAssetId, adminId, row.fileName);
+        return { ...row, fileUrl };
+    }));
+};
+
+const createAttachmentFromAsset = async (
+    jobId: string,
+    assetId: string,
+    user: IRequestUser,
+    photoType?: PhotoType,
+) => {
+    const { adminId, uploaderRole } = await resolveAdminIdForJob(user, jobId);
+    await assertJobOwnership(jobId, adminId);
+    const existingCount = await prisma.jobAttachment.count({ where: { jobId, adminId } });
+    if (existingCount >= 20) throw new AppError(status.BAD_REQUEST, "A job may have at most 20 attachments");
+
+    // Images use JOB_PHOTO; PDFs and other allowed documents use JOB_ATTACHMENT.
+    const raw = await mediaService.getAssetForTenant(assetId, adminId);
+    const purpose = raw.mimeType.startsWith("image/") ? "JOB_PHOTO" : "JOB_ATTACHMENT";
+    const asset = await mediaService.bindReadyAsset(assetId, user, purpose, jobId);
+    const fileUrl = `r2://${asset.bucket}/${asset.objectKey}`;
+    try {
+        return await prisma.jobAttachment.create({
+            data: {
+                jobId, adminId, fileName: asset.originalFilename, fileUrl, cloudinaryId: null,
+                mediaAssetId: asset.id, storageKey: asset.objectKey, mimeType: asset.mimeType,
+                fileSizeBytes: asset.storedBytes ?? asset.originalBytes, uploadedByRole: uploaderRole, photoType: photoType ?? null,
+            },
+        });
+    } catch (error) {
+        await mediaService.deleteAssetIfUnreferencedForTenant(asset.id, adminId).catch(() => undefined);
+        throw error;
+    }
 };
 
 const uploadAttachment = async (
@@ -243,55 +276,23 @@ const uploadAttachment = async (
     user: IRequestUser,
     photoType?: PhotoType,
 ) => {
-    const { adminId, uploaderRole } = await resolveAdminIdForJob(user, jobId);
+    const { adminId } = await resolveAdminIdForJob(user, jobId);
     await assertJobOwnership(jobId, adminId);
-
-    if (!file) {
-        throw new AppError(status.BAD_REQUEST, "No file provided");
+    if (!file) throw new AppError(status.BAD_REQUEST, "No file provided");
+    if (!ALLOWED_MIMES.has(file.mimetype)) throw new AppError(status.BAD_REQUEST, `File type '${file.mimetype}' is not allowed. Allowed types: JPEG, PNG, WEBP, GIF, PDF`);
+    if (file.size > MAX_FILE_SIZE_BYTES) throw new AppError(status.BAD_REQUEST, `File is too large. Maximum size is ${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB`);
+    const existingCount = await prisma.jobAttachment.count({ where: { jobId, adminId } });
+    if (existingCount >= 20) throw new AppError(status.BAD_REQUEST, "A job may have at most 20 attachments");
+    const purpose = file.mimetype.startsWith("image/") ? "JOB_PHOTO" : "JOB_ATTACHMENT";
+    const asset = await mediaService.uploadFromServer({
+        purpose, entityId: jobId, filename: file.originalname, contentType: file.mimetype, buffer: file.buffer,
+    }, user);
+    try {
+        return await createAttachmentFromAsset(jobId, asset.id, user, photoType);
+    } catch (error) {
+        await mediaService.deleteAssetIfUnreferencedForTenant(asset.id, adminId).catch(() => undefined);
+        throw error;
     }
-    if (!ALLOWED_MIMES.has(file.mimetype)) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            `File type '${file.mimetype}' is not allowed. Allowed types: JPEG, PNG, WEBP, GIF, PDF`,
-        );
-    }
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            `File is too large. Maximum size is ${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB`,
-        );
-    }
-
-    // Count existing attachments (cap at 20 per job)
-    const existingCount = await prisma.jobAttachment.count({
-        where: { jobId, adminId },
-    });
-    if (existingCount >= 20) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "A job may have at most 20 attachments",
-        );
-    }
-
-    // Upload to Cloudinary
-    const uploadResult = await uploadFileToCloudinary(
-        file.buffer,
-        file.originalname,
-    );
-
-    return prisma.jobAttachment.create({
-        data: {
-            jobId,
-            adminId,
-            fileName: file.originalname,
-            fileUrl: uploadResult.secure_url,
-            cloudinaryId: uploadResult.public_id,
-            mimeType: file.mimetype,
-            fileSizeBytes: file.size,
-            uploadedByRole: uploaderRole,
-            photoType: photoType ?? null,
-        },
-    });
 };
 
 const deleteAttachment = async (
@@ -308,11 +309,13 @@ const deleteAttachment = async (
     if (!attachment)
         throw new AppError(status.NOT_FOUND, "Attachment not found");
 
-    // Delete from Cloudinary first — if this fails we don't touch the DB record
-    // so the admin can retry without losing the reference.
-    await deleteFileFromCloudinary(attachment.fileUrl);
-
     await prisma.jobAttachment.delete({ where: { id: attachId } });
+    if (attachment.mediaAssetId) {
+        await mediaService.deleteAssetForTenant(attachment.mediaAssetId, adminId).catch(() => undefined);
+    } else if (attachment.fileUrl.includes("cloudinary")) {
+        // Existing pre-R2 rows remain deletable during the rolling Phase-2/3 migration.
+        await deleteFileFromCloudinary(attachment.fileUrl).catch(() => undefined);
+    }
     return { deleted: true };
 };
 
@@ -323,5 +326,6 @@ export const jobNotesService = {
     deleteNote,
     getAttachments,
     uploadAttachment,
+    createAttachmentFromAsset,
     deleteAttachment,
 };

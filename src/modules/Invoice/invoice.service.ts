@@ -13,7 +13,7 @@ import {
     PaymentStatus,
 } from "../../generated/prisma/enums";
 import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
-import { uploadFileToCloudinary } from "../../config/cloudinary";
+import { mediaService } from "../Media/media.service";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
 import { logActivity } from "../../lib/utils/logActivity";
@@ -24,6 +24,7 @@ import { nextReference } from "../../lib/utils/referenceNumber";
 import { formatMoney } from "../../lib/utils/money";
 import { queueInvoiceNotification } from "../../lib/notifications/businessNotificationEvents";
 import type { Payment, Prisma } from "../../generated/prisma/client";
+import type { InitiateMediaUploadInput } from "../Media/media.types";
 
 const createInvoice = async (payload: IInvoiceCreate, user: IRequestUser) => {
     const adminId = await getAdminId(user);
@@ -215,6 +216,7 @@ const getInvoiceById = async (id: string, user: IRequestUser) => {
                     note: true,
                     paidAt: true,
                     paymentProofUrl: true,
+                    paymentProofMediaAssetId: true,
                     rejectionReason: true,
                     createdAt: true,
                 },
@@ -225,8 +227,13 @@ const getInvoiceById = async (id: string, user: IRequestUser) => {
     if (!invoice) {
         throw new AppError(status.NOT_FOUND, "Invoice not found");
     }
-
-    return invoice;
+    const payments = await Promise.all(invoice.payments.map(async (payment) => ({
+        ...payment,
+        paymentProofUrl: payment.paymentProofMediaAssetId
+            ? await mediaService.getReadUrlForTenant(payment.paymentProofMediaAssetId, invoice.adminId)
+            : payment.paymentProofUrl,
+    })));
+    return { ...invoice, payments };
 };
 
 const updateInvoice = async (id: string, payload: IInvoiceUpdate, user: IRequestUser) => {
@@ -405,13 +412,14 @@ const getPaymentHistory = async (
     const { page = 1, limit = 10, searchTerm, method, adminId } = filters;
 
     // ── Resolve adminId ────────────────────────────────────────────────────────
-    let resolvedAdminId: string | undefined = adminId;
-    if (!resolvedAdminId && user.role === "ADMIN") {
-        const adminProfile = await prisma.adminProfile.findUnique({
-            where: { userId: user.id },
-            select: { id: true },
-        });
-        resolvedAdminId = adminProfile?.id;
+    // Only SUPER_ADMIN may choose an arbitrary organization filter. Tenant
+    // administrators are always scoped from their authenticated identity even
+    // if a forged adminId query parameter is supplied.
+    let resolvedAdminId: string | undefined;
+    if (user.role === UserRole.SUPER_ADMIN) {
+        resolvedAdminId = adminId;
+    } else {
+        resolvedAdminId = await getAdminId(user);
     }
 
     // ── Build filter for the list (PAID + PENDING_APPROVAL payments) ───────────
@@ -538,7 +546,7 @@ const getPaymentHistory = async (
     );
 
     // ── Shape payments list ───────────────────────────────────────────────────
-    const payments = paymentRows.map((p) => {
+    const payments = await Promise.all(paymentRows.map(async (p) => {
         const displayDate = p.paidAt ?? p.createdAt;
         return {
             id: p.id,
@@ -549,7 +557,9 @@ const getPaymentHistory = async (
             amount: Number(p.amount),
             method: METHOD_LABELS[p.method] ?? p.method,
             status: p.status,
-            paymentProofUrl: p.paymentProofUrl ?? undefined,
+            paymentProofUrl: p.paymentProofMediaAssetId
+                ? await mediaService.getReadUrlForTenant(p.paymentProofMediaAssetId, p.adminId)
+                : (p.paymentProofUrl ?? undefined),
             rejectionReason: p.rejectionReason ?? undefined,
             notes: p.note ?? undefined,
             date: new Date(displayDate).toLocaleDateString("en-GB", {
@@ -558,7 +568,7 @@ const getPaymentHistory = async (
                 year: "numeric",
             }),
         };
-    });
+    }));
 
     return {
         payments,
@@ -734,114 +744,149 @@ const recordPayment = async (
 // ── Submit payment proof (bank-transfer screenshot) ──────────────────────────
 //
 // Called by admin (or on behalf of client).
-// Uploads the proof image to Cloudinary, creates or updates a Payment record
+// Stores the proof in private R2, creates or updates a Payment record
 // with status PENDING_APPROVAL, and keeps the invoice in its current state
 // until an admin approves.
 
 interface ISubmitPaymentProofAuthCtx {
-    user?: { id: string } | undefined;
+    user?: IRequestUser | undefined;
     portalClient?: { id: string; adminId: string } | undefined;
 }
 
-const submitPaymentProof = async (
+const resolvePaymentProofContext = async (
     invoiceId: string,
     paymentId: string,
-    file: Express.Multer.File,
     authCtx: ISubmitPaymentProofAuthCtx,
 ) => {
-    // Two callers hit this route: an authenticated admin submitting proof on
-    // a client's behalf, or the client themselves via their portal token.
-    // Either way we resolve to an `adminId` that scopes the invoice lookup —
-    // for the portal path that also doubles as the ownership check (the
-    // invoice must belong to a booking for *this* client).
     let adminId: string;
     let invoice: Awaited<ReturnType<typeof prisma.invoice.findFirst>>;
+    let tenantActor: IRequestUser | null = null;
 
     if (authCtx.portalClient) {
         invoice = await prisma.invoice.findFirst({
             where: {
                 id: invoiceId,
+                adminId: authCtx.portalClient.adminId,
                 booking: { clientId: authCtx.portalClient.id },
             },
         });
         if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
         adminId = authCtx.portalClient.adminId;
     } else {
-        if (!authCtx.user) {
-            throw new AppError(status.UNAUTHORIZED, "Unauthorized");
+        if (!authCtx.user) throw new AppError(status.UNAUTHORIZED, "Unauthorized");
+        if (authCtx.user.role === UserRole.SUPER_ADMIN) {
+            invoice = await prisma.invoice.findUnique({ where: { id: invoiceId } });
+            if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
+            adminId = invoice.adminId;
+            tenantActor = { ...authCtx.user, role: UserRole.ADMIN, adminId };
+        } else {
+            adminId = await getAdminId(authCtx.user);
+            invoice = await prisma.invoice.findFirst({ where: { id: invoiceId, adminId } });
+            if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
+            tenantActor = authCtx.user;
         }
-        const admin = await prisma.adminProfile.findUnique({
-            where: { userId: authCtx.user.id },
-        });
-        if (!admin)
-            throw new AppError(status.NOT_FOUND, "Admin profile not found");
-
-        invoice = await prisma.invoice.findFirst({
-            where: { id: invoiceId, adminId: admin.id },
-        });
-        if (!invoice) throw new AppError(status.NOT_FOUND, "Invoice not found");
-        adminId = admin.id;
     }
 
-    const paymentCurrency = await prisma.adminProfile.findUnique({
-        where: { id: adminId },
-        select: { currency: true },
-    });
-    if (!paymentCurrency) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    const existingPaymentId = paymentId === "new" ? undefined : paymentId;
+    const previousPayment = existingPaymentId
+        ? await prisma.payment.findFirst({
+            where: { id: existingPaymentId, adminId, invoiceId: invoice.id },
+            select: { id: true, paymentProofMediaAssetId: true },
+        })
+        : null;
+    if (existingPaymentId && !previousPayment) throw new AppError(status.NOT_FOUND, "Payment not found");
 
-    if (invoice.status === InvoiceStatus.PAID) {
-        throw new AppError(status.BAD_REQUEST, "Invoice is already paid");
-    }
-    if (invoice.status === InvoiceStatus.CANCELLED) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "Cannot submit proof for a cancelled invoice",
-        );
-    }
+    return { adminId, invoice, tenantActor, existingPaymentId, previousPayment };
+};
 
-    // Upload the screenshot to Cloudinary
-    const uploadResult = await uploadFileToCloudinary(
-        file.buffer,
-        file.originalname || "payment-proof.jpg",
+const initiatePaymentProofUpload = async (
+    invoiceId: string,
+    paymentId: string,
+    input: Omit<InitiateMediaUploadInput, "purpose" | "entityId">,
+    authCtx: ISubmitPaymentProofAuthCtx,
+) => {
+    const { adminId, existingPaymentId } = await resolvePaymentProofContext(invoiceId, paymentId, authCtx);
+    return mediaService.initiateUploadForTenant(
+        { ...input, purpose: "PAYMENT_PROOF", entityId: existingPaymentId },
+        adminId,
+        authCtx.user?.id ?? null,
     );
+};
 
-    let payment: Payment;
+const finalizePaymentProofUpload = async (
+    invoiceId: string,
+    paymentId: string,
+    uploadId: string,
+    authCtx: ISubmitPaymentProofAuthCtx,
+) => {
+    const { adminId, existingPaymentId } = await resolvePaymentProofContext(invoiceId, paymentId, authCtx);
+    const asset = await mediaService.finalizeUploadForTenant(uploadId, adminId);
+    return mediaService.bindReadyAssetForTenant(asset.id, adminId, "PAYMENT_PROOF", existingPaymentId);
+};
 
-    if (paymentId === "new") {
-        payment = await prisma.$transaction(async (tx) => {
-            const paymentRef = await nextReference(tx, "payment");
-            return tx.payment.create({
-            data: {
-                paymentRef,
-                amount: invoice.total,
-                method: PaymentMethod.BANK_TRANSFER,
-                status: PaymentStatus.PENDING_APPROVAL,
-                currency: paymentCurrency.currency,
-                paymentProofUrl: uploadResult.secure_url,
-                adminId,
-                invoiceId: invoice.id,
-            },
-            });
-        });
+const discardPaymentProofUpload = async (
+    invoiceId: string,
+    paymentId: string,
+    uploadId: string,
+    authCtx: ISubmitPaymentProofAuthCtx,
+) => {
+    const { adminId } = await resolvePaymentProofContext(invoiceId, paymentId, authCtx);
+    await mediaService.deleteAssetIfUnreferencedForTenant(uploadId, adminId);
+};
+
+const submitPaymentProof = async (
+    invoiceId: string,
+    paymentId: string,
+    input: { file?: Express.Multer.File; mediaAssetId?: string },
+    authCtx: ISubmitPaymentProofAuthCtx,
+) => {
+    const { adminId, invoice, tenantActor, existingPaymentId, previousPayment } =
+        await resolvePaymentProofContext(invoiceId, paymentId, authCtx);
+
+    const paymentCurrency = await prisma.adminProfile.findUnique({ where: { id: adminId }, select: { currency: true } });
+    if (!paymentCurrency) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+    if (invoice.status === InvoiceStatus.PAID) throw new AppError(status.BAD_REQUEST, "Invoice is already paid");
+    if (invoice.status === InvoiceStatus.CANCELLED) throw new AppError(status.BAD_REQUEST, "Cannot submit proof for a cancelled invoice");
+
+    let asset;
+    if (input.mediaAssetId) {
+        asset = tenantActor
+            ? await mediaService.bindReadyAsset(input.mediaAssetId, tenantActor, "PAYMENT_PROOF", existingPaymentId)
+            : await mediaService.bindReadyAssetForTenant(input.mediaAssetId, adminId, "PAYMENT_PROOF", existingPaymentId);
+    } else if (input.file) {
+        asset = tenantActor
+            ? await mediaService.uploadFromServer({ purpose: "PAYMENT_PROOF", entityId: existingPaymentId, filename: input.file.originalname || "payment-proof", contentType: input.file.mimetype, buffer: input.file.buffer }, tenantActor)
+            : await mediaService.uploadFromServerForTenant({ purpose: "PAYMENT_PROOF", entityId: existingPaymentId, filename: input.file.originalname || "payment-proof", contentType: input.file.mimetype, buffer: input.file.buffer }, adminId, null);
     } else {
-        // Update an existing payment record
-        const existing = await prisma.payment.findFirst({
-            where: { id: paymentId, adminId },
-        });
-        if (!existing)
-            throw new AppError(status.NOT_FOUND, "Payment not found");
-
-        payment = await prisma.payment.update({
-            where: { id: paymentId },
-            data: {
-                status: PaymentStatus.PENDING_APPROVAL,
-                currency: paymentCurrency.currency,
-                paymentProofUrl: uploadResult.secure_url,
-            },
-        });
+        throw new AppError(status.BAD_REQUEST, "Proof image file is required");
     }
 
-    return { payment, proofUrl: uploadResult.secure_url };
+    try {
+        const storageMarker = `r2://${asset.bucket}/${asset.objectKey}`;
+        let payment: Payment;
+        if (paymentId === "new") {
+            payment = await prisma.$transaction(async (tx) => {
+                const paymentRef = await nextReference(tx, "payment");
+                return tx.payment.create({ data: {
+                    paymentRef, amount: invoice.total, method: PaymentMethod.BANK_TRANSFER, status: PaymentStatus.PENDING_APPROVAL,
+                    currency: paymentCurrency.currency, paymentProofUrl: storageMarker, paymentProofMediaAssetId: asset.id, adminId, invoiceId: invoice.id,
+                } });
+            });
+            await prisma.mediaAsset.update({ where: { id: asset.id }, data: { entityId: payment.id } }).catch(() => undefined);
+        } else {
+            payment = await prisma.payment.update({ where: { id: paymentId }, data: {
+                status: PaymentStatus.PENDING_APPROVAL, currency: paymentCurrency.currency, paymentProofUrl: storageMarker, paymentProofMediaAssetId: asset.id,
+            } });
+            if (previousPayment?.paymentProofMediaAssetId && previousPayment.paymentProofMediaAssetId !== asset.id) {
+                await mediaService.deleteAssetForTenant(previousPayment.paymentProofMediaAssetId, adminId).catch(() => undefined);
+            }
+        }
+        const proofUrl = await mediaService.getReadUrlForTenant(asset.id, adminId, asset.originalFilename);
+        return { payment: { ...payment, paymentProofUrl: proofUrl }, proofUrl, mediaAssetId: asset.id };
+    } catch (error) {
+        await mediaService.deleteAssetIfUnreferencedForTenant(asset.id, adminId).catch(() => undefined);
+        throw error;
+    }
 };
 
 // ── Approve or reject a PENDING_APPROVAL payment ─────────────────────────────
@@ -977,6 +1022,9 @@ export const invoiceService = {
     deleteInvoice,
     getPaymentHistory,
     recordPayment,
+    initiatePaymentProofUpload,
+    finalizePaymentProofUpload,
+    discardPaymentProofUpload,
     submitPaymentProof,
     approvePayment,
 };

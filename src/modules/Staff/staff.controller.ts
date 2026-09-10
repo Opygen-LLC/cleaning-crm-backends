@@ -143,21 +143,16 @@ const updateMyProfile = catchAsync(async (req, res) => {
     });
 });
 
-/** POST /staff/me/avatar — upload profile photo to Cloudinary */
+/** POST /staff/me/avatar — upload profile photo to R2 */
 const uploadMyAvatar = catchAsync(async (req, res) => {
-    if (!req.file) {
-        throw new AppError(status.BAD_REQUEST, "No file uploaded", {
-            code: "VALIDATION_ERROR",
-            retryable: false,
-            fieldErrors: { avatar: "Choose an image to upload." },
-        });
+    const mediaAssetId = typeof req.body?.mediaAssetId === "string" ? req.body.mediaAssetId : undefined;
+    if (!req.file && !mediaAssetId) {
+        throw new AppError(status.BAD_REQUEST, "No file uploaded", { code: "VALIDATION_ERROR", retryable: false, fieldErrors: { avatar: "Choose an image to upload." } });
     }
 
-    const result = await staffService.uploadMyAvatar(
-        req.user.id,
-        req.file.buffer,
-        req.file.mimetype,
-    );
+    const result = mediaAssetId
+        ? await staffService.attachMyAvatarAsset(req.user, mediaAssetId)
+        : await staffService.uploadMyAvatar(req.user, req.file!.buffer, req.file!.mimetype, req.file!.originalname);
     await bumpCacheResourcesForUser(req.user, [CacheResource.staff, CacheResource.dashboard]);
     sendResponse(res, {
         httpStatusCode: status.OK,

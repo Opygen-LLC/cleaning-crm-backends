@@ -15,7 +15,10 @@ model Payment {
   invoiceId         String?
   paidAt            DateTime?
   // ── Manual proof-of-payment approval ─────────────────────────────────
-  paymentProofUrl   String?       // client submits bank-transfer screenshot
+  paymentProofUrl   String?       // legacy/read-compatible URL; private R2 values are signed on reads
+  paymentProofMediaAssetId String? @unique
+  receiptUrl        String?
+  receiptMediaAssetId String?      @unique
   approvedAt        DateTime?
   approvedByUserId  String?
   rejectionReason   String?

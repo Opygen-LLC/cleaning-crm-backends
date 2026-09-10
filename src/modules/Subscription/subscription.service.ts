@@ -1,3 +1,4 @@
+import { mediaService } from "../Media/media.service";
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import {
@@ -561,23 +562,29 @@ const getMyBillingHistory = async (
         }),
     ]);
 
+    const rows = await Promise.all(data.map(async (row) => ({
+        ...row,
+        paymentProofUrl: row.paymentProofMediaAssetId
+            ? await mediaService.getReadUrlForTenant(row.paymentProofMediaAssetId, adminId)
+            : row.paymentProofUrl,
+    })));
     return {
         meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
-        data,
+        data: rows,
     };
 };
 
 const submitPaymentProof = async (
     user: IRequestUser,
     payload: {
-        paymentProofUrl: string;
+        paymentProofAssetId: string;
         amount?: number;
         method: "CASH" | "BANK_TRANSFER" | "CHEQUE" | "MANUAL";
         note?: string;
         transactionId?: string;
     },
 ) => {
-    const { paymentProofUrl, amount, method, note, transactionId } = payload;
+    const { paymentProofAssetId, amount, method, note, transactionId } = payload;
     const adminId = await resolveAdminProfileId(user);
 
     const sub = await prisma.subscription.findFirst({
@@ -585,7 +592,10 @@ const submitPaymentProof = async (
         orderBy: { createdAt: "desc" },
     });
     if (!sub) throw new AppError(status.NOT_FOUND, "No subscription found.");
+    const proofAsset = await mediaService.bindReadyAsset(paymentProofAssetId, user, "SUBSCRIPTION_PROOF", sub.id);
+    const paymentProofUrl = `r2://${proofAsset.bucket}/${proofAsset.objectKey}`;
 
+    try {
     const checkout = await prisma.pendingPlanChange.findFirst({
         where: {
             subscriptionId: sub.id,
@@ -664,6 +674,7 @@ const submitPaymentProof = async (
                     method,
                     status: "PENDING",
                     paymentProofUrl,
+                    paymentProofMediaAssetId: proofAsset.id,
                     note: note ?? null,
                     transactionId: transactionId ?? null,
                     planChangeId: fresh.id,
@@ -744,6 +755,7 @@ const submitPaymentProof = async (
             method,
             status: "PENDING",
             paymentProofUrl,
+            paymentProofMediaAssetId: proofAsset.id,
             note: note ?? null,
             transactionId: transactionId ?? null,
         },
@@ -757,6 +769,10 @@ const submitPaymentProof = async (
         submittedAt: billingRecord.createdAt.toISOString(),
     });
     return { billingRecord, pendingPlanChange: null };
+    } catch (error) {
+        await mediaService.deleteAssetIfUnreferencedForTenant(proofAsset.id, adminId).catch(() => undefined);
+        throw error;
+    }
 };
 
 export const subscriptionService = {

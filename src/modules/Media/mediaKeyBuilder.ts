@@ -40,6 +40,7 @@ export const buildFinalObjectKey = (params: {
   if (params.purpose === "JOB_PHOTO") parts.push("photos");
   if (params.purpose === "JOB_ATTACHMENT") parts.push("attachments");
   if (params.purpose === "PAYMENT_PROOF" || params.purpose === "SUBSCRIPTION_PROOF") parts.push("proofs");
+  if (params.purpose === "PAYMENT_RECEIPT") parts.push("receipts");
   if (params.purpose === "INVOICE_ATTACHMENT") parts.push("attachments");
   if (params.purpose === "EXPENSE_RECEIPT") parts.push("receipts");
 

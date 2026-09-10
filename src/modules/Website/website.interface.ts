@@ -99,6 +99,7 @@ export interface WebsiteRevisionRestoreInput {
 
 export interface WebsiteAssetCreateInput {
   publicId: string;
+  mediaAssetId?: string;
   url: string;
   mimeType: string;
   width?: number | null;
@@ -124,12 +125,14 @@ export interface WebsiteBrandUploadSignatureInput {
 
 export interface WebsiteBrandUploadFinalizeInput {
   kind: WebsiteBrandAssetKind;
-  publicId: string;
+  mediaAssetId: string;
 }
 
 export interface WebsiteManagedBrandAssetInput {
   kind: WebsiteBrandAssetKind;
   publicId: string;
+  /** Authoritative R2 MediaAsset reference for newly uploaded managed assets. */
+  mediaAssetId?: string;
   url: string;
   mimeType: string;
   width: number;

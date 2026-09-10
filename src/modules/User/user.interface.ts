@@ -6,6 +6,6 @@ export interface UpdateUserPayload {
 }
 
 export interface UploadAvatarResult {
-    /** Cloudinary secure_url for the newly uploaded avatar. */
+    /** Public R2 URL for the newly uploaded avatar. */
     avatarUrl: string;
 }

@@ -1,94 +1,97 @@
 import {
-  CopyObjectCommand,
-  DeleteObjectCommand,
-  GetObjectCommand,
-  HeadBucketCommand,
-  HeadObjectCommand,
-  PutObjectCommand,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import {
   R2_PRIVATE_BUCKET,
   R2_PRIVATE_DOWNLOAD_TTL_SECONDS,
   R2_PUBLIC_BASE_URL,
   R2_UPLOAD_URL_TTL_SECONDS,
 } from "../../config/ENV";
-import { getR2Client } from "./r2Client";
+import { createR2PresignedUrl, r2SignedFetch } from "./r2Client";
 
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, "");
-
-const bodyToBuffer = async (body: unknown): Promise<Buffer> => {
-  if (!body || typeof body !== "object") throw new Error("R2 returned an empty object body.");
-  const candidate = body as { transformToByteArray?: () => Promise<Uint8Array> };
-  if (typeof candidate.transformToByteArray !== "function") throw new Error("R2 response body is not readable in this runtime.");
-  return Buffer.from(await candidate.transformToByteArray());
-};
+const cleanEtag = (value: string | null) => value?.replace(/^"|"$/g, "") ?? undefined;
 
 export const r2StorageService = {
   async createUploadUrl(params: { key: string; contentType: string }) {
-    const client = getR2Client();
-    const command = new PutObjectCommand({
-      Bucket: R2_PRIVATE_BUCKET,
-      Key: params.key,
-      ContentType: params.contentType,
-    });
-    return getSignedUrl(client, command, {
+    return createR2PresignedUrl({
+      method: "PUT",
+      bucket: R2_PRIVATE_BUCKET,
+      key: params.key,
       expiresIn: R2_UPLOAD_URL_TTL_SECONDS,
-      signableHeaders: new Set(["content-type"]),
+      headers: { "content-type": params.contentType },
     });
   },
 
   async headObject(bucket: string, key: string) {
-    return getR2Client().send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    const response = await r2SignedFetch({ method: "HEAD", bucket, key });
+    return {
+      ContentLength: Number(response.headers.get("content-length") ?? 0),
+      ContentType: response.headers.get("content-type") ?? undefined,
+      ETag: response.headers.get("etag") ?? undefined,
+    };
   },
 
   async getObjectBuffer(bucket: string, key: string): Promise<Buffer> {
-    const response = await getR2Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-    return bodyToBuffer(response.Body);
+    const response = await r2SignedFetch({ method: "GET", bucket, key });
+    return Buffer.from(await response.arrayBuffer());
   },
 
   async getObjectPrefix(bucket: string, key: string, bytes = 16): Promise<Buffer> {
-    const response = await getR2Client().send(new GetObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      Range: `bytes=0-${Math.max(0, bytes - 1)}`,
-    }));
-    return bodyToBuffer(response.Body);
+    const response = await r2SignedFetch({
+      method: "GET",
+      bucket,
+      key,
+      headers: { range: `bytes=0-${Math.max(0, bytes - 1)}` },
+    });
+    return Buffer.from(await response.arrayBuffer());
   },
 
   async putObject(params: { bucket: string; key: string; body: Buffer; contentType: string; isPublic: boolean }) {
-    return getR2Client().send(new PutObjectCommand({
-      Bucket: params.bucket,
-      Key: params.key,
-      Body: params.body,
-      ContentType: params.contentType,
-      ContentLength: params.body.length,
-      CacheControl: params.isPublic ? "public, max-age=31536000, immutable" : "private, no-store",
-    }));
+    const response = await r2SignedFetch({
+      method: "PUT",
+      bucket: params.bucket,
+      key: params.key,
+      body: params.body,
+      headers: {
+        "content-type": params.contentType,
+        "cache-control": params.isPublic ? "public, max-age=31536000, immutable" : "private, no-store",
+      },
+    });
+    return { ETag: response.headers.get("etag") ?? undefined };
   },
 
   async copyObject(params: { sourceBucket: string; sourceKey: string; destinationBucket: string; destinationKey: string; contentType: string; isPublic: boolean }) {
-    return getR2Client().send(new CopyObjectCommand({
-      Bucket: params.destinationBucket,
-      Key: params.destinationKey,
-      CopySource: `${params.sourceBucket}/${params.sourceKey}`,
-      MetadataDirective: "REPLACE",
-      ContentType: params.contentType,
-      CacheControl: params.isPublic ? "public, max-age=31536000, immutable" : "private, no-store",
-    }));
+    const copySource = `/${encodeURIComponent(params.sourceBucket)}/${params.sourceKey.split("/").map(encodeURIComponent).join("/")}`;
+    const response = await r2SignedFetch({
+      method: "PUT",
+      bucket: params.destinationBucket,
+      key: params.destinationKey,
+      headers: {
+        "x-amz-copy-source": copySource,
+        "x-amz-metadata-directive": "REPLACE",
+        "content-type": params.contentType,
+        "cache-control": params.isPublic ? "public, max-age=31536000, immutable" : "private, no-store",
+      },
+    });
+    const body = await response.text().catch(() => "");
+    const xmlEtag = body.match(/<ETag>(?:&quot;|\")?([^<\"]+)(?:&quot;|\")?<\/ETag>/i)?.[1];
+    return { CopyObjectResult: { ETag: xmlEtag ?? cleanEtag(response.headers.get("etag")) } };
   },
 
   async deleteObject(bucket: string, key: string) {
-    await getR2Client().send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    await r2SignedFetch({ method: "DELETE", bucket, key });
   },
 
   async createPrivateDownloadUrl(bucket: string, key: string, filename?: string) {
-    const command = new GetObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      ...(filename ? { ResponseContentDisposition: `attachment; filename="${filename.replace(/["\\\r\n]/g, "_")}"` } : {}),
-    });
-    return getSignedUrl(getR2Client(), command, { expiresIn: R2_PRIVATE_DOWNLOAD_TTL_SECONDS });
+    const query = filename
+      ? { "response-content-disposition": `attachment; filename="${filename.replace(/["\\\r\n]/g, "_")}"` }
+      : undefined;
+    return createR2PresignedUrl({ method: "GET", bucket, key, expiresIn: R2_PRIVATE_DOWNLOAD_TTL_SECONDS, query });
+  },
+
+  async createPrivateReadUrl(bucket: string, key: string, filename?: string) {
+    const query = filename
+      ? { "response-content-disposition": `inline; filename="${filename.replace(/["\\\r\n]/g, "_")}"` }
+      : undefined;
+    return createR2PresignedUrl({ method: "GET", bucket, key, expiresIn: R2_PRIVATE_DOWNLOAD_TTL_SECONDS, query });
   },
 
   publicUrl(key: string): string {
@@ -97,13 +100,12 @@ export const r2StorageService = {
   },
 
   async probe() {
-    const client = getR2Client();
     const publicBucket = process.env.R2_PUBLIC_BUCKET?.trim();
     const privateBucket = process.env.R2_PRIVATE_BUCKET?.trim();
     if (!publicBucket || !privateBucket) throw new Error("R2 bucket names are not configured.");
     const [publicResult, privateResult] = await Promise.allSettled([
-      client.send(new HeadBucketCommand({ Bucket: publicBucket })),
-      client.send(new HeadBucketCommand({ Bucket: privateBucket })),
+      r2SignedFetch({ method: "HEAD", bucket: publicBucket, timeoutMs: 10_000 }),
+      r2SignedFetch({ method: "HEAD", bucket: privateBucket, timeoutMs: 10_000 }),
     ]);
     return {
       ok: publicResult.status === "fulfilled" && privateResult.status === "fulfilled",

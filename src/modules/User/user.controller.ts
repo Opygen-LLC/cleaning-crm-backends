@@ -64,23 +64,18 @@ const updateUser = catchAsync(async (req, res) => {
 
 /**
  * POST /user/me/avatar
- * Multipart upload (field: "avatar") → Cloudinary → user.image updated.
- * Returns { avatarUrl: string } pointing to the Cloudinary secure URL.
+ * R2 media asset or multipart fallback upload → user.image updated.
+ * Returns { avatarUrl: string } pointing to the public R2 URL.
  */
 const uploadMyAvatar = catchAsync(async (req, res) => {
-    if (!req.file) {
-        throw new AppError(status.BAD_REQUEST, "No file uploaded", {
-            code: "VALIDATION_ERROR",
-            retryable: false,
-            fieldErrors: { avatar: "Choose an image to upload." },
-        });
+    const mediaAssetId = typeof req.body?.mediaAssetId === "string" ? req.body.mediaAssetId : undefined;
+    if (!req.file && !mediaAssetId) {
+        throw new AppError(status.BAD_REQUEST, "No file uploaded", { code: "VALIDATION_ERROR", retryable: false, fieldErrors: { avatar: "Choose an image to upload." } });
     }
 
-    const result = await userService.uploadMyAvatar(
-        req.user.id,
-        req.file.buffer,
-        req.file.mimetype,
-    );
+    const result = mediaAssetId
+        ? await userService.attachMyAvatarAsset(req.user, mediaAssetId)
+        : await userService.uploadMyAvatar(req.user, req.file!.buffer, req.file!.mimetype, req.file!.originalname);
 
     sendResponse(res, {
         httpStatusCode: status.OK,

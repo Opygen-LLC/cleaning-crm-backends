@@ -26,19 +26,53 @@ const processingQueue: Array<() => void> = [];
 let activeImageJobs = 0;
 const maxImageJobs = Math.max(1, Math.min(8, Number(process.env.R2_IMAGE_PROCESSING_CONCURRENCY) || 2));
 
-async function withImageSlot<T>(work: () => Promise<T>): Promise<T> {
-  if (activeImageJobs >= maxImageJobs) await new Promise<void>((resolve) => processingQueue.push(resolve));
-  activeImageJobs += 1;
-  try { return await work(); }
-  finally {
-    activeImageJobs -= 1;
-    processingQueue.shift()?.();
+async function acquireImageSlot(): Promise<void> {
+  if (activeImageJobs < maxImageJobs) {
+    activeImageJobs += 1;
+    return;
   }
+  await new Promise<void>((resolve) => processingQueue.push(resolve));
+  // A released slot is transferred directly to this waiter. Do not increment
+  // activeImageJobs here or a newly arriving request could race the waiter and
+  // temporarily exceed the configured Sharp concurrency limit.
+}
+
+function releaseImageSlot(): void {
+  const next = processingQueue.shift();
+  if (next) {
+    next();
+    return;
+  }
+  activeImageJobs = Math.max(0, activeImageJobs - 1);
+}
+
+async function withImageSlot<T>(work: () => Promise<T>): Promise<T> {
+  await acquireImageSlot();
+  try { return await work(); }
+  finally { releaseImageSlot(); }
 }
 
 async function optimizeValidatedImage(buffer: Buffer, options: Parameters<typeof optimizeImage>[1]) {
   try {
     return await withImageSlot(() => optimizeImage(buffer, options));
+  } catch {
+    throw new AppError(status.BAD_REQUEST, "The uploaded image is invalid or cannot be processed safely.", {
+      code: "MEDIA_IMAGE_INVALID",
+      retryable: false,
+      fieldErrors: { file: "Choose a valid JPEG, PNG, WebP, AVIF, HEIC, or HEIF image." },
+    });
+  }
+}
+
+async function downloadAndOptimizeR2Image(key: string, options: Parameters<typeof optimizeImage>[1]) {
+  try {
+    return await withImageSlot(async () => {
+      // Keep both the R2 download buffer and Sharp's native allocations inside
+      // the same concurrency slot so many simultaneous 10 MB uploads cannot
+      // exhaust a small Cloud Run instance before processing even begins.
+      const source = await r2StorageService.getObjectBuffer(R2_PRIVATE_BUCKET, key);
+      return optimizeImage(source, options);
+    });
   } catch {
     throw new AppError(status.BAD_REQUEST, "The uploaded image is invalid or cannot be processed safely.", {
       code: "MEDIA_IMAGE_INVALID",
@@ -64,6 +98,18 @@ const assertMimeAndSize = (purpose: MediaPurpose, contentType: string, size: num
 
 async function assertEntityOwnership(user: IRequestUser, adminId: string, purpose: MediaPurpose, entityId?: string) {
   const policy = MEDIA_PURPOSE_POLICY[purpose];
+
+  // Website and subscription uploaders may not have the domain id at selection
+  // time. Resolve it from authenticated tenant context rather than trusting the
+  // browser to manufacture storage paths.
+  if (!entityId && (purpose === "WEBSITE_BRAND" || purpose === "WEBSITE_CONTENT")) {
+    const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { id: true } });
+    entityId = website?.id;
+  }
+  if (!entityId && purpose === "SUBSCRIPTION_PROOF") {
+    const subscription = await prisma.subscription.findFirst({ where: { adminId }, orderBy: { createdAt: "desc" }, select: { id: true } });
+    entityId = subscription?.id;
+  }
   if (policy.requireEntity && !entityId) throw safeError("entityId is required for this upload purpose.", "entityId");
 
   if (purpose === "USER_AVATAR") {
@@ -72,7 +118,7 @@ async function assertEntityOwnership(user: IRequestUser, adminId: string, purpos
   }
   if (purpose === "BUSINESS_LOGO" || purpose === "BUSINESS_FAVICON") {
     if (user.role !== UserRole.ADMIN) throw new AppError(status.FORBIDDEN, "Only an administrator can update business branding.", { code: "FORBIDDEN", retryable: false });
-    return adminId;
+    return undefined;
   }
   if (!entityId) return undefined;
 
@@ -94,7 +140,8 @@ async function assertEntityOwnership(user: IRequestUser, adminId: string, purpos
     case "JOB_PHOTO":
     case "JOB_ATTACHMENT": return owned(await prisma.job.findUnique({ where: { id: entityId }, select: { adminId: true } }));
     case "INVOICE_ATTACHMENT": return owned(await prisma.invoice.findUnique({ where: { id: entityId }, select: { adminId: true } }));
-    case "PAYMENT_PROOF": return owned(await prisma.payment.findUnique({ where: { id: entityId }, select: { adminId: true } }));
+    case "PAYMENT_PROOF":
+    case "PAYMENT_RECEIPT": return owned(await prisma.payment.findUnique({ where: { id: entityId }, select: { adminId: true } }));
     case "EXPENSE_RECEIPT": return owned(await prisma.expense.findUnique({ where: { id: entityId }, select: { adminId: true } }));
     case "SUBSCRIPTION_PROOF": return owned(await prisma.subscription.findUnique({ where: { id: entityId }, select: { adminId: true } }));
     default: return entityId;
@@ -115,10 +162,12 @@ const accessWhere = async (assetId: string, user: IRequestUser) => {
   return asset;
 };
 
-async function initiateUpload(input: InitiateMediaUploadInput, user: IRequestUser) {
-  assertPurposeRole(user, input.purpose);
-  const adminId = await getAdminId(user);
-  const entityId = await assertEntityOwnership(user, adminId, input.purpose, input.entityId);
+async function createUploadSession(
+  input: InitiateMediaUploadInput,
+  adminId: string,
+  entityId: string | undefined,
+  createdByUserId: string | null,
+) {
   assertMimeAndSize(input.purpose, input.contentType, input.size);
 
   const uploadId = randomUUID();
@@ -128,7 +177,7 @@ async function initiateUpload(input: InitiateMediaUploadInput, user: IRequestUse
     data: {
       id: uploadId,
       adminId,
-      createdByUserId: user.id,
+      createdByUserId,
       bucket: MEDIA_PURPOSE_POLICY[input.purpose].visibility === "PUBLIC" ? R2_PUBLIC_BUCKET : R2_PRIVATE_BUCKET,
       objectKey: `pending/${uploadId}`,
       temporaryObjectKey,
@@ -161,10 +210,30 @@ async function initiateUpload(input: InitiateMediaUploadInput, user: IRequestUse
   }
 }
 
+async function initiateUpload(input: InitiateMediaUploadInput, user: IRequestUser) {
+  assertPurposeRole(user, input.purpose);
+  const adminId = await getAdminId(user);
+  const entityId = await assertEntityOwnership(user, adminId, input.purpose, input.entityId);
+  return createUploadSession(input, adminId, entityId, user.id);
+}
+
+/**
+ * Internal tenant-scoped session creator for non-user principals such as the
+ * client portal. Callers must perform their own domain authorization first.
+ */
+async function initiateUploadForTenant(
+  input: InitiateMediaUploadInput,
+  adminId: string,
+  createdByUserId: string | null = null,
+) {
+  return createUploadSession(input, adminId, input.entityId, createdByUserId);
+}
+
 async function finalizeUpload(uploadId: string, user: IRequestUser) {
   if (uploadLocks.has(uploadId)) throw new AppError(status.CONFLICT, "This upload is already being finalized.", { code: "MEDIA_FINALIZE_IN_PROGRESS", retryable: true });
   uploadLocks.add(uploadId);
   let asset: Awaited<ReturnType<typeof accessWhere>> | null = null;
+  let processingLeaseUpdatedAt: Date | null = null;
   try {
     asset = await accessWhere(uploadId, user);
     if (asset.status === "READY") return asset;
@@ -192,6 +261,8 @@ async function finalizeUpload(uploadId: string, user: IRequestUser) {
       if (latest?.status === "READY") return latest;
       throw new AppError(status.CONFLICT, "This upload is already being finalized.", { code: "MEDIA_FINALIZE_IN_PROGRESS", retryable: true });
     }
+    const claimedAsset = await prisma.mediaAsset.findUnique({ where: { id: asset.id }, select: { updatedAt: true } });
+    processingLeaseUpdatedAt = claimedAsset?.updatedAt ?? null;
     let head;
     try {
       head = await r2StorageService.headObject(R2_PRIVATE_BUCKET, asset.temporaryObjectKey);
@@ -217,8 +288,7 @@ async function finalizeUpload(uploadId: string, user: IRequestUser) {
     let finalObjectKey: string;
 
     if (isImageMimeType(uploadedType)) {
-      const source = await r2StorageService.getObjectBuffer(R2_PRIVATE_BUCKET, asset.temporaryObjectKey);
-      const optimized = await optimizeValidatedImage(source, {
+      const optimized = await downloadAndOptimizeR2Image(asset.temporaryObjectKey, {
         contentType: uploadedType,
         maxDimension: policy.maxDimension ?? 1600,
         targetBytes: policy.targetBytes ?? 400 * 1024,
@@ -240,9 +310,11 @@ async function finalizeUpload(uploadId: string, user: IRequestUser) {
       etag = copy.CopyObjectResult?.ETag?.replace(/"/g, "") ?? null;
     }
 
-    await r2StorageService.deleteObject(R2_PRIVATE_BUCKET, asset.temporaryObjectKey).catch(() => undefined);
     const publicUrl = asset.visibility === "PUBLIC" ? r2StorageService.publicUrl(finalObjectKey) : null;
-    return await prisma.mediaAsset.update({
+    // Persist READY before deleting the temporary source. If the database write
+    // fails after the R2 put/copy, the temp object remains available and a
+    // retry can safely write the same immutable final key again.
+    const readyAsset = await prisma.mediaAsset.update({
       where: { id: asset.id },
       data: {
         objectKey: finalObjectKey,
@@ -259,18 +331,39 @@ async function finalizeUpload(uploadId: string, user: IRequestUser) {
         expiresAt: null,
       },
     });
+    await r2StorageService.deleteObject(R2_PRIVATE_BUCKET, asset.temporaryObjectKey).catch(() => undefined);
+    return readyAsset;
   } catch (error) {
-    if (asset) await prisma.mediaAsset.update({ where: { id: asset.id }, data: { status: "FAILED" } }).catch(() => undefined);
+    // Only the worker that acquired this exact PROCESSING lease may mark it
+    // failed. A concurrent finalize request that merely observes the lease must
+    // never flip another worker back to FAILED and open a duplicate processor.
+    if (asset && processingLeaseUpdatedAt) {
+      await prisma.mediaAsset.updateMany({
+        where: { id: asset.id, status: "PROCESSING", updatedAt: processingLeaseUpdatedAt },
+        data: { status: "FAILED" },
+      }).catch(() => undefined);
+    }
     throw error;
   } finally {
     uploadLocks.delete(uploadId);
   }
 }
 
-async function uploadFromServer(input: ServerMediaUploadInput, user: IRequestUser) {
-  assertPurposeRole(user, input.purpose);
-  const adminId = await getAdminId(user);
-  const entityId = await assertEntityOwnership(user, adminId, input.purpose, input.entityId);
+async function finalizeUploadForTenant(uploadId: string, adminId: string) {
+  // finalizeUpload only needs an ADMIN tenant identity to scope accessWhere;
+  // no user-owned operation is performed here. This wrapper is reserved for
+  // domain services that have already authorized a non-session principal
+  // (currently the client portal) against the same tenant.
+  const tenantActor: IRequestUser = {
+    id: `tenant-media:${adminId}`,
+    email: "tenant-media@internal.invalid",
+    role: UserRole.ADMIN,
+    adminId,
+  };
+  return finalizeUpload(uploadId, tenantActor);
+}
+
+async function uploadFromServerForTenant(input: ServerMediaUploadInput, adminId: string, createdByUserId?: string | null) {
   assertMimeAndSize(input.purpose, input.contentType, input.buffer.length);
   const policy = MEDIA_PURPOSE_POLICY[input.purpose];
   let finalBuffer = input.buffer;
@@ -280,47 +373,32 @@ async function uploadFromServer(input: ServerMediaUploadInput, user: IRequestUse
 
   if (isImageMimeType(finalMime)) {
     const optimized = await optimizeValidatedImage(finalBuffer, {
-      contentType: finalMime,
-      maxDimension: policy.maxDimension ?? 1600,
-      targetBytes: policy.targetBytes ?? 400 * 1024,
-      favicon: input.purpose === "BUSINESS_FAVICON",
+      contentType: finalMime, maxDimension: policy.maxDimension ?? 1600, targetBytes: policy.targetBytes ?? 400 * 1024, favicon: input.purpose === "BUSINESS_FAVICON",
     });
-    finalBuffer = optimized.buffer;
-    finalMime = optimized.mimeType;
-    width = optimized.width;
-    height = optimized.height;
+    finalBuffer = optimized.buffer; finalMime = optimized.mimeType; width = optimized.width; height = optimized.height;
   } else if (finalMime === "application/pdf") {
     assertPdfSignature(finalBuffer.subarray(0, 8));
   }
 
   const bucket = policy.visibility === "PUBLIC" ? R2_PUBLIC_BUCKET : R2_PRIVATE_BUCKET;
-  const objectKey = buildFinalObjectKey({ adminId, purpose: input.purpose, entityId, mimeType: finalMime });
+  const objectKey = buildFinalObjectKey({ adminId, purpose: input.purpose, entityId: input.entityId, mimeType: finalMime });
   const put = await r2StorageService.putObject({ bucket, key: objectKey, body: finalBuffer, contentType: finalMime, isPublic: policy.visibility === "PUBLIC" });
   const publicUrl = policy.visibility === "PUBLIC" ? r2StorageService.publicUrl(objectKey) : null;
   return prisma.mediaAsset.create({
     data: {
-      adminId,
-      createdByUserId: user.id,
-      bucket,
-      objectKey,
-      purpose: input.purpose,
-      visibility: policy.visibility,
-      entityType: policy.entityType,
-      entityId: entityId ?? null,
-      originalFilename: input.filename,
-      originalMimeType: input.contentType.toLowerCase(),
-      mimeType: finalMime,
-      originalBytes: input.buffer.length,
-      storedBytes: finalBuffer.length,
-      width,
-      height,
-      checksum: createHash("sha256").update(finalBuffer).digest("hex"),
-      etag: put.ETag?.replace(/"/g, "") ?? null,
-      publicUrl,
-      status: "READY",
-      finalizedAt: new Date(),
+      adminId, createdByUserId: createdByUserId ?? null, bucket, objectKey, purpose: input.purpose, visibility: policy.visibility,
+      entityType: policy.entityType, entityId: input.entityId ?? null, originalFilename: input.filename, originalMimeType: input.contentType.toLowerCase(),
+      mimeType: finalMime, originalBytes: input.buffer.length, storedBytes: finalBuffer.length, width, height,
+      checksum: createHash("sha256").update(finalBuffer).digest("hex"), etag: put.ETag?.replace(/"/g, "") ?? null, publicUrl, status: "READY", finalizedAt: new Date(),
     },
   });
+}
+
+async function uploadFromServer(input: ServerMediaUploadInput, user: IRequestUser) {
+  assertPurposeRole(user, input.purpose);
+  const adminId = await getAdminId(user);
+  const entityId = await assertEntityOwnership(user, adminId, input.purpose, input.entityId);
+  return uploadFromServerForTenant({ ...input, entityId }, adminId, user.id);
 }
 
 async function getAsset(assetId: string, user: IRequestUser) {
@@ -335,15 +413,148 @@ async function getDownloadUrl(assetId: string, user: IRequestUser) {
   return { url, expiresAt: new Date(Date.now() + Number(process.env.R2_PRIVATE_DOWNLOAD_TTL_SECONDS || 300) * 1000).toISOString() };
 }
 
+async function assertAssetNotInUse(assetId: string): Promise<void> {
+  const references = await Promise.all([
+    prisma.user.findFirst({ where: { imageMediaAssetId: assetId }, select: { id: true } }),
+    prisma.adminProfile.findFirst({ where: { businessLogoMediaAssetId: assetId }, select: { id: true } }),
+    prisma.jobAttachment.findFirst({ where: { mediaAssetId: assetId }, select: { id: true } }),
+    prisma.payment.findFirst({ where: { OR: [{ paymentProofMediaAssetId: assetId }, { receiptMediaAssetId: assetId }] }, select: { id: true } }),
+    prisma.billingHistory.findFirst({ where: { paymentProofMediaAssetId: assetId }, select: { id: true } }),
+    prisma.expense.findFirst({ where: { receiptMediaAssetId: assetId }, select: { id: true } }),
+    prisma.websiteAsset.findFirst({ where: { mediaAssetId: assetId }, select: { id: true } }),
+  ]);
+  if (references.some(Boolean)) {
+    throw new AppError(status.CONFLICT, "This media asset is currently attached to a record. Remove or replace it from that record first.", {
+      code: "MEDIA_ASSET_IN_USE",
+      retryable: false,
+    });
+  }
+}
+
+async function deleteClaimedTenantAsset(asset: {
+  id: string; adminId: string; status: string; updatedAt: Date; bucket: string; objectKey: string; temporaryObjectKey: string | null; deletedAt: Date | null;
+}) {
+  if (asset.deletedAt || asset.status === "DELETED") return;
+  if (asset.status === "PROCESSING") {
+    throw new AppError(status.CONFLICT, "This media asset is still being finalized. Try again after processing completes.", {
+      code: "MEDIA_FINALIZE_IN_PROGRESS", retryable: true,
+    });
+  }
+
+  let current = asset;
+  if (current.status !== "DELETING") {
+    if (current.status === "READY") await assertAssetNotInUse(current.id);
+    const claimed = await prisma.mediaAsset.updateMany({
+      where: {
+        id: current.id,
+        adminId: current.adminId,
+        deletedAt: null,
+        status: current.status,
+        updatedAt: current.updatedAt,
+      },
+      data: { status: "DELETING" },
+    });
+    if (claimed.count !== 1) {
+      const latest = await prisma.mediaAsset.findFirst({ where: { id: current.id, adminId: current.adminId } });
+      if (!latest || latest.deletedAt || latest.status === "DELETED") return;
+      return deleteClaimedTenantAsset(latest);
+    }
+    const claimedRow = await prisma.mediaAsset.findUnique({ where: { id: current.id } });
+    if (!claimedRow) return;
+    current = claimedRow;
+  }
+
+  // Marking DELETING before touching R2 is the concurrency barrier: finalize
+  // only claims INITIATED/FAILED rows, so a cancel/delete can never race a
+  // processor and resurrect an object after it has been removed. R2 deletes
+  // are idempotent, so a transient failure can safely retry this state.
+  await Promise.all([
+    current.objectKey.startsWith("pending/") ? Promise.resolve() : r2StorageService.deleteObject(current.bucket, current.objectKey),
+    current.temporaryObjectKey ? r2StorageService.deleteObject(R2_PRIVATE_BUCKET, current.temporaryObjectKey) : Promise.resolve(),
+  ]);
+
+  await prisma.mediaAsset.updateMany({
+    where: { id: current.id, adminId: current.adminId, status: "DELETING", deletedAt: null },
+    data: { status: "DELETED", deletedAt: new Date(), temporaryObjectKey: null },
+  });
+}
+
 async function deleteAsset(assetId: string, user: IRequestUser) {
   const asset = await accessWhere(assetId, user);
-  await Promise.all([
-    asset.objectKey.startsWith("pending/") ? Promise.resolve() : r2StorageService.deleteObject(asset.bucket, asset.objectKey),
-    asset.temporaryObjectKey ? r2StorageService.deleteObject(R2_PRIVATE_BUCKET, asset.temporaryObjectKey) : Promise.resolve(),
-  ]);
-  return prisma.mediaAsset.update({ where: { id: asset.id }, data: { status: "DELETED", deletedAt: new Date(), temporaryObjectKey: null } });
+  await deleteClaimedTenantAsset(asset);
+  return prisma.mediaAsset.findUnique({ where: { id: asset.id } });
+}
+
+async function requireReadyAssetForPurpose(assetId: string, user: IRequestUser, purpose: MediaPurpose, entityId?: string) {
+  const asset = await accessWhere(assetId, user);
+  if (asset.status !== "READY" || asset.deletedAt) {
+    throw new AppError(status.CONFLICT, "Media asset is not ready.", { code: "MEDIA_NOT_READY", retryable: true });
+  }
+  if (asset.purpose !== purpose) {
+    throw new AppError(status.BAD_REQUEST, "The uploaded media has the wrong purpose for this field.", { code: "MEDIA_PURPOSE_MISMATCH", retryable: false });
+  }
+  if (entityId && asset.entityId && asset.entityId !== entityId) {
+    throw new AppError(status.BAD_REQUEST, "The uploaded media belongs to a different record.", { code: "MEDIA_ENTITY_MISMATCH", retryable: false });
+  }
+  return asset;
+}
+
+async function bindReadyAsset(assetId: string, user: IRequestUser, purpose: MediaPurpose, entityId?: string) {
+  const adminId = await getAdminId(user);
+  if (entityId) await assertEntityOwnership(user, adminId, purpose, entityId);
+  const asset = await requireReadyAssetForPurpose(assetId, user, purpose, entityId);
+  if (entityId && asset.entityId !== entityId) {
+    return prisma.mediaAsset.update({ where: { id: asset.id }, data: { entityId } });
+  }
+  return asset;
+}
+
+async function getAssetForTenant(assetId: string, adminId: string) {
+  const asset = await prisma.mediaAsset.findFirst({ where: { id: assetId, adminId, status: "READY", deletedAt: null } });
+  if (!asset) throw new AppError(status.NOT_FOUND, "Media asset not found.", { code: "MEDIA_NOT_FOUND", retryable: false });
+  return asset;
+}
+
+async function bindReadyAssetForTenant(assetId: string, adminId: string, purpose: MediaPurpose, entityId?: string) {
+  const asset = await getAssetForTenant(assetId, adminId);
+  if (asset.purpose !== purpose) {
+    throw new AppError(status.BAD_REQUEST, "The uploaded media has the wrong purpose for this field.", { code: "MEDIA_PURPOSE_MISMATCH", retryable: false });
+  }
+  if (entityId && asset.entityId && asset.entityId !== entityId) {
+    throw new AppError(status.BAD_REQUEST, "The uploaded media belongs to a different record.", { code: "MEDIA_ENTITY_MISMATCH", retryable: false });
+  }
+  if (entityId && asset.entityId !== entityId) {
+    return prisma.mediaAsset.update({ where: { id: asset.id }, data: { entityId } });
+  }
+  return asset;
+}
+
+async function getReadUrlForTenant(assetId: string, adminId: string, downloadName?: string) {
+  const asset = await getAssetForTenant(assetId, adminId);
+  if (asset.visibility === "PUBLIC" && asset.publicUrl) return asset.publicUrl;
+  return r2StorageService.createPrivateReadUrl(asset.bucket, asset.objectKey, downloadName);
+}
+
+async function deleteAssetForTenant(assetId: string, adminId: string) {
+  const asset = await prisma.mediaAsset.findFirst({ where: { id: assetId, adminId } });
+  if (!asset || asset.deletedAt || asset.status === "DELETED") return;
+  await deleteClaimedTenantAsset(asset);
+}
+
+async function deleteAssetIfUnreferencedForTenant(assetId: string, adminId: string) {
+  try {
+    await deleteAssetForTenant(assetId, adminId);
+  } catch (error) {
+    if (error instanceof AppError && (error.code === "MEDIA_ASSET_IN_USE" || error.code === "MEDIA_FINALIZE_IN_PROGRESS")) return;
+    throw error;
+  }
 }
 
 async function storageHealth() { return r2StorageService.probe(); }
 
-export const mediaService = { initiateUpload, finalizeUpload, uploadFromServer, getAsset, getDownloadUrl, deleteAsset, storageHealth };
+export const mediaService = {
+  initiateUpload, initiateUploadForTenant, finalizeUpload, finalizeUploadForTenant,
+  uploadFromServer, uploadFromServerForTenant, getAsset, getDownloadUrl, deleteAsset,
+  requireReadyAssetForPurpose, bindReadyAsset, bindReadyAssetForTenant, getAssetForTenant, getReadUrlForTenant,
+  deleteAssetForTenant, deleteAssetIfUnreferencedForTenant, storageHealth,
+};

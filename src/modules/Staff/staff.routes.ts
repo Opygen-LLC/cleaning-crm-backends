@@ -12,7 +12,7 @@
  *  STAFF SELF-SERVICE
  *   GET    /staff/me              own profile + availability + perf stats
  *   PATCH  /staff/me              update name, phone, address, emergency contact
- *   POST   /staff/me/avatar       upload profile photo → Cloudinary (multipart)
+ *   POST   /staff/me/avatar       upload profile photo → Cloudflare R2 (multipart)
  *   PATCH  /staff/me/availability toggle/edit own weekly working-hours schedule
  *
  *  ADMIN CRUD
@@ -50,8 +50,8 @@ router.patch("/me", checkAuth(UserRole.STAFF), staffController.updateMyProfile);
 
 /**
  * POST /staff/me/avatar
- * Multipart upload (field: "avatar") → HEIC conversion → Cloudinary → user.image updated.
- * Returns { avatarUrl: string } pointing to the Cloudinary secure URL.
+ * Multipart upload (field: "avatar") → HEIC conversion → Cloudflare R2 → user.image updated.
+ * Returns { avatarUrl: string } pointing to the Cloudflare R2 secure URL.
  * File size limit: 10 MB (set by multerMemory config).
  * convertHeicToPng is a no-op for jpeg/png so it is always safe to include.
  */

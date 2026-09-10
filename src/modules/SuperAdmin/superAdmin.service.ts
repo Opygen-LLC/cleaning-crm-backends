@@ -1,3 +1,4 @@
+import { mediaService } from "../Media/media.service";
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
 import {
@@ -50,6 +51,23 @@ function buildPagination(options: IPaginationOptions) {
     const limit = Number(options.limit) || 10;
     const skip = (page - 1) * limit;
     return { page, limit, skip };
+}
+
+async function resolveBillingProofUrl(
+    record: { paymentProofMediaAssetId?: string | null; paymentProofUrl?: string | null },
+    adminId: string,
+): Promise<string | null> {
+    if (record.paymentProofMediaAssetId) {
+        try {
+            return await mediaService.getReadUrlForTenant(record.paymentProofMediaAssetId, adminId);
+        } catch {
+            // Never expose internal r2:// markers when a referenced asset is unavailable.
+            return null;
+        }
+    }
+
+    const legacyUrl = record.paymentProofUrl?.trim();
+    return legacyUrl && !legacyUrl.startsWith("r2://") ? legacyUrl : null;
 }
 
 const invalidateAdminWebsiteRouting = async (adminProfileId: string | null | undefined) => {
@@ -565,7 +583,21 @@ const getAdminAccountById = async (adminId: string) => {
         throw new AppError(status.NOT_FOUND, "Admin account not found.");
     }
 
-    return admin;
+    if (!admin.admin) return admin;
+
+    const subscriptions = await Promise.all(
+        admin.admin.subscription.map(async (subscription) => ({
+            ...subscription,
+            billingHistory: await Promise.all(
+                subscription.billingHistory.map(async (record) => ({
+                    ...record,
+                    paymentProofUrl: await resolveBillingProofUrl(record, admin.admin!.id),
+                })),
+            ),
+        })),
+    );
+
+    return { ...admin, admin: { ...admin.admin, subscription: subscriptions } };
 };
 
 const suspendAdminAccount = async (adminId: string) => {
@@ -1383,9 +1415,21 @@ const getAllSubscriptions = async (
         0,
     );
 
+    const resolvedData = await Promise.all(
+        data.map(async (subscription) => ({
+            ...subscription,
+            billingHistory: await Promise.all(
+                subscription.billingHistory.map(async (record) => ({
+                    ...record,
+                    paymentProofUrl: await resolveBillingProofUrl(record, subscription.adminId),
+                })),
+            ),
+        })),
+    );
+
     return {
         meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
-        data,
+        data: resolvedData,
         stats: {
             totalMRR: parseFloat(totalMRR.toFixed(2)),
             activeCount: activeNonTrialCount,
@@ -1464,6 +1508,7 @@ const getBillingHistory = async (
                         plan: { select: { interval: true } },
                         admin: {
                             select: {
+                                id: true,
                                 businessName: true,
                                 user: { select: { name: true, email: true } },
                             },
@@ -1486,9 +1531,16 @@ const getBillingHistory = async (
         }),
     ]);
 
+    const resolvedData = await Promise.all(
+        data.map(async (record) => ({
+            ...record,
+            paymentProofUrl: await resolveBillingProofUrl(record, record.subscription.admin.id),
+        })),
+    );
+
     return {
         meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
-        data,
+        data: resolvedData,
     };
 };
 
@@ -1898,7 +1950,7 @@ const getPendingProofs = async (options: IPaginationOptions) => {
 
     const where: Prisma.BillingHistoryWhereInput = {
         status: "PENDING",
-        paymentProofUrl: { not: null },
+        OR: [{ paymentProofMediaAssetId: { not: null } }, { paymentProofUrl: { not: null } }],
     };
 
     const [total, data] = await Promise.all([
@@ -1948,9 +2000,15 @@ const getPendingProofs = async (options: IPaginationOptions) => {
         }),
     ]);
 
+    const resolved = await Promise.all(data.map(async (row) => ({
+        ...row,
+        paymentProofUrl: row.paymentProofMediaAssetId
+            ? await mediaService.getReadUrlForTenant(row.paymentProofMediaAssetId, row.subscription.adminId)
+            : row.paymentProofUrl,
+    })));
     return {
         meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
-        data,
+        data: resolved,
     };
 };
 
@@ -1990,7 +2048,7 @@ const approvePaymentProof = async (
             { code: "PAYMENT_PROOF_NOT_PENDING", retryable: false },
         );
     }
-    if (!record.paymentProofUrl) {
+    if (!record.paymentProofUrl && !record.paymentProofMediaAssetId) {
         throw new AppError(status.BAD_REQUEST, "This billing record has no attached payment proof.");
     }
 
@@ -2212,7 +2270,7 @@ const rejectPaymentProof = async (
             { code: "PAYMENT_PROOF_NOT_PENDING", retryable: false },
         );
     }
-    if (!record.paymentProofUrl) {
+    if (!record.paymentProofUrl && !record.paymentProofMediaAssetId) {
         throw new AppError(status.BAD_REQUEST, "This billing record has no attached payment proof.");
     }
 

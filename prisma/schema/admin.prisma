@@ -2,6 +2,7 @@ model AdminProfile {
   id                    String                  @id @default(uuid())
   businessName          String
   businessLogo          String?
+  businessLogoMediaAssetId String?                @unique
   address               String?
   currency              Currency                @default(USD)
   userId                String                  @unique

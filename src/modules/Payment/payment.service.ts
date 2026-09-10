@@ -7,7 +7,7 @@ import {
   PaymentStatus,
   InvoiceStatus,
 } from "../../generated/prisma/enums";
-import { uploadFileToCloudinary } from "../../config/cloudinary";
+import { mediaService } from "../Media/media.service";
 import { logActivity } from "../../lib/utils/logActivity";
 import { createNotification } from "../../lib/utils/createNotification";
 import { NotificationType } from "../../generated/prisma/enums";
@@ -199,6 +199,10 @@ const getAllPayments = async (filters: IPaymentFilters, user: IRequestUser) => {
         note: true,
         transactionId: true,
         paymentProofUrl: true,
+        paymentProofMediaAssetId: true,
+        receiptUrl: true,
+        receiptMediaAssetId: true,
+        adminId: true,
         rejectionReason: true,
         invoiceId: true,
         invoice: { select: { invoiceRef: true, clientName: true } },
@@ -208,7 +212,7 @@ const getAllPayments = async (filters: IPaymentFilters, user: IRequestUser) => {
   ]);
 
   return {
-    payments: payments.map((p) => ({
+    payments: await Promise.all(payments.map(async (p) => ({
       id: p.id,
       paymentRef: p.paymentRef,
       invoiceRef: p.invoice?.invoiceRef ?? null,
@@ -219,10 +223,15 @@ const getAllPayments = async (filters: IPaymentFilters, user: IRequestUser) => {
       date: p.paidAt?.toISOString() ?? p.createdAt.toISOString(),
       note: p.note,
       transactionId: p.transactionId,
-      paymentProofUrl: p.paymentProofUrl,
+      paymentProofUrl: p.paymentProofMediaAssetId
+        ? await mediaService.getReadUrlForTenant(p.paymentProofMediaAssetId, p.adminId)
+        : p.paymentProofUrl,
+      receiptUrl: p.receiptMediaAssetId
+        ? await mediaService.getReadUrlForTenant(p.receiptMediaAssetId, p.adminId, `receipt-${p.paymentRef}`)
+        : p.receiptUrl,
       rejectionReason: p.rejectionReason,
       invoiceId: p.invoiceId,
-    })),
+    }))),
     total,
     meta: { page: safePage, limit: safeLimit, totalPages: Math.ceil(total / safeLimit) },
   };
@@ -280,7 +289,15 @@ const getPaymentById = async (id: string, user: IRequestUser) => {
   });
 
   if (!payment) throw new AppError(status.NOT_FOUND, "Payment not found");
-  return payment;
+  const [paymentProofUrl, receiptUrl] = await Promise.all([
+    payment.paymentProofMediaAssetId
+      ? mediaService.getReadUrlForTenant(payment.paymentProofMediaAssetId, payment.adminId)
+      : Promise.resolve(payment.paymentProofUrl),
+    payment.receiptMediaAssetId
+      ? mediaService.getReadUrlForTenant(payment.receiptMediaAssetId, payment.adminId, `receipt-${payment.paymentRef}`)
+      : Promise.resolve(payment.receiptUrl),
+  ]);
+  return { ...payment, paymentProofUrl, receiptUrl };
 };
 
 // ─── Update Payment — PATCH /payment/:id ─────────────────────────────────────
@@ -328,6 +345,10 @@ const deletePayment = async (id: string, user: IRequestUser) => {
   if (!existing) throw new AppError(status.NOT_FOUND, "Payment not found");
 
   await prisma.payment.delete({ where: { id } });
+  await Promise.all([
+    existing.paymentProofMediaAssetId ? mediaService.deleteAssetForTenant(existing.paymentProofMediaAssetId, adminId).catch(() => undefined) : Promise.resolve(),
+    existing.receiptMediaAssetId ? mediaService.deleteAssetForTenant(existing.receiptMediaAssetId, adminId).catch(() => undefined) : Promise.resolve(),
+  ]);
 
   logActivity({
     adminId,
@@ -345,34 +366,48 @@ const deletePayment = async (id: string, user: IRequestUser) => {
 
 const uploadReceipt = async (
   id: string,
-  file: Express.Multer.File,
+  input: { file?: Express.Multer.File; mediaAssetId?: string },
   user: IRequestUser,
 ) => {
-  const adminId = await getAdminId(user);
-
-  const existing = await prisma.payment.findFirst({ where: { id, adminId } });
+  const tenantAdminId = user.role === UserRole.SUPER_ADMIN
+    ? (await prisma.payment.findUnique({ where: { id }, select: { adminId: true } }))?.adminId
+    : await getAdminId(user);
+  if (!tenantAdminId) throw new AppError(status.NOT_FOUND, "Payment not found");
+  const existing = await prisma.payment.findFirst({ where: { id, adminId: tenantAdminId } });
   if (!existing) throw new AppError(status.NOT_FOUND, "Payment not found");
+  const tenantActor: IRequestUser = user.role === UserRole.SUPER_ADMIN
+    ? { ...user, role: UserRole.ADMIN, adminId: tenantAdminId }
+    : user;
 
-  const cloudinaryResult = await uploadFileToCloudinary(
-    file.buffer,
-    file.originalname,
-  );
+  let asset;
+  if (input.mediaAssetId) {
+    asset = await mediaService.bindReadyAsset(input.mediaAssetId, tenantActor, "PAYMENT_RECEIPT", id);
+  } else if (input.file) {
+    asset = await mediaService.uploadFromServer({
+      purpose: "PAYMENT_RECEIPT", entityId: id, filename: input.file.originalname, contentType: input.file.mimetype, buffer: input.file.buffer,
+    }, tenantActor);
+  } else {
+    throw new AppError(status.BAD_REQUEST, "Receipt file is required");
+  }
 
-  const updated = await prisma.payment.update({
-    where: { id },
-    data: { paymentProofUrl: cloudinaryResult.secure_url },
-    select: { id: true, paymentRef: true, updatedAt: true },
-  });
-
-  logActivity({
-    adminId,
-    action: "UPLOAD_RECEIPT",
-    entityType: "Payment",
-    entityId: id,
-    description: `Uploaded receipt for payment ${existing.paymentRef}`,
-  });
-
-  return { receiptUrl: cloudinaryResult.secure_url, payment: updated };
+  const storageMarker = `r2://${asset.bucket}/${asset.objectKey}`;
+  let updated;
+  try {
+    updated = await prisma.payment.update({
+      where: { id },
+      data: { receiptUrl: storageMarker, receiptMediaAssetId: asset.id },
+      select: { id: true, paymentRef: true, updatedAt: true },
+    });
+  } catch (error) {
+    await mediaService.deleteAssetIfUnreferencedForTenant(asset.id, tenantAdminId).catch(() => undefined);
+    throw error;
+  }
+  if (existing.receiptMediaAssetId && existing.receiptMediaAssetId !== asset.id) {
+    await mediaService.deleteAssetForTenant(existing.receiptMediaAssetId, tenantAdminId).catch(() => undefined);
+  }
+  const receiptUrl = await mediaService.getReadUrlForTenant(asset.id, tenantAdminId, asset.originalFilename);
+  logActivity({ adminId: tenantAdminId, action: "UPLOAD_RECEIPT", entityType: "Payment", entityId: id, description: `Uploaded receipt for payment ${existing.paymentRef}` });
+  return { receiptUrl, mediaAssetId: asset.id, payment: updated };
 };
 
 export const paymentService = {

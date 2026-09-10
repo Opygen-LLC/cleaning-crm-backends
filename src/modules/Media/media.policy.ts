@@ -55,6 +55,10 @@ export const MEDIA_PURPOSE_POLICY: Record<MediaPurpose, MediaPurposePolicy> = {
     visibility: "PRIVATE", prefix: "payments", entityType: "PAYMENT", requireEntity: false,
     allowedMimeTypes: IMAGE_OR_PDF, maxDimension: 1600, targetBytes: 300 * 1024, imageOnly: false,
   },
+  PAYMENT_RECEIPT: {
+    visibility: "PRIVATE", prefix: "payments", entityType: "PAYMENT", requireEntity: true,
+    allowedMimeTypes: IMAGE_OR_PDF, maxDimension: 1600, targetBytes: 300 * 1024, imageOnly: false,
+  },
   INVOICE_ATTACHMENT: {
     visibility: "PRIVATE", prefix: "invoices", entityType: "INVOICE", requireEntity: true,
     allowedMimeTypes: IMAGE_OR_PDF, maxDimension: 1600, targetBytes: 300 * 1024, imageOnly: false,

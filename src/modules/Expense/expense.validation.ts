@@ -9,7 +9,8 @@ const createExpenseSchema = z.object({
   paidBy: z.string().min(1, "Paid by is required"),
   isRecurring: z.boolean().optional(),
   notes: z.string().optional(),
-});
+  receiptMediaAssetId: z.string().uuid("Upload a valid receipt first.").optional(),
+}).strict();
 
 const updateExpenseSchema = z.object({
   description: z.string().optional(),
@@ -19,7 +20,8 @@ const updateExpenseSchema = z.object({
   paidBy: z.string().optional(),
   isRecurring: z.boolean().optional(),
   notes: z.string().optional(),
-});
+  receiptMediaAssetId: z.string().uuid("Upload a valid receipt first.").nullable().optional(),
+}).strict();
 
 export const expenseValidation = {
   createExpense: createExpenseSchema,

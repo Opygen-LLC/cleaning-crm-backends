@@ -1,217 +1,139 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { prismaMock, getAdminIdMock, websiteServiceMock, cloudinaryMock } = vi.hoisted(() => ({
+const { prismaMock, getAdminIdMock, websiteServiceMock, entitlementMock, mediaMock } = vi.hoisted(() => ({
   prismaMock: {
     businessWebsite: { findUnique: vi.fn() },
-    subscription: {
-      findFirst: vi.fn(async () => ({
-        status: "ACTIVE",
-        isTrial: false,
-        currentPeriodEnd: null as Date | null,
-        subscriptionPlan: {
-          name: "GROWTH",
-          features: [JSON.stringify({ label: "Advanced Website SEO", included: true })],
-        },
-      })),
-    },
   },
   getAdminIdMock: vi.fn(),
   websiteServiceMock: { attachManagedBrandAsset: vi.fn() },
-  cloudinaryMock: {
-    utils: { api_sign_request: vi.fn() },
-    api: { resource: vi.fn() },
-    uploader: { destroy: vi.fn() },
-    url: vi.fn(),
+  entitlementMock: { getForAdminId: vi.fn() },
+  mediaMock: {
+    initiateUpload: vi.fn(),
+    bindReadyAsset: vi.fn(),
   },
 }));
 
-vi.mock("../../config/ENV", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../config/ENV")>();
-  return {
-    ...actual,
-    CLOUDINARY_CLOUD_NAME: "demo-cloud",
-    CLOUDINARY_API_KEY: "public-key",
-    CLOUDINARY_API_SECRET: "private-secret",
-  };
-});
-vi.mock("../../config/redis", () => ({
-  default: {
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => "OK"),
-    setex: vi.fn(async () => "OK"),
-    del: vi.fn(async () => 1),
-  },
-}));
-vi.mock("../../config/cloudinary", () => ({ cloudinaryUpload: cloudinaryMock }));
 vi.mock("../../lib/prisma/prisma", () => ({ prisma: prismaMock }));
 vi.mock("../../lib/utils/resolveAdminId", () => ({ getAdminId: getAdminIdMock }));
 vi.mock("./website.service", () => ({ WebsiteService: websiteServiceMock }));
+vi.mock("./websiteEntitlement.service", () => ({ WebsiteEntitlementService: entitlementMock }));
+vi.mock("../Media/media.service", () => ({ mediaService: mediaMock }));
 
 import { WebsiteAssetService } from "./websiteAsset.service";
+
+const requester = { id: "user-1" } as never;
 
 beforeEach(() => {
   vi.clearAllMocks();
   getAdminIdMock.mockResolvedValue("admin-1");
-  prismaMock.businessWebsite.findUnique.mockResolvedValue({ id: "website-1", adminId: "admin-1", status: "DRAFT" });
-  prismaMock.subscription.findFirst.mockResolvedValue({
-    status: "ACTIVE",
-    isTrial: false,
-    currentPeriodEnd: new Date(Date.now() + 86400000),
-    subscriptionPlan: {
-      name: "GROWTH",
-      features: [JSON.stringify({ label: "Advanced Website SEO", included: true })],
-    },
+  prismaMock.businessWebsite.findUnique.mockResolvedValue({ id: "website-1", status: "DRAFT" });
+  entitlementMock.getForAdminId.mockResolvedValue({ advancedSeo: true });
+  mediaMock.initiateUpload.mockResolvedValue({
+    uploadId: "asset-pending",
+    uploadUrl: "https://signed-r2.example/upload",
+    method: "PUT",
+    headers: { "Content-Type": "image/png" },
+    expiresAt: "2026-09-10T12:00:00.000Z",
   });
-  cloudinaryMock.utils.api_sign_request.mockReturnValue("signed-value");
-  cloudinaryMock.uploader.destroy.mockResolvedValue({ result: "ok" });
-  cloudinaryMock.url.mockImplementation((publicId: string, options: any) =>
-    `https://cdn.example/${publicId}/${options.format}/${options.transformation?.[0]?.width}`,
-  );
+  mediaMock.bindReadyAsset.mockResolvedValue({
+    id: "asset-ready",
+    objectKey: "organizations/admin-1/website/website-1/brand/uuid.webp",
+    publicUrl: "https://media.example.com/organizations/admin-1/website/website-1/brand/uuid.webp",
+    mimeType: "image/webp",
+    width: 800,
+    height: 300,
+    storedBytes: 100_000,
+    originalBytes: 250_000,
+  });
   websiteServiceMock.attachManagedBrandAsset.mockImplementation(async (payload: any) => ({
-    asset: { id: "asset-1", ...payload },
+    asset: { id: "website-asset-1", ...payload },
     website: { id: "website-1", logo: payload.kind === "logo" ? payload.url : null },
   }));
 });
 
-describe("WebsiteAssetService signed brand uploads", () => {
-  it("issues a short-lived tenant-scoped signed Cloudinary upload", async () => {
+describe("WebsiteAssetService R2 brand uploads", () => {
+  it("issues a short-lived tenant-scoped R2 PUT session", async () => {
     const result = await WebsiteAssetService.requestBrandUploadSignature({
       kind: "logo",
       fileName: "bio-cleaning.png",
       mimeType: "image/png",
       bytes: 250_000,
-    }, { id: "user-1" } as never);
+    }, requester);
 
-    expect(result.publicId).toMatch(/^Cleaning-CRM\/websites\/website-1\/brand\/logo-/);
-    expect(result.uploadUrl).toBe("https://api.cloudinary.com/v1_1/demo-cloud/image/upload");
-    expect(result.fields.signature).toBe("signed-value");
-    expect(result.fields.context).toContain("website_id=website-1");
-    expect(result.fields.eager).toContain("f_webp");
-    expect(result.fields.eager).toContain("f_avif");
+    expect(mediaMock.initiateUpload).toHaveBeenCalledWith({
+      purpose: "WEBSITE_BRAND",
+      entityId: "website-1",
+      filename: "bio-cleaning.png",
+      contentType: "image/png",
+      size: 250_000,
+    }, requester);
+    expect(result.provider).toBe("r2");
+    expect(result.kind).toBe("logo");
+    expect(result.uploadUrl).toBe("https://signed-r2.example/upload");
   });
 
-  it("verifies provider metadata and persists immutable responsive variants", async () => {
-    const publicId = "Cleaning-CRM/websites/website-1/brand/logo-upload-token";
-    cloudinaryMock.api.resource.mockResolvedValue({
-      public_id: publicId,
-      secure_url: "https://res.cloudinary.com/demo/image/upload/logo.png",
-      format: "png",
-      width: 800,
-      height: 300,
-      bytes: 180_000,
-      context: {
-        custom: {
-          website_id: "website-1",
-          asset_kind: "logo",
-          upload_token: "upload-token",
-          expires_at: String(Math.floor(Date.now() / 1000) + 300),
-        },
-      },
-    });
+  it("binds a finalized tenant asset and persists immutable R2 metadata", async () => {
+    const result = await WebsiteAssetService.finalizeBrandUpload({ kind: "logo", mediaAssetId: "asset-ready" }, requester);
 
-    const result = await WebsiteAssetService.finalizeBrandUpload({ kind: "logo", publicId }, { id: "user-1" } as never);
-
+    expect(mediaMock.bindReadyAsset).toHaveBeenCalledWith("asset-ready", requester, "WEBSITE_BRAND", "website-1");
     expect(websiteServiceMock.attachManagedBrandAsset).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "logo",
-        publicId,
+        mediaAssetId: "asset-ready",
+        publicId: "organizations/admin-1/website/website-1/brand/uuid.webp",
+        url: "https://media.example.com/organizations/admin-1/website/website-1/brand/uuid.webp",
         width: 800,
         height: 300,
-        metadata: expect.objectContaining({ provider: "cloudinary", kind: "brand", immutable: true }),
+        metadata: expect.objectContaining({ provider: "r2", mediaAssetId: "asset-ready", kind: "brand", immutable: true }),
       }),
-      expect.anything(),
+      requester,
     );
-    const persisted = websiteServiceMock.attachManagedBrandAsset.mock.calls[0][0];
-    expect(persisted.metadata.variants.webp[512]).toContain("/webp/512");
-    expect(persisted.metadata.variants.avif[512]).toContain("/avif/512");
-    expect(result.asset.id).toBe("asset-1");
+    expect(result.id).toBe("website-asset-1");
   });
 
-  it("rejects cross-tenant public IDs before reading Cloudinary", async () => {
-    await expect(WebsiteAssetService.finalizeBrandUpload({
-      kind: "logo",
-      publicId: "Cleaning-CRM/websites/website-2/brand/logo-stolen",
-    }, { id: "user-1" } as never)).rejects.toThrow("does not belong");
-    expect(cloudinaryMock.api.resource).not.toHaveBeenCalled();
-  });
-
-  it("rejects non-square favicons and cleans up the rejected provider asset", async () => {
-    const publicId = "Cleaning-CRM/websites/website-1/brand/favicon-upload-token";
-    cloudinaryMock.api.resource.mockResolvedValue({
-      public_id: publicId,
-      secure_url: "https://res.cloudinary.com/demo/image/upload/favicon.png",
-      format: "png",
+  it("rejects an asset whose dimensions do not match favicon requirements", async () => {
+    mediaMock.bindReadyAsset.mockResolvedValue({
+      id: "asset-favicon",
+      objectKey: "organizations/admin-1/website/website-1/brand/favicon.webp",
+      publicUrl: "https://media.example.com/favicon.webp",
+      mimeType: "image/webp",
       width: 256,
       height: 100,
-      bytes: 20_000,
-      context: {
-        custom: {
-          website_id: "website-1",
-          asset_kind: "favicon",
-          upload_token: "upload-token",
-          expires_at: String(Math.floor(Date.now() / 1000) + 300),
-        },
-      },
+      storedBytes: 20_000,
+      originalBytes: 25_000,
     });
 
-    await expect(WebsiteAssetService.finalizeBrandUpload({ kind: "favicon", publicId }, { id: "user-1" } as never))
+    await expect(WebsiteAssetService.finalizeBrandUpload({ kind: "favicon", mediaAssetId: "asset-favicon" }, requester))
       .rejects.toThrow("approximately square");
-    expect(cloudinaryMock.uploader.destroy).toHaveBeenCalledWith(publicId, expect.objectContaining({ invalidate: true }));
-  });
-});
-
-describe("WebsiteAssetService SEO social-image uploads", () => {
-  it("generates a crawler-friendly 1200x630 immutable social image plus modern variants", async () => {
-    const publicId = "Cleaning-CRM/websites/website-1/brand/social-upload-token";
-    cloudinaryMock.api.resource.mockResolvedValue({
-      public_id: publicId,
-      secure_url: "https://res.cloudinary.com/demo/image/upload/social.png",
-      format: "png",
-      width: 1600,
-      height: 900,
-      bytes: 420_000,
-      context: {
-        custom: {
-          website_id: "website-1",
-          asset_kind: "social",
-          upload_token: "upload-token",
-          expires_at: String(Math.floor(Date.now() / 1000) + 300),
-        },
-      },
-    });
-
-    await WebsiteAssetService.finalizeBrandUpload({ kind: "social", publicId }, { id: "user-1" } as never);
-
-    const persisted = websiteServiceMock.attachManagedBrandAsset.mock.calls[0][0];
-    expect(persisted.kind).toBe("social");
-    expect(persisted.mimeType).toBe("image/jpeg");
-    expect(persisted.url).toContain("/jpg/1200");
-    expect(persisted.metadata.variants.jpg[1200]).toContain("/jpg/1200");
-    expect(persisted.metadata.variants.webp[1200]).toContain("/webp/1200");
-    expect(persisted.metadata.variants.avif[1200]).toContain("/avif/1200");
+    expect(websiteServiceMock.attachManagedBrandAsset).not.toHaveBeenCalled();
   });
 
-  it("rejects portrait social images", async () => {
-    const publicId = "Cleaning-CRM/websites/website-1/brand/social-portrait";
-    cloudinaryMock.api.resource.mockResolvedValue({
-      public_id: publicId,
-      secure_url: "https://res.cloudinary.com/demo/image/upload/social.png",
-      format: "png",
+  it("rejects social-image uploads when Advanced Website SEO is unavailable", async () => {
+    entitlementMock.getForAdminId.mockResolvedValue({ advancedSeo: false });
+
+    await expect(WebsiteAssetService.requestBrandUploadSignature({
+      kind: "social",
+      fileName: "share.png",
+      mimeType: "image/png",
+      bytes: 200_000,
+    }, requester)).rejects.toMatchObject({ statusCode: 403 });
+    expect(mediaMock.initiateUpload).not.toHaveBeenCalled();
+  });
+
+  it("rejects portrait social images before mutating Website Studio state", async () => {
+    mediaMock.bindReadyAsset.mockResolvedValue({
+      id: "asset-social",
+      objectKey: "organizations/admin-1/website/website-1/brand/social.webp",
+      publicUrl: "https://media.example.com/social.webp",
+      mimeType: "image/webp",
       width: 800,
       height: 1000,
-      bytes: 200_000,
-      context: {
-        custom: {
-          website_id: "website-1",
-          asset_kind: "social",
-          upload_token: "portrait",
-          expires_at: String(Math.floor(Date.now() / 1000) + 300),
-        },
-      },
+      storedBytes: 200_000,
+      originalBytes: 220_000,
     });
 
-    await expect(WebsiteAssetService.finalizeBrandUpload({ kind: "social", publicId }, { id: "user-1" } as never))
+    await expect(WebsiteAssetService.finalizeBrandUpload({ kind: "social", mediaAssetId: "asset-social" }, requester))
       .rejects.toThrow("landscape aspect ratio");
-    expect(cloudinaryMock.uploader.destroy).toHaveBeenCalled();
+    expect(websiteServiceMock.attachManagedBrandAsset).not.toHaveBeenCalled();
   });
 });

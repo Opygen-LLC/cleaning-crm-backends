@@ -35,6 +35,7 @@ import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.servic
 import { getPlatformConfig } from "../../lib/utils/platformConfig";
 import { superAdminService } from "./superAdmin.service";
 import { Organization360Service } from "./organization360.service";
+import { mediaService } from "../Media/media.service";
 
 const TENANT_REASON_MIN = 10;
 const HARD_DELETE_TEXT = "DELETE PERMANENTLY";
@@ -799,7 +800,7 @@ export const approveSubscriptionRequest = async (requestId: string, context: Ten
     where: { id: requestId, isAdministrative: false },
     include: {
       subscription: { select: { adminId: true, admin: { select: { userId: true } } } },
-      billingHistory: { where: { status: "PENDING", paymentProofUrl: { not: null } }, orderBy: { createdAt: "desc" }, take: 1 },
+      billingHistory: { where: { status: "PENDING", OR: [{ paymentProofMediaAssetId: { not: null } }, { paymentProofUrl: { not: null } }] }, orderBy: { createdAt: "desc" }, take: 1 },
     },
   });
   if (!request) throw new AppError(status.NOT_FOUND, "Subscription request not found.");
@@ -821,7 +822,7 @@ export const rejectSubscriptionRequest = async (requestId: string, context: Tena
     where: { id: requestId, isAdministrative: false },
     include: {
       subscription: { select: { adminId: true, admin: { select: { userId: true } } } },
-      billingHistory: { where: { status: "PENDING", paymentProofUrl: { not: null } }, orderBy: { createdAt: "desc" }, take: 1 },
+      billingHistory: { where: { status: "PENDING", OR: [{ paymentProofMediaAssetId: { not: null } }, { paymentProofUrl: { not: null } }] }, orderBy: { createdAt: "desc" }, take: 1 },
     },
   });
   if (!request) throw new AppError(status.NOT_FOUND, "Subscription request not found.");
@@ -844,7 +845,16 @@ export const getSubscriptionRequests = async (query: Record<string, unknown>) =>
     prisma.pendingPlanChange.count({ where }),
     prisma.pendingPlanChange.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: "desc" }, include: { targetPlan: { include: { subscriptionPlan: true } }, coupon: true, billingHistory: { orderBy: { createdAt: "desc" }, take: 5 }, subscription: { include: { admin: { select: { id: true, businessName: true, user: { select: { name: true, email: true } } } }, plan: { include: { subscriptionPlan: true } } } } } }),
   ]);
-  return { data: rows, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+  const data = await Promise.all(rows.map(async (row) => ({
+    ...row,
+    billingHistory: await Promise.all(row.billingHistory.map(async (billing) => ({
+      ...billing,
+      paymentProofUrl: billing.paymentProofMediaAssetId
+        ? await mediaService.getReadUrlForTenant(billing.paymentProofMediaAssetId, row.subscription.adminId).catch(() => null)
+        : (billing.paymentProofUrl?.startsWith("r2://") ? null : billing.paymentProofUrl),
+    }))),
+  })));
+  return { data, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
 };
 
 const latestSubscription = async (tenantId: string) => {

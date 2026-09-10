@@ -7,6 +7,9 @@ import {
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
 import { UserRole, ExpenseCategory } from "../../generated/prisma/enums";
+import { mediaService } from "../Media/media.service";
+import type { IRequestUser } from "../../types/requestUser.interface";
+import { randomUUID } from "node:crypto";
 import { startOfMonth, endOfMonth, subMonths, subDays } from "date-fns";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 
@@ -35,19 +38,34 @@ const generateExpenseRef = async () => {
   return `#OP-EXP-${formattedNumber}`;
 };
 
-const createExpense = async (payload: IExpenseCreate, user: any) => {
+const createExpense = async (payload: IExpenseCreate, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const expenseRef = await generateExpenseRef();
-
-  return await prisma.expense.create({
-    data: {
-      ...payload,
-      expenseRef,
-      adminId,
-      date: new Date(payload.date),
-    },
-  });
+  const { receiptMediaAssetId, ...expensePayload } = payload;
+  if (receiptMediaAssetId) await mediaService.requireReadyAssetForPurpose(receiptMediaAssetId, user, "EXPENSE_RECEIPT");
+  const expenseId = randomUUID();
+  let expense;
+  try {
+    expense = await prisma.$transaction(async (tx) => {
+      const created = await tx.expense.create({
+        data: { ...expensePayload, id: expenseId, expenseRef, adminId, date: new Date(payload.date), receiptMediaAssetId: receiptMediaAssetId ?? null, receiptUrl: receiptMediaAssetId ? `r2-asset://${receiptMediaAssetId}` : null },
+      });
+      if (receiptMediaAssetId) await tx.mediaAsset.update({ where: { id: receiptMediaAssetId }, data: { entityId: expenseId } });
+      return created;
+    });
+  } catch (error) {
+    if (receiptMediaAssetId) await mediaService.deleteAssetIfUnreferencedForTenant(receiptMediaAssetId, adminId).catch(() => undefined);
+    throw error;
+  }
+  return presentExpense(expense, adminId);
 };
+
+const presentExpense = async <T extends { receiptMediaAssetId?: string | null; receiptUrl?: string | null }>(expense: T, adminId: string) => ({
+  ...expense,
+  receiptUrl: expense.receiptMediaAssetId
+    ? await mediaService.getReadUrlForTenant(expense.receiptMediaAssetId, adminId)
+    : expense.receiptUrl ?? null,
+});
 
 const getAllExpenses = async (
   filters: IExpenseFilters,
@@ -81,9 +99,12 @@ const getAllExpenses = async (
     andConditions.push({ date: dateFilter });
   }
 
-  if (adminId) {
-    andConditions.push({ adminId });
-  } else if (user.role === UserRole.ADMIN) {
+  // Tenant users must never be able to widen or replace their organization
+  // scope with an adminId query parameter. Only SUPER_ADMIN may intentionally
+  // filter across tenants.
+  if (user.role === UserRole.SUPER_ADMIN) {
+    if (adminId) andConditions.push({ adminId });
+  } else {
     andConditions.push({ adminId: await getAdminId(user) });
   }
 
@@ -106,13 +127,14 @@ const getAllExpenses = async (
       total,
       totalPages: Math.ceil(total / limit),
     },
-    data: result,
+    data: await Promise.all(result.map((row) => presentExpense(row, row.adminId))),
   };
 };
 
-const getExpenseById = async (id: string) => {
-  const result = await prisma.expense.findUnique({
-    where: { id },
+const getExpenseById = async (id: string, user: IRequestUser) => {
+  const adminId = user.role === UserRole.SUPER_ADMIN ? undefined : await getAdminId(user);
+  const result = await prisma.expense.findFirst({
+    where: { id, ...(adminId ? { adminId } : {}) },
     include: {
       admin: {
         select: {
@@ -127,35 +149,43 @@ const getExpenseById = async (id: string) => {
     throw new AppError(status.NOT_FOUND, "Expense not found");
   }
 
-  return result;
+  return presentExpense(result, result.adminId);
 };
 
-const updateExpense = async (id: string, payload: IExpenseUpdate) => {
-  const isExist = await prisma.expense.findUnique({ where: { id } });
-
-  if (!isExist) {
-    throw new AppError(status.NOT_FOUND, "Expense not found");
+const updateExpense = async (id: string, payload: IExpenseUpdate, user: IRequestUser) => {
+  const existing = await prisma.expense.findUnique({ where: { id } });
+  if (!existing) throw new AppError(status.NOT_FOUND, "Expense not found");
+  const adminId = user.role === UserRole.SUPER_ADMIN ? existing.adminId : await getAdminId(user);
+  if (existing.adminId !== adminId) throw new AppError(status.NOT_FOUND, "Expense not found");
+  const tenantActor: IRequestUser = user.role === UserRole.SUPER_ADMIN ? { ...user, role: UserRole.ADMIN, adminId } : user;
+  const { receiptMediaAssetId, ...fields } = payload;
+  if (receiptMediaAssetId) await mediaService.bindReadyAsset(receiptMediaAssetId, tenantActor, "EXPENSE_RECEIPT", id);
+  let updated;
+  try {
+    updated = await prisma.expense.update({
+      where: { id },
+      data: { ...fields, date: payload.date ? new Date(payload.date) : undefined, ...(receiptMediaAssetId !== undefined ? { receiptMediaAssetId, receiptUrl: receiptMediaAssetId ? `r2-asset://${receiptMediaAssetId}` : null } : {}) },
+    });
+  } catch (error) {
+    if (receiptMediaAssetId) await mediaService.deleteAssetIfUnreferencedForTenant(receiptMediaAssetId, adminId).catch(() => undefined);
+    throw error;
   }
-
-  return await prisma.expense.update({
-    where: { id },
-    data: {
-      ...payload,
-      date: payload.date ? new Date(payload.date) : undefined,
-    },
-  });
+  if (receiptMediaAssetId !== undefined && existing.receiptMediaAssetId && existing.receiptMediaAssetId !== receiptMediaAssetId) {
+    await mediaService.deleteAssetForTenant(existing.receiptMediaAssetId, adminId).catch(() => undefined);
+  }
+  return presentExpense(updated, adminId);
 };
 
-const deleteExpense = async (id: string) => {
-  const isExist = await prisma.expense.findUnique({ where: { id } });
-
-  if (!isExist) {
-    throw new AppError(status.NOT_FOUND, "Expense not found");
+const deleteExpense = async (id: string, user: IRequestUser) => {
+  const existing = await prisma.expense.findUnique({ where: { id } });
+  if (!existing) throw new AppError(status.NOT_FOUND, "Expense not found");
+  const adminId = user.role === UserRole.SUPER_ADMIN ? existing.adminId : await getAdminId(user);
+  if (existing.adminId !== adminId) throw new AppError(status.NOT_FOUND, "Expense not found");
+  const deleted = await prisma.expense.delete({ where: { id } });
+  if (existing.receiptMediaAssetId) {
+    await mediaService.deleteAssetForTenant(existing.receiptMediaAssetId, adminId).catch(() => undefined);
   }
-
-  return await prisma.expense.delete({
-    where: { id },
-  });
+  return deleted;
 };
 
 const getExpenseStats = async (user: any) => {

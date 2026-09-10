@@ -20,6 +20,7 @@ import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.servic
 import { TenantEntitlementService } from "./tenantEntitlement.service";
 import { writeSuperAdminAudit } from "./superAdminAudit.service";
 import redis from "../../config/redis";
+import { mediaService } from "../Media/media.service";
 
 const DAY_MS = 86_400_000;
 const DEFAULT_PAGE_SIZE = 20;
@@ -418,11 +419,11 @@ export const getOrganization360 = async (organizationId: string) => {
     prisma.staffProfile.findMany({ where: { adminId: identity.id }, orderBy: { createdAt: "desc" }, take: PREVIEW_SIZE, select: { id: true, userId: true, staffRole: true, status: true, manuallyInactive: true, createdAt: true, updatedAt: true, user: { select: { id: true, name: true, email: true, emailVerified: true, status: true, createdAt: true, updatedAt: true } } } }),
     prisma.activityLog.findFirst({ where: { adminId: identity.id }, orderBy: { createdAt: "desc" }, select: { createdAt: true } }),
     prisma.superAdminAuditLog.findMany({ where: { tenantAdminId: identity.id }, orderBy: { createdAt: "desc" }, take: PREVIEW_SIZE, include: { actor: { select: { id: true, name: true, email: true } } } }),
-    prisma.billingHistory.findMany({ where: { subscription: { adminId: identity.id } }, orderBy: { createdAt: "desc" }, take: PREVIEW_SIZE, select: { id: true, amount: true, currency: true, method: true, status: true, note: true, transactionId: true, paymentProofUrl: true, paidAt: true, createdAt: true, subscriptionId: true, planChangeId: true } }),
+    prisma.billingHistory.findMany({ where: { subscription: { adminId: identity.id } }, orderBy: { createdAt: "desc" }, take: PREVIEW_SIZE, select: { id: true, amount: true, currency: true, method: true, status: true, note: true, transactionId: true, paymentProofUrl: true, paymentProofMediaAssetId: true, paidAt: true, createdAt: true, subscriptionId: true, planChangeId: true } }),
     staffUserIdsPromise,
     prisma.billingHistory.count({ where: { subscription: { adminId: identity.id } } }),
     prisma.billingHistory.aggregate({ where: { subscription: { adminId: identity.id }, status: PaymentStatus.PAID }, _sum: { amount: true } }),
-    prisma.billingHistory.count({ where: { subscription: { adminId: identity.id }, status: PaymentStatus.PENDING, paymentProofUrl: { not: null } } }),
+    prisma.billingHistory.count({ where: { subscription: { adminId: identity.id }, status: PaymentStatus.PENDING, OR: [{ paymentProofMediaAssetId: { not: null } }, { paymentProofUrl: { not: null } }] } }),
     tenant.businessWebsite
       ? prisma.websiteAsset.aggregate({ where: { websiteId: tenant.businessWebsite.id }, _sum: { bytes: true } })
       : Promise.resolve({ _sum: { bytes: null as number | null } }),
@@ -450,6 +451,12 @@ export const getOrganization360 = async (organizationId: string) => {
   const resourceOverrides = access.tenantOverrides.resources;
 
   const storageUsedMb = Math.ceil(((storageBytesAggregate._sum.bytes ?? 0) / (1024 * 1024)) * 100) / 100;
+  const recentBillingResolved = await Promise.all(recentBilling.map(async (row) => ({
+    ...row,
+    paymentProofUrl: row.paymentProofMediaAssetId
+      ? await mediaService.getReadUrlForTenant(row.paymentProofMediaAssetId, identity.id)
+      : row.paymentProofUrl,
+  })));
 
   const resourceLimits = {
     staff: limitBreakdown({ used: tenant._count.staff, base: access.resourceLimits.base.staff, paidExtra: access.paidExtras.staff, afterPaidExtras: access.resourceLimits.afterPaidExtras.staff, adminOverride: resourceOverrides.staff, effective: access.resourceLimits.effective.staff }),
@@ -572,7 +579,7 @@ export const getOrganization360 = async (organizationId: string) => {
         pendingProofs: pendingBillingCount,
         currency: subscription?.subscriptionPlan.currency ?? tenant.currency,
       },
-      preview: recentBilling,
+      preview: recentBillingResolved,
     },
     cleaningOperations: {
       totals: {
@@ -714,7 +721,7 @@ export const getOrganizationBilling = async (organizationId: string, query: List
     prisma.billingHistory.count({ where }),
     prisma.billingHistory.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: "desc" }, include: { subscription: { select: { id: true, status: true, isTrial: true, subscriptionPlan: { select: { id: true, name: true, currency: true } }, plan: { select: { id: true, interval: true } } } }, pendingPlanChange: { select: { id: true, status: true, isAdministrative: true, targetPlan: { select: { id: true, subscriptionPlan: { select: { id: true, name: true } } } } } } } }),
     prisma.billingHistory.aggregate({ where: { subscription: { adminId: identity.id }, status: PaymentStatus.PAID }, _sum: { amount: true } }),
-    prisma.billingHistory.count({ where: { subscription: { adminId: identity.id }, status: PaymentStatus.PENDING, paymentProofUrl: { not: null } } }),
+    prisma.billingHistory.count({ where: { subscription: { adminId: identity.id }, status: PaymentStatus.PENDING, OR: [{ paymentProofMediaAssetId: { not: null } }, { paymentProofUrl: { not: null } }] } }),
   ]);
   return { summary: { records: total, totalPaid: paid._sum.amount ?? null, pendingProofs }, data: rows, meta: paginationMeta(page, limit, total) };
 };

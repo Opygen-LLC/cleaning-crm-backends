@@ -58,7 +58,7 @@ router.delete(
 
 // PATCH /payment/:id/receipt — upload receipt image
 // convertHeicToPng runs after multer so the buffer is already in memory;
-// it converts HEIC/HEIF → PNG before Cloudinary upload.
+// it converts HEIC/HEIF → PNG before the server-side R2 fallback upload.
 router.patch(
   "/:id/receipt",
   checkAuth(UserRole.ADMIN, UserRole.SUPER_ADMIN),

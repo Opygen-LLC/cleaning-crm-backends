@@ -28,7 +28,7 @@ router.patch(
 
 /**
  * POST /user/me/avatar
- * Multipart upload (field: "avatar") → Cloudinary → user.image updated.
+ * Multipart upload (field: "avatar") → Cloudflare R2 → user.image updated.
  * Registered before "/:id" so "me" is never treated as a route param.
  * Mirrors POST /staff/me/avatar for the Staff role.
  */

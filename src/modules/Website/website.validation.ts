@@ -118,7 +118,7 @@ const brandUploadSignature = z.object({
 
 const brandUploadFinalize = z.object({
   kind: z.enum(["logo", "favicon", "social"]),
-  publicId: z.string().trim().min(1).max(512),
+  mediaAssetId: z.string().uuid("Upload a valid website image first."),
 }).strict();
 
 const createAsset = z.object({

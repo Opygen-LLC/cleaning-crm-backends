@@ -6,7 +6,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import { acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { PROVISIONING_TRANSACTION_OPTIONS } from "../../lib/prisma/transactionPolicy";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
-import { deleteFromCloudinary, uploadToCloudinary } from "../../lib/utils/cloudinary";
+import { mediaService } from "../Media/media.service";
 import type { IRequestUser } from "../../types/requestUser.interface";
 import { ONBOARDING_STEPS } from "../Admin/admin.constant";
 import type {
@@ -123,7 +123,7 @@ type ManagedImageField = (typeof MANAGED_IMAGE_FIELDS)[number]["field"];
 const isManagedBrandAsset = (asset: { metadata: unknown } | null, kind: ManagedImageKind) => {
   if (!asset?.metadata || typeof asset.metadata !== "object" || Array.isArray(asset.metadata)) return false;
   const metadata = asset.metadata as Record<string, unknown>;
-  return metadata.provider === "cloudinary" && metadata.kind === "brand" && metadata.slot === kind && metadata.immutable === true;
+  return (metadata.provider === "r2" || metadata.provider === "cloudinary") && metadata.kind === "brand" && metadata.slot === kind && metadata.immutable === true;
 };
 
 const assertManagedBrandReferences = async (
@@ -1618,6 +1618,7 @@ const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, u
       create: {
         websiteId: website.id,
         publicId: payload.publicId,
+        mediaAssetId: payload.mediaAssetId ?? null,
         url: payload.url,
         mimeType: payload.mimeType,
         width: payload.width,
@@ -1628,6 +1629,7 @@ const attachManagedBrandAsset = async (payload: WebsiteManagedBrandAssetInput, u
         metadata: payload.metadata as any,
       },
       update: {
+        mediaAssetId: payload.mediaAssetId ?? undefined,
         url: payload.url,
         mimeType: payload.mimeType,
         width: payload.width,
@@ -1681,114 +1683,58 @@ const uploadBrandAsset = async (
 ) => {
   const adminId = await getAdminId(user);
   const website = await getWebsiteOrThrow(adminId);
-  if (!file?.buffer || !["image/jpeg", "image/png", "image/webp", "image/avif"].includes(file.mimetype.toLowerCase())) {
-    throw new AppError(status.BAD_REQUEST, "Upload a JPEG, PNG, WEBP, or AVIF image");
-  }
-  const maxBytes = kind === "favicon" ? 2 * 1024 * 1024 : 5 * 1024 * 1024;
-  if (file.size > maxBytes) throw new AppError(status.BAD_REQUEST, `${kind === "logo" ? "Logo" : "Favicon"} file is too large`);
-
-  // Backward-compatible server upload for older clients. New clients use the
-  // signed direct-to-Cloudinary flow. The unique public ID is essential: never
-  // overwrite the asset referenced by the currently published snapshot.
-  const folder = `Cleaning-CRM/websites/${website.id}/brand`;
-  const publicId = `${kind}-${randomUUID()}`;
-  const uploaded = await uploadToCloudinary(file.buffer, {
-    folder,
-    public_id: publicId,
-    overwrite: false,
-    transformation: kind === "favicon"
-      ? [{ width: 512, height: 512, crop: "limit", quality: "auto:good" }]
-      : [{ width: 1600, height: 1600, crop: "limit", quality: "auto:good" }],
-  });
-  if (!uploaded?.secure_url || !uploaded?.public_id || !uploaded?.width || !uploaded?.height) {
-    throw new AppError(status.BAD_GATEWAY, "Image storage did not return a usable asset");
-  }
-  if (kind === "favicon") {
-    const ratio = uploaded.width / uploaded.height;
-    if (uploaded.width < 32 || uploaded.height < 32 || ratio < 0.8 || ratio > 1.25) {
-      throw new AppError(status.BAD_REQUEST, "Favicon must be at least 32×32 and approximately square");
-    }
-  } else {
-    const ratio = uploaded.width / uploaded.height;
-    if (uploaded.width < 64 || uploaded.height < 24 || ratio < 0.1 || ratio > 10) {
-      throw new AppError(status.BAD_REQUEST, "Logo dimensions or aspect ratio are not supported");
-    }
-  }
-
-  const result = await attachManagedBrandAsset({
-    kind,
-    publicId: uploaded.public_id,
-    url: uploaded.secure_url,
-    mimeType: `image/${uploaded.format === "jpg" ? "jpeg" : (uploaded.format ?? "webp")}`,
-    width: uploaded.width,
-    height: uploaded.height,
-    bytes: uploaded.bytes ?? file.size,
-    folder,
-    metadata: { provider: "cloudinary", kind: "brand", slot: kind, immutable: true, legacyDirectUpload: true },
+  const asset = await mediaService.uploadFromServer({
+    purpose: "WEBSITE_BRAND", entityId: website.id, filename: file.originalname, contentType: file.mimetype, buffer: file.buffer,
   }, user);
-  return result.asset;
+  try {
+    if (!asset.publicUrl || !asset.width || !asset.height) throw new AppError(status.BAD_GATEWAY, "Image storage did not return a usable asset");
+    const result = await attachManagedBrandAsset({
+      kind, publicId: asset.objectKey, mediaAssetId: asset.id, url: asset.publicUrl, mimeType: asset.mimeType, width: asset.width, height: asset.height,
+      bytes: asset.storedBytes ?? asset.originalBytes, folder: `website/${website.id}/brand`,
+      metadata: { provider: "r2", mediaAssetId: asset.id, kind: "brand", slot: kind, immutable: true, serverFallback: true },
+    }, user);
+    return result.asset;
+  } catch (error) {
+    await mediaService.deleteAssetIfUnreferencedForTenant(asset.id, adminId).catch(() => undefined);
+    throw error;
+  }
 };
 
-const CONTENT_ASSET_SLOTS = new Set(["about-image", "hero-image"]);
+const CONTENT_ASSET_SLOTS = new Set(["about-image", "hero-image", "gallery"]);
 
-const uploadContentAsset = async (
-  file: Express.Multer.File,
-  slot: string,
-  user: IRequestUser,
-) => {
+const attachContentAsset = async (mediaAssetId: string, slot: string, user: IRequestUser) => {
   const adminId = await getAdminId(user);
   const website = await getWebsiteOrThrow(adminId);
   const normalizedSlot = slot.trim().toLowerCase();
-  if (!CONTENT_ASSET_SLOTS.has(normalizedSlot)) {
-    throw new AppError(status.BAD_REQUEST, "Unsupported website content asset slot");
+  if (!CONTENT_ASSET_SLOTS.has(normalizedSlot)) throw new AppError(status.BAD_REQUEST, "Unsupported website content asset slot");
+  const asset = await mediaService.bindReadyAsset(mediaAssetId, user, "WEBSITE_CONTENT", website.id);
+  if (!asset.publicUrl || !asset.width || !asset.height) throw new AppError(status.BAD_GATEWAY, "Image storage did not return a usable asset");
+  if (asset.width < 320 || asset.height < 180 || asset.width > 5000 || asset.height > 5000) throw new AppError(status.BAD_REQUEST, "Website image dimensions are not supported");
+  try {
+    const row = await prisma.websiteAsset.create({
+      data: { websiteId: website.id, publicId: asset.objectKey, mediaAssetId: asset.id, url: asset.publicUrl, mimeType: asset.mimeType, width: asset.width, height: asset.height,
+        bytes: asset.storedBytes ?? asset.originalBytes, altText: normalizedSlot === "hero-image" ? "" : "About the business", folder: `website/${website.id}/content`,
+        metadata: { provider: "r2", mediaAssetId: asset.id, kind: "content", slot: normalizedSlot, immutable: true },
+      },
+    });
+    await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
+    return row;
+  } catch (error) {
+    await mediaService.deleteAssetIfUnreferencedForTenant(asset.id, adminId).catch(() => undefined);
+    throw error;
   }
-  const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
-  if (!file?.buffer || !allowedTypes.has(file.mimetype.toLowerCase())) {
-    throw new AppError(status.BAD_REQUEST, "Upload a JPEG, PNG, WEBP, or AVIF image");
-  }
-  if (file.size > 5 * 1024 * 1024) {
-    throw new AppError(status.BAD_REQUEST, "Website image must be no larger than 5 MB");
-  }
+};
 
-  // Content images are immutable for the same reason as logos: published and
-  // historical snapshots must never change underneath a stored URL.
-  const folder = `Cleaning-CRM/websites/${website.id}/content`;
-  const publicId = `${normalizedSlot}-${randomUUID()}`;
-  const uploaded = await uploadToCloudinary(file.buffer, {
-    folder,
-    public_id: publicId,
-    overwrite: false,
-    transformation: [{ width: 1800, height: 1400, crop: "limit", quality: "auto", fetch_format: "auto" }],
-  });
-  if (!uploaded?.secure_url || !uploaded?.public_id || !uploaded?.width || !uploaded?.height) {
-    if (uploaded?.public_id) await deleteFromCloudinary(uploaded.public_id).catch(() => undefined);
-    throw new AppError(status.BAD_GATEWAY, "Image storage did not return a usable asset");
+const uploadContentAsset = async (file: Express.Multer.File, slot: string, user: IRequestUser) => {
+  const adminId = await getAdminId(user);
+  const website = await getWebsiteOrThrow(adminId);
+  const asset = await mediaService.uploadFromServer({ purpose: "WEBSITE_CONTENT", entityId: website.id, filename: file.originalname, contentType: file.mimetype, buffer: file.buffer }, user);
+  try {
+    return await attachContentAsset(asset.id, slot, user);
+  } catch (error) {
+    await mediaService.deleteAssetIfUnreferencedForTenant(asset.id, adminId).catch(() => undefined);
+    throw error;
   }
-
-  const bytes = Number(uploaded.bytes ?? file.size ?? 0);
-  const width = Number(uploaded.width);
-  const height = Number(uploaded.height);
-  if (bytes <= 0 || bytes > 5 * 1024 * 1024 || width < 320 || height < 180 || width > 5000 || height > 5000) {
-    await deleteFromCloudinary(uploaded.public_id).catch(() => undefined);
-    throw new AppError(status.BAD_REQUEST, "Website image dimensions or file size are not supported");
-  }
-
-  const asset = await prisma.websiteAsset.create({
-    data: {
-      websiteId: website.id,
-      publicId: uploaded.public_id,
-      url: uploaded.secure_url,
-      mimeType: `image/${uploaded.format === "jpg" ? "jpeg" : (uploaded.format ?? "webp")}`,
-      width,
-      height,
-      bytes,
-      altText: normalizedSlot === "hero-image" ? "" : "About the business",
-      folder,
-      metadata: { provider: "cloudinary", kind: "content", slot: normalizedSlot, immutable: true },
-    },
-  });
-  await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
-  return asset;
 };
 
 const deleteAsset = async (assetId: string, user: IRequestUser) => {
@@ -1807,7 +1753,7 @@ const deleteAsset = async (assetId: string, user: IRequestUser) => {
   if (!website) throw new AppError(status.NOT_FOUND, "Business website has not been provisioned yet");
   const asset = await prisma.websiteAsset.findFirst({
     where: { id: assetId, websiteId: website.id },
-    select: { id: true, url: true, metadata: true },
+    select: { id: true, url: true, metadata: true, mediaAssetId: true },
   });
   if (!asset) throw new AppError(status.NOT_FOUND, "Website asset not found");
 
@@ -1828,6 +1774,7 @@ const deleteAsset = async (assetId: string, user: IRequestUser) => {
     throw new AppError(status.CONFLICT, "This image is retained for saved website revisions. Remove it from the page instead.", { code: "WEBSITE_ASSET_RETAINED", retryable: false });
   }
   await prisma.websiteAsset.delete({ where: { id: assetId } });
+  if (asset.mediaAssetId) await mediaService.deleteAssetForTenant(asset.mediaAssetId, adminId).catch(() => undefined);
   await WebsiteProjectionCacheService.invalidateStudioAdmin(adminId);
   return { id: assetId, deleted: true };
 };
@@ -1857,5 +1804,6 @@ export const WebsiteService = {
   registerAsset,
   uploadBrandAsset,
   uploadContentAsset,
+  attachContentAsset,
   deleteAsset,
 };

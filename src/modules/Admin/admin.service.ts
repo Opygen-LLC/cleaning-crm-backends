@@ -144,7 +144,7 @@ const getAdmin = async (userId: string) => {
 const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
   const adminId = await findAdminIdOrThrow(userId);
 
-  const { workLocations, country, postcode, zipcode, ...scalarFields } = payload;
+  const { workLocations, country, postcode, zipcode, businessLogoAssetId: _businessLogoAssetId, ...scalarFields } = payload;
 
   const data: Record<string, unknown> = {
     ...scalarFields,
