@@ -11,7 +11,7 @@
  *
  *   POST   /job/:id/attachments            upload a file (multipart/form-data)
  *   GET    /job/:id/attachments            list attachments for a job
- *   DELETE /job/:id/attachments/:attachId  delete a file (R2; legacy Cloudinary cleanup retained until Phase 3)
+ *   DELETE /job/:id/attachments/:attachId  delete a file (R2)
  */
 
 import { prisma } from "../../lib/prisma/prisma";
@@ -19,9 +19,7 @@ import AppError from "../../errorHelper/AppError";
 import status from "http-status";
 import { NoteType } from "../../generated/prisma/enums";
 import { IRequestUser } from "../../types/requestUser.interface";
-import { getAdminId } from "../../lib/utils/resolveAdminId";
-import { deleteFileFromCloudinary } from "../../config/cloudinary"; // Phase-3 legacy cleanup only
-import { mediaService } from "../Media/media.service";
+import { getAdminId } from "../../lib/utils/resolveAdminId";import { mediaService } from "../Media/media.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -259,7 +257,7 @@ const createAttachmentFromAsset = async (
     try {
         return await prisma.jobAttachment.create({
             data: {
-                jobId, adminId, fileName: asset.originalFilename, fileUrl, cloudinaryId: null,
+                jobId, adminId, fileName: asset.originalFilename, fileUrl,
                 mediaAssetId: asset.id, storageKey: asset.objectKey, mimeType: asset.mimeType,
                 fileSizeBytes: asset.storedBytes ?? asset.originalBytes, uploadedByRole: uploaderRole, photoType: photoType ?? null,
             },
@@ -312,9 +310,6 @@ const deleteAttachment = async (
     await prisma.jobAttachment.delete({ where: { id: attachId } });
     if (attachment.mediaAssetId) {
         await mediaService.deleteAssetForTenant(attachment.mediaAssetId, adminId).catch(() => undefined);
-    } else if (attachment.fileUrl.includes("cloudinary")) {
-        // Existing pre-R2 rows remain deletable during the rolling Phase-2/3 migration.
-        await deleteFileFromCloudinary(attachment.fileUrl).catch(() => undefined);
     }
     return { deleted: true };
 };

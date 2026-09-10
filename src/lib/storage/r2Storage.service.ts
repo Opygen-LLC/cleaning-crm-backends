@@ -9,6 +9,32 @@ import { createR2PresignedUrl, r2SignedFetch } from "./r2Client";
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, "");
 const cleanEtag = (value: string | null) => value?.replace(/^"|"$/g, "") ?? undefined;
 
+const decodeXml = (value: string) => value
+  .replace(/&lt;/g, "<")
+  .replace(/&gt;/g, ">")
+  .replace(/&quot;/g, '"')
+  .replace(/&apos;/g, "'")
+  .replace(/&amp;/g, "&");
+
+const xmlText = (xml: string, tag: string): string | undefined => {
+  const match = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i"));
+  return match ? decodeXml(match[1]) : undefined;
+};
+
+const deleteWithConcurrency = async (bucket: string, keys: string[], concurrency = 12) => {
+  let cursor = 0;
+  let deleted = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, keys.length || 1)) }, async () => {
+    while (cursor < keys.length) {
+      const key = keys[cursor++];
+      await r2SignedFetch({ method: "DELETE", bucket, key });
+      deleted += 1;
+    }
+  });
+  await Promise.all(workers);
+  return deleted;
+};
+
 export const r2StorageService = {
   async createUploadUrl(params: { key: string; contentType: string }) {
     return createR2PresignedUrl({
@@ -78,6 +104,52 @@ export const r2StorageService = {
 
   async deleteObject(bucket: string, key: string) {
     await r2SignedFetch({ method: "DELETE", bucket, key });
+  },
+
+  async listObjects(params: { bucket: string; prefix: string; continuationToken?: string; maxKeys?: number }) {
+    const query: Record<string, string> = {
+      "list-type": "2",
+      prefix: params.prefix,
+      "max-keys": String(Math.max(1, Math.min(1000, params.maxKeys ?? 1000))),
+    };
+    if (params.continuationToken) query["continuation-token"] = params.continuationToken;
+    const response = await r2SignedFetch({ method: "GET", bucket: params.bucket, query, timeoutMs: 30_000 });
+    const xml = await response.text();
+    const keys = [...xml.matchAll(/<Contents>[\s\S]*?<Key>([\s\S]*?)<\/Key>[\s\S]*?<\/Contents>/gi)]
+      .map((match) => decodeXml(match[1]));
+    return {
+      keys,
+      isTruncated: (xmlText(xml, "IsTruncated") ?? "false").toLowerCase() === "true",
+      nextContinuationToken: xmlText(xml, "NextContinuationToken"),
+    };
+  },
+
+  async deletePrefix(bucket: string, prefix: string) {
+    let continuationToken: string | undefined;
+    let deleted = 0;
+    do {
+      const page = await this.listObjects({ bucket, prefix, continuationToken, maxKeys: 1000 });
+      if (page.keys.length) deleted += await deleteWithConcurrency(bucket, page.keys);
+      continuationToken = page.isTruncated ? page.nextContinuationToken : undefined;
+      if (page.isTruncated && !continuationToken) throw new Error(`R2 list for ${prefix} was truncated without a continuation token.`);
+    } while (continuationToken);
+    return deleted;
+  },
+
+  async putLifecycleConfiguration(bucket: string, xml: string) {
+    await r2SignedFetch({
+      method: "PUT",
+      bucket,
+      query: { lifecycle: "" },
+      body: Buffer.from(xml, "utf8"),
+      headers: { "content-type": "application/xml" },
+      timeoutMs: 30_000,
+    });
+  },
+
+  async getLifecycleConfiguration(bucket: string) {
+    const response = await r2SignedFetch({ method: "GET", bucket, query: { lifecycle: "" }, timeoutMs: 30_000 });
+    return response.text();
   },
 
   async createPrivateDownloadUrl(bucket: string, key: string, filename?: string) {

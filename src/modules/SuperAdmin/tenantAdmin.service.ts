@@ -27,7 +27,6 @@ import { PublicWebsiteCacheOutbox } from "../../lib/outbox/publicWebsiteCacheOut
 import { WebsitePublicationDeliveryService } from "../Website/websitePublicationDelivery.service";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { WebsiteHostResolverService } from "../Website/websiteHostResolver.service";
-import { deleteFileFromCloudinary } from "../../config/cloudinary";
 import { disconnectTenantSockets } from "../../config/socketio";
 import { writeSuperAdminAudit } from "./superAdminAudit.service";
 import { TenantEntitlementService } from "./tenantEntitlement.service";
@@ -36,6 +35,8 @@ import { getPlatformConfig } from "../../lib/utils/platformConfig";
 import { superAdminService } from "./superAdmin.service";
 import { Organization360Service } from "./organization360.service";
 import { mediaService } from "../Media/media.service";
+import { r2StorageService } from "../../lib/storage/r2Storage.service";
+import { R2_PRIVATE_BUCKET, R2_PUBLIC_BUCKET } from "../../config/ENV";
 
 const TENANT_REASON_MIN = 10;
 const HARD_DELETE_TEXT = "DELETE PERMANENTLY";
@@ -473,15 +474,15 @@ export const getTenantDeletionPreview = async (identifier: string) => {
   return { tenant: { id: tenant.id, ownerUserId: tenant.userId, businessName: tenant.businessName, ownerEmail: tenant.user.email, lifecycleStatus: tenant.lifecycleStatus }, confirmationAdminId: tenant.id, confirmationText: HARD_DELETE_TEXT, retryable: tenant.lifecycleStatus === PENDING_DELETION, deletion: { startedAt: tenant.deletionStartedAt, attemptCount: tenant.deletionAttemptCount, lastAttemptAt: tenant.deletionLastAttemptAt, lastError: tenant.deletionLastError }, counts: { users, staff, clients, leads, leadActivities, jobs, bookings, recurringBookings, services, quotes, estimates, invoices, payments, expenses, commissions: 0, website: website ? 1 : 0, websiteRevisions, domains, assets, submissions, reviews, notifications, subscriptions, billingHistory, pendingPlanChanges, couponUsages } };
 };
 
-const tenantCloudinaryUrls = async (adminId: string) => {
-  const website = await prisma.businessWebsite.findUnique({ where: { adminId }, select: { logo: true, favicon: true, assets: { select: { url: true } } } });
-  const [attachments, payments, billing] = await Promise.all([
-    prisma.jobAttachment.findMany({ where: { adminId }, select: { fileUrl: true } }),
-    prisma.payment.findMany({ where: { adminId }, select: { invoiceUrl: true, paymentProofUrl: true } }),
-    prisma.billingHistory.findMany({ where: { subscription: { adminId } }, select: { invoiceUrl: true, paymentProofUrl: true } }),
+const purgeTenantR2Objects = async (adminId: string) => {
+  const organizationPrefix = `organizations/${adminId}/`;
+  const temporaryPrefix = `tmp/${adminId}/`;
+  const [publicDeleted, privateDeleted, temporaryDeleted] = await Promise.all([
+    r2StorageService.deletePrefix(R2_PUBLIC_BUCKET, organizationPrefix),
+    r2StorageService.deletePrefix(R2_PRIVATE_BUCKET, organizationPrefix),
+    r2StorageService.deletePrefix(R2_PRIVATE_BUCKET, temporaryPrefix),
   ]);
-  const values = [website?.logo, website?.favicon, ...(website?.assets.map((x) => x.url) ?? []), ...attachments.map((x) => x.fileUrl), ...payments.flatMap((x) => [x.invoiceUrl, x.paymentProofUrl]), ...billing.flatMap((x) => [x.invoiceUrl, x.paymentProofUrl])];
-  return [...new Set(values.filter((url): url is string => Boolean(url && url.includes("cloudinary"))))];
+  return { publicDeleted, privateDeleted, temporaryDeleted, totalDeleted: publicDeleted + privateDeleted + temporaryDeleted };
 };
 
 export const hardDeleteTenant = async (
@@ -573,7 +574,7 @@ export const hardDeleteTenant = async (
   await revokeTenantSessions(tenant.id);
   await invalidateTenantCaches(tenant);
 
-  const recordFailure = async (stage: "EXTERNAL_ASSETS" | "DATABASE" | "VERIFICATION", error: unknown) => {
+  const recordFailure = async (stage: "R2_ASSETS" | "DATABASE" | "VERIFICATION", error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     const safeMessage = message.slice(0, 1000);
     await prisma.adminProfile.update({
@@ -592,15 +593,12 @@ export const hardDeleteTenant = async (
     }).catch(() => undefined);
   };
 
-  const urls = await tenantCloudinaryUrls(tenant.id);
-  const cleanup = await Promise.allSettled(urls.map((url) => deleteFileFromCloudinary(url)));
-  const failedAssets = cleanup
-    .map((result, index) => ({ result, url: urls[index] }))
-    .filter((entry): entry is { result: PromiseRejectedResult; url: string } => entry.result.status === "rejected");
-  if (failedAssets.length) {
-    const error = new AppError(status.BAD_GATEWAY, `External asset cleanup failed for ${failedAssets.length} file(s). The organization remains pending deletion and can be retried.`, { code: "TENANT_DELETE_EXTERNAL_CLEANUP_FAILED", retryable: true });
-    await recordFailure("EXTERNAL_ASSETS", error);
-    throw error;
+  let r2Cleanup: { publicDeleted: number; privateDeleted: number; temporaryDeleted: number; totalDeleted: number };
+  try {
+    r2Cleanup = await purgeTenantR2Objects(tenant.id);
+  } catch (error) {
+    await recordFailure("R2_ASSETS", error);
+    throw new AppError(status.BAD_GATEWAY, "R2 asset cleanup failed. The organization remains pending deletion and can be retried.", { code: "TENANT_DELETE_R2_CLEANUP_FAILED", retryable: true });
   }
 
   const staffUsers = await prisma.staffProfile.findMany({ where: { adminId: tenant.id }, select: { userId: true } });
@@ -618,7 +616,7 @@ export const hardDeleteTenant = async (
         targetUserId: tenant.userId,
         action: "TENANT_HARD_DELETED",
         reason,
-        metadata: { counts: preview.counts, externalAssetsDeleted: urls.length, retry },
+        metadata: { counts: preview.counts, r2ObjectsDeleted: r2Cleanup.totalDeleted, r2Cleanup, retry },
         before: { lifecycleStatus: PENDING_DELETION },
         after: { lifecycleStatus: "DELETED" },
         ...auditHttpContext(context),
@@ -635,7 +633,7 @@ export const hardDeleteTenant = async (
     await recordFailure("VERIFICATION", error);
     throw error;
   }
-  return { deleted: true, tenantId: tenant.id, externalAssetsDeleted: urls.length, counts: preview.counts, retried: retry };
+  return { deleted: true, tenantId: tenant.id, r2ObjectsDeleted: r2Cleanup.totalDeleted, r2Cleanup, counts: preview.counts, retried: retry };
 };
 
 const buildGlobalUserWhere = (query: Record<string, unknown>): Prisma.UserWhereInput => {

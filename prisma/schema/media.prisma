@@ -36,3 +36,29 @@ model MediaAsset {
   @@index([status, expiresAt])
   @@map("media_asset")
 }
+
+model LegacyMediaMigration {
+  id                 String       @id @default(uuid())
+  adminId            String
+  sourceUrlHash      String
+  sourceUrl          String       @db.Text
+  purpose            String
+  visibility         String
+  entityType         String?
+  entityId           String?
+  targetMediaAssetId String?
+  status             String       @default("PENDING")
+  attemptCount       Int          @default(0)
+  lastError          String?      @db.Text
+  metadata           Json         @default("{}")
+  migratedAt         DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  admin              AdminProfile @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@unique([adminId, sourceUrlHash, purpose])
+  @@index([adminId, status, updatedAt])
+  @@index([status, updatedAt])
+  @@map("legacy_media_migration")
+}

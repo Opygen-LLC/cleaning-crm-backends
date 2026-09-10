@@ -70,6 +70,22 @@ async function resolveBillingProofUrl(
     return legacyUrl && !legacyUrl.startsWith("r2://") ? legacyUrl : null;
 }
 
+async function resolveBillingInvoiceUrl(
+    record: { invoiceMediaAssetId?: string | null; invoiceUrl?: string | null },
+    adminId: string,
+): Promise<string | null> {
+    if (record.invoiceMediaAssetId) {
+        try {
+            return await mediaService.getReadUrlForTenant(record.invoiceMediaAssetId, adminId);
+        } catch {
+            return null;
+        }
+    }
+
+    const legacyUrl = record.invoiceUrl?.trim();
+    return legacyUrl && !legacyUrl.startsWith("r2://") && !legacyUrl.startsWith("r2-asset://") ? legacyUrl : null;
+}
+
 const invalidateAdminWebsiteRouting = async (adminProfileId: string | null | undefined) => {
     if (!adminProfileId) return;
     try {
@@ -1535,6 +1551,7 @@ const getBillingHistory = async (
         data.map(async (record) => ({
             ...record,
             paymentProofUrl: await resolveBillingProofUrl(record, record.subscription.admin.id),
+            invoiceUrl: await resolveBillingInvoiceUrl(record, record.subscription.admin.id),
         })),
     );
 
@@ -1906,9 +1923,10 @@ const refundBillingRecord = async (id: string) => {
     return updatedBilling;
 };
 
-// ─── Billing History — Invoice URL (item 14) ──────────────────────────────────
-// Returns the Cloudinary invoiceUrl stored on the record, or a structured
-// placeholder so the frontend always gets a usable response.
+// ─── Billing History — Invoice URL ────────────────────────────────────────────
+// Private R2 invoices are resolved only after the billing record establishes
+// the owning tenant. Legacy external URLs remain readable until the migration
+// verification gate reports zero legacy references.
 
 const getBillingInvoice = async (id: string) => {
     const record = await prisma.billingHistory.findUnique({
@@ -1916,10 +1934,12 @@ const getBillingInvoice = async (id: string) => {
         select: {
             id: true,
             invoiceUrl: true,
+            invoiceMediaAssetId: true,
             amount: true,
             currency: true,
             paidAt: true,
             createdAt: true,
+            subscription: { select: { adminId: true } },
         },
     });
     if (!record) {
@@ -1928,7 +1948,7 @@ const getBillingInvoice = async (id: string) => {
 
     return {
         id: record.id,
-        invoiceUrl: record.invoiceUrl ?? null,
+        invoiceUrl: await resolveBillingInvoiceUrl(record, record.subscription.adminId),
         amount: Number(record.amount),
         currency: record.currency,
         paidAt: record.paidAt,

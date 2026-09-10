@@ -140,6 +140,10 @@ async function assertEntityOwnership(user: IRequestUser, adminId: string, purpos
     case "JOB_PHOTO":
     case "JOB_ATTACHMENT": return owned(await prisma.job.findUnique({ where: { id: entityId }, select: { adminId: true } }));
     case "INVOICE_ATTACHMENT": return owned(await prisma.invoice.findUnique({ where: { id: entityId }, select: { adminId: true } }));
+    case "BILLING_INVOICE": {
+      const billing = await prisma.billingHistory.findUnique({ where: { id: entityId }, select: { subscription: { select: { adminId: true } } } });
+      return owned(billing ? { adminId: billing.subscription.adminId } : null);
+    }
     case "PAYMENT_PROOF":
     case "PAYMENT_RECEIPT": return owned(await prisma.payment.findUnique({ where: { id: entityId }, select: { adminId: true } }));
     case "EXPENSE_RECEIPT": return owned(await prisma.expense.findUnique({ where: { id: entityId }, select: { adminId: true } }));
@@ -381,7 +385,11 @@ async function uploadFromServerForTenant(input: ServerMediaUploadInput, adminId:
   }
 
   const bucket = policy.visibility === "PUBLIC" ? R2_PUBLIC_BUCKET : R2_PRIVATE_BUCKET;
-  const objectKey = buildFinalObjectKey({ adminId, purpose: input.purpose, entityId: input.entityId, mimeType: finalMime });
+  const objectKey = buildFinalObjectKey({ adminId, purpose: input.purpose, entityId: input.entityId, mimeType: finalMime, objectId: input.objectId });
+  if (input.objectId) {
+    const existing = await prisma.mediaAsset.findUnique({ where: { objectKey } });
+    if (existing && existing.adminId === adminId && existing.purpose === input.purpose && existing.status === "READY" && !existing.deletedAt) return existing;
+  }
   const put = await r2StorageService.putObject({ bucket, key: objectKey, body: finalBuffer, contentType: finalMime, isPublic: policy.visibility === "PUBLIC" });
   const publicUrl = policy.visibility === "PUBLIC" ? r2StorageService.publicUrl(objectKey) : null;
   return prisma.mediaAsset.create({
@@ -418,8 +426,8 @@ async function assertAssetNotInUse(assetId: string): Promise<void> {
     prisma.user.findFirst({ where: { imageMediaAssetId: assetId }, select: { id: true } }),
     prisma.adminProfile.findFirst({ where: { businessLogoMediaAssetId: assetId }, select: { id: true } }),
     prisma.jobAttachment.findFirst({ where: { mediaAssetId: assetId }, select: { id: true } }),
-    prisma.payment.findFirst({ where: { OR: [{ paymentProofMediaAssetId: assetId }, { receiptMediaAssetId: assetId }] }, select: { id: true } }),
-    prisma.billingHistory.findFirst({ where: { paymentProofMediaAssetId: assetId }, select: { id: true } }),
+    prisma.payment.findFirst({ where: { OR: [{ paymentProofMediaAssetId: assetId }, { receiptMediaAssetId: assetId }, { invoiceMediaAssetId: assetId }] }, select: { id: true } }),
+    prisma.billingHistory.findFirst({ where: { OR: [{ paymentProofMediaAssetId: assetId }, { invoiceMediaAssetId: assetId }] }, select: { id: true } }),
     prisma.expense.findFirst({ where: { receiptMediaAssetId: assetId }, select: { id: true } }),
     prisma.websiteAsset.findFirst({ where: { mediaAssetId: assetId }, select: { id: true } }),
   ]);

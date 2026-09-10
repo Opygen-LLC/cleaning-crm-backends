@@ -49,7 +49,7 @@ const assertDimensions = (kind: WebsiteBrandAssetKind, asset: { width: number | 
 
 /**
  * Compatibility endpoint for older Studio builds. It now issues an R2 PUT
- * session instead of a Cloudinary signed POST. New clients use /media directly.
+ * session instead of a provider-specific signed POST. New clients use /media directly.
  */
 const requestBrandUploadSignature = async (input: WebsiteBrandUploadSignatureInput, user: IRequestUser) => {
   const { website } = await assertWebsiteCanUpload(input.kind, user);

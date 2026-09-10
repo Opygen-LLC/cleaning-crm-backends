@@ -68,7 +68,7 @@ function fixture() {
     'src/lib/logger':{default:{warn:()=>{},info:()=>{},error:()=>{}},__esModule:true},
     'src/lib/prisma/advisoryLock':{acquireTextTransactionAdvisoryLock:async()=>{order.push('advisory:lock');}},
     'src/lib/prisma/transactionPolicy':{PROVISIONING_TRANSACTION_OPTIONS:{timeout:10000}},
-    'src/lib/utils/resolveAdminId':{getAdminId:async()=>ADMIN},'src/lib/utils/cloudinary':{},
+    'src/lib/utils/resolveAdminId':{getAdminId:async()=>ADMIN},
     'src/modules/Admin/admin.constant':{ONBOARDING_STEPS:['business_profile','branding','services','website_address','review_launch'].map(key=>({key}))},
     'src/lib/utils/subscriptionPlanFeatures':{normalizeSubscriptionPlanFeatures:value=>Array.isArray(value)?value:[]},
     'src/modules/SuperAdmin/tenantEntitlement.service':{

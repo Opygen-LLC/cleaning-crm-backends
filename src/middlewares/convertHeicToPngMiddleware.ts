@@ -2,9 +2,9 @@
  * convertHeicToPngMiddleware.ts
  *
  * Converts HEIC/HEIF images (uploaded by iOS devices) to PNG in-memory before
- * the file is passed to downstream handlers (Cloudinary upload, etc.).
+ * the file is passed to downstream handlers (R2 upload, etc.).
  *
- * Usage — apply BEFORE any Cloudinary upload on routes that accept image files:
+ * Usage — apply BEFORE any R2 upload on routes that accept image files:
  *
  *   router.post(
  *     "/payment/:id/receipt",

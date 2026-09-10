@@ -36,9 +36,7 @@ const productionEnvSchema = z.object({
   OUTBOX_WORKER_POLL_MS: z.coerce.number().int().min(500).max(60_000).optional(),
   OUTBOX_WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).optional(),
   OUTBOX_LOCK_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(15 * 60_000).optional(),
-  // R2 is the canonical media foundation. Cloudinary variables may remain
-  // temporarily during Phase 1 so legacy feature routes keep working until
-  // Phase 2 migrates each caller, but production no longer depends on them.
+  // Cloudflare R2 is the only supported media provider in production.
   STORAGE_PROVIDER: z.literal("r2"),
   R2_ACCOUNT_ID: nonEmpty,
   R2_ACCESS_KEY_ID: nonEmpty,
@@ -53,9 +51,6 @@ const productionEnvSchema = z.object({
   R2_MAX_IMAGE_SIZE_MB: z.coerce.number().positive().max(25).optional(),
   R2_MAX_DOCUMENT_SIZE_MB: z.coerce.number().positive().max(100).optional(),
   R2_IMAGE_PROCESSING_CONCURRENCY: z.coerce.number().int().min(1).max(8).optional(),
-  CLOUDINARY_CLOUD_NAME: z.string().trim().optional(),
-  CLOUDINARY_API_KEY: z.string().trim().optional(),
-  CLOUDINARY_API_SECRET: z.string().trim().optional(),
   APP_VERSION: nonEmpty.default("1.0.0"),
   GIT_SHA: nonEmpty.default("production"),
   BUILD_DATE: nonEmpty.default(new Date().toISOString()),

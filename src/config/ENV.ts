@@ -120,12 +120,6 @@ export const OUTBOX_WORKER_POLL_MS: number = Math.min(60_000, Math.max(500, Numb
 export const OUTBOX_WORKER_BATCH_SIZE: number = Math.min(100, Math.max(1, Math.trunc(Number(process.env.OUTBOX_WORKER_BATCH_SIZE) || 10)));
 export const OUTBOX_LOCK_TIMEOUT_MS: number = Math.min(15 * 60_000, Math.max(30_000, Number(process.env.OUTBOX_LOCK_TIMEOUT_MS) || 120_000));
 
-export const CLOUDINARY_CLOUD_NAME: string = process.env
-    .CLOUDINARY_CLOUD_NAME as string;
-export const CLOUDINARY_API_KEY: string = process.env
-    .CLOUDINARY_API_KEY as string;
-export const CLOUDINARY_API_SECRET: string = process.env
-    .CLOUDINARY_API_SECRET as string;
 
 export const BETTER_AUTH_SECRET: string = process.env
     .BETTER_AUTH_SECRET as string;

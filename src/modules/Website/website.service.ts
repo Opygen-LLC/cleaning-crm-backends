@@ -123,7 +123,7 @@ type ManagedImageField = (typeof MANAGED_IMAGE_FIELDS)[number]["field"];
 const isManagedBrandAsset = (asset: { metadata: unknown } | null, kind: ManagedImageKind) => {
   if (!asset?.metadata || typeof asset.metadata !== "object" || Array.isArray(asset.metadata)) return false;
   const metadata = asset.metadata as Record<string, unknown>;
-  return (metadata.provider === "r2" || metadata.provider === "cloudinary") && metadata.kind === "brand" && metadata.slot === kind && metadata.immutable === true;
+  return metadata.provider === "r2" && metadata.kind === "brand" && metadata.slot === kind && metadata.immutable === true;
 };
 
 const assertManagedBrandReferences = async (
@@ -191,7 +191,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 /**
- * Asset deletion removes only the WebsiteAsset row; immutable Cloudinary
+ * Asset deletion removes only the WebsiteAsset row; immutable R2
  * resources remain available so historical revisions can still be recovered.
  * Rehydrate only brand assets that were already recorded inside this tenant's
  * own revision snapshot and still carry the Phase-8 immutable metadata.

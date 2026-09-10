@@ -25,7 +25,6 @@ model JobAttachment {
     adminId        String
     fileName       String // original filename shown in the UI
     fileUrl        String // public legacy URL or r2:// storage marker; API returns a signed URL for private R2 assets
-    cloudinaryId   String? // legacy only; new R2 uploads leave this null
     mediaAssetId   String? @unique
     storageKey     String?
     mimeType       String

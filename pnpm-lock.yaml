@@ -26,9 +26,6 @@ importers:
       chalk:
         specifier: ^5.6.2
         version: 5.6.2
-      cloudinary:
-        specifier: ^2.8.0
-        version: 2.10.0
       compression:
         specifier: ^1.8.1
         version: 1.8.1
@@ -2865,11 +2862,6 @@ packages:
       integrity: sha512-3Pe/CF1Nn94hyhIYpjtiLhdCoEoz0DqQ+988E9gmeEdQZlojxnOb74wctFyuwWQHzqyf9X7C7MG8juUpqBJT8w==
     engines:
       node: '>=0.8'
-  cloudinary@2.10.0:
-    resolution:
-      integrity: sha512-sY09kYg7wprkndAOjZBAYqFZqwL+SxnEGcAvksOvFA+5upnFn949UjkEkHKNSwkBtW/xRDd0p6NgbSXZcxkI3w==
-    engines:
-      node: '>=9'
   cluster-key-slot@1.1.2:
     resolution:
       integrity: sha512-RMr0FhtfXemyinomL4hrWcYJxmX6deFdCxpJzhDttxgO1+bcCnkk+9drydLVDmAMG7NE6aN/fl4F7ucU/90gAA==
@@ -6559,9 +6551,6 @@ snapshots:
   chownr@3.0.0: {}
   cjs-module-lexer@1.2.3: {}
   clone@2.1.2: {}
-  cloudinary@2.10.0:
-    dependencies:
-      lodash: 4.18.1
   cluster-key-slot@1.1.2: {}
   code-block-writer@10.1.1: {}
   color-convert@3.1.3:

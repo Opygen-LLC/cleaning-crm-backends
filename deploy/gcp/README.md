@@ -15,7 +15,7 @@ Only ports 80/443 should be Internet-accessible on the VM. Do not expose API por
 
 ## Runtime secret requirements
 
-At minimum configure `DATABASE_URL`, `DIRECT_URL`, `BETTER_AUTH_SECRET`, JWT secrets, SMTP/provider secrets, Cloudinary secrets, `APP_REGION`, `DATABASE_REGION`, and the other application values from `.env.example`. Production auth must use:
+At minimum configure `DATABASE_URL`, `DIRECT_URL`, `BETTER_AUTH_SECRET`, JWT secrets, SMTP/provider secrets, Cloudflare R2 credentials/bucket settings, `APP_REGION`, `DATABASE_REGION`, and the other application values from `.env.example`. Production auth must use:
 
 ```env
 NODE_ENV=production
@@ -70,7 +70,7 @@ If `dbConnectivityCheck.mjs` reports `ETIMEDOUT`, `EHOSTUNREACH` or `ENETUNREACH
 
 ## Credential rotation
 
-The historical project archive contained a populated `.env`. If that archive was shared outside the trusted deployment environment, rotate database, JWT/auth, SMTP, Cloudinary and third-party credentials before this release and store the new values only in Google Secret Manager.
+The historical project archive contained a populated `.env`. If that archive was shared outside the trusted deployment environment, rotate database, JWT/auth, SMTP, Cloudflare R2 and third-party credentials before this release and store the new values only in Google Secret Manager.
 
 
 ## Phase 6 observability

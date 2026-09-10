@@ -1,0 +1,6 @@
+Delete these legacy runtime files when applying the Phase 3 patch over Phase 2:
+
+src/config/cloudinary.ts
+src/config/multer.ts
+src/lib/utils/cloudinary.ts
+src/middlewares/fileUpload.middleware.ts

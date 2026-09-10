@@ -11,6 +11,7 @@ export const MEDIA_PURPOSES = [
   "PAYMENT_PROOF",
   "PAYMENT_RECEIPT",
   "INVOICE_ATTACHMENT",
+  "BILLING_INVOICE",
   "EXPENSE_RECEIPT",
   "SUBSCRIPTION_PROOF",
 ] as const;
@@ -44,4 +45,6 @@ export interface ServerMediaUploadInput {
   filename: string;
   contentType: string;
   buffer: Buffer;
+  /** Internal deterministic id used by one-time legacy migrations. */
+  objectId?: string;
 }

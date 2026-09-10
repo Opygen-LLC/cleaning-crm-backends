@@ -68,7 +68,7 @@ test('a late retry acknowledges the latest state rather than undoing a subsequen
 test('branding persists all fields and owned logo/favicon before progress and revision', async () => {
   const f = fixture({ completed: ['business_profile'] });
   const logo = 'https://cdn.example.com/logo.png', favicon = 'https://cdn.example.com/favicon.png';
-  for (const [slot, url] of [['logo',logo],['favicon',favicon]]) f.assets.set(`${f.websiteId}:${url}`, { metadata: { provider: 'cloudinary', kind: 'brand', slot, immutable: true } });
+  for (const [slot, url] of [['logo',logo],['favicon',favicon]]) f.assets.set(`${f.websiteId}:${url}`, { metadata: { provider: 'r2', kind: 'brand', slot, immutable: true } });
   const branding = { primaryColor: '#102030', secondaryColor: '#405060', accentColor: '#708090', font: 'Inter', logo, favicon };
   const result = await f.service.saveStep(f.userId, { schemaVersion: 2, websiteId: f.websiteId, step: 'branding', expectedRevisionNumber: 5, branding });
   for (const [key, value] of Object.entries(branding)) assert.equal(result.bootstrap.website[key], value);
@@ -85,8 +85,8 @@ test('foreign, unregistered or wrong-slot assets fail before any branding milest
   for (const kind of ['foreign', 'unregistered', 'wrong-slot']) {
     const f = fixture({ completed: ['business_profile'] });
     const url = 'https://cdn.example.com/asset.png';
-    if (kind === 'foreign') f.assets.set(`foreign-website:${url}`, { metadata: { provider: 'cloudinary', kind: 'brand', slot: 'favicon', immutable: true } });
-    if (kind === 'wrong-slot') f.assets.set(`${f.websiteId}:${url}`, { metadata: { provider: 'cloudinary', kind: 'brand', slot: 'logo', immutable: true } });
+    if (kind === 'foreign') f.assets.set(`foreign-website:${url}`, { metadata: { provider: 'r2', kind: 'brand', slot: 'favicon', immutable: true } });
+    if (kind === 'wrong-slot') f.assets.set(`${f.websiteId}:${url}`, { metadata: { provider: 'r2', kind: 'brand', slot: 'logo', immutable: true } });
     await assert.rejects(f.service.saveStep(f.userId, { schemaVersion: 2, websiteId: f.websiteId, step: 'branding', expectedRevisionNumber: 5, branding: { favicon: url, primaryColor: '#123456' } }), { code: 'WEBSITE_MANAGED_ASSET_REQUIRED' });
     assert.equal(f.state().website.primaryColor, '#000000');
     assert.deepEqual(f.state().owner.onboardingCompletedSteps, ['business_profile']);

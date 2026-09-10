@@ -8,6 +8,7 @@ model Payment {
   note              String?
   transactionId     String?
   invoiceUrl        String?
+  invoiceMediaAssetId String?     @unique
   refundAmount      Decimal?      @db.Decimal(10, 2)
   gatewayPaymentId  String?
   gatewayCustomerId String?

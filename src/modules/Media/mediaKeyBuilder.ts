@@ -42,6 +42,7 @@ export const buildFinalObjectKey = (params: {
   if (params.purpose === "PAYMENT_PROOF" || params.purpose === "SUBSCRIPTION_PROOF") parts.push("proofs");
   if (params.purpose === "PAYMENT_RECEIPT") parts.push("receipts");
   if (params.purpose === "INVOICE_ATTACHMENT") parts.push("attachments");
+  if (params.purpose === "BILLING_INVOICE") parts.push("documents");
   if (params.purpose === "EXPENSE_RECEIPT") parts.push("receipts");
 
   const objectId = params.objectId ? safeSegment(params.objectId) : randomUUID();

@@ -59,9 +59,15 @@ jobs:
       SMTP_FROM: no-reply@example.com
       SUPER_ADMIN_EMAIL: admin@example.com
       SUPER_ADMIN_PASSWORD: replace-ci-bootstrap-password
-      CLOUDINARY_CLOUD_NAME: test
-      CLOUDINARY_API_KEY: test
-      CLOUDINARY_API_SECRET: replace-ci-cloudinary-secret
+      STORAGE_PROVIDER: r2
+      R2_ACCOUNT_ID: 0123456789abcdef0123456789abcdef
+      R2_ACCESS_KEY_ID: replace-ci-r2-access-key
+      R2_SECRET_ACCESS_KEY: replace-ci-r2-secret-key
+      R2_PUBLIC_BUCKET: cleaning-crm-public-ci
+      R2_PRIVATE_BUCKET: cleaning-crm-private-ci
+      R2_ENDPOINT: https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com
+      R2_REGION: auto
+      R2_PUBLIC_BASE_URL: https://media.example.com
       NEXT_REVALIDATE_SECRET: replace-ci-revalidate-secret-with-32-plus-chars
       PERFORMANCE_METRICS_TOKEN: replace-ci-monitoring-token-with-32-plus-chars
       WEBSITE_BASE_DOMAIN: sites.example.com

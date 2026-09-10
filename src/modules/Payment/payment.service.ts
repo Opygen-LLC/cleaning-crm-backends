@@ -289,15 +289,18 @@ const getPaymentById = async (id: string, user: IRequestUser) => {
   });
 
   if (!payment) throw new AppError(status.NOT_FOUND, "Payment not found");
-  const [paymentProofUrl, receiptUrl] = await Promise.all([
+  const [paymentProofUrl, receiptUrl, invoiceUrl] = await Promise.all([
     payment.paymentProofMediaAssetId
       ? mediaService.getReadUrlForTenant(payment.paymentProofMediaAssetId, payment.adminId)
-      : Promise.resolve(payment.paymentProofUrl),
+      : Promise.resolve(payment.paymentProofUrl?.startsWith("r2") ? null : payment.paymentProofUrl),
     payment.receiptMediaAssetId
       ? mediaService.getReadUrlForTenant(payment.receiptMediaAssetId, payment.adminId, `receipt-${payment.paymentRef}`)
-      : Promise.resolve(payment.receiptUrl),
+      : Promise.resolve(payment.receiptUrl?.startsWith("r2") ? null : payment.receiptUrl),
+    payment.invoiceMediaAssetId
+      ? mediaService.getReadUrlForTenant(payment.invoiceMediaAssetId, payment.adminId, `invoice-${payment.paymentRef}.pdf`)
+      : Promise.resolve(payment.invoiceUrl?.startsWith("r2") ? null : payment.invoiceUrl),
   ]);
-  return { ...payment, paymentProofUrl, receiptUrl };
+  return { ...payment, paymentProofUrl, receiptUrl, invoiceUrl };
 };
 
 // ─── Update Payment — PATCH /payment/:id ─────────────────────────────────────
@@ -348,6 +351,7 @@ const deletePayment = async (id: string, user: IRequestUser) => {
   await Promise.all([
     existing.paymentProofMediaAssetId ? mediaService.deleteAssetForTenant(existing.paymentProofMediaAssetId, adminId).catch(() => undefined) : Promise.resolve(),
     existing.receiptMediaAssetId ? mediaService.deleteAssetForTenant(existing.receiptMediaAssetId, adminId).catch(() => undefined) : Promise.resolve(),
+    existing.invoiceMediaAssetId ? mediaService.deleteAssetForTenant(existing.invoiceMediaAssetId, adminId).catch(() => undefined) : Promise.resolve(),
   ]);
 
   logActivity({

@@ -128,7 +128,7 @@ function pendingRecord(overrides: Partial<Record<string, unknown>> = {}) {
     return {
         id: BILLING_ID,
         status: "PENDING",
-        paymentProofUrl: "https://cloudinary.com/proof.jpg",
+        paymentProofUrl: "https://legacy-media.example/proof.jpg",
         note: null,
         pendingPlanChange: null,
         subscription: {
@@ -374,7 +374,7 @@ describe("rejectPaymentProof", () => {
         return {
             id: BILLING_ID,
             status: "PENDING",
-            paymentProofUrl: "https://cloudinary.com/proof.jpg",
+            paymentProofUrl: "https://legacy-media.example/proof.jpg",
             note: null,
             pendingPlanChange: null,
             subscription: {

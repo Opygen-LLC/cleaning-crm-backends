@@ -566,7 +566,10 @@ const getMyBillingHistory = async (
         ...row,
         paymentProofUrl: row.paymentProofMediaAssetId
             ? await mediaService.getReadUrlForTenant(row.paymentProofMediaAssetId, adminId)
-            : row.paymentProofUrl,
+            : (row.paymentProofUrl?.startsWith("r2") ? null : row.paymentProofUrl),
+        invoiceUrl: row.invoiceMediaAssetId
+            ? await mediaService.getReadUrlForTenant(row.invoiceMediaAssetId, adminId)
+            : (row.invoiceUrl?.startsWith("r2") ? null : row.invoiceUrl),
     })));
     return {
         meta: { page, limit, total, totalPages: Math.ceil(total / limit) },

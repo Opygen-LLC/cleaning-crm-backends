@@ -76,7 +76,7 @@ describe("website structured content", () => {
     const about = validateWebsitePageContent("ABOUT", {
       heading: "About Bio Cleaning",
       body: "Professional cleaning with environmentally conscious products.",
-      imageUrl: "https://res.cloudinary.com/demo/image/upload/about.webp",
+      imageUrl: "https://media.cleaningcrm.opygen.com/organizations/admin/website/site/content/about.webp",
       imageAlt: "Bio Cleaning team",
       values: ["Reliable", "Eco conscious"],
       yearsExperience: 12,

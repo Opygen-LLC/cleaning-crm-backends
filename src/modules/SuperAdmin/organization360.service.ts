@@ -419,7 +419,7 @@ export const getOrganization360 = async (organizationId: string) => {
     prisma.staffProfile.findMany({ where: { adminId: identity.id }, orderBy: { createdAt: "desc" }, take: PREVIEW_SIZE, select: { id: true, userId: true, staffRole: true, status: true, manuallyInactive: true, createdAt: true, updatedAt: true, user: { select: { id: true, name: true, email: true, emailVerified: true, status: true, createdAt: true, updatedAt: true } } } }),
     prisma.activityLog.findFirst({ where: { adminId: identity.id }, orderBy: { createdAt: "desc" }, select: { createdAt: true } }),
     prisma.superAdminAuditLog.findMany({ where: { tenantAdminId: identity.id }, orderBy: { createdAt: "desc" }, take: PREVIEW_SIZE, include: { actor: { select: { id: true, name: true, email: true } } } }),
-    prisma.billingHistory.findMany({ where: { subscription: { adminId: identity.id } }, orderBy: { createdAt: "desc" }, take: PREVIEW_SIZE, select: { id: true, amount: true, currency: true, method: true, status: true, note: true, transactionId: true, paymentProofUrl: true, paymentProofMediaAssetId: true, paidAt: true, createdAt: true, subscriptionId: true, planChangeId: true } }),
+    prisma.billingHistory.findMany({ where: { subscription: { adminId: identity.id } }, orderBy: { createdAt: "desc" }, take: PREVIEW_SIZE, select: { id: true, amount: true, currency: true, method: true, status: true, note: true, transactionId: true, paymentProofUrl: true, paymentProofMediaAssetId: true, invoiceUrl: true, invoiceMediaAssetId: true, paidAt: true, createdAt: true, subscriptionId: true, planChangeId: true } }),
     staffUserIdsPromise,
     prisma.billingHistory.count({ where: { subscription: { adminId: identity.id } } }),
     prisma.billingHistory.aggregate({ where: { subscription: { adminId: identity.id }, status: PaymentStatus.PAID }, _sum: { amount: true } }),
@@ -455,7 +455,10 @@ export const getOrganization360 = async (organizationId: string) => {
     ...row,
     paymentProofUrl: row.paymentProofMediaAssetId
       ? await mediaService.getReadUrlForTenant(row.paymentProofMediaAssetId, identity.id)
-      : row.paymentProofUrl,
+      : (row.paymentProofUrl?.startsWith("r2") ? null : row.paymentProofUrl),
+    invoiceUrl: row.invoiceMediaAssetId
+      ? await mediaService.getReadUrlForTenant(row.invoiceMediaAssetId, identity.id)
+      : (row.invoiceUrl?.startsWith("r2") ? null : row.invoiceUrl),
   })));
 
   const resourceLimits = {
@@ -723,7 +726,16 @@ export const getOrganizationBilling = async (organizationId: string, query: List
     prisma.billingHistory.aggregate({ where: { subscription: { adminId: identity.id }, status: PaymentStatus.PAID }, _sum: { amount: true } }),
     prisma.billingHistory.count({ where: { subscription: { adminId: identity.id }, status: PaymentStatus.PENDING, OR: [{ paymentProofMediaAssetId: { not: null } }, { paymentProofUrl: { not: null } }] } }),
   ]);
-  return { summary: { records: total, totalPaid: paid._sum.amount ?? null, pendingProofs }, data: rows, meta: paginationMeta(page, limit, total) };
+  const resolvedRows = await Promise.all(rows.map(async (row) => ({
+    ...row,
+    paymentProofUrl: row.paymentProofMediaAssetId
+      ? await mediaService.getReadUrlForTenant(row.paymentProofMediaAssetId, identity.id)
+      : (row.paymentProofUrl?.startsWith("r2") ? null : row.paymentProofUrl),
+    invoiceUrl: row.invoiceMediaAssetId
+      ? await mediaService.getReadUrlForTenant(row.invoiceMediaAssetId, identity.id)
+      : (row.invoiceUrl?.startsWith("r2") ? null : row.invoiceUrl),
+  })));
+  return { summary: { records: total, totalPaid: paid._sum.amount ?? null, pendingProofs }, data: resolvedRows, meta: paginationMeta(page, limit, total) };
 };
 
 export const getOrganizationActivity = async (organizationId: string, query: ListQuery) => {

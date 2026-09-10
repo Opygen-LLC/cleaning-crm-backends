@@ -167,7 +167,6 @@ function fixture() {
     '../../lib/prisma/prisma': { prisma }, '../prisma/prisma': { prisma },
     '../../lib/prisma/advisoryLock': { acquireTextTransactionAdvisoryLock: async () => {} },
     '../../lib/utils/resolveAdminId': { getAdminId: async () => adminId },
-    '../../lib/utils/cloudinary': {},
     '../../lib/logger': { warn() {}, info() {}, error() {} }, '../logger': { warn() {}, info() {} },
     '../monitoring/requestTrace': { getRequestTrace: () => undefined, recordTraceResponseCache: () => {}, getTracePropagationMetadata: () => ({ traceId: 'test-trace' }), traceAsyncOperation: (_k, _n, fn) => fn() },
     '../../lib/monitoring/requestTrace': { getRequestTrace: () => undefined, recordTraceResponseCache: () => {}, getTracePropagationMetadata: () => ({ traceId: 'test-trace' }), traceAsyncOperation: (_k, _n, fn) => fn() },
