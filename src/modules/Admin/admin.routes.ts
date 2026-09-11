@@ -11,14 +11,26 @@ import { multerMemory } from "../../config/multerMemory";
 import { convertHeicToPng } from "../../middlewares/convertHeicToPngMiddleware";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
+import { checkSubscriptionRecoveryAccess } from "../../middlewares/checkSubscription";
 
 const router = Router();
+const recoveryRouter = Router();
 
-router.get("/profile", checkAuth(UserRole.ADMIN), adminController.getAdmin);
-
-router.patch(
+// Account profile remains available for expired trials/subscriptions, but only
+// when the canonical tenant resolver says self-service recovery is allowed.
+// Keeping these two routes in a separate router lets routes/index.ts mount them
+// before the normal /admin subscription gate without exposing any business API.
+recoveryRouter.get(
   "/profile",
   checkAuth(UserRole.ADMIN),
+  checkSubscriptionRecoveryAccess,
+  adminController.getAdmin,
+);
+
+recoveryRouter.patch(
+  "/profile",
+  checkAuth(UserRole.ADMIN),
+  checkSubscriptionRecoveryAccess,
   multerMemory.single("businessLogo"),
   convertHeicToPng,
   zodValidate(adminValidation.updateAdmin, ValidationProperty.BODY),
@@ -131,4 +143,5 @@ router.post(
   adminController.skipAllOnboarding,
 );
 
+export const adminRecoveryRoutes = recoveryRouter;
 export const adminRoutes = router;

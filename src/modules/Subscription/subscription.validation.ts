@@ -19,7 +19,19 @@ const submitPaymentProofSchema = z.object({
     transactionId: optionalTrimmed(200),
 }).strict();
 
+const proofUploadInitiateSchema = z.object({
+    filename: z.string().trim().min(1, "Choose a file to upload.").max(255),
+    contentType: z.string().trim().min(3).max(100).transform((value) => value.toLowerCase()),
+    size: z.number().int().positive().max(100 * 1024 * 1024),
+}).strict();
+
+const proofUploadParamsSchema = z.object({
+    uploadId: z.string().uuid("Choose a valid subscription proof upload."),
+}).strict();
+
 export const subscriptionValidation = {
     changePlanSchema,
     submitPaymentProofSchema,
+    proofUploadInitiateSchema,
+    proofUploadParamsSchema,
 };

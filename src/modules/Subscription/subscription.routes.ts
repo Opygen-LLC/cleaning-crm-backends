@@ -17,6 +17,20 @@ router.use(checkAuth(UserRole.ADMIN));
 router.get("/me", subscriptionController.getMySubscription);
 router.get("/me/billing-history", subscriptionController.getMyBillingHistory);
 
+// Recovery-only media path. It is intentionally outside checkSubscription so
+// expired/suspended subscriptions can upload exactly one allowed media purpose:
+// SUBSCRIPTION_PROOF. The controller/service never trust a client-sent purpose.
+router.post(
+    "/me/proof-upload/initiate",
+    zodValidate(subscriptionValidation.proofUploadInitiateSchema, ValidationProperty.BODY),
+    subscriptionController.initiateSubscriptionProofUpload,
+);
+router.post(
+    "/me/proof-upload/:uploadId/complete",
+    zodValidate(subscriptionValidation.proofUploadParamsSchema, ValidationProperty.PARAMS),
+    subscriptionController.finalizeSubscriptionProofUpload,
+);
+
 router.patch(
     "/me/change-plan",
     zodValidate(subscriptionValidation.changePlanSchema, ValidationProperty.BODY),

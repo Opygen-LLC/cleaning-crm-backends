@@ -17,6 +17,7 @@ import { emitToSuperAdmins } from "../../config/socketio";
 import { invalidateSubscriptionAccessCache } from "../../middlewares/checkSubscription";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
+import { startOfMonth } from "date-fns";
 
 // Fallback only — the real value is read from platform config
 // (super-admin → Settings → Platform Configuration → "Default trial days")
@@ -24,6 +25,95 @@ import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.servic
 // for all new signups immediately without a redeploy.
 const FALLBACK_TRIAL_DAYS = 7;
 const CHECKOUT_TTL_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+type SubscriptionLifecycleState =
+    | "TRIAL_ACTIVE"
+    | "TRIAL_EXPIRED"
+    | "PAID_ACTIVE"
+    | "PAID_EXPIRED"
+    | "CANCEL_AT_PERIOD_END"
+    | "CANCELLED"
+    | "PAYMENT_PENDING"
+    | "SUSPENDED"
+    | "ACCESS_BLOCKED";
+
+const percentage = (current: number, limit: number | null): number | null => {
+    if (limit === null) return null;
+    if (limit <= 0) return 100;
+    return Math.min(100, Math.round((current / limit) * 100));
+};
+
+const getSubscriptionUsageSnapshot = async (
+    adminId: string,
+    limits: { staff: number | null; clients: number | null; monthlyBookings: number | null },
+    now: Date,
+) => {
+    // Keep this endpoint usable after expiry. /admin/usage is intentionally
+    // behind the subscription gate, but /subscription/me is a recovery route.
+    const monthStart = startOfMonth(now);
+    type UsageRow = {
+        staffCount: number;
+        clientCount: number;
+        bookingCountThisMonth: number;
+    };
+    const [row] = await prisma.$queryRaw<UsageRow[]>`
+      SELECT
+        -- Match assertWithinLimit() exactly: inactive staff/client records still
+        -- consume plan capacity until they are actually removed. This keeps
+        -- the recovery UI from advertising capacity that gated create routes
+        -- will reject.
+        (SELECT COUNT(*)::int FROM "StaffProfile" sp
+          WHERE sp."adminId" = ${adminId}) AS "staffCount",
+        (SELECT COUNT(*)::int FROM "client" c
+          WHERE c."adminId" = ${adminId}) AS "clientCount",
+        (SELECT COUNT(*)::int FROM "booking" b
+          WHERE b."adminId" = ${adminId} AND b."createdAt" >= ${monthStart}) AS "bookingCountThisMonth"
+    `;
+    const staffCount = row?.staffCount ?? 0;
+    const clientCount = row?.clientCount ?? 0;
+    const bookingCountThisMonth = row?.bookingCountThisMonth ?? 0;
+
+    return {
+        measuredAt: now.toISOString(),
+        staffCount,
+        clientCount,
+        bookingCountThisMonth,
+        limits: {
+            staff: limits.staff,
+            clients: limits.clients,
+            bookingsPerMonth: limits.monthlyBookings,
+        },
+        percentages: {
+            staff: percentage(staffCount, limits.staff),
+            clients: percentage(clientCount, limits.clients),
+            bookingsPerMonth: percentage(bookingCountThisMonth, limits.monthlyBookings),
+        },
+    };
+};
+
+const getLifecycleState = (
+    subscription: {
+        status: SubscriptionStatus;
+        isTrial: boolean;
+        cancelAtPeriodEnd: boolean;
+    },
+    deniedReason: string,
+): SubscriptionLifecycleState => {
+    if (subscription.status === SubscriptionStatus.SUSPENDED || deniedReason === "SUBSCRIPTION_SUSPENDED") {
+        return "SUSPENDED";
+    }
+    if (subscription.status === SubscriptionStatus.PENDING_PAYMENT || deniedReason === "PAYMENT_PENDING") {
+        return "PAYMENT_PENDING";
+    }
+    if (subscription.status === SubscriptionStatus.CANCELLED) return "CANCELLED";
+    if (deniedReason === "TRIAL_EXPIRED") return "TRIAL_EXPIRED";
+    if (subscription.isTrial && deniedReason === "SUBSCRIPTION_EXPIRED") return "TRIAL_EXPIRED";
+    if (!subscription.isTrial && deniedReason === "SUBSCRIPTION_EXPIRED") return "PAID_EXPIRED";
+    if (deniedReason !== "ACTIVE") return "ACCESS_BLOCKED";
+    if (subscription.cancelAtPeriodEnd) return "CANCEL_AT_PERIOD_END";
+    return subscription.isTrial ? "TRIAL_ACTIVE" : "PAID_ACTIVE";
+};
 
 // ─── Helper: resolve AdminProfile.id from the authenticated User ─────────────
 // BUGFIX: Subscription.adminId is a foreign key to AdminProfile.id, NOT
@@ -35,6 +125,18 @@ const CHECKOUT_TTL_MS = 24 * 60 * 60 * 1000;
 
 const resolveAdminProfileId = async (user: IRequestUser): Promise<string> =>
     getAdminId(user);
+
+const assertSelfServiceRecoveryAllowed = async (adminId: string) => {
+    const access = await TenantAccessResolver.resolve(adminId);
+    if (!access.access.recoveryAllowed) {
+        throw new AppError(
+            status.FORBIDDEN,
+            "This organization cannot use self-service subscription recovery. Please contact support.",
+            { code: access.access.deniedReason, retryable: false },
+        );
+    }
+    return access;
+};
 
 // ─── Existing: get my subscription ───────────────────────────────────────────
 
@@ -81,6 +183,13 @@ const getMySubscription = async (user: IRequestUser) => {
         TenantAccessResolver.resolve(adminId),
     ]);
 
+    const endsAt = subscription.isTrial
+        ? subscription.trialEndsAt
+        : subscription.currentPeriodEnd;
+    const remainingMs = endsAt ? Math.max(0, endsAt.getTime() - now.getTime()) : null;
+    const lifecycleState = getLifecycleState(subscription, access.access.deniedReason);
+    const usage = await getSubscriptionUsageSnapshot(adminId, access.resourceLimits.effective, now);
+
     // Preserve the historical subscription response while exposing the exact
     // canonical access/entitlement decision used by middleware, public routes,
     // workers and Super Admin. Frontends should authorize by stable keys here.
@@ -93,6 +202,20 @@ const getMySubscription = async (user: IRequestUser) => {
         paidExtras: access.paidExtras,
         tenantOverrides: access.tenantOverrides,
         resourceLimits: access.resourceLimits.effective,
+        serverTime: now.toISOString(),
+        lifecycle: {
+            state: lifecycleState,
+            isTrial: subscription.isTrial,
+            startsAt: subscription.currentPeriodStart?.toISOString() ?? null,
+            endsAt: endsAt?.toISOString() ?? null,
+            daysRemaining: remainingMs === null ? null : Math.ceil(remainingMs / DAY_MS),
+            secondsRemaining: remainingMs === null ? null : Math.ceil(remainingMs / 1000),
+            trialPlanName: subscription.isTrial ? subscription.subscriptionPlan.name : null,
+            dashboardAllowed: access.access.dashboardAllowed,
+            recoveryAllowed: access.access.recoveryAllowed,
+            deniedReason: access.access.deniedReason,
+        },
+        usage,
         effectiveAccess: access,
     };
 };
@@ -112,7 +235,31 @@ const createTrialSubscription = async (
     adminId: string,
     options: CreateTrialSubscriptionOptions = {},
 ) => {
+    // If this helper is ever called outside an existing transaction, create a
+    // transaction so the advisory lock below covers both the history check and
+    // insert. This closes the double-provisioning race from concurrent repair
+    // or retry requests. Fresh account provisioning already supplies `db: tx`
+    // and `skipExistingCheck: true` because the AdminProfile is created in the
+    // same canonical registration transaction.
+    if (!options.skipExistingCheck && (!options.db || options.db === prisma)) {
+        return prisma.$transaction(
+            async (tx) =>
+                createTrialSubscription(adminId, {
+                    ...options,
+                    db: tx,
+                }),
+            { maxWait: 10_000, timeout: 20_000 },
+        );
+    }
+
     const db = options.db ?? prisma;
+
+    if (!options.skipExistingCheck) {
+        await acquireExtendedTextTransactionAdvisoryLock(
+            db,
+            `subscription-trial-provision:${adminId}`,
+        );
+    }
 
     // Fresh registration creates the AdminProfile in the same transaction, so
     // an active subscription cannot already exist. Skip that defensive lookup
@@ -130,8 +277,13 @@ const createTrialSubscription = async (
         options.skipExistingCheck
             ? Promise.resolve(null)
             : db.subscription.findFirst({
-                where: { adminId, status: SubscriptionStatus.ACTIVE },
-                select: { id: true },
+                // A trial is an account-level onboarding benefit, not an
+                // "ACTIVE row" benefit. Any existing subscription history
+                // means this tenant has already been provisioned and must not
+                // receive another automatic trial after expiry/cancellation.
+                where: { adminId },
+                orderBy: { createdAt: "desc" },
+                select: { id: true, status: true, isTrial: true, trialEndsAt: true },
             }),
     ]);
 
@@ -140,8 +292,9 @@ const createTrialSubscription = async (
     }
     if (existing) {
         throw new AppError(
-            status.BAD_REQUEST,
-            "Admin already has an active subscription.",
+            status.CONFLICT,
+            "This account already has subscription history and cannot receive another automatic trial.",
+            { code: "TRIAL_ALREADY_PROVISIONED", retryable: false },
         );
     }
 
@@ -215,6 +368,7 @@ const changePlan = async (
     payload: { planId: string; couponCode?: string },
 ) => {
     const adminId = await resolveAdminProfileId(user);
+    await assertSelfServiceRecoveryAllowed(adminId);
     const couponCode = payload.couponCode?.trim().toUpperCase() || undefined;
 
     const [targetPlan, current] = await Promise.all([
@@ -280,6 +434,33 @@ const changePlan = async (
     const lockKey = `subscription-checkout:${current.id}`;
     return prisma.$transaction(async (tx) => {
         await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
+
+        // Legacy checkouts (created before PendingPlanChange existed) moved the
+        // live subscription into PENDING_PAYMENT. Do not allow a second checkout
+        // while one of those payment proofs is still awaiting review. Keeping
+        // this check inside the same advisory lock closes double-click/race gaps.
+        const freshSubscription = await tx.subscription.findUnique({
+            where: { id: current.id },
+            select: { status: true },
+        });
+        if (freshSubscription?.status === SubscriptionStatus.PENDING_PAYMENT) {
+            const legacyProofUnderReview = await tx.billingHistory.findFirst({
+                where: {
+                    subscriptionId: current.id,
+                    status: "PENDING",
+                    paymentProofUrl: { not: null },
+                    planChangeId: null,
+                },
+                select: { id: true },
+            });
+            if (legacyProofUnderReview) {
+                throw new AppError(
+                    status.CONFLICT,
+                    "A payment proof is already under review. Wait for it to be reviewed before starting another plan change.",
+                    { code: "PAYMENT_PROOF_ALREADY_PENDING", retryable: false },
+                );
+            }
+        }
 
         // A checkout only reserves pricing/coupon capacity for a bounded time.
         // Under-review proofs are never auto-expired while a super-admin is
@@ -443,6 +624,7 @@ const changePlan = async (
 
 const cancelPendingPlanChange = async (user: IRequestUser) => {
     const adminId = await resolveAdminProfileId(user);
+    await assertSelfServiceRecoveryAllowed(adminId);
     const current = await prisma.subscription.findFirst({
         where: { adminId },
         orderBy: { createdAt: "desc" },
@@ -489,6 +671,7 @@ const cancelPendingPlanChange = async (user: IRequestUser) => {
 
 const cancelAtPeriodEnd = async (user: IRequestUser) => {
     const adminId = await resolveAdminProfileId(user);
+    await assertSelfServiceRecoveryAllowed(adminId);
 
     const current = await prisma.subscription.findFirst({
         where: { adminId, status: SubscriptionStatus.ACTIVE },
@@ -516,6 +699,7 @@ const cancelAtPeriodEnd = async (user: IRequestUser) => {
 
 const resumeSubscription = async (user: IRequestUser) => {
     const adminId = await resolveAdminProfileId(user);
+    await assertSelfServiceRecoveryAllowed(adminId);
 
     const current = await prisma.subscription.findFirst({
         where: { adminId, status: SubscriptionStatus.ACTIVE },
@@ -577,6 +761,49 @@ const getMyBillingHistory = async (
     };
 };
 
+const initiateSubscriptionProofUpload = async (
+    user: IRequestUser,
+    payload: { filename: string; contentType: string; size: number },
+) => {
+    const adminId = await resolveAdminProfileId(user);
+    await assertSelfServiceRecoveryAllowed(adminId);
+
+    // This recovery upload intentionally lives under /subscription instead of
+    // the normal /media router so an expired trial can still submit proof.
+    // The server hard-codes the purpose; the browser cannot use this endpoint
+    // to upload arbitrary tenant media while its subscription is inactive.
+    return mediaService.initiateUpload(
+        {
+            purpose: "SUBSCRIPTION_PROOF",
+            filename: payload.filename,
+            contentType: payload.contentType,
+            size: payload.size,
+        },
+        user,
+    );
+};
+
+const finalizeSubscriptionProofUpload = async (
+    user: IRequestUser,
+    uploadId: string,
+) => {
+    const adminId = await resolveAdminProfileId(user);
+    await assertSelfServiceRecoveryAllowed(adminId);
+    const asset = await prisma.mediaAsset.findFirst({
+        where: { id: uploadId, adminId, deletedAt: null },
+        select: { id: true, purpose: true },
+    });
+
+    if (!asset || asset.purpose !== "SUBSCRIPTION_PROOF") {
+        throw new AppError(status.NOT_FOUND, "Subscription proof upload was not found.", {
+            code: "SUBSCRIPTION_PROOF_UPLOAD_NOT_FOUND",
+            retryable: false,
+        });
+    }
+
+    return mediaService.finalizeUpload(uploadId, user);
+};
+
 const submitPaymentProof = async (
     user: IRequestUser,
     payload: {
@@ -589,189 +816,218 @@ const submitPaymentProof = async (
 ) => {
     const { paymentProofAssetId, amount, method, note, transactionId } = payload;
     const adminId = await resolveAdminProfileId(user);
+    await assertSelfServiceRecoveryAllowed(adminId);
 
     const sub = await prisma.subscription.findFirst({
         where: { adminId },
         orderBy: { createdAt: "desc" },
+        include: { subscriptionPlan: { select: { currency: true } } },
     });
     if (!sub) throw new AppError(status.NOT_FOUND, "No subscription found.");
     const proofAsset = await mediaService.bindReadyAsset(paymentProofAssetId, user, "SUBSCRIPTION_PROOF", sub.id);
     const paymentProofUrl = `r2://${proofAsset.bucket}/${proofAsset.objectKey}`;
 
     try {
-    const checkout = await prisma.pendingPlanChange.findFirst({
-        where: {
-            subscriptionId: sub.id,
-            status: {
-                in: [
-                    PendingPlanChangeStatus.AWAITING_PAYMENT,
-                    PendingPlanChangeStatus.UNDER_REVIEW,
-                    PendingPlanChangeStatus.REJECTED,
-                ],
-            },
-        },
-        orderBy: { createdAt: "desc" },
-        include: { targetPlan: { include: { subscriptionPlan: true } } },
-    });
-
-    if (checkout) {
-        const expectedAmount = Number(checkout.quotedAmount);
-        if (
-            amount !== undefined &&
-            Math.abs(Number(amount) - expectedAmount) > 0.01
-        ) {
-            throw new AppError(
-                status.UNPROCESSABLE_ENTITY,
-                "The payment amount does not match this checkout.",
-                {
-                    code: "PAYMENT_AMOUNT_MISMATCH",
-                    fieldErrors: {
-                        amount: `The expected amount is ${checkout.currency} ${expectedAmount.toFixed(2)}.`,
-                    },
+        const checkout = await prisma.pendingPlanChange.findFirst({
+            where: {
+                subscriptionId: sub.id,
+                status: {
+                    in: [
+                        PendingPlanChangeStatus.AWAITING_PAYMENT,
+                        PendingPlanChangeStatus.UNDER_REVIEW,
+                        PendingPlanChangeStatus.REJECTED,
+                    ],
                 },
-            );
-        }
+            },
+            orderBy: { createdAt: "desc" },
+            include: { targetPlan: { include: { subscriptionPlan: true } } },
+        });
 
-        const lockKey = `subscription-checkout:${sub.id}`;
-        const result = await prisma.$transaction(async (tx) => {
-            await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
-            const fresh = await tx.pendingPlanChange.findUnique({
-                where: { id: checkout.id },
-                include: { targetPlan: { include: { subscriptionPlan: true } } },
-            });
-            if (!fresh) {
-                throw new AppError(status.NOT_FOUND, "This plan checkout no longer exists.");
-            }
+        if (checkout) {
+            const expectedAmount = Number(checkout.quotedAmount);
             if (
-                fresh.status !== PendingPlanChangeStatus.UNDER_REVIEW &&
-                fresh.expiresAt <= new Date()
+                amount !== undefined &&
+                Math.abs(Number(amount) - expectedAmount) > 0.01
             ) {
                 throw new AppError(
-                    status.GONE,
-                    "This plan checkout has expired. Choose the plan again to get a fresh total.",
-                    { code: "PLAN_CHECKOUT_EXPIRED", retryable: false },
+                    status.UNPROCESSABLE_ENTITY,
+                    "The payment amount does not match this checkout.",
+                    {
+                        code: "PAYMENT_AMOUNT_MISMATCH",
+                        fieldErrors: {
+                            amount: `The expected amount is ${checkout.currency} ${expectedAmount.toFixed(2)}.`,
+                        },
+                    },
                 );
             }
-            if (fresh.status === PendingPlanChangeStatus.UNDER_REVIEW) {
+
+            const lockKey = `subscription-checkout:${sub.id}`;
+            const result = await prisma.$transaction(async (tx) => {
+                await acquireExtendedTextTransactionAdvisoryLock(tx, lockKey);
+                const fresh = await tx.pendingPlanChange.findUnique({
+                    where: { id: checkout.id },
+                    include: { targetPlan: { include: { subscriptionPlan: true } } },
+                });
+                if (!fresh) {
+                    throw new AppError(status.NOT_FOUND, "This plan checkout no longer exists.");
+                }
+                if (
+                    fresh.status !== PendingPlanChangeStatus.UNDER_REVIEW &&
+                    fresh.expiresAt <= new Date()
+                ) {
+                    throw new AppError(
+                        status.GONE,
+                        "This plan checkout has expired. Choose the plan again to get a fresh total.",
+                        { code: "PLAN_CHECKOUT_EXPIRED", retryable: false },
+                    );
+                }
+                if (fresh.status === PendingPlanChangeStatus.UNDER_REVIEW) {
+                    throw new AppError(
+                        status.CONFLICT,
+                        "A payment proof for this plan is already under review.",
+                        { code: "PAYMENT_PROOF_ALREADY_PENDING", retryable: false },
+                    );
+                }
+                if (
+                    fresh.status !== PendingPlanChangeStatus.AWAITING_PAYMENT &&
+                    fresh.status !== PendingPlanChangeStatus.REJECTED
+                ) {
+                    throw new AppError(status.CONFLICT, "This checkout can no longer accept payment proof.", {
+                        code: "PLAN_CHANGE_NOT_PAYABLE",
+                        retryable: false,
+                    });
+                }
+
+                const billingRecord = await tx.billingHistory.create({
+                    data: {
+                        subscriptionId: sub.id,
+                        amount: fresh.quotedAmount,
+                        currency: fresh.currency,
+                        method,
+                        status: "PENDING",
+                        paymentProofUrl,
+                        paymentProofMediaAssetId: proofAsset.id,
+                        note: note ?? null,
+                        transactionId: transactionId ?? null,
+                        planChangeId: fresh.id,
+                    },
+                });
+                const pendingPlanChange = await tx.pendingPlanChange.update({
+                    where: { id: fresh.id },
+                    data: {
+                        status: PendingPlanChangeStatus.UNDER_REVIEW,
+                        submittedAt: new Date(),
+                        reviewedAt: null,
+                        rejectionReason: null,
+                    },
+                    include: {
+                        targetPlan: { include: { subscriptionPlan: true } },
+                        coupon: true,
+                        billingHistory: { orderBy: { createdAt: "desc" }, take: 1 },
+                    },
+                });
+                return { billingRecord, pendingPlanChange };
+            });
+
+            emitToSuperAdmins("payment-proof:submitted", {
+                billingId: result.billingRecord.id,
+                subscriptionId: sub.id,
+                planChangeId: result.pendingPlanChange.id,
+                adminId,
+                amount: Number(result.billingRecord.amount),
+                submittedAt: result.billingRecord.createdAt.toISOString(),
+            });
+            return result;
+        }
+
+        // Backward compatibility for checkouts started before Phase 6 deployed.
+        // Those old records already changed Subscription.status to PENDING_PAYMENT
+        // and have no PendingPlanChange row. New flows never mutate the live
+        // subscription before approval. Keep the legacy fallback concurrency-safe
+        // as well so retries/double-clicks cannot create two pending payments.
+        if (!amount || amount <= 0) {
+            throw new AppError(status.BAD_REQUEST, "A valid amount is required for this legacy payment.", {
+                fieldErrors: { amount: "Enter the amount paid." },
+            });
+        }
+
+        const legacyBillingRecord = await prisma.$transaction(async (tx) => {
+            await acquireExtendedTextTransactionAdvisoryLock(
+                tx,
+                `subscription-checkout:${sub.id}`,
+            );
+
+            const freshSub = await tx.subscription.findUnique({
+                where: { id: sub.id },
+                select: {
+                    id: true,
+                    status: true,
+                    isTrial: true,
+                    currentPeriodEnd: true,
+                    trialEndsAt: true,
+                },
+            });
+            if (!freshSub) {
+                throw new AppError(status.NOT_FOUND, "Subscription no longer exists.");
+            }
+
+            const now = new Date();
+            const periodExpired = Boolean(
+                freshSub.currentPeriodEnd && freshSub.currentPeriodEnd <= now,
+            );
+            const trialExpired = Boolean(
+                freshSub.isTrial && freshSub.trialEndsAt && freshSub.trialEndsAt <= now,
+            );
+            const canReactivateCurrentPlan =
+                freshSub.status !== SubscriptionStatus.ACTIVE || periodExpired || trialExpired;
+            if (!canReactivateCurrentPlan) {
                 throw new AppError(
-                    status.CONFLICT,
-                    "A payment proof for this plan is already under review.",
+                    status.BAD_REQUEST,
+                    "Choose a subscription plan before submitting payment proof.",
+                    { code: "PLAN_CHECKOUT_REQUIRED", retryable: false },
+                );
+            }
+
+            const recentPending = await tx.billingHistory.findFirst({
+                where: {
+                    subscriptionId: sub.id,
+                    status: "PENDING",
+                    paymentProofUrl: { not: null },
+                    planChangeId: null,
+                },
+                select: { id: true },
+            });
+            if (recentPending) {
+                throw new AppError(
+                    status.TOO_MANY_REQUESTS,
+                    "A payment proof is already under review.",
                     { code: "PAYMENT_PROOF_ALREADY_PENDING", retryable: false },
                 );
             }
-            if (
-                fresh.status !== PendingPlanChangeStatus.AWAITING_PAYMENT &&
-                fresh.status !== PendingPlanChangeStatus.REJECTED
-            ) {
-                throw new AppError(status.CONFLICT, "This checkout can no longer accept payment proof.", {
-                    code: "PLAN_CHANGE_NOT_PAYABLE",
-                    retryable: false,
-                });
-            }
 
-            const billingRecord = await tx.billingHistory.create({
+            return tx.billingHistory.create({
                 data: {
                     subscriptionId: sub.id,
-                    amount: fresh.quotedAmount,
-                    currency: fresh.currency,
+                    amount,
+                    currency: sub.subscriptionPlan.currency,
                     method,
                     status: "PENDING",
                     paymentProofUrl,
                     paymentProofMediaAssetId: proofAsset.id,
                     note: note ?? null,
                     transactionId: transactionId ?? null,
-                    planChangeId: fresh.id,
                 },
             });
-            const pendingPlanChange = await tx.pendingPlanChange.update({
-                where: { id: fresh.id },
-                data: {
-                    status: PendingPlanChangeStatus.UNDER_REVIEW,
-                    submittedAt: new Date(),
-                    reviewedAt: null,
-                    rejectionReason: null,
-                },
-                include: {
-                    targetPlan: { include: { subscriptionPlan: true } },
-                    coupon: true,
-                    billingHistory: { orderBy: { createdAt: "desc" }, take: 1 },
-                },
-            });
-            return { billingRecord, pendingPlanChange };
         });
 
         emitToSuperAdmins("payment-proof:submitted", {
-            billingId: result.billingRecord.id,
+            billingId: legacyBillingRecord.id,
             subscriptionId: sub.id,
-            planChangeId: result.pendingPlanChange.id,
             adminId,
-            amount: Number(result.billingRecord.amount),
-            submittedAt: result.billingRecord.createdAt.toISOString(),
+            amount: Number(legacyBillingRecord.amount),
+            submittedAt: legacyBillingRecord.createdAt.toISOString(),
         });
-        return result;
-    }
-
-    // Backward compatibility for checkouts started before Phase 6 deployed.
-    // Those old records already changed Subscription.status to PENDING_PAYMENT
-    // and have no PendingPlanChange row. New flows never mutate the live
-    // subscription before approval.
-    const periodExpired = Boolean(
-        sub.currentPeriodEnd && sub.currentPeriodEnd <= new Date(),
-    );
-    const trialExpired = Boolean(sub.isTrial && sub.trialEndsAt && sub.trialEndsAt <= new Date());
-    const canReactivateCurrentPlan =
-        sub.status !== SubscriptionStatus.ACTIVE || periodExpired || trialExpired;
-    if (!canReactivateCurrentPlan) {
-        throw new AppError(
-            status.BAD_REQUEST,
-            "Choose a subscription plan before submitting payment proof.",
-            { code: "PLAN_CHECKOUT_REQUIRED", retryable: false },
-        );
-    }
-    if (!amount || amount <= 0) {
-        throw new AppError(status.BAD_REQUEST, "A valid amount is required for this legacy payment.", {
-            fieldErrors: { amount: "Enter the amount paid." },
-        });
-    }
-
-    const recentPending = await prisma.billingHistory.findFirst({
-        where: {
-            subscriptionId: sub.id,
-            status: "PENDING",
-            paymentProofUrl: { not: null },
-            createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-        },
-    });
-    if (recentPending) {
-        throw new AppError(
-            status.TOO_MANY_REQUESTS,
-            "A payment proof is already under review.",
-            { code: "PAYMENT_PROOF_ALREADY_PENDING", retryable: false },
-        );
-    }
-
-    const billingRecord = await prisma.billingHistory.create({
-        data: {
-            subscriptionId: sub.id,
-            amount,
-            currency: "USD",
-            method,
-            status: "PENDING",
-            paymentProofUrl,
-            paymentProofMediaAssetId: proofAsset.id,
-            note: note ?? null,
-            transactionId: transactionId ?? null,
-        },
-    });
-
-    emitToSuperAdmins("payment-proof:submitted", {
-        billingId: billingRecord.id,
-        subscriptionId: sub.id,
-        adminId,
-        amount: Number(billingRecord.amount),
-        submittedAt: billingRecord.createdAt.toISOString(),
-    });
-    return { billingRecord, pendingPlanChange: null };
+        return { billingRecord: legacyBillingRecord, pendingPlanChange: null };
     } catch (error) {
         await mediaService.deleteAssetIfUnreferencedForTenant(proofAsset.id, adminId).catch(() => undefined);
         throw error;
@@ -786,5 +1042,7 @@ export const subscriptionService = {
     cancelAtPeriodEnd,
     resumeSubscription,
     getMyBillingHistory,
+    initiateSubscriptionProofUpload,
+    finalizeSubscriptionProofUpload,
     submitPaymentProof,
 };

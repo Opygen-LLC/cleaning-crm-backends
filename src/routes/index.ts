@@ -1,7 +1,7 @@
 import { Router } from "express";
 import authRoutes from "../modules/Auth/auth.route";
 import { userRoutes } from "../modules/User/user.routes";
-import { adminRoutes } from "../modules/Admin/admin.routes";
+import { adminRecoveryRoutes, adminRoutes } from "../modules/Admin/admin.routes";
 import { staffRoutes } from "../modules/Staff/staff.routes";
 import { clientRoutes } from "../modules/Client/client.routes";
 import { serviceCatalogRoutes } from "../modules/ServiceCatalog/serviceCatalog.routes";
@@ -34,7 +34,6 @@ import { pushRoutes } from "../modules/Push/push.routes";
 import { websiteRoutes } from "../modules/Website/website.routes";
 import { publicWebsiteRoutes } from "../modules/Website/publicWebsite.routes";
 import { checkSubscription } from "../middlewares/checkSubscription";
-import express from "express";
 import { telemetryRoutes } from "../modules/Telemetry/telemetry.routes";
 import { dataExportRoutes } from "../modules/DataExport/dataExport.routes";
 import { NODE_ENV } from "../config/ENV";
@@ -48,6 +47,9 @@ const openRoutes: { path: string; route: Router }[] = [
     { path: "/user",            route: userRoutes },
     { path: "/subscription",    route: subscriptionRoutes },
     { path: "/subscription-plan", route: subscriptionPlanRoutes },
+    // Recovery-safe account surface. Only /admin/profile exists on this router;
+    // every normal /admin business route remains behind checkSubscription below.
+    { path: "/admin",           route: adminRecoveryRoutes },
     { path: "/booking-form",    route: bookingFormRoutes },
     { path: "/estimate-form",   route: estimateFormRoutes },
     { path: "/quote/public",    route: quotePublicRoutes },

@@ -166,6 +166,68 @@ export const checkSubscription = async (
 };
 
 /**
+ * Recovery-route access gate. Use this only after checkAuth on a narrowly
+ * scoped account/billing route that must remain usable when a trial or paid
+ * subscription has expired. Administrative tenant/owner blocks still fail
+ * closed, so subscription recovery can never override a suspension, archive,
+ * deletion workflow, or invalid access configuration.
+ */
+export const checkSubscriptionRecoveryAccess = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> => {
+  const authStarted = process.hrtime.bigint();
+  try {
+    const user = req.user;
+    if (!user) {
+      throw new AppError(status.UNAUTHORIZED, "Authentication is required.", {
+        code: "UNAUTHENTICATED",
+        retryable: false,
+      });
+    }
+    if (user.role !== UserRole.ADMIN) {
+      throw new AppError(status.FORBIDDEN, "Administrator access is required.", {
+        code: "FORBIDDEN",
+        retryable: false,
+      });
+    }
+
+    const runtime = await getRuntimeAdminAccessContext(user.id);
+    if (!runtime.adminId) {
+      throw new AppError(status.FORBIDDEN, "No organization is provisioned for this account.", {
+        code: "ORGANIZATION_NOT_FOUND",
+        retryable: false,
+      });
+    }
+
+    const resolution = await TenantAccessResolver.resolve(runtime.adminId);
+    req.authRuntime = {
+      userStatus: runtime.userStatus,
+      adminId: resolution.organizationId,
+      subscriptionPlanName: resolution.plan.name,
+      subscriptionFeatures: resolution.plan.features,
+      entitlementSummary: resolution.plan.features,
+      effectiveEntitlements: resolution.effectiveEntitlements,
+      accessDeniedReason: resolution.access.deniedReason,
+    };
+
+    if (!resolution.access.recoveryAllowed) {
+      throw accessError(resolution.access.deniedReason);
+    }
+    next();
+  } catch (error) {
+    next(error);
+  } finally {
+    recordTraceSpan(
+      "auth",
+      Number(process.hrtime.bigint() - authStarted) / 1_000_000,
+      "auth.subscription-recovery-gate",
+    );
+  }
+};
+
+/**
  * Per-route feature gate. Stable keys are preferred; legacy labels are resolved
  * only for rolling-deployment compatibility and never used as the decision key.
  */

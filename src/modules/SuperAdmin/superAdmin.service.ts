@@ -2221,32 +2221,57 @@ const approvePaymentProof = async (
     }
 
     // Legacy proof path for PENDING_PAYMENT subscriptions created before Phase 6.
-    const baseDate =
-        sub.currentPeriodEnd && sub.currentPeriodEnd > new Date()
-            ? new Date(sub.currentPeriodEnd)
-            : new Date();
-    const nextPeriodEnd = new Date(baseDate);
-    nextPeriodEnd.setMonth(nextPeriodEnd.getMonth() + periodMonths);
+    // Keep this path idempotent under concurrent approval clicks too; older
+    // records should not be able to emit duplicate approvals or extend twice.
+    const legacyLockKey = `subscription-checkout:${sub.id}`;
+    const legacyResult = await prisma.$transaction(async (tx) => {
+        await acquireExtendedTextTransactionAdvisoryLock(tx, legacyLockKey);
 
-    const [updatedBilling, updatedSub] = await prisma.$transaction([
-        prisma.billingHistory.update({
+        const freshBilling = await tx.billingHistory.findUnique({
             where: { id: billingId },
-            data: { status: "PAID", paidAt: new Date(), note: note ?? record.note },
-        }),
-        prisma.subscription.update({
+        });
+        if (!freshBilling || freshBilling.status !== "PENDING") {
+            throw new AppError(status.CONFLICT, "This payment proof has already been reviewed.", {
+                code: "PAYMENT_PROOF_ALREADY_REVIEWED",
+                retryable: false,
+            });
+        }
+
+        const freshSub = await tx.subscription.findUnique({
+            where: { id: sub.id },
+            select: { currentPeriodEnd: true },
+        });
+        if (!freshSub) throw new AppError(status.NOT_FOUND, "Subscription no longer exists.");
+
+        const now = new Date();
+        const baseDate =
+            freshSub.currentPeriodEnd && freshSub.currentPeriodEnd > now
+                ? new Date(freshSub.currentPeriodEnd)
+                : now;
+        const nextPeriodEnd = new Date(baseDate);
+        nextPeriodEnd.setMonth(nextPeriodEnd.getMonth() + periodMonths);
+
+        const updatedBilling = await tx.billingHistory.update({
+            where: { id: billingId },
+            data: { status: "PAID", paidAt: now, note: note ?? freshBilling.note },
+        });
+        const updatedSub = await tx.subscription.update({
             where: { id: sub.id },
             data: {
                 status: SubscriptionStatus.ACTIVE,
                 isTrial: false,
-                currentPeriodStart: new Date(),
+                trialEndsAt: null,
+                currentPeriodStart: now,
                 currentPeriodEnd: nextPeriodEnd,
                 cancelAtPeriodEnd: false,
                 canceledAt: null,
             },
             include: { plan: true, subscriptionPlan: true },
-        }),
-    ]);
+        });
+        return { updatedBilling, updatedSub, nextPeriodEnd };
+    });
 
+    const { updatedBilling, updatedSub, nextPeriodEnd } = legacyResult;
     await invalidateSubscriptionAccessCache(sub.admin.userId);
     createNotification({
         adminId: sub.adminId,

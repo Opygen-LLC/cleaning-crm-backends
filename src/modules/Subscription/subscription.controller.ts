@@ -71,6 +71,35 @@ const getMyBillingHistory = catchAsync(async (req, res) => {
   });
 });
 
+const initiateSubscriptionProofUpload = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const result = await subscriptionService.initiateSubscriptionProofUpload(req.user, {
+    filename: req.body.filename,
+    contentType: req.body.contentType,
+    size: req.body.size,
+  });
+  sendResponse(res, {
+    httpStatusCode: status.CREATED,
+    success: true,
+    message: "Subscription proof upload session created",
+    data: result,
+  });
+});
+
+const finalizeSubscriptionProofUpload = catchAsync(async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const result = await subscriptionService.finalizeSubscriptionProofUpload(
+    req.user,
+    req.params.uploadId as string,
+  );
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Subscription proof upload finalized",
+    data: result,
+  });
+});
+
 const submitPaymentProof = catchAsync(async (req, res) => {
   const result = await subscriptionService.submitPaymentProof(req.user!, {
     paymentProofAssetId: req.body.paymentProofAssetId,
@@ -95,5 +124,7 @@ export const subscriptionController = {
   cancelAtPeriodEnd,
   resumeSubscription,
   getMyBillingHistory,
+  initiateSubscriptionProofUpload,
+  finalizeSubscriptionProofUpload,
   submitPaymentProof
 };
