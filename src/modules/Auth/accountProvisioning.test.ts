@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
     createAdmin: vi.fn(),
     provisionWebsite: vi.fn(),
     createTrial: vi.fn(),
+    seedRecommendedServices: vi.fn(),
     enqueueVerification: vi.fn(),
     invalidateSubdomains: vi.fn(),
   };
@@ -58,6 +59,10 @@ vi.mock("../Subscription/subscription.service", () => ({
   subscriptionService: { createTrialSubscription: mocks.createTrial },
 }));
 
+vi.mock("../ServiceCatalog/recommendedCleaningServices", () => ({
+  seedRecommendedCleaningServicesTx: mocks.seedRecommendedServices,
+}));
+
 vi.mock("../Website/websiteHostResolver.service", () => ({
   WebsiteHostResolverService: {
     invalidateSubdomains: mocks.invalidateSubdomains,
@@ -93,6 +98,10 @@ beforeEach(() => {
     mocks.order.push("admin");
     return { id: "admin-1", businessName: "Sparkle Cleaning" };
   });
+  mocks.seedRecommendedServices.mockImplementation(async () => {
+    mocks.order.push("services");
+    return { createdCount: 9, restoredCount: 0, skippedCount: 0, total: 9 };
+  });
   mocks.provisionWebsite.mockImplementation(async () => {
     mocks.order.push("website");
     return {
@@ -122,7 +131,7 @@ describe("AccountProvisioningService", () => {
       trialDays: 14,
     });
 
-    expect(mocks.order).toEqual(["user+account", "admin", "website", "trial", "outbox"]);
+    expect(mocks.order).toEqual(["user+account", "admin", "website", "services", "trial", "outbox"]);
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.transaction.mock.calls[0]?.[1]).toEqual(PROVISIONING_TRANSACTION_OPTIONS);
     expect(mocks.hashPassword).toHaveBeenCalledWith("Secret123!");
@@ -145,6 +154,7 @@ describe("AccountProvisioningService", () => {
       { userId, businessName: "Sparkle Cleaning", mobileNumber: undefined, businessType: undefined, licenseNumber: "LIC-2026-001" },
       mocks.tx,
     );
+    expect(mocks.seedRecommendedServices).toHaveBeenCalledWith(mocks.tx, "admin-1");
     expect(mocks.provisionWebsite).toHaveBeenCalledWith(mocks.tx, {
       adminId: "admin-1",
       businessName: "Sparkle Cleaning",
@@ -181,7 +191,7 @@ describe("AccountProvisioningService", () => {
       requireEmailVerification: false,
     });
 
-    expect(mocks.order).toEqual(["user+account", "admin", "website", "trial"]);
+    expect(mocks.order).toEqual(["user+account", "admin", "website", "services", "trial"]);
     expect(mocks.enqueueVerification).not.toHaveBeenCalled();
 
     const userCreate = mocks.tx.user.create.mock.calls[0]?.[0];
@@ -227,7 +237,7 @@ describe("AccountProvisioningService", () => {
       trialDays: 7,
     })).rejects.toThrow("trial plan missing");
 
-    expect(mocks.order).toEqual(["user+account", "admin", "website", "trial"]);
+    expect(mocks.order).toEqual(["user+account", "admin", "website", "services", "trial"]);
     expect(mocks.enqueueVerification).not.toHaveBeenCalled();
   });
 });

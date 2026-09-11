@@ -44,7 +44,7 @@ const resolveTenantService = async (
 ) => {
   if (!serviceCatalogId) return null;
   const service = await db.serviceCatalog.findFirst({
-    where: { id: serviceCatalogId, adminId },
+    where: { id: serviceCatalogId, adminId, archivedAt: null },
     select: { id: true, serviceName: true },
   });
   if (!service) {

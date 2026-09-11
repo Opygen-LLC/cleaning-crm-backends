@@ -1,0 +1,136 @@
+TAP version 13
+# Subtest: admin review-link routes remain authenticated and feature-gated
+ok 1 - admin review-link routes remain authenticated and feature-gated
+  ---
+  duration_ms: 1.026026
+  type: 'test'
+  ...
+# Subtest: share-link input is a strict discriminated union
+ok 2 - share-link input is a strict discriminated union
+  ---
+  duration_ms: 0.348044
+  type: 'test'
+  ...
+# Subtest: canonical website links are server-resolved and tenant-bound
+ok 3 - canonical website links are server-resolved and tenant-bound
+  ---
+  duration_ms: 0.508145
+  type: 'test'
+  ...
+# Subtest: completed-job token generation is concurrency-safe and rotates expired tokens
+ok 4 - completed-job token generation is concurrency-safe and rotates expired tokens
+  ---
+  duration_ms: 0.187523
+  type: 'test'
+  ...
+# Subtest: review-link discovery and creation responses are no-store
+ok 5 - review-link discovery and creation responses are no-store
+  ---
+  duration_ms: 1.211615
+  type: 'test'
+  ...
+# Subtest: recommended catalogue contains the nine requested cleaning services and no fabricated prices
+ok 6 - recommended catalogue contains the nine requested cleaning services and no fabricated prices
+  ---
+  duration_ms: 1.355923
+  type: 'test'
+  ...
+# Subtest: all supported new-admin provisioning paths seed the starter catalogue inside their transaction
+ok 7 - all supported new-admin provisioning paths seed the starter catalogue inside their transaction
+  ---
+  duration_ms: 0.504079
+  type: 'test'
+  ...
+# Subtest: recommended import is tenant-scoped, advisory-locked, idempotent, and restores archived presets
+ok 8 - recommended import is tenant-scoped, advisory-locked, idempotent, and restores archived presets
+  ---
+  duration_ms: 0.244418
+  type: 'test'
+  ...
+# Subtest: literal recommended routes are admin-only and declared before the dynamic id route
+ok 9 - literal recommended routes are admin-only and declared before the dynamic id route
+  ---
+  duration_ms: 0.24561
+  type: 'test'
+  ...
+# Subtest: website booking never fabricates a priced service for an unconfigured starter catalogue
+ok 10 - website booking never fabricates a priced service for an unconfigured starter catalogue
+  ---
+  duration_ms: 1.328682
+  type: 'test'
+  ...
+# Subtest: zero-price services cannot be activated while inactive presets remain valid setup records
+ok 11 - zero-price services cannot be activated while inactive presets remain valid setup records
+  ---
+  duration_ms: 0.210497
+  type: 'test'
+  ...
+# Subtest: referenced services are archived and unreferenced services may be hard deleted
+ok 12 - referenced services are archived and unreferenced services may be hard deleted
+  ---
+  duration_ms: 0.518871
+  type: 'test'
+  ...
+# Subtest: archived services are excluded from current catalogue and onboarding read models
+ok 13 - archived services are excluded from current catalogue and onboarding read models
+  ---
+  duration_ms: 0.343908
+  type: 'test'
+  ...
+# Subtest: database schema and forward migration support history-safe service archiving
+ok 14 - database schema and forward migration support history-safe service archiving
+  ---
+  duration_ms: 0.350678
+  type: 'test'
+  ...
+# Subtest: subscription/me exposes server-authoritative lifecycle, access and usage
+ok 15 - subscription/me exposes server-authoritative lifecycle, access and usage
+  ---
+  duration_ms: 0.947047
+  type: 'test'
+  ...
+# Subtest: recovery usage matches the same staff/client/month booking semantics as backend limits
+ok 16 - recovery usage matches the same staff/client/month booking semantics as backend limits
+  ---
+  duration_ms: 1.094459
+  type: 'test'
+  ...
+# Subtest: automatic trial provisioning cannot be repeated for an existing tenant
+ok 17 - automatic trial provisioning cannot be repeated for an existing tenant
+  ---
+  duration_ms: 0.261234
+  type: 'test'
+  ...
+# Subtest: expired accounts have a narrowly scoped R2 payment-proof recovery path
+ok 18 - expired accounts have a narrowly scoped R2 payment-proof recovery path
+  ---
+  duration_ms: 0.384309
+  type: 'test'
+  ...
+# Subtest: plan checkout and proof submission are concurrency-safe and duplicate-aware
+ok 19 - plan checkout and proof submission are concurrency-safe and duplicate-aware
+  ---
+  duration_ms: 0.307483
+  type: 'test'
+  ...
+# Subtest: legacy payment approval is idempotent and converts trial state to paid
+ok 20 - legacy payment approval is idempotent and converts trial state to paid
+  ---
+  duration_ms: 0.446764
+  type: 'test'
+  ...
+# Subtest: expired subscription recovery keeps profile access narrow and does not delete business data
+ok 21 - expired subscription recovery keeps profile access narrow and does not delete business data
+  ---
+  duration_ms: 0.946396
+  type: 'test'
+  ...
+1..21
+# tests 21
+# suites 0
+# pass 21
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 60.680576

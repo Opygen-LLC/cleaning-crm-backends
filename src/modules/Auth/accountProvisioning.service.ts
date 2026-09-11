@@ -16,6 +16,7 @@ import { prisma } from "../../lib/prisma/prisma";
 import { PROVISIONING_TRANSACTION_OPTIONS } from "../../lib/prisma/transactionPolicy";
 import { adminService } from "../Admin/admin.service";
 import { subscriptionService } from "../Subscription/subscription.service";
+import { seedRecommendedCleaningServicesTx } from "../ServiceCatalog/recommendedCleaningServices";
 import { WebsiteHostResolverService } from "../Website/websiteHostResolver.service";
 import { WebsiteProvisioningService } from "../Website/websiteProvisioning.service";
 
@@ -72,6 +73,7 @@ const isUserEmailUniqueConstraintError = (error: unknown) => {
  *     -> AdminProfile (with optional mobileNumber / businessType / licenseNumber)
  *     -> advisory-locked unique subdomain
  *     -> BusinessWebsite + default pages + revision #1
+ *     -> recommended cleaning-service starter catalogue (inactive/unpriced)
  *     -> trial subscription
  *     -> verification-email outbox event
  *
@@ -222,6 +224,12 @@ const runProvisioningTransaction = async (
             skipExistingCheck: true,
           },
         );
+
+      // Seed a safe starter catalogue after website provisioning so the
+      // transaction follows the documented advisory-lock order. Presets start
+      // inactive with no fabricated price and the seeder is idempotent, so a
+      // retry/recovery path cannot duplicate them.
+      await seedRecommendedCleaningServicesTx(tx, admin.id);
 
       const subscription =
         await subscriptionService.createTrialSubscription(admin.id, {

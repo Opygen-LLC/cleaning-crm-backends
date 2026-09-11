@@ -134,7 +134,7 @@ async function assertEntityOwnership(user: IRequestUser, adminId: string, purpos
       if (user.role === UserRole.STAFF && staff?.userId !== user.id) throw new AppError(status.FORBIDDEN, "Staff can only update their own avatar.", { code: "FORBIDDEN", retryable: false });
       return entityId;
     }
-    case "SERVICE_IMAGE": return owned(await prisma.serviceCatalog.findUnique({ where: { id: entityId }, select: { adminId: true } }));
+    case "SERVICE_IMAGE": return owned(await prisma.serviceCatalog.findFirst({ where: { id: entityId, archivedAt: null }, select: { adminId: true } }));
     case "WEBSITE_BRAND":
     case "WEBSITE_CONTENT": return owned(await prisma.businessWebsite.findUnique({ where: { id: entityId }, select: { adminId: true } }));
     case "JOB_PHOTO":

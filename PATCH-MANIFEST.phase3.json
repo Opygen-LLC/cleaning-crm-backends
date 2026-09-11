@@ -1,0 +1,117 @@
+{
+  "phase": 3,
+  "project": "backend",
+  "baseline": "full Phase 2 production-ready archive",
+  "deletions": [],
+  "files": [
+    {
+      "path": "docs/phase3-default-services/README.md",
+      "baselineSha256": null,
+      "sha256": "854daae04da856e26c8f94ee1708cd6ced753c95f6dc6b04d86d2a60cacac3ce",
+      "operation": "add"
+    },
+    {
+      "path": "docs/phase3-default-services/native-contract-tests.tap",
+      "baselineSha256": null,
+      "sha256": "cf319cfef91d15c26a9cc76411a7bec2e9aaf61cf968d2f04655a0e3c7019114",
+      "operation": "add"
+    },
+    {
+      "path": "docs/phase3-default-services/verification.json",
+      "baselineSha256": null,
+      "sha256": "f66f45b179790bbd58871abc685c66e2f7d9b2cf284159721a7463cd5fbf4ea7",
+      "operation": "add"
+    },
+    {
+      "path": "prisma/migrations/20260911190500_phase3_service_catalog_archiving/migration.sql",
+      "baselineSha256": null,
+      "sha256": "52aa81c352204867624ab065759aaddfe7b9a33578450b9d39d84ac3f0635904",
+      "operation": "add"
+    },
+    {
+      "path": "prisma/schema/service.prisma",
+      "baselineSha256": "ced6f23dc149daa830cb760ef967cac1e2c284b4f3b807e6c9bfe3378d23026e",
+      "sha256": "d196726f3270dc7afc9bc14ee8300133eb5691b2836ad229c5590d795722ebad",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Auth/accountProvisioning.service.ts",
+      "baselineSha256": "e6c94650b73f7238530240879a6682c820bde0da92fd24ea52beff01e18820b6",
+      "sha256": "93982730018c8a7230402eaa0875f2ba5613f0d5bb47ac8bf597e1b3d7fe385a",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Auth/accountProvisioning.test.ts",
+      "baselineSha256": "392e54f0e3ec866c65d8e2997d3128c78079e2c72b33c11bc511d596f6c5653e",
+      "sha256": "62db64d385fb36743e48b2f40134ec186afd857c42151bc2026a6e48c3542192",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Invoice/invoice.service.ts",
+      "baselineSha256": "4eba4c1b7e4eb65221de95990ef3ab5cbefaa7380ea1f81989b83e21864b26ba",
+      "sha256": "384878305e55c3ae829c417a58bd9c8fdda24d63427824a782cb7a2aa919e380",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Lead/lead.service.ts",
+      "baselineSha256": "4269c1af60438fd3660668f8a2f32ae84768fcc9e6ad27d37c7e285ae63b0769",
+      "sha256": "048ae9b59bc3d02df65ddb3150628259035b3c43fa42d78f07eafc063def4f3a",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Media/media.service.ts",
+      "baselineSha256": "284dd4dd3aaefb661f7e0b700e6949a3f5f48b4dfcfcef6622731d0313071176",
+      "sha256": "3de5005edef20a74f61bc24730ab334c9cc082fc497ee02eabc2fc1d01381b8d",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/recommendedCleaningServices.ts",
+      "baselineSha256": null,
+      "sha256": "e28a4159f33e50ad6a7c8b4c56c5e1a47de1ca29f87ccdcaaa8b56eeba160569",
+      "operation": "add"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/serviceCatalog.controller.ts",
+      "baselineSha256": "d9c3058092031812453206acb588102cd96fa7f108acdce6aeab0e9a0fc29ddf",
+      "sha256": "fc43c2cf28b55add0deab260a2905c85eea1322b0e45c71cef73b91d9337367f",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/serviceCatalog.routes.ts",
+      "baselineSha256": "b199a31b1d1070d0212ad696c8ff4a361dca5a84db9d6792c59196d29ae0fbd0",
+      "sha256": "f48b6d3d356750b6e9272698294754a2f2a053a82e3ccbfb5ecf2d38669cd18c",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/serviceCatalog.service.ts",
+      "baselineSha256": "e53077a7bcbd6f735ec29344a04ddf60ff5141d646bae5db0c7b5c5a03028e53",
+      "sha256": "4ca15620a8274c300ea15a52e99fcef97267a64bd719e4c42f466aa969ceb89c",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/serviceCatalogConcurrency.ts",
+      "baselineSha256": "cecacd33f54bc1f5ca8dca870e3935e42f07ad7de3c3ace608f013bc440dc32d",
+      "sha256": "0c2c80ddc93ce57319c3f29083d15edd191f8842b62058a8251c328d7b12f998",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/SuperAdmin/superAdmin.service.ts",
+      "baselineSha256": "74d29f868cdbb31cb7ad55fb77b2ae756d648aef2ef9a3760ff5e4104c4c6817",
+      "sha256": "74ce75f4d3a798e4864b610bdb01185eb0e4c3fb9c153579e74be2dbf91f99eb",
+      "operation": "update"
+    },
+    {
+      "path": "src/modules/Website/websiteBookingProvisioning.service.ts",
+      "baselineSha256": "c8ca7939d421c8a344930f6afc1d382ff46ef3d96ec3f2769e0686cb2717ec7a",
+      "sha256": "2f1c346f8da12b0bd646c4c3e390307a8b039775734d196027f420a12dd48338",
+      "operation": "update"
+    },
+    {
+      "path": "tests/services/phase3-service-catalog-contract.test.cjs",
+      "baselineSha256": null,
+      "sha256": "f77d24ac58c5f0e92dcbf4b8b5cca01beedfe563d06948aa2a99c7e513708e49",
+      "operation": "add"
+    }
+  ],
+  "note": "The manifest itself is not included in its own hash list."
+}

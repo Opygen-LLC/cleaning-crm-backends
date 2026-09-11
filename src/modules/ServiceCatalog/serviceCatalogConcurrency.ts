@@ -4,7 +4,7 @@ import status from "http-status";
 import type { Prisma } from "../../generated/prisma/client";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 
-/** All catalog writers, including booking default provisioning, use this lock.
+/** All catalog writers and booking synchronization paths use this lock.
  * Lock order when more than one is needed: website -> booking -> catalog.
  */
 export const lockServiceCatalogTx = (tx: Prisma.TransactionClient, adminId: string) =>
@@ -57,7 +57,7 @@ export const readOnboardingAddOns = (value: unknown): Array<{ name: string; pric
 /** No Redis and no page limit: the token attests to the complete tenant catalog. */
 export const readOnboardingCatalogTx = async (tx: Prisma.TransactionClient, adminId: string) => {
   const rows = await tx.serviceCatalog.findMany({
-    where: { adminId }, select: onboardingCatalogSelect, orderBy: { id: "asc" },
+    where: { adminId, archivedAt: null }, select: onboardingCatalogSelect, orderBy: { id: "asc" },
   });
   return {
     version: fingerprint(rows),

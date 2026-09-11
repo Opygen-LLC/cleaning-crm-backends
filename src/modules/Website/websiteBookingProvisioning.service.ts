@@ -1,6 +1,6 @@
 import status from "http-status";
 import AppError from "../../errorHelper/AppError";
-import { FormFieldType, ServiceCategory, ServiceStatus, ServiceType } from "../../generated/prisma/enums";
+import { FormFieldType, ServiceStatus, ServiceType } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireExtendedTextTransactionAdvisoryLock, acquireTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
@@ -9,7 +9,6 @@ import type { IRequestUser } from "../../types/requestUser.interface";
 import { WebsiteProjectionCacheService } from "./websiteProjectionCache.service";
 import { statusAfterDraftMutation, WEBSITE_STATUS, type WebsiteLifecycleStatus } from "./websiteLifecycle";
 import { parsePublishedSnapshot } from "./websiteSnapshot";
-import { allocateServiceSlugTx } from "../ServiceCatalog/serviceCatalog.slug";
 import { lockServiceCatalogTx } from "../ServiceCatalog/serviceCatalogConcurrency";
 
 export interface WebsiteBookingSetupPayload {
@@ -312,9 +311,10 @@ const getSetup = async (user: IRequestUser): Promise<WebsiteBookingSetupResult> 
 
 const ensureAtLeastOneBookableService = async (tx: Prisma.TransactionClient, adminId: string) => {
   await lockServiceCatalogTx(tx, adminId);
-  let services = await tx.serviceCatalog.findMany({
+  const services = await tx.serviceCatalog.findMany({
     where: {
       adminId,
+      archivedAt: null,
       status: ServiceStatus.ACTIVE,
       onlineBookingEnabled: true,
     },
@@ -326,48 +326,15 @@ const ensureAtLeastOneBookableService = async (tx: Prisma.TransactionClient, adm
     orderBy: { createdAt: "asc" },
   });
 
-  if (services.length > 0) return services;
-
-  const activeServiceCount = await tx.serviceCatalog.count({
-    where: { adminId, status: ServiceStatus.ACTIVE },
-  });
-
-  // "Skip setup & use defaults" may be used before the Services step. In that
-  // one case, create a single canonical ServiceCatalog record so the website
-  // still gets a working booking route. If the owner already has services but
-  // explicitly disabled online booking for all of them, respect that choice.
-  if (activeServiceCount === 0) {
-    const serviceName = "Standard Cleaning";
-    const slug = await allocateServiceSlugTx(tx, adminId, serviceName);
-    const created = await tx.serviceCatalog.create({
-      data: {
-        adminId,
-        serviceName,
-        slug,
-        description: "Routine home cleaning for kitchens, bathrooms, bedrooms and living areas.",
-        basePrice: 60,
-        duration: "2h",
-        category: ServiceCategory.RESIDENTIAL,
-        status: ServiceStatus.ACTIVE,
-        onlineBookingEnabled: true,
-        legacyServiceType: ServiceType.RESIDENTIAL_CLEAN,
-        addOns: [],
-      },
-      select: {
-        id: true,
-        duration: true,
-        legacyServiceType: true,
-      },
-    });
-    services = [created];
-  }
-
   if (services.length === 0) {
-    throw new AppError(status.CONFLICT, "Enable online booking for at least one service before connecting website booking.", {
+    // Never fabricate a price just to make website booking launchable. New
+    // tenants receive recommended services in an inactive/unpriced setup state
+    // and must enter their own price before enabling a service for booking.
+    throw new AppError(status.CONFLICT, "Enable online booking for at least one priced service before connecting website booking.", {
       code: "NO_BOOKABLE_SERVICES",
       retryable: false,
       fieldErrors: {
-        services: "Turn on Online booking for at least one active service.",
+        services: "Set a real price, activate the service, and turn on Online booking first.",
       },
     });
   }

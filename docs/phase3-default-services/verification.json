@@ -1,0 +1,17 @@
+{
+  "phase": 3,
+  "project": "backend",
+  "scope": "default cleaning services, history-safe service removal, no fabricated booking price, new-tenant provisioning",
+  "nativeContractTests": {
+    "command": "node --test tests/services/phase3-service-catalog-contract.test.cjs tests/reviews/phase1-review-link-contract.test.cjs tests/subscription/phase2-saas-trial-contract.test.cjs",
+    "passed": 21,
+    "failed": 0
+  },
+  "r2RegressionTests": {
+    "command": "node --test tests/r2/*.test.mjs tests/r2/*.test.cjs",
+    "passed": 19,
+    "failed": 0
+  },
+  "syntaxAudit": "Modified TypeScript sources parsed successfully with the available global TypeScript compiler API.",
+  "fullDependencyBuild": "Not run in this artifact environment because node_modules and generated Prisma client files are not bundled in the source archive. Run the repository release/typecheck/build commands after installing locked dependencies and running prisma generate."
+}

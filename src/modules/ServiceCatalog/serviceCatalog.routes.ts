@@ -20,7 +20,6 @@ router.post(
   serviceCatalogController.createServiceCatalog,
 );
 
-
 router.post(
   "/bulk",
   checkAuth(UserRole.ADMIN),
@@ -35,6 +34,20 @@ router.get(
   "/",
   checkAuth(UserRole.ADMIN, UserRole.STAFF),
   serviceCatalogController.getAllServiceCatalogs,
+);
+
+// Keep literal routes before /:id so "recommended" can never be interpreted
+// as a catalogue identifier.
+router.get(
+  "/recommended",
+  checkAuth(UserRole.ADMIN),
+  serviceCatalogController.getRecommendedServices,
+);
+
+router.post(
+  "/recommended/import",
+  checkAuth(UserRole.ADMIN),
+  serviceCatalogController.importRecommendedServices,
 );
 
 router.get(

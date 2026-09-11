@@ -21,6 +21,7 @@ import { sendEmailSafely } from "../../lib/utils/sendEmailSafely";
 import { waitUntil } from "@vercel/functions";
 import { auth } from "../../lib/auth";
 import { adminService } from "../Admin/admin.service";
+import { seedRecommendedCleaningServicesTx } from "../ServiceCatalog/recommendedCleaningServices";
 import { WebsiteProvisioningService } from "../Website/websiteProvisioning.service";
 import { WebsiteHostResolverService } from "../Website/websiteHostResolver.service";
 import { createNotification } from "../../lib/utils/createNotification";
@@ -760,6 +761,12 @@ const createAdminAccount = async (payload: {
                         createdByUserId: data.user.id,
                     },
                 );
+
+            // Super-admin-created tenant accounts receive the same safe starter
+            // catalogue as self-service registrations. The shared seeder is
+            // idempotent and keeps every preset inactive/unpriced until the
+            // tenant supplies its own pricing.
+            await seedRecommendedCleaningServicesTx(tx, admin.id);
 
             return { user, admin, website };
         });

@@ -30,7 +30,7 @@ const createInvoice = async (payload: IInvoiceCreate, user: IRequestUser) => {
     const adminId = await getAdminId(user);
 
     const serviceCatalog = await prisma.serviceCatalog.findFirst({
-        where: { id: payload.serviceCatalogId, adminId },
+        where: { id: payload.serviceCatalogId, adminId, archivedAt: null },
     });
 
     if (!serviceCatalog) {
@@ -249,7 +249,7 @@ const updateInvoice = async (id: string, payload: IInvoiceUpdate, user: IRequest
 
     if (payload.serviceCatalogId) {
         const ownedService = await prisma.serviceCatalog.findFirst({
-            where: { id: payload.serviceCatalogId, adminId: invoice.adminId },
+            where: { id: payload.serviceCatalogId, adminId: invoice.adminId, archivedAt: null },
             select: { id: true },
         });
         if (!ownedService) {

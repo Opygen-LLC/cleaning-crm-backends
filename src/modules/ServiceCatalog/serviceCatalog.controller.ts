@@ -4,14 +4,16 @@ import { sendResponse } from "../../shared/sendResponse";
 import { serviceCatalogService } from "./serviceCatalog.service";
 import { IServiceCatalogFilters } from "./serviceCatalog.interface";
 import { ServiceStatus } from "../../generated/prisma/enums";
-import { bumpCacheResourcesForUser, CacheResource } from "../../lib/cache/resourceCacheVersion";
+import {
+  bumpCacheResourcesForUser,
+  CacheResource,
+} from "../../lib/cache/resourceCacheVersion";
+
+const catalogCacheResources = [CacheResource.services, CacheResource.dashboard];
 
 const createServiceCatalog = catchAsync(async (req, res) => {
-  const result = await serviceCatalogService.createServiceCatalog(
-    req.body,
-    req.user,
-  );
-  await bumpCacheResourcesForUser(req.user, [CacheResource.services, CacheResource.dashboard]);
+  const result = await serviceCatalogService.createServiceCatalog(req.body, req.user);
+  await bumpCacheResourcesForUser(req.user, catalogCacheResources);
 
   sendResponse(res, {
     httpStatusCode: status.CREATED,
@@ -21,10 +23,9 @@ const createServiceCatalog = catchAsync(async (req, res) => {
   });
 });
 
-
 const bulkUpsertServiceCatalogs = catchAsync(async (req, res) => {
   const result = await serviceCatalogService.bulkUpsertServiceCatalogs(req.body, req.user);
-  await bumpCacheResourcesForUser(req.user, [CacheResource.services, CacheResource.dashboard]);
+  await bumpCacheResourcesForUser(req.user, catalogCacheResources);
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
@@ -40,10 +41,7 @@ const getAllServiceCatalogs = catchAsync(async (req, res) => {
     status: req.query.status as ServiceStatus,
   };
 
-  const result = await serviceCatalogService.getAllServiceCatalogs(
-    filters,
-    req.user,
-  );
+  const result = await serviceCatalogService.getAllServiceCatalogs(filters, req.user);
 
   sendResponse(res, {
     httpStatusCode: status.OK,
@@ -53,12 +51,33 @@ const getAllServiceCatalogs = catchAsync(async (req, res) => {
   });
 });
 
+const getRecommendedServices = catchAsync(async (req, res) => {
+  const result = await serviceCatalogService.getRecommendedServices(req.user);
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message: "Recommended cleaning services retrieved successfully",
+    data: result,
+  });
+});
+
+const importRecommendedServices = catchAsync(async (req, res) => {
+  const result = await serviceCatalogService.importRecommendedServices(req.user);
+  await bumpCacheResourcesForUser(req.user, catalogCacheResources);
+  sendResponse(res, {
+    httpStatusCode: status.OK,
+    success: true,
+    message:
+      result.createdCount + result.restoredCount > 0
+        ? "Recommended cleaning services added successfully"
+        : "All recommended cleaning services are already installed",
+    data: result,
+  });
+});
+
 const getServiceCatalogById = catchAsync(async (req, res) => {
   const { id } = req.params;
-  const result = await serviceCatalogService.getServiceCatalogById(
-    id as string,
-    req.user,
-  );
+  const result = await serviceCatalogService.getServiceCatalogById(id as string, req.user);
 
   sendResponse(res, {
     httpStatusCode: status.OK,
@@ -75,7 +94,7 @@ const updateServiceCatalog = catchAsync(async (req, res) => {
     req.body,
     req.user,
   );
-  await bumpCacheResourcesForUser(req.user, [CacheResource.services, CacheResource.dashboard]);
+  await bumpCacheResourcesForUser(req.user, catalogCacheResources);
 
   sendResponse(res, {
     httpStatusCode: status.OK,
@@ -88,12 +107,15 @@ const updateServiceCatalog = catchAsync(async (req, res) => {
 const deleteServiceCatalog = catchAsync(async (req, res) => {
   const { id } = req.params;
   const result = await serviceCatalogService.deleteServiceCatalog(id as string, req.user);
-  await bumpCacheResourcesForUser(req.user, [CacheResource.services, CacheResource.dashboard]);
+  await bumpCacheResourcesForUser(req.user, catalogCacheResources);
 
   sendResponse(res, {
     httpStatusCode: status.OK,
     success: true,
-    message: "Service deleted successfully",
+    message:
+      result.mode === "ARCHIVED"
+        ? "Service removed from the current catalogue; historical records were preserved"
+        : "Service deleted successfully",
     data: result,
   });
 });
@@ -102,6 +124,8 @@ export const serviceCatalogController = {
   createServiceCatalog,
   bulkUpsertServiceCatalogs,
   getAllServiceCatalogs,
+  getRecommendedServices,
+  importRecommendedServices,
   getServiceCatalogById,
   updateServiceCatalog,
   deleteServiceCatalog,

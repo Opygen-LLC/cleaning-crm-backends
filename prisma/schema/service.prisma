@@ -36,13 +36,15 @@ model ServiceCatalog {
   websiteSubmissions       WebsiteSubmission[]
   reviews                  Review[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
 
   @@unique([serviceName, adminId])
   @@unique([adminId, slug])
   @@index([adminId, category, status])
+  @@index([adminId, archivedAt, status])
   @@index([adminId, legacyServiceType])
   @@map("service_catalog")
 }
