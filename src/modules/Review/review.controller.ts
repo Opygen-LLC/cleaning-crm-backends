@@ -64,6 +64,31 @@ const submitWebsiteReview = catchAsync(async (req, res) => {
 
 // ── Admin endpoints ───────────────────────────────────────────────────────────
 
+const getReviewLinkOptions = catchAsync(async (req, res) => {
+    const result = await reviewService.getReviewLinkOptions(
+        req.query as { jobSearch?: string; jobLimit?: number },
+        req.user,
+    );
+    res.setHeader("Cache-Control", "no-store");
+    sendResponse(res, {
+        httpStatusCode: httpStatus.OK,
+        success: true,
+        message: "Review link options retrieved.",
+        data: result,
+    });
+});
+
+const createReviewShareLink = catchAsync(async (req, res) => {
+    const result = await reviewService.createReviewShareLink(req.body, req.user);
+    res.setHeader("Cache-Control", "no-store");
+    sendResponse(res, {
+        httpStatusCode: httpStatus.OK,
+        success: true,
+        message: "Review link ready.",
+        data: result,
+    });
+});
+
 const getAllReviews = catchAsync(async (req, res) => {
     const filters = req.query as unknown as IReviewFilters;
     const result = await reviewService.getAllReviews(filters, req.user);
@@ -144,6 +169,8 @@ export const reviewController = {
     submitPublicReview,
     getWebsiteReviewContext,
     submitWebsiteReview,
+    getReviewLinkOptions,
+    createReviewShareLink,
     getAllReviews,
     getReviewById,
     updateReview,

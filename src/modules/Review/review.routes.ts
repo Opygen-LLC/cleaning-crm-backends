@@ -56,6 +56,24 @@ router.post(
     reviewController.generateTokenForJob,
 );
 
+// GET /review/link-options -> canonical website state, active services, and recent completed jobs
+router.get(
+    "/link-options",
+    isTenantAdmin,
+    hasReviews,
+    zodValidate(reviewValidation.reviewLinkOptionsQuery, ValidationProperty.QUERY),
+    reviewController.getReviewLinkOptions,
+);
+
+// POST /review/share-link -> canonical company/service link or secure completed-job link
+router.post(
+    "/share-link",
+    isTenantAdmin,
+    hasReviews,
+    zodValidate(reviewValidation.createReviewShareLink, ValidationProperty.BODY),
+    reviewController.createReviewShareLink,
+);
+
 // GET  /review  → paginated list with filters
 router.get(
     "/",

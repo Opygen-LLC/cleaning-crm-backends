@@ -41,3 +41,13 @@ export interface ISubmitWebsiteReview {
   comment: string;
   companyWebsite?: string;
 }
+
+export interface IReviewLinkOptionsQuery {
+  jobSearch?: string;
+  jobLimit?: number;
+}
+
+export type ReviewShareLinkRequest =
+  | { kind: "COMPANY" }
+  | { kind: "SERVICE"; serviceCatalogId: string }
+  | { kind: "JOB"; jobId: string };

@@ -1,15 +1,18 @@
+import { randomUUID } from "node:crypto";
 import { prisma } from "../../lib/prisma/prisma";
 import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/advisoryLock";
 import { FRONTEND_URL } from "../../config/ENV";
 import AppError from "../../errorHelper/AppError";
 import status from "http-status";
-import { IReviewFilters, ISubmitPublicReview, IUpdateReview } from "./review.interface";
+import { IReviewFilters, IReviewLinkOptionsQuery, ISubmitPublicReview, IUpdateReview, ReviewShareLinkRequest } from "./review.interface";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { IRequestUser } from "../../types/requestUser.interface";
 import { serviceDisplayName } from "../../lib/utils/serviceIdentity";
 import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache.service";
 import { invalidateBookingFormsForAdmin } from "../BookingForm/bookingForm.cache";
 import { queueReviewRequestNotification } from "../../lib/notifications/businessNotificationEvents";
+import { TenantPublicUrlService } from "../Website/tenantPublicUrl.service";
+import { TenantAccessResolver } from "../Entitlement/tenantAccessResolver.service";
 
 function deriveSentiment(rating: number): string {
     if (rating >= 4) return "positive";
@@ -17,18 +20,85 @@ function deriveSentiment(rating: number): string {
     return "negative";
 }
 
-const generateReviewToken = async (jobId: string, adminId: string) => {
-    const existing = await prisma.reviewToken.findUnique({ where: { jobId } });
-    if (existing) {
-        if (existing.adminId !== adminId) {
-            throw new AppError(status.NOT_FOUND, "Job not found.");
-        }
-        return existing;
-    }
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
-    return prisma.reviewToken.create({ data: { jobId, adminId, expiresAt } });
+const REVIEW_TOKEN_TTL_DAYS = 7;
+
+const nextReviewTokenExpiry = (now = new Date()) => {
+    const expiresAt = new Date(now);
+    expiresAt.setDate(expiresAt.getDate() + REVIEW_TOKEN_TTL_DAYS);
+    return expiresAt;
 };
+
+const configuredFrontendOrigin = (): string | null => {
+    try {
+        const parsed = new URL(FRONTEND_URL);
+        if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+        return parsed.origin;
+    } catch {
+        return null;
+    }
+};
+
+const requireFrontendOrigin = (): string => {
+    const origin = configuredFrontendOrigin();
+    if (!origin) {
+        throw new AppError(status.SERVICE_UNAVAILABLE, "Review links are temporarily unavailable.", {
+            code: "REVIEW_FRONTEND_URL_UNAVAILABLE",
+            retryable: false,
+        });
+    }
+    return origin;
+};
+
+const buildJobReviewUrl = (token: string): string =>
+    `${requireFrontendOrigin()}/review/${encodeURIComponent(token)}`;
+
+/**
+ * Returns one usable token per completed job. Expired unused tokens are rotated
+ * atomically. Used tokens are terminal because a job may only be reviewed once.
+ */
+const generateReviewToken = async (jobId: string, adminId: string) =>
+    prisma.$transaction(async (tx) => {
+        await acquireExtendedTextTransactionAdvisoryLock(tx, `review-token-job:${jobId}`);
+
+        let existing = await tx.reviewToken.findUnique({ where: { jobId } });
+        if (existing) {
+            if (existing.adminId !== adminId) {
+                throw new AppError(status.NOT_FOUND, "Job not found.");
+            }
+
+            // Serialize with public submission, which locks using the token value.
+            await acquireExtendedTextTransactionAdvisoryLock(tx, `review-token:${existing.token}`);
+            existing = await tx.reviewToken.findUnique({ where: { jobId } });
+            if (!existing || existing.adminId !== adminId) {
+                throw new AppError(status.NOT_FOUND, "Job not found.");
+            }
+            if (existing.used) {
+                throw new AppError(status.CONFLICT, "A review has already been submitted for this job.", {
+                    code: "REVIEW_ALREADY_SUBMITTED",
+                    retryable: false,
+                });
+            }
+            if (existing.expiresAt.getTime() > Date.now()) return existing;
+
+            return tx.reviewToken.update({
+                where: { id: existing.id },
+                data: {
+                    token: randomUUID(),
+                    used: false,
+                    expiresAt: nextReviewTokenExpiry(),
+                },
+            });
+        }
+
+        return tx.reviewToken.create({
+            data: {
+                jobId,
+                adminId,
+                token: randomUUID(),
+                expiresAt: nextReviewTokenExpiry(),
+            },
+        });
+    });
 
 const validateReviewToken = async (token: string) => {
     const reviewToken = await prisma.reviewToken.findUnique({
@@ -152,6 +222,254 @@ const submitPublicReview = async (token: string, payload: ISubmitPublicReview) =
         await tx.reviewToken.update({ where: { id: reviewToken.id }, data: { used: true } });
         return { success: true };
     });
+};
+
+type ReviewWebsiteLinkState = {
+    available: boolean;
+    state: "LIVE" | "NOT_PROVISIONED" | "UNPUBLISHED" | "PUBLIC_ACCESS_BLOCKED" | "ADDRESS_UNAVAILABLE";
+    reason: string | null;
+    code: string | null;
+    websiteId: string | null;
+    subdomain: string | null;
+    canonicalOrigin: string | null;
+    companyReviewUrl: string | null;
+};
+
+const getReviewWebsiteLinkState = async (adminId: string): Promise<ReviewWebsiteLinkState> => {
+    const access = await TenantAccessResolver.resolve(adminId, { authoritative: true });
+
+    if (!access.website.id || !access.website.subdomain) {
+        return {
+            available: false,
+            state: "NOT_PROVISIONED",
+            reason: "Create your business website before sharing website review links.",
+            code: "REVIEW_WEBSITE_NOT_PROVISIONED",
+            websiteId: null,
+            subdomain: null,
+            canonicalOrigin: null,
+            companyReviewUrl: null,
+        };
+    }
+
+    if (!access.website.published) {
+        return {
+            available: false,
+            state: "UNPUBLISHED",
+            reason: "Publish your business website before sharing company or service review links.",
+            code: "REVIEW_WEBSITE_UNPUBLISHED",
+            websiteId: access.website.id,
+            subdomain: access.website.subdomain,
+            canonicalOrigin: null,
+            companyReviewUrl: null,
+        };
+    }
+
+    if (!access.access.publicWebsiteAllowed) {
+        return {
+            available: false,
+            state: "PUBLIC_ACCESS_BLOCKED",
+            reason: "Your public website is not available with the current account or subscription state.",
+            code: access.website.deniedReason,
+            websiteId: access.website.id,
+            subdomain: access.website.subdomain,
+            canonicalOrigin: null,
+            companyReviewUrl: null,
+        };
+    }
+
+    try {
+        const publicUrl = await TenantPublicUrlService.resolveForAdminId(adminId);
+        const origin = publicUrl.origin.replace(/\/+$/, "");
+        return {
+            available: true,
+            state: "LIVE",
+            reason: null,
+            code: null,
+            websiteId: publicUrl.websiteId,
+            subdomain: publicUrl.subdomain,
+            canonicalOrigin: origin,
+            companyReviewUrl: `${origin}/review`,
+        };
+    } catch (error) {
+        if (error instanceof AppError) {
+            return {
+                available: false,
+                state: "ADDRESS_UNAVAILABLE",
+                reason: error.message,
+                code: error.code ?? "WEBSITE_PUBLIC_ORIGIN_UNAVAILABLE",
+                websiteId: access.website.id,
+                subdomain: access.website.subdomain,
+                canonicalOrigin: null,
+                companyReviewUrl: null,
+            };
+        }
+        throw error;
+    }
+};
+
+const reviewTokenState = (token: { used: boolean; expiresAt: Date } | null) => {
+    if (!token) return "NOT_CREATED" as const;
+    if (token.used) return "SUBMITTED" as const;
+    if (token.expiresAt.getTime() <= Date.now()) return "EXPIRED" as const;
+    return "READY" as const;
+};
+
+const getReviewLinkOptions = async (query: IReviewLinkOptionsQuery, user: IRequestUser) => {
+    const adminId = await getAdminId(user);
+    const jobSearch = query.jobSearch?.trim();
+    const jobLimit = Math.min(50, Math.max(1, Number(query.jobLimit) || 20));
+
+    const [website, services, completedJobs] = await Promise.all([
+        getReviewWebsiteLinkState(adminId),
+        prisma.serviceCatalog.findMany({
+            where: { adminId, status: "ACTIVE" },
+            select: { id: true, serviceName: true, slug: true },
+            orderBy: [{ serviceName: "asc" }, { id: "asc" }],
+            take: 500,
+        }),
+        prisma.job.findMany({
+            where: {
+                adminId,
+                status: "COMPLETED",
+                ...(jobSearch
+                    ? {
+                        OR: [
+                            { jobRef: { contains: jobSearch, mode: "insensitive" } },
+                            { client: { name: { contains: jobSearch, mode: "insensitive" } } },
+                            { serviceNameSnapshot: { contains: jobSearch, mode: "insensitive" } },
+                        ],
+                    }
+                    : {}),
+            },
+            select: {
+                id: true,
+                jobRef: true,
+                scheduledDate: true,
+                updatedAt: true,
+                serviceType: true,
+                serviceNameSnapshot: true,
+                serviceCatalog: { select: { serviceName: true } },
+                client: { select: { name: true } },
+                reviewToken: { select: { token: true, used: true, expiresAt: true } },
+            },
+            orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+            take: jobLimit,
+        }),
+    ]);
+
+    const appOrigin = configuredFrontendOrigin();
+    return {
+        website,
+        services: services.map((service) => ({
+            id: service.id,
+            name: service.serviceName,
+            slug: service.slug,
+            reviewUrl: website.available && website.canonicalOrigin
+                ? `${website.canonicalOrigin}/${encodeURIComponent(service.slug)}/review`
+                : null,
+        })),
+        completedJobs: completedJobs.map((job) => {
+            const tokenState = reviewTokenState(job.reviewToken);
+            return {
+                id: job.id,
+                jobRef: job.jobRef,
+                clientName: job.client.name,
+                serviceName: serviceDisplayName(job),
+                scheduledDate: job.scheduledDate,
+                completedAt: job.updatedAt,
+                tokenState,
+                tokenExpiresAt: job.reviewToken?.expiresAt ?? null,
+                reviewUrl:
+                    tokenState === "READY" && appOrigin && job.reviewToken
+                        ? `${appOrigin}/review/${encodeURIComponent(job.reviewToken.token)}`
+                        : null,
+                canCreateLink: tokenState !== "SUBMITTED",
+            };
+        }),
+    };
+};
+
+const assertWebsiteShareLinkReady = (website: ReviewWebsiteLinkState) => {
+    if (website.available && website.canonicalOrigin) return website.canonicalOrigin;
+    const httpStatus = website.state === "ADDRESS_UNAVAILABLE"
+        ? status.SERVICE_UNAVAILABLE
+        : status.CONFLICT;
+    throw new AppError(httpStatus, website.reason ?? "Website review link is not available.", {
+        code: website.code ?? "REVIEW_WEBSITE_LINK_UNAVAILABLE",
+        retryable: website.state === "ADDRESS_UNAVAILABLE",
+    });
+};
+
+const createReviewShareLink = async (payload: ReviewShareLinkRequest, user: IRequestUser) => {
+    const adminId = await getAdminId(user);
+
+    if (payload.kind === "COMPANY") {
+        const website = await getReviewWebsiteLinkState(adminId);
+        const origin = assertWebsiteShareLinkReady(website);
+        return {
+            kind: payload.kind,
+            url: `${origin}/review`,
+            expiresAt: null,
+            website: { id: website.websiteId!, subdomain: website.subdomain!, canonicalOrigin: origin },
+        };
+    }
+
+    if (payload.kind === "SERVICE") {
+        const [website, service] = await Promise.all([
+            getReviewWebsiteLinkState(adminId),
+            prisma.serviceCatalog.findFirst({
+                where: { id: payload.serviceCatalogId, adminId, status: "ACTIVE" },
+                select: { id: true, serviceName: true, slug: true },
+            }),
+        ]);
+        if (!service) {
+            throw new AppError(status.NOT_FOUND, "Active service not found.", {
+                code: "REVIEW_SERVICE_NOT_FOUND",
+                retryable: false,
+            });
+        }
+        const origin = assertWebsiteShareLinkReady(website);
+        return {
+            kind: payload.kind,
+            url: `${origin}/${encodeURIComponent(service.slug)}/review`,
+            expiresAt: null,
+            service: { id: service.id, name: service.serviceName, slug: service.slug },
+            website: { id: website.websiteId!, subdomain: website.subdomain!, canonicalOrigin: origin },
+        };
+    }
+
+    const job = await prisma.job.findFirst({
+        where: { id: payload.jobId, adminId },
+        select: {
+            id: true,
+            jobRef: true,
+            status: true,
+            serviceType: true,
+            serviceNameSnapshot: true,
+            serviceCatalog: { select: { serviceName: true } },
+            client: { select: { name: true } },
+        },
+    });
+    if (!job) throw new AppError(status.NOT_FOUND, "Job not found.");
+    if (job.status !== "COMPLETED") {
+        throw new AppError(status.CONFLICT, "Only completed jobs can receive a review link.", {
+            code: "REVIEW_JOB_NOT_COMPLETED",
+            retryable: false,
+        });
+    }
+
+    const token = await generateReviewToken(job.id, adminId);
+    return {
+        kind: payload.kind,
+        url: buildJobReviewUrl(token.token),
+        expiresAt: token.expiresAt,
+        job: {
+            id: job.id,
+            jobRef: job.jobRef,
+            clientName: job.client.name,
+            serviceName: serviceDisplayName(job),
+        },
+    };
 };
 
 const getAllReviews = async (filters: IReviewFilters, user: IRequestUser) => {
@@ -373,12 +691,13 @@ const generateTokenForJob = async (jobId: string, user: IRequestUser, occurrence
     if (job.status !== "COMPLETED") throw new AppError(status.BAD_REQUEST, "Job must be COMPLETED to generate a review token.");
 
     const token = await generateReviewToken(jobId, adminId);
+    const reviewUrl = buildJobReviewUrl(token.token);
     await queueReviewRequestNotification(
         job.id,
-        `${FRONTEND_URL}/review/${token.token}`,
+        reviewUrl,
         occurrence,
     );
-    return token;
+    return { ...token, reviewUrl };
 };
 
 const resendReviewEmail = async (reviewId: string, user: IRequestUser) => {
@@ -401,6 +720,8 @@ export const reviewService = {
     generateReviewToken,
     validateReviewToken,
     submitPublicReview,
+    getReviewLinkOptions,
+    createReviewShareLink,
     getAllReviews,
     getReviewById,
     updateReview,

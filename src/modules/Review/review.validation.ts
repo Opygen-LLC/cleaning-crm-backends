@@ -38,6 +38,23 @@ const submitWebsiteReview = z.object({
   }
 });
 
+const reviewLinkOptionsQuery = z.object({
+  jobSearch: z.string().trim().max(120).optional(),
+  jobLimit: z.coerce.number().int().min(1).max(50).optional(),
+}).strict();
+
+const createReviewShareLink = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("COMPANY") }).strict(),
+  z.object({
+    kind: z.literal("SERVICE"),
+    serviceCatalogId: z.string().uuid(),
+  }).strict(),
+  z.object({
+    kind: z.literal("JOB"),
+    jobId: z.string().uuid(),
+  }).strict(),
+]);
+
 const reviewFilters = z.object({
   page: z.coerce.number().int().min(1).max(100000).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
@@ -76,6 +93,8 @@ export const reviewValidation = {
   submitPublicReview,
   reviewContextQuery,
   submitWebsiteReview,
+  reviewLinkOptionsQuery,
+  createReviewShareLink,
   reviewFilters,
   updateReview,
 };
