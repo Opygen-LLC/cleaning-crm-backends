@@ -7,15 +7,16 @@ dist
 
 # Local env files
 .env
-.env.example
 .env.local
 .env.runtime
+.env.production
+!.env.example
+!.env.production.example
 task.md
 .Deployments.md
 .agent.md
 
 .vscode
-.env
 
 Deployments.md
 .task.md

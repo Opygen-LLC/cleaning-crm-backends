@@ -472,6 +472,20 @@ const createReviewShareLink = async (payload: ReviewShareLinkRequest, user: IReq
     };
 };
 
+const reviewTenantRelationGuard = (adminId: string) => ({
+    OR: [
+        { source: "JOB_TOKEN" as const, reviewToken: { job: { adminId } } },
+        { source: "WEBSITE" as const, website: { adminId } },
+    ],
+});
+
+const reviewDateBoundary = (value: string, endOfDay: boolean) => {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        return new Date(`${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`);
+    }
+    return new Date(value);
+};
+
 const getAllReviews = async (filters: IReviewFilters, user: IRequestUser) => {
     const adminId = await getAdminId(user);
     const {
@@ -479,12 +493,7 @@ const getAllReviews = async (filters: IReviewFilters, user: IRequestUser) => {
         staffId, jobId, dateFrom, dateTo, scope, source, serviceCatalogId,
     } = filters;
 
-    const tenantRelationGuard = {
-        OR: [
-            { source: "JOB_TOKEN", reviewToken: { job: { adminId } } },
-            { source: "WEBSITE", website: { adminId } },
-        ],
-    };
+    const tenantRelationGuard = reviewTenantRelationGuard(adminId);
     const and: any[] = [tenantRelationGuard];
     const where: any = { adminId, AND: and };
     if (filterStatus) where.status = filterStatus;
@@ -506,8 +515,8 @@ const getAllReviews = async (filters: IReviewFilters, user: IRequestUser) => {
     }
     if (dateFrom || dateTo) {
         where.createdAt = {
-            ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
-            ...(dateTo ? { lte: new Date(new Date(dateTo).setHours(23, 59, 59, 999)) } : {}),
+            ...(dateFrom ? { gte: reviewDateBoundary(dateFrom, false) } : {}),
+            ...(dateTo ? { lte: reviewDateBoundary(dateTo, true) } : {}),
         };
     }
 
@@ -571,10 +580,7 @@ const getReviewById = async (id: string, user: IRequestUser) => {
         where: {
             id,
             adminId,
-            OR: [
-                { source: "JOB_TOKEN", reviewToken: { job: { adminId } } },
-                { source: "WEBSITE", website: { adminId } },
-            ],
+            ...reviewTenantRelationGuard(adminId),
         },
         include: {
             reviewToken: {
@@ -600,7 +606,10 @@ const getReviewById = async (id: string, user: IRequestUser) => {
 
 const updateReview = async (id: string, payload: IUpdateReview, user: IRequestUser) => {
     const adminId = await getAdminId(user);
-    const review = await prisma.review.findFirst({ where: { id, adminId }, select: { id: true } });
+    const review = await prisma.review.findFirst({
+        where: { id, adminId, ...reviewTenantRelationGuard(adminId) },
+        select: { id: true },
+    });
     if (!review) throw new AppError(status.NOT_FOUND, "Review not found.");
     const canonicalStatus =
         payload.status ??
@@ -703,7 +712,7 @@ const generateTokenForJob = async (jobId: string, user: IRequestUser, occurrence
 const resendReviewEmail = async (reviewId: string, user: IRequestUser) => {
     const adminId = await getAdminId(user);
     const review = await prisma.review.findFirst({
-        where: { id: reviewId, adminId },
+        where: { id: reviewId, adminId, ...reviewTenantRelationGuard(adminId) },
         select: { jobId: true, source: true },
     });
     if (!review) throw new AppError(status.NOT_FOUND, "Review not found.");

@@ -1,0 +1,161 @@
+{
+  "release": "Cleaning CRM Phase 4 - Production Regression, Security and Release",
+  "generatedAt": "2026-09-11T19:05:00+06:00",
+  "parentRelease": "Phase 3 full production-ready archive",
+  "archiveType": "full project source with original folder structure",
+  "rootFolder": "cleaning-crm-backends-master",
+  "database": {
+    "newPhase4Migration": false,
+    "requiredExistingMigration": "prisma/migrations/20260911190500_phase3_service_catalog_archiving/migration.sql",
+    "productionCommand": "pnpm run db:migrate:deploy",
+    "forbiddenProductionCommand": "prisma db push"
+  },
+  "releaseCommands": [
+    "pnpm install --frozen-lockfile",
+    "pnpm run generate",
+    "pnpm exec prisma validate",
+    "pnpm run db:migrate:status",
+    "pnpm run db:migrate:deploy",
+    "pnpm run release:phase4:cleaning-crm"
+  ],
+  "verification": {
+    "dependencyFreePhase4Contracts": "12/12 passed",
+    "focusedPhase1To3Regressions": "21/21 passed",
+    "phase8RolloutContract": "5/5 passed",
+    "r2Regressions": "19/19 passed",
+    "typescriptSyntaxParse": "542 files, 0 syntax errors",
+    "dependencyAwareGate": "must be run in CI/staging after installing locked dependencies"
+  },
+  "changedFiles": [
+    {
+      "path": ".env.example",
+      "status": "modified",
+      "sha256": "9a61815f23136eaaff61c7914adac7b4151d5533706b57d2c8b82b53ce12c7c0"
+    },
+    {
+      "path": ".gitignore",
+      "status": "modified",
+      "sha256": "ca09b0f6242b951cb08e01b5fa2764ce4ad83b92822fde2979c2713a39bda06e"
+    },
+    {
+      "path": "docs/phase4-production-release/README.md",
+      "status": "added",
+      "sha256": "011a32c506c468f0a2c16329d6301b3bd7126d6e496feae00a2579b16461c936"
+    },
+    {
+      "path": "docs/phase4-production-release/VERIFICATION.md",
+      "status": "added",
+      "sha256": "e4f2661036afa877e5bd71e6b8cc470fb9abc1e44447209fa36cb12e472ff75d"
+    },
+    {
+      "path": "package.json",
+      "status": "modified",
+      "sha256": "496cf5ab5ec613351840cb28209fb3c98735c08ebbf9a14d2b01f83647c02a00"
+    },
+    {
+      "path": "scripts/phase4-cleaning-crm/verifyProductionReadiness.mjs",
+      "status": "added",
+      "sha256": "9fae78053a8cace206395ddc64e78a777d1441a56abc1c5c98c58440abf0b94d"
+    },
+    {
+      "path": "scripts/phase7/checkSecretSafety.mjs",
+      "status": "modified",
+      "sha256": "16bd3c1f81d72ee7306420ce202585c7144955c32343fc18254e74dd7f3b365a"
+    },
+    {
+      "path": "scripts/phase8/verifyProductionRollout.mjs",
+      "status": "modified",
+      "sha256": "000eee813b47f25307c4874ae75c3bc31a6d9b9048cfebefc61146a1877f5ce8"
+    },
+    {
+      "path": "src/config/authSecurity.ts",
+      "status": "modified",
+      "sha256": "d5f038760d27bdf1aae3a33636dd363c99a018a28e4892127df5d1a8fb1ee3df"
+    },
+    {
+      "path": "src/contracts/phase4CleaningCrmFinalContract.test.ts",
+      "status": "added",
+      "sha256": "f6dde08f88c276291fd4c79a69a876d2faaefb385748b1d9fe2aabfeb6240482"
+    },
+    {
+      "path": "src/lib/logger.ts",
+      "status": "modified",
+      "sha256": "778cac50d1fa878f83fba9e5c35d6b5420ba201d27b7dc24b4f47c30351c4882"
+    },
+    {
+      "path": "src/modules/Review/review.routes.ts",
+      "status": "modified",
+      "sha256": "6038ead51e75ee23bf45ec1f458742258e2e9f319a21fbdc108324d0c06c2677"
+    },
+    {
+      "path": "src/modules/Review/review.service.ts",
+      "status": "modified",
+      "sha256": "288b2553b812a70774fc802b7221dd10b5b432846e0567b2934f1857f9a83809"
+    },
+    {
+      "path": "src/modules/Review/review.validation.ts",
+      "status": "modified",
+      "sha256": "3c37dee75ab79cce04fc1953f3075ac80d037989592ea76730b59e635d3bc354"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/serviceCatalog.controller.ts",
+      "status": "modified",
+      "sha256": "b94b5de749e045650ca8f9afb30841761671f7c386c46057622aa269b2bc83d2"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/serviceCatalog.interface.ts",
+      "status": "modified",
+      "sha256": "bef1bae98be6e75edbb6734afd4d512800843ef4031f945c1392727ac24ca7a7"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/serviceCatalog.routes.ts",
+      "status": "modified",
+      "sha256": "85ef240e4d81467c44fbc06f7f6cfe381aec07d4b6ed58396fa62c7de1b25247"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/serviceCatalog.service.ts",
+      "status": "modified",
+      "sha256": "5f6ae9f0896bef78153e1b78ab5d65bc18496aa2940e10f7d594abafbda7181c"
+    },
+    {
+      "path": "src/modules/ServiceCatalog/serviceCatalog.validation.ts",
+      "status": "modified",
+      "sha256": "54e57bb2acfa7de03b5e79ef7a99577ae41241446c983bfa83d61f49d222edfe"
+    },
+    {
+      "path": "src/modules/Subscription/subscription.controller.ts",
+      "status": "modified",
+      "sha256": "c1f8f9ad78db13395e4c96555df6be2403c32e951f16828c536826824654a65d"
+    },
+    {
+      "path": "src/modules/Subscription/subscription.routes.ts",
+      "status": "modified",
+      "sha256": "cd611c87c7a4b1c778e57b428ce1b8701c58594f5a77ffe81b524e31eda64a70"
+    },
+    {
+      "path": "src/modules/Subscription/subscription.validation.ts",
+      "status": "modified",
+      "sha256": "a68f8d1866c67190184bf46f9723abb21c7a7309ea5ca65b47faa77f8fffe8c8"
+    },
+    {
+      "path": "src/modules/SuperAdmin/tenantAdmin.service.ts",
+      "status": "modified",
+      "sha256": "683c4587cbf993281010fd6d4cb58875536b052f98ad1ec1eedcfb00416b9ad3"
+    },
+    {
+      "path": "src/modules/Website/publicWebsite.service.ts",
+      "status": "modified",
+      "sha256": "5c037be70e9cab1d862d5ce0f682992c03f3a513d0f092c4305c1382035d5c82"
+    },
+    {
+      "path": "tests/production/phase4-cleaning-crm-production.test.cjs",
+      "status": "added",
+      "sha256": "493d305dee2609bc457caf70e5c82aa12758e2cffc75f6e0e79cb774510dcc1c"
+    },
+    {
+      "path": "tests/security/phase8ProductionRolloutContract.test.mjs",
+      "status": "modified",
+      "sha256": "d449bc41c5dc9d4f822c09e9e521805a0e6425c344072295bb1856e280df380c"
+    }
+  ]
+}

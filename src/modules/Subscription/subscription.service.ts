@@ -224,6 +224,10 @@ const getMySubscription = async (user: IRequestUser) => {
 
 type SubscriptionDb = Prisma.TransactionClient | typeof prisma;
 
+type TrialSubscriptionResult = Prisma.SubscriptionGetPayload<{
+    include: { plan: true; subscriptionPlan: true };
+}>;
+
 interface CreateTrialSubscriptionOptions {
     db?: SubscriptionDb;
     trialDays?: number;
@@ -234,7 +238,7 @@ interface CreateTrialSubscriptionOptions {
 const createTrialSubscription = async (
     adminId: string,
     options: CreateTrialSubscriptionOptions = {},
-) => {
+): Promise<TrialSubscriptionResult> => {
     // If this helper is ever called outside an existing transaction, create a
     // transaction so the advisory lock below covers both the history check and
     // insert. This closes the double-provisioning race from concurrent repair
@@ -243,7 +247,7 @@ const createTrialSubscription = async (
     // same canonical registration transaction.
     if (!options.skipExistingCheck && (!options.db || options.db === prisma)) {
         return prisma.$transaction(
-            async (tx) =>
+            async (tx): Promise<TrialSubscriptionResult> =>
                 createTrialSubscription(adminId, {
                     ...options,
                     db: tx,

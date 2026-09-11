@@ -63,6 +63,9 @@ const bulkCreateServiceCatalogSchema = z
 const updateServiceCatalogSchema = serviceCatalogBaseSchema
     .partial()
     .strict()
+    .refine((value) => Object.keys(value).length > 0, {
+        message: "Provide at least one service field to update",
+    })
     .transform(({ basePrice, basePriceGbp, ...rest }) => ({
         ...rest,
         ...(basePrice !== undefined || basePriceGbp !== undefined
@@ -70,8 +73,24 @@ const updateServiceCatalogSchema = serviceCatalogBaseSchema
             : {}),
     }));
 
+
+
+const serviceCatalogFiltersSchema = z.object({
+    page: z.coerce.number().int().min(1).max(100_000).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    searchTerm: z.string().trim().max(200).optional(),
+    category: z.nativeEnum(ServiceCategory).optional(),
+    status: z.nativeEnum(ServiceStatus).optional(),
+}).strict();
+
+const serviceCatalogIdParamsSchema = z.object({
+    id: z.string().uuid("Choose a valid service."),
+}).strict();
+
 export const serviceCatalogValidation = {
     createServiceCatalog: createServiceCatalogSchema,
     bulkCreateServiceCatalog: bulkCreateServiceCatalogSchema,
     updateServiceCatalog: updateServiceCatalogSchema,
+    serviceCatalogFilters: serviceCatalogFiltersSchema,
+    serviceCatalogIdParams: serviceCatalogIdParamsSchema,
 };

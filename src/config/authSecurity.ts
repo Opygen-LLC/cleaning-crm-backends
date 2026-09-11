@@ -62,6 +62,12 @@ export const assertAuthSecurityConfiguration = (): void => {
     if (!accessMs || accessMs <= 0) {
         throw new Error("ACCESS_TOKEN_EXPIRES_IN must be a valid duration");
     }
+    // Keep bearer credentials short-lived even if a production environment
+    // accidentally drifts from the documented 15 minute contract. Refresh
+    // tokens remain the long-lived, rotating credential.
+    if (accessMs > 15 * 60_000) {
+        throw new Error("ACCESS_TOKEN_EXPIRES_IN must not exceed 15m in production");
+    }
 
     const explicitAllowedOrigins = AUTH_ALLOWED_ORIGINS
         .map(normalizeOrigin)

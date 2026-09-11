@@ -15,7 +15,7 @@ import { WebsiteProjectionCacheService } from "../Website/websiteProjectionCache
 import redis from "../../config/redis";
 import { CacheNamespaces, CacheTtl, ttlForKey } from "../../lib/cache/cachePolicy";
 import { invalidateBookingFormsForAdmin } from "../BookingForm/bookingForm.cache";
-import { ServiceStatus } from "../../generated/prisma/enums";
+import { ServiceCategory, ServiceStatus } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { allocateServiceSlugTx } from "./serviceCatalog.slug";
 import { lockServiceCatalogTx } from "./serviceCatalogConcurrency";
@@ -358,25 +358,49 @@ const getAllServiceCatalogs = async (
 ) => {
   const adminId = await getAdminId(user);
   const { searchTerm, category, status: serviceStatus } = filters;
+  const page = filters.page ?? 1;
+  const limit = filters.limit ?? 10;
   const services = await loadCanonicalServiceCatalog(adminId);
   const needle = searchTerm?.trim().toLocaleLowerCase("en-GB") ?? "";
 
-  return services
-    .filter((service) => {
-      if (category && normalizeServiceCategory(service.category) !== category)
-        return false;
-      if (
-        serviceStatus &&
-        String(service.status).toUpperCase() !== String(serviceStatus).toUpperCase()
-      )
-        return false;
-      if (!needle) return true;
-      return (
-        service.serviceName.toLocaleLowerCase("en-GB").includes(needle) ||
-        service.description.toLocaleLowerCase("en-GB").includes(needle)
-      );
-    })
-    .map(normalizeServiceForApi);
+  const filtered = services.filter((service) => {
+    if (category && normalizeServiceCategory(service.category) !== category) return false;
+    if (
+      serviceStatus &&
+      String(service.status).toUpperCase() !== String(serviceStatus).toUpperCase()
+    ) return false;
+    if (!needle) return true;
+    return (
+      service.serviceName.toLocaleLowerCase("en-GB").includes(needle) ||
+      service.description.toLocaleLowerCase("en-GB").includes(needle)
+    );
+  });
+
+  // Summary cards describe the tenant's complete current catalogue, not only
+  // the current page. This prevents page 2 (or a narrow filter) from making
+  // organization-level counts appear to change.
+  const stats = services.reduce(
+    (acc, service) => {
+      acc.total += 1;
+      if (service.status === ServiceStatus.ACTIVE) acc.active += 1;
+      else acc.inactive += 1;
+      const normalizedCategory = normalizeServiceCategory(service.category);
+      if (normalizedCategory === ServiceCategory.RESIDENTIAL) acc.residential += 1;
+      else if (normalizedCategory === ServiceCategory.COMMERCIAL) acc.commercial += 1;
+      else acc.specialist += 1;
+      return acc;
+    },
+    { total: 0, active: 0, inactive: 0, residential: 0, commercial: 0, specialist: 0 },
+  );
+
+  const total = filtered.length;
+  const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+  const start = (page - 1) * limit;
+
+  return {
+    data: filtered.slice(start, start + limit).map(normalizeServiceForApi),
+    meta: { page, limit, total, totalPages, stats },
+  };
 };
 
 const getServiceCatalogById = async (id: string, user: IRequestUser) => {

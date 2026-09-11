@@ -17,6 +17,7 @@ import {
 } from "../../middlewares/validations/zodValidation.middleware";
 import { reviewValidation } from "./review.validation";
 import { publicMutationRateLimit, publicReadRateLimit, publicResourceMutationRateLimit, publicSensitiveNoStore } from "../../middlewares/publicApiSecurity";
+import { publicJsonOnly, publicReviewBodyLimit } from "../../middlewares/publicWebsiteRequestSecurity";
 
 const router = Router();
 
@@ -26,7 +27,13 @@ const hasReviews     = checkFeature("reviews");
 // ── Public routes (no auth, no feature gate) ──────────────────────────────────
 
 // GET  /review/public/:token  → validate token & return job summary
-router.get("/public/:token", publicSensitiveNoStore, publicReadRateLimit, reviewController.validateReviewToken);
+router.get(
+    "/public/:token",
+    publicSensitiveNoStore,
+    publicReadRateLimit,
+    zodValidate(reviewValidation.reviewTokenParams, ValidationProperty.PARAMS),
+    reviewController.validateReviewToken,
+);
 
 // POST /review/public/:token  → submit review
 router.post(
@@ -34,6 +41,9 @@ router.post(
     publicSensitiveNoStore,
     publicMutationRateLimit,
     publicResourceMutationRateLimit,
+    publicJsonOnly,
+    publicReviewBodyLimit,
+    zodValidate(reviewValidation.reviewTokenParams, ValidationProperty.PARAMS),
     zodValidate(reviewValidation.submitPublicReview, ValidationProperty.BODY),
     reviewController.submitPublicReview,
 );
@@ -53,6 +63,7 @@ router.post(
     "/generate-token/:jobId",
     isTenantAdmin,
     hasReviews,
+    zodValidate(reviewValidation.reviewJobIdParams, ValidationProperty.PARAMS),
     reviewController.generateTokenForJob,
 );
 
@@ -88,6 +99,7 @@ router.post(
     "/:id/resend-email",
     isTenantAdmin,
     hasReviews,
+    zodValidate(reviewValidation.reviewIdParams, ValidationProperty.PARAMS),
     reviewController.resendReviewEmail,
 );
 
@@ -96,6 +108,7 @@ router.get(
     "/:id",
     isTenantAdmin,
     hasReviews,
+    zodValidate(reviewValidation.reviewIdParams, ValidationProperty.PARAMS),
     reviewController.getReviewById,
 );
 
@@ -104,6 +117,7 @@ router.patch(
     "/:id",
     isTenantAdmin,
     hasReviews,
+    zodValidate(reviewValidation.reviewIdParams, ValidationProperty.PARAMS),
     zodValidate(reviewValidation.updateReview, ValidationProperty.BODY),
     reviewController.updateReview,
 );

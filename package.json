@@ -135,7 +135,9 @@
     "media:migrate:r2:dry-run": "tsx src/scripts/migrateLegacyMediaToR2.ts --dry-run",
     "media:migrate:r2:verify": "tsx src/scripts/migrateLegacyMediaToR2.ts --verify-only",
     "r2:lifecycle:apply": "tsx src/scripts/configureR2Lifecycle.ts",
-    "test:r2:phase3": "node --test tests/r2/phase3-r2-hardening.test.mjs"
+    "test:r2:phase3": "node --test tests/r2/phase3-r2-hardening.test.mjs",
+    "test:phase4:cleaning-crm": "node scripts/phase4-cleaning-crm/verifyProductionReadiness.mjs",
+    "release:phase4:cleaning-crm": "pnpm run test:phase4:cleaning-crm && pnpm run release:check"
   },
   "keywords": [],
   "author": "opygen",

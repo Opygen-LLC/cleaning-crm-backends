@@ -35,10 +35,14 @@ const bulkUpsertServiceCatalogs = catchAsync(async (req, res) => {
 });
 
 const getAllServiceCatalogs = catchAsync(async (req, res) => {
+  // Express 5 exposes req.query through a getter, so zodValidate validates it
+  // without replacing it. Convert the already-validated scalar values here.
   const filters: IServiceCatalogFilters = {
-    searchTerm: req.query.searchTerm as string,
+    page: req.query.page ? Number(req.query.page) : undefined,
+    limit: req.query.limit ? Number(req.query.limit) : undefined,
+    searchTerm: req.query.searchTerm as string | undefined,
     category: req.query.category as IServiceCatalogFilters["category"],
-    status: req.query.status as ServiceStatus,
+    status: req.query.status as ServiceStatus | undefined,
   };
 
   const result = await serviceCatalogService.getAllServiceCatalogs(filters, req.user);
@@ -47,7 +51,8 @@ const getAllServiceCatalogs = catchAsync(async (req, res) => {
     httpStatusCode: status.OK,
     success: true,
     message: "Services retrieved successfully",
-    data: result,
+    data: result.data,
+    meta: result.meta,
   });
 });
 

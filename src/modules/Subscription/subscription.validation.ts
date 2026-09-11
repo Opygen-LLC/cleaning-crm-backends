@@ -29,9 +29,17 @@ const proofUploadParamsSchema = z.object({
     uploadId: z.string().uuid("Choose a valid subscription proof upload."),
 }).strict();
 
+
+
+const billingHistoryQuerySchema = z.object({
+    page: z.coerce.number().int().min(1).max(100_000).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+}).strict();
+
 export const subscriptionValidation = {
     changePlanSchema,
     submitPaymentProofSchema,
     proofUploadInitiateSchema,
     proofUploadParamsSchema,
+    billingHistoryQuerySchema,
 };

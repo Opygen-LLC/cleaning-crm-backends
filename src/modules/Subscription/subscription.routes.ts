@@ -15,7 +15,11 @@ router.use(checkAuth(UserRole.ADMIN));
 // Subscription routes intentionally live outside checkSubscription so expired
 // accounts can still inspect plans, create a checkout and submit payment proof.
 router.get("/me", subscriptionController.getMySubscription);
-router.get("/me/billing-history", subscriptionController.getMyBillingHistory);
+router.get(
+    "/me/billing-history",
+    zodValidate(subscriptionValidation.billingHistoryQuerySchema, ValidationProperty.QUERY),
+    subscriptionController.getMyBillingHistory,
+);
 
 // Recovery-only media path. It is intentionally outside checkSubscription so
 // expired/suspended subscriptions can upload exactly one allowed media purpose:

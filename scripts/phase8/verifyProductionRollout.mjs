@@ -36,7 +36,7 @@ assert.doesNotMatch(save, /invalidateHosts\(/);
 assert.doesNotMatch(save, /invalidateSubdomains\(/);
 assert.match(publish, /publishedSnapshot/);
 assert.match(publish, /enqueuePublicationTx\(tx/);
-assert.match(publish, /deliverImmediate/);
+assert.match(publish, /WebsitePublicationDeliveryService\.attemptImmediate/);
 const delivery = read("src/modules/Website/websitePublicationDelivery.service.ts");
 assert.match(delivery, /await TenantAccessResolver\.invalidate/);
 assert.match(delivery, /invalidateWebsite\(/);

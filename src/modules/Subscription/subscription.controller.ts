@@ -59,8 +59,8 @@ const resumeSubscription = catchAsync(async (req, res) => {
 
 const getMyBillingHistory = catchAsync(async (req, res) => {
   const result = await subscriptionService.getMyBillingHistory(req.user, {
-    page: req.query.page ? parseInt(req.query.page as string) : undefined,
-    limit: req.query.limit ? parseInt(req.query.limit as string) : undefined,
+    page: req.query.page ? Number(req.query.page) : undefined,
+    limit: req.query.limit ? Number(req.query.limit) : undefined,
   });
   sendResponse(res, {
     httpStatusCode: status.OK,

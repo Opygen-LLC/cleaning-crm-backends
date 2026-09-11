@@ -33,6 +33,10 @@ router.post(
 router.get(
   "/",
   checkAuth(UserRole.ADMIN, UserRole.STAFF),
+  zodValidate(
+    serviceCatalogValidation.serviceCatalogFilters,
+    ValidationProperty.QUERY,
+  ),
   serviceCatalogController.getAllServiceCatalogs,
 );
 
@@ -53,12 +57,20 @@ router.post(
 router.get(
   "/:id",
   checkAuth(UserRole.ADMIN, UserRole.STAFF),
+  zodValidate(
+    serviceCatalogValidation.serviceCatalogIdParams,
+    ValidationProperty.PARAMS,
+  ),
   serviceCatalogController.getServiceCatalogById,
 );
 
 router.patch(
   "/:id",
   checkAuth(UserRole.ADMIN),
+  zodValidate(
+    serviceCatalogValidation.serviceCatalogIdParams,
+    ValidationProperty.PARAMS,
+  ),
   zodValidate(
     serviceCatalogValidation.updateServiceCatalog,
     ValidationProperty.BODY,
@@ -69,6 +81,10 @@ router.patch(
 router.delete(
   "/:id",
   checkAuth(UserRole.ADMIN),
+  zodValidate(
+    serviceCatalogValidation.serviceCatalogIdParams,
+    ValidationProperty.PARAMS,
+  ),
   serviceCatalogController.deleteServiceCatalog,
 );
 

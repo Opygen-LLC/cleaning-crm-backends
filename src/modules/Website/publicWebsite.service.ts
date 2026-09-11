@@ -83,7 +83,7 @@ const loadProjectionSource = async (websiteId: string, options: { includeDraftPa
           user: { select: { email: true, status: true } },
           subscription: { orderBy: { createdAt: "desc" }, take: 1, select: websiteEntitlementSubscriptionSelect },
           serviceCatalogs: {
-            where: { status: ServiceStatus.ACTIVE },
+            where: { status: ServiceStatus.ACTIVE, archivedAt: null },
             select: {
               id: true,
               serviceName: true,
@@ -615,6 +615,16 @@ const resolvePublicContactIntegration = async (identifier: string) => {
 const resolvePublicReviewIntegration = async (identifier: string, serviceSlug?: string | null) => {
   const site = await getPublicWebsite(identifier);
   const adminId = await requireProjectionAdminId(site.website.id);
+  const access = await TenantAccessResolver.resolve(adminId);
+  // Public review endpoints must obey the same effective entitlement as the
+  // authenticated Reviews dashboard. Return a public-safe 404 rather than
+  // exposing a tenant's subscription state to anonymous visitors.
+  if (!access.effectiveEntitlements.reviews) {
+    throw new AppError(status.NOT_FOUND, "Reviews are not available on this website.", {
+      code: "WEBSITE_REVIEWS_UNAVAILABLE",
+      retryable: false,
+    });
+  }
   const normalizedSlug = serviceSlug?.trim().toLowerCase() || null;
 
   if (!normalizedSlug) {
@@ -632,6 +642,7 @@ const resolvePublicReviewIntegration = async (identifier: string, serviceSlug?: 
       adminId,
       slug: normalizedSlug,
       status: ServiceStatus.ACTIVE,
+      archivedAt: null,
     },
     select: { id: true, slug: true, serviceName: true },
   });

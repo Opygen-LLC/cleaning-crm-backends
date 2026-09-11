@@ -54,9 +54,18 @@ test("Set Active, component changes and animations remain editor-only; Publish i
   assert.match(publish, /assertWebsiteDesignPublishable/);
   assert.ok(publish.indexOf("assertWebsiteDesignPublishable") < publish.indexOf("buildPublishedSnapshot"));
   assert.match(publish, /publishedSnapshot/);
-  assert.match(publish, /invalidateWebsite\(/);
-  assert.match(publish, /invalidateHosts\(/);
-  assert.match(publish, /invalidateSubdomains\(/);
+  // Publication now persists a durable delivery event inside the transaction,
+  // then attempts that exact event immediately. Cache invalidation lives in the
+  // shared delivery service so retries and the outbox worker execute identical
+  // ordering rather than maintaining a second publish-only invalidation path.
+  assert.match(publish, /enqueuePublicationTx\(/);
+  assert.match(publish, /WebsitePublicationDeliveryService\.attemptImmediate/);
+  const delivery = read("src/modules/Website/websitePublicationDelivery.service.ts");
+  assert.match(delivery, /await TenantAccessResolver\.invalidate/);
+  assert.match(delivery, /invalidateWebsite\(/);
+  assert.match(delivery, /invalidateHosts\(/);
+  assert.match(delivery, /invalidateSubdomains\(/);
+  assert.ok(delivery.indexOf("await TenantAccessResolver.invalidate") < delivery.indexOf("invalidateSubdomains("));
 });
 
 test("the release gate makes Phase 8 regression protection mandatory in CI", () => {

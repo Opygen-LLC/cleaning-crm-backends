@@ -35,6 +35,8 @@ export interface IServiceCatalogUpdate {
 }
 
 export interface IServiceCatalogFilters {
+    page?: number;
+    limit?: number;
     searchTerm?: string;
     category?: ServiceCategory;
     status?: ServiceStatus;

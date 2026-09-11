@@ -1,5 +1,20 @@
 import { z } from "zod";
 
+const uuidParams = (key: "token" | "id" | "jobId", message: string) =>
+  z.object({ [key]: z.string().uuid(message) }).strict();
+
+const reviewTokenParams = uuidParams("token", "Review link is invalid.");
+const reviewIdParams = uuidParams("id", "Choose a valid review.");
+const reviewJobIdParams = uuidParams("jobId", "Choose a valid completed job.");
+
+const reviewDateInput = z.string().trim().max(40).refine((value) => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  }
+  return !Number.isNaN(Date.parse(value));
+}, "Choose a valid date.");
+
 const submitPublicReview = z.object({
   serviceRating: z.number().int().min(1).max(5),
   serviceComment: z.string().trim().max(5000).optional(),
@@ -63,12 +78,21 @@ const reviewFilters = z.object({
   rating: z.coerce.number().int().min(1).max(5).optional(),
   staffId: z.union([z.literal("not-null"), z.string().uuid()]).optional(),
   jobId: z.string().uuid().optional(),
-  dateFrom: z.string().max(40).optional(),
-  dateTo: z.string().max(40).optional(),
+  dateFrom: reviewDateInput.optional(),
+  dateTo: reviewDateInput.optional(),
   scope: z.enum(["COMPANY", "SERVICE", "JOB", "STAFF"]).optional(),
   source: z.enum(["WEBSITE", "JOB_TOKEN"]).optional(),
   serviceCatalogId: z.string().uuid().optional(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (!value.dateFrom || !value.dateTo) return;
+  if (Date.parse(value.dateFrom) > Date.parse(value.dateTo)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["dateTo"],
+      message: "End date must be on or after the start date.",
+    });
+  }
+});
 
 const updateReview = z.object({
   status: z.enum(["pending", "published", "unpublished", "flagged"]).optional(),
@@ -77,6 +101,13 @@ const updateReview = z.object({
   isPublished: z.boolean().optional(),
   adminReply: z.string().trim().max(5000).optional(),
 }).strict().superRefine((value, ctx) => {
+  if (value.status === undefined && value.isPublished === undefined && value.adminReply === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: [],
+      message: "Provide at least one review field to update.",
+    });
+  }
   if (value.status !== undefined && value.isPublished !== undefined) {
     const expected = value.status === "published";
     if (expected !== value.isPublished) {
@@ -90,6 +121,9 @@ const updateReview = z.object({
 });
 
 export const reviewValidation = {
+  reviewTokenParams,
+  reviewIdParams,
+  reviewJobIdParams,
   submitPublicReview,
   reviewContextQuery,
   submitWebsiteReview,

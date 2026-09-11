@@ -477,11 +477,32 @@ export const getTenantDeletionPreview = async (identifier: string) => {
 const purgeTenantR2Objects = async (adminId: string) => {
   const organizationPrefix = `organizations/${adminId}/`;
   const temporaryPrefix = `tmp/${adminId}/`;
-  const [publicDeleted, privateDeleted, temporaryDeleted] = await Promise.all([
+  // Wait for every independent R2 purge to settle. Promise.all would reject on
+  // the first failure while the other deletions continue in the background,
+  // making a retry race an unknown partial cleanup. allSettled gives the
+  // deletion workflow a deterministic checkpoint before it records failure.
+  const [publicResult, privateResult, temporaryResult] = await Promise.allSettled([
     r2StorageService.deletePrefix(R2_PUBLIC_BUCKET, organizationPrefix),
     r2StorageService.deletePrefix(R2_PRIVATE_BUCKET, organizationPrefix),
     r2StorageService.deletePrefix(R2_PRIVATE_BUCKET, temporaryPrefix),
   ]);
+  const failedScopes = [
+    ["public organization media", publicResult],
+    ["private organization media", privateResult],
+    ["temporary uploads", temporaryResult],
+  ].flatMap(([label, result]) =>
+    (result as PromiseSettledResult<number>).status === "rejected" ? [String(label)] : [],
+  );
+  if (failedScopes.length) {
+    throw new Error(`R2 tenant purge did not complete for: ${failedScopes.join(", " )}`);
+  }
+  const settledValue = (result: PromiseSettledResult<number>): number => {
+    if (result.status === "rejected") throw new Error("R2 tenant purge did not complete");
+    return result.value;
+  };
+  const publicDeleted = settledValue(publicResult);
+  const privateDeleted = settledValue(privateResult);
+  const temporaryDeleted = settledValue(temporaryResult);
   return { publicDeleted, privateDeleted, temporaryDeleted, totalDeleted: publicDeleted + privateDeleted + temporaryDeleted };
 };
 
