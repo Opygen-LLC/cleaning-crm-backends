@@ -25,6 +25,8 @@ export interface ProvisionRegisteredAdminInput {
   email: string;
   password: string;
   businessName: string;
+  /** ISO-3166-1 alpha-2 country chosen in registration Step 1. */
+  country: string;
   trialDays: number;
   requireEmailVerification?: boolean;
   /** Optional fields collected in the 2-step registration wizard */
@@ -207,6 +209,7 @@ const runProvisioningTransaction = async (
         {
           userId: input.userId,
           businessName: input.businessName.trim(),
+          country: input.country,
           mobileNumber: input.mobileNumber,
           businessType: input.businessType,
           licenseNumber: input.licenseNumber,

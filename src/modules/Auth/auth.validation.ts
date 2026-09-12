@@ -1,5 +1,6 @@
 import z from "zod";
 import { optionalE164PhoneSchema } from "../../lib/validation/phone";
+import { resolveCountryEnum } from "../../lib/constants/countryIsoMap";
 
 const registerValidation = z
     .object({
@@ -8,6 +9,12 @@ const registerValidation = z
             .min(2, "Business name must be at least 2 characters")
             .max(100, "Business name is too long")
             .trim(),
+        country: z
+            .string()
+            .trim()
+            .length(2, "Select a valid business country")
+            .transform((value) => value.toUpperCase())
+            .refine((value) => Boolean(resolveCountryEnum(value)), "Select a supported business country"),
         name: z
             .string()
             .min(2, "Name must be at least 2 characters")
@@ -35,8 +42,8 @@ const registerValidation = z
             .max(60, "License / Trade ID is too long")
             .optional(),
     });
-    // NOTE: .strict() intentionally removed so the optional wizard fields
-    // are accepted without breaking existing integrations.
+    // NOTE: .strict() intentionally omitted for rolling compatibility with
+    // older registration clients that may send harmless extra wizard fields.
 
 const loginValidation = z
     .object({

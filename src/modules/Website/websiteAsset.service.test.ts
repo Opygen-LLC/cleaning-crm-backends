@@ -10,6 +10,7 @@ const { prismaMock, getAdminIdMock, websiteServiceMock, entitlementMock, mediaMo
   mediaMock: {
     initiateUpload: vi.fn(),
     bindReadyAsset: vi.fn(),
+    deleteAssetIfUnreferencedForTenant: vi.fn(),
   },
 }));
 
@@ -106,6 +107,7 @@ describe("WebsiteAssetService R2 brand uploads", () => {
     await expect(WebsiteAssetService.finalizeBrandUpload({ kind: "favicon", mediaAssetId: "asset-favicon" }, requester))
       .rejects.toThrow("approximately square");
     expect(websiteServiceMock.attachManagedBrandAsset).not.toHaveBeenCalled();
+    expect(mediaMock.deleteAssetIfUnreferencedForTenant).toHaveBeenCalledWith("asset-favicon", "admin-1");
   });
 
   it("rejects social-image uploads when Advanced Website SEO is unavailable", async () => {

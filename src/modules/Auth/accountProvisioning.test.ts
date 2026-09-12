@@ -127,6 +127,7 @@ describe("AccountProvisioningService", () => {
       email: "JAMIE@example.com",
       password: "Secret123!",
       businessName: "Sparkle Cleaning",
+      country: "GB",
       licenseNumber: "LIC-2026-001",
       trialDays: 14,
     });
@@ -151,7 +152,7 @@ describe("AccountProvisioningService", () => {
       }),
     });
     expect(mocks.createAdmin).toHaveBeenCalledWith(
-      { userId, businessName: "Sparkle Cleaning", mobileNumber: undefined, businessType: undefined, licenseNumber: "LIC-2026-001" },
+      { userId, businessName: "Sparkle Cleaning", country: "GB", mobileNumber: undefined, businessType: undefined, licenseNumber: "LIC-2026-001" },
       mocks.tx,
     );
     expect(mocks.seedRecommendedServices).toHaveBeenCalledWith(mocks.tx, "admin-1");
@@ -187,6 +188,7 @@ describe("AccountProvisioningService", () => {
       email: "jamie@example.com",
       password: "Secret123!",
       businessName: "Sparkle Cleaning",
+      country: "GB",
       trialDays: 14,
       requireEmailVerification: false,
     });
@@ -216,6 +218,7 @@ describe("AccountProvisioningService", () => {
       email: "jamie@example.com",
       password: "Secret123!",
       businessName: "Sparkle Cleaning",
+      country: "GB",
       trialDays: 7,
     })).rejects.toMatchObject({ statusCode: 409 });
 
@@ -234,6 +237,7 @@ describe("AccountProvisioningService", () => {
       email: "jamie@example.com",
       password: "Secret123!",
       businessName: "Sparkle Cleaning",
+      country: "GB",
       trialDays: 7,
     })).rejects.toThrow("trial plan missing");
 

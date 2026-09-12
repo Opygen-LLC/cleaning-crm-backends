@@ -38,9 +38,9 @@ const assertDimensions = (kind: WebsiteBrandAssetKind, asset: { width: number | 
   const bytes = Number(asset.storedBytes ?? 0);
   const limit = LIMITS[kind];
   const label = kind === "logo" ? "Logo" : kind === "favicon" ? "Favicon" : "Social share image";
-  if (!width || !height || width < limit.minWidth || height < limit.minHeight) throw new AppError(status.BAD_REQUEST, `${label} dimensions are too small`);
-  if (width > limit.maxWidth || height > limit.maxHeight) throw new AppError(status.BAD_REQUEST, `${label} dimensions are too large`);
-  if (!bytes || bytes > limit.maxBytes) throw new AppError(status.BAD_REQUEST, `${label} file is too large`);
+  if (!width || !height || width < limit.minWidth || height < limit.minHeight) throw new AppError(status.BAD_REQUEST, `${label} dimensions are too small. Minimum ${limit.minWidth}x${limit.minHeight}px.`);
+  if (width > limit.maxWidth || height > limit.maxHeight) throw new AppError(status.BAD_REQUEST, `${label} dimensions are too large. Maximum ${limit.maxWidth}x${limit.maxHeight}px.`);
+  if (!bytes || bytes > limit.maxBytes) throw new AppError(status.BAD_REQUEST, `${label} file is too large. Maximum ${Math.round(limit.maxBytes / 1024 / 1024)} MB.`);
   const ratio = width / height;
   if (kind === "favicon" && (ratio < 0.8 || ratio > 1.25)) throw new AppError(status.BAD_REQUEST, "Favicon must be approximately square");
   if (kind === "logo" && (ratio < 0.1 || ratio > 10)) throw new AppError(status.BAD_REQUEST, "Logo aspect ratio is not supported");
@@ -68,10 +68,10 @@ const requestBrandUploadSignature = async (input: WebsiteBrandUploadSignatureInp
 const finalizeBrandUpload = async (input: WebsiteBrandUploadFinalizeInput, user: IRequestUser) => {
   const { adminId, website } = await assertWebsiteCanUpload(input.kind, user);
   const asset = await mediaService.bindReadyAsset(input.mediaAssetId, user, "WEBSITE_BRAND", website.id);
-  if (!asset.publicUrl) throw new AppError(status.CONFLICT, "Website image is not publicly available yet.", { code: "MEDIA_NOT_READY", retryable: true });
-  assertDimensions(input.kind, asset);
 
   try {
+    if (!asset.publicUrl) throw new AppError(status.CONFLICT, "Website image is not publicly available yet.", { code: "MEDIA_NOT_READY", retryable: true });
+    assertDimensions(input.kind, asset);
     const result = await WebsiteService.attachManagedBrandAsset({
       kind: input.kind,
       publicId: asset.objectKey,

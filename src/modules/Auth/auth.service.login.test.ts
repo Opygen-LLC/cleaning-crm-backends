@@ -179,9 +179,10 @@ describe("login Better Auth + rotating refresh contract", () => {
 
 describe("complete auth lifecycle service regression", () => {
   it("register requires email verification by default and delegates to canonical provisioning", async () => {
-    const result = await authService.register({ businessName: "Jamie Cleaning", name: "Jamie Doe", email: "jamie@example.com", password: "correct-password" });
+    const result = await authService.register({ businessName: "Jamie Cleaning", country: "GB", name: "Jamie Doe", email: "jamie@example.com", password: "correct-password" });
     expect(mocks.provisionRegisteredAdmin).toHaveBeenCalledWith({
       businessName: "Jamie Cleaning",
+      country: "GB",
       name: "Jamie Doe",
       email: "jamie@example.com",
       password: "correct-password",
@@ -208,7 +209,7 @@ describe("complete auth lifecycle service regression", () => {
     });
 
     const result = await authService.register(
-      { businessName: "Jamie Cleaning", name: "Jamie Doe", email: "jamie@example.com", password: "correct-password" },
+      { businessName: "Jamie Cleaning", country: "GB", name: "Jamie Doe", email: "jamie@example.com", password: "correct-password" },
       { ipAddress: "203.0.113.20", userAgent: "Registration Browser" },
     );
 
@@ -230,6 +231,7 @@ describe("complete auth lifecycle service regression", () => {
 
     const result = await authService.register({
       businessName: "Jamie Cleaning",
+      country: "GB",
       name: "Jamie Doe",
       email: "jamie@example.com",
       password: "correct-password",

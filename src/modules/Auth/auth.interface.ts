@@ -1,5 +1,7 @@
 export interface IRegisterUserPayload {
     businessName: string;
+    /** ISO-3166-1 alpha-2 business country selected before OTP verification */
+    country: string;
     name: string;
     email: string;
     password: string;

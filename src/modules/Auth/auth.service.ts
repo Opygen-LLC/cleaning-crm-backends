@@ -210,6 +210,7 @@ const ensureVerifiedSessionToken = async (
  */
 const register = async ({
     businessName,
+    country,
     name,
     email,
     password,
@@ -228,6 +229,7 @@ const register = async ({
     const verificationRequired = platformConfig.authentication?.requireEmailOtpVerification ?? true;
     const provisioned = await AccountProvisioningService.provisionRegisteredAdmin({
         businessName,
+        country,
         name,
         email,
         password,

@@ -6,6 +6,7 @@ import logger from "../../lib/logger";
 import AppError from "../../errorHelper/AppError";
 import { normalizeOptionalE164Phone, requireE164Phone } from "../../lib/validation/phone";
 import { countryEnumToIso, resolveCountryEnum } from "../../lib/constants/countryIsoMap";
+import { getCountryRegionalDefaults } from "../../lib/constants/countryRegionalDefaults";
 import {
   GETTING_STARTED_STEPS,
   ONBOARDING_STEPS,
@@ -122,6 +123,7 @@ const getAdmin = async (userId: string) => {
 
   const { user, workLocations, id: _adminProfileId, userId: _userId, ...profileFields } = admin;
 
+  const countryIso = countryEnumToIso(profileFields.country);
   const result = {
     id: user.id,
     name: user.name,
@@ -131,7 +133,8 @@ const getAdmin = async (userId: string) => {
     ...profileFields,
     businessHours: normalizeBusinessHours(profileFields.businessHours),
     postcode: profileFields.zipcode ?? null,
-    countryIso: countryEnumToIso(profileFields.country),
+    countryIso,
+    regionalDefaults: countryIso ? getCountryRegionalDefaults(countryIso) ?? null : null,
     workLocations,
   };
 
@@ -157,22 +160,53 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
       : {}),
   };
 
-  // "country" arrives as an ISO-3166-1 alpha-2 code (or already a valid enum
-  // value) from the frontend's country picker — resolve it to the real
-  // Prisma enum member here rather than trusting the client to send it.
+  // Country is tenant identity. Registration always sets it before OTP; a
+  // legacy profile with no country may claim one exactly once. Resolve the
+  // requested country before entering the transaction, then use an atomic
+  // updateMany claim so two concurrent legacy requests cannot overwrite each
+  // other. Same-country PATCHes remain idempotent for rolling clients.
+  let requestedCountry: ReturnType<typeof resolveCountryEnum> | undefined;
   if (country !== undefined) {
     if (country === null) {
-      data.country = null;
-    } else {
-      const resolved = resolveCountryEnum(country);
-      if (!resolved) {
-        throw new AppError(status.BAD_REQUEST, `Unrecognised country: "${country}"`);
-      }
-      data.country = resolved;
+      throw new AppError(status.CONFLICT, "Business country is locked after registration.", {
+        code: "BUSINESS_COUNTRY_LOCKED",
+        retryable: false,
+        fieldErrors: { country: "Business country cannot be cleared after registration." },
+      });
+    }
+    requestedCountry = resolveCountryEnum(country);
+    if (!requestedCountry) {
+      throw new AppError(status.BAD_REQUEST, `Unrecognised country: "${country}"`, {
+        code: "BUSINESS_COUNTRY_INVALID",
+        retryable: false,
+        fieldErrors: { country: "Select a supported business country." },
+      });
     }
   }
 
   await prisma.$transaction(async (tx) => {
+    if (requestedCountry) {
+      const claimed = await tx.adminProfile.updateMany({
+        where: { id: adminId, country: null },
+        data: { country: requestedCountry },
+      });
+
+      if (claimed.count === 0) {
+        const current = await tx.adminProfile.findUnique({
+          where: { id: adminId },
+          select: { country: true },
+        });
+        if (!current) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+        if (current.country !== requestedCountry) {
+          throw new AppError(status.CONFLICT, "Business country is locked after registration.", {
+            code: "BUSINESS_COUNTRY_LOCKED",
+            retryable: false,
+            fieldErrors: { country: "Contact support if the registered business country must be corrected." },
+          });
+        }
+      }
+    }
+
     if (Object.keys(data).length > 0) {
       await tx.adminProfile.update({ where: { id: adminId }, data });
     }
@@ -244,6 +278,8 @@ const createAdmin = async (
   payload: {
     userId: string;
     businessName: string;
+    /** ISO-3166-1 alpha-2 country. Registration supplies this before OTP. */
+    country?: string;
     /** Phone / WhatsApp collected in registration wizard Step 2 */
     mobileNumber?: string;
     /** Business type collected in registration wizard Step 1 */
@@ -253,10 +289,22 @@ const createAdmin = async (
   },
   db: Prisma.TransactionClient | typeof prisma = prisma,
 ) => {
+  const resolvedCountry = payload.country ? resolveCountryEnum(payload.country) : undefined;
+  if (payload.country && !resolvedCountry) {
+    throw new AppError(status.BAD_REQUEST, `Unrecognised country: "${payload.country}"`, {
+      code: "BUSINESS_COUNTRY_INVALID",
+      retryable: false,
+      fieldErrors: { country: "Select a supported business country." },
+    });
+  }
+  const regionalDefaults = payload.country ? getCountryRegionalDefaults(payload.country) : undefined;
+
   return db.adminProfile.create({
     data: {
       userId: payload.userId,
       businessName: payload.businessName,
+      ...(resolvedCountry ? { country: resolvedCountry } : {}),
+      ...(regionalDefaults?.currency ? { currency: regionalDefaults.currency } : {}),
       // Persist optional wizard fields immediately so they are available
       // to the onboarding flow without an extra PATCH round-trip.
       ...(payload.mobileNumber && {
