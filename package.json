@@ -140,7 +140,15 @@
     "release:phase4:cleaning-crm": "pnpm run test:phase4:cleaning-crm && pnpm run release:check",
     "online-booking:defaults:report": "tsx src/scripts/phase3-online-booking/reconcileOnlineBookingDefaults.ts",
     "online-booking:defaults:fix": "tsx src/scripts/phase3-online-booking/reconcileOnlineBookingDefaults.ts --fix",
-    "test:phase3:cleaning-crm": "node --test tests/phase3-cleaning-crm/*.test.mjs"
+    "test:phase3:cleaning-crm": "node --test tests/phase3-cleaning-crm/*.test.mjs",
+    "country-locks:report": "tsx src/scripts/phase4-cleaning-crm/reconcileCountryLocks.ts --dry-run",
+    "country-locks:fix": "tsx src/scripts/phase4-cleaning-crm/reconcileCountryLocks.ts --fix",
+    "test:phase4:cleaning-crm:focused": "node --test tests/phase1-cleaning-crm/*.test.mjs tests/phase2-cleaning-crm/*.test.cjs tests/phase3-cleaning-crm/*.test.mjs tests/phase4-cleaning-crm/*.test.mjs",
+    "country-locks:verify": "tsx src/scripts/phase4-cleaning-crm/reconcileCountryLocks.ts --dry-run --ci",
+    "online-booking:defaults:verify": "tsx src/scripts/phase3-online-booking/reconcileOnlineBookingDefaults.ts --ci",
+    "phase4:backfill:report": "pnpm run country-locks:report && pnpm run online-booking:defaults:report",
+    "phase4:backfill:fix": "pnpm run country-locks:fix && pnpm run online-booking:defaults:fix",
+    "phase4:backfill:verify": "pnpm run country-locks:verify && pnpm run online-booking:defaults:verify"
   },
   "keywords": [],
   "author": "opygen",

@@ -6,6 +6,7 @@ import { parsePublishedSnapshot } from "../../modules/Website/websiteSnapshot";
 import { ServiceStatus } from "../../generated/prisma/enums";
 
 const applyFixes = process.argv.includes("--fix");
+const ci = process.argv.includes("--ci");
 const batchSizeArg = process.argv.find((arg) => arg.startsWith("--batch-size="));
 const batchSize = Math.min(Math.max(Number(batchSizeArg?.split("=")[1] ?? 100) || 100, 1), 500);
 
@@ -20,6 +21,7 @@ const main = async () => {
     liveSnapshotUpdated: 0,
     safelyStagedUntilServiceSetup: 0,
     errors: 0,
+    criticalUnresolved: 0,
   };
 
   do {
@@ -148,8 +150,12 @@ const main = async () => {
     }
   } while (cursor);
 
-  console.log(JSON.stringify({ mode: applyFixes ? "fix" : "report", ...summary }, null, 2));
-  if (summary.errors > 0) process.exitCode = 1;
+  summary.criticalUnresolved = summary.errors;
+  console.log(JSON.stringify({
+    mode: applyFixes ? "fix" : "dry-run",
+    ...summary,
+  }, null, 2));
+  if (summary.criticalUnresolved > 0 || (ci && summary.errors > 0)) process.exitCode = 1;
 };
 
 main()

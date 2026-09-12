@@ -13,6 +13,12 @@ model AdminProfile {
   mobileNumber          String?
   zipcode               String?
   country               Country?
+  /// Timestamp proving when this tenant country became immutable.
+  /// Registration sets it immediately; the Phase 4 rollout backfills legacy rows.
+  countryLockedAt       DateTime?
+  /// Legacy tenants with no country are placed into an explicit one-time setup state.
+  /// It is cleared atomically when the tenant claims its country.
+  countrySelectionRequiredAt DateTime?
   legacyState           String?                 @map("state") @ignore
   businessEmail         String?
   businessType          String?
@@ -100,6 +106,7 @@ model AdminProfile {
 
   @@index([createdAt])
   @@index([lifecycleStatus, createdAt])
+  @@index([countrySelectionRequiredAt])
 }
 
 model WorkLocation {

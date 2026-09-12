@@ -1,11 +1,25 @@
 import { spawnSync } from "node:child_process";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+
+const testFiles = (directory) => readdirSync(directory)
+  .filter((name) => /\.test\.(?:cjs|mjs)$/.test(name))
+  .map((name) => join(directory, name));
+
+const cleaningCrmRegressions = [
+  "tests/phase1-cleaning-crm",
+  "tests/phase2-cleaning-crm",
+  "tests/phase3-cleaning-crm",
+  "tests/phase4-cleaning-crm",
+].flatMap(testFiles);
 
 const checks = [
   ["secret placeholders", ["node", "scripts/phase7/checkSecretSafety.mjs"]],
   ["repository hygiene", ["node", "scripts/checkRepositoryHygiene.mjs"]],
   ["production cleanup", ["node", "scripts/checkProductionCleanup.mjs"]],
-  ["Cleaning CRM Phase 4 contracts", ["node", "--test", "tests/production/phase4-cleaning-crm-production.test.cjs"]],
-  ["Phase 1-3 focused regressions", ["node", "--test", "tests/reviews/phase1-review-link-contract.test.cjs", "tests/subscription/phase2-saas-trial-contract.test.cjs", "tests/services/phase3-service-catalog-contract.test.cjs"]],
+  ["Cleaning CRM Phase 4 production contracts", ["node", "--test", "tests/production/phase4-cleaning-crm-production.test.cjs"]],
+  ["Cleaning CRM Phase 1-4 regressions", ["node", "--test", ...cleaningCrmRegressions]],
+  ["existing product regressions", ["node", "--test", "tests/reviews/phase1-review-link-contract.test.cjs", "tests/subscription/phase2-saas-trial-contract.test.cjs", "tests/services/phase3-service-catalog-contract.test.cjs"]],
   ["reliability source gate", ["node", "scripts/verifyReliability.mjs"]],
   ["Phase 3 runtime source gate", ["node", "scripts/verifyPhase3Runtime.mjs"]],
   ["existing Phase 4 production gate", ["node", "scripts/phase4/verifyProductionGate.mjs"]],

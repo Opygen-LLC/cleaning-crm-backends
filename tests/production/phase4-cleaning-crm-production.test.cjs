@@ -118,8 +118,12 @@ test("public website reviews obey the same effective reviews entitlement and exc
   assert.match(source, /status: ServiceStatus\.ACTIVE,[\s\S]*archivedAt: null/);
 });
 
-test("Phase 4 introduces no schema mutation and retains the Phase 3 forward migration", () => {
+test("Phase 4 uses forward Prisma migrations for country locking and retains prior migrations", () => {
   const migrations = fs.readdirSync(path.join(root, "prisma/migrations"));
   assert.ok(migrations.includes("20260911190500_phase3_service_catalog_archiving"));
-  assert.equal(migrations.filter((name) => /phase4.*cleaning/i.test(name)).length, 0);
+  assert.ok(migrations.includes("20260912131500_online_booking_default_on"));
+  assert.ok(migrations.includes("20260912143000_country_lock_rollout"));
+  const pkg = JSON.parse(read("package.json"));
+  assert.match(pkg.scripts["db:migrate:deploy"], /prisma migrate deploy/);
+  assert.doesNotMatch(Object.values(pkg.scripts).join("\n"), /prisma\s+db\s+push/);
 });

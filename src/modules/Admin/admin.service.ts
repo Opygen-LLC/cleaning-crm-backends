@@ -155,6 +155,7 @@ const getAdmin = async (userId: string) => {
     businessHours: normalizeBusinessHours(profileFields.businessHours),
     postcode: profileFields.zipcode ?? null,
     countryIso,
+    countrySetupRequired: profileFields.country === null,
     regionalDefaults: countryIso ? getCountryRegionalDefaults(countryIso) ?? null : null,
     workLocations,
   };
@@ -209,7 +210,11 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
     if (requestedCountry) {
       const claimed = await tx.adminProfile.updateMany({
         where: { id: adminId, country: null },
-        data: { country: requestedCountry },
+        data: {
+          country: requestedCountry,
+          countryLockedAt: new Date(),
+          countrySelectionRequiredAt: null,
+        },
       });
 
       if (claimed.count === 0) {
@@ -343,7 +348,9 @@ const createAdmin = async (
     data: {
       userId: payload.userId,
       businessName: payload.businessName,
-      ...(resolvedCountry ? { country: resolvedCountry } : {}),
+      ...(resolvedCountry
+        ? { country: resolvedCountry, countryLockedAt: new Date(), countrySelectionRequiredAt: null }
+        : { countrySelectionRequiredAt: new Date() }),
       ...(regionalDefaults?.currency ? { currency: regionalDefaults.currency } : {}),
       // Persist optional wizard fields immediately so they are available
       // to the onboarding flow without an extra PATCH round-trip.
