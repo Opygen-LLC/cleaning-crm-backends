@@ -27,6 +27,8 @@ export interface UpdateAdminPayload {
     city: string;
     postcode?: string;
     notes?: string;
+    /** Tenant-country assertion supplied by clients; never persisted on WorkLocation. */
+    countryIso?: string;
   }[];
 }
 
@@ -34,6 +36,7 @@ export interface UpdateWorkLocationPayload {
   city?: string;
   postcode?: string;
   notes?: string;
+  countryIso?: string;
 }
 
 // ─── Account setup + Getting Started ─────────────────────────────────────────

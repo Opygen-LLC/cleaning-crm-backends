@@ -17,6 +17,7 @@ import { SubdomainService } from "../Website/subdomain.service";
 import { WEBSITE_STATUS, statusAfterDraftMutation } from "../Website/websiteLifecycle";
 import { fingerprint, lockServiceCatalogTx, readOnboardingCatalogTx } from "../ServiceCatalog/serviceCatalogConcurrency";
 import { syncServiceCatalogSelectionTx, invalidateServiceCatalogReadModels } from "../ServiceCatalog/serviceCatalog.service";
+import { invalidateAdminTimezoneCache } from "../Lead/followUpCache";
 
 type Step = OnboardingStepSavePayload["step"];
 const transactionOptions = { maxWait: 15_000, timeout: 35_000 };
@@ -124,7 +125,12 @@ const saveStep = async (userId: string, input: OnboardingStepSavePayload): Promi
     bumpCacheResourceVersions(result.adminId, [CacheResource.onboarding, CacheResource.profile, CacheResource.website, CacheResource.dashboard]),
   ];
   if (payload.step === "services") deliveries.push(invalidateServiceCatalogReadModels(result.adminId));
-  if (payload.step === "business_profile") deliveries.push(WebsiteProjectionCacheService.invalidateAdminWebsite(result.adminId));
+  if (payload.step === "business_profile") {
+    deliveries.push(WebsiteProjectionCacheService.invalidateAdminWebsite(result.adminId));
+    if (payload.profile.businessHours !== undefined) {
+      deliveries.push(invalidateAdminTimezoneCache(result.adminId));
+    }
+  }
   if (rename) deliveries.push(SubdomainService.deliverRename(result.bootstrap.website.id, rename));
   const outcomes = await Promise.allSettled(deliveries);
   if (outcomes.some(outcome => outcome.status === "rejected")) logger.warn("onboarding_save_cache_delivery_failed", {

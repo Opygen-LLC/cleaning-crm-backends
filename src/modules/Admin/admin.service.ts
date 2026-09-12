@@ -30,6 +30,7 @@ import { REQUIRED_SETUP_KEYS, normalizeCompletedSetupSteps, lockOnboardingOwnerT
 import { businessHoursSchema, normalizeBusinessHours, type BusinessHours } from "./businessHours";
 import { onboardingProfile } from "./onboardingProfile";
 import { bumpCacheResourceVersions, CacheResource } from "../../lib/cache/resourceCacheVersion";
+import { invalidateAdminTimezoneCache } from "../Lead/followUpCache";
 import type {
   GettingStartedStepKey,
   LegacyOnboardingStepKey,
@@ -85,6 +86,26 @@ const findAdminIdOrThrow = async (userId: string): Promise<string> => {
   }
 
   return admin.id;
+};
+
+const assertTenantWorkLocationCountry = (
+  tenantCountryIso: string | undefined,
+  submittedCountryIso: string | undefined,
+) => {
+  if (!tenantCountryIso) {
+    throw new AppError(status.CONFLICT, "Set the business country before saving service areas.", {
+      code: "BUSINESS_COUNTRY_REQUIRED",
+      retryable: false,
+      fieldErrors: { country: "Set the business country first." },
+    });
+  }
+  if (submittedCountryIso && submittedCountryIso.toUpperCase() !== tenantCountryIso) {
+    throw new AppError(status.UNPROCESSABLE_ENTITY, "Service areas must use the registered business country.", {
+      code: "WORK_LOCATION_COUNTRY_MISMATCH",
+      retryable: false,
+      fieldErrors: { workLocations: "Choose cities from the registered business country." },
+    });
+  }
 };
 
 // ── Get admin profile (identity + business + work locations) ───────────────
@@ -216,10 +237,20 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
     // settings "service area" editor). Individual locations are otherwise
     // managed one at a time via PATCH/DELETE /admin/work-location/:id.
     if (workLocations) {
+      const profile = await tx.adminProfile.findUnique({
+        where: { id: adminId },
+        select: { country: true },
+      });
+      if (!profile) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+      const tenantCountryIso = countryEnumToIso(profile.country);
+      for (const location of workLocations) {
+        assertTenantWorkLocationCountry(tenantCountryIso, location.countryIso);
+      }
+
       await tx.workLocation.deleteMany({ where: { adminId } });
       if (workLocations.length > 0) {
         await tx.workLocation.createMany({
-          data: workLocations.map((loc) => ({
+          data: workLocations.map(({ countryIso: _countryIso, ...loc }) => ({
             adminId,
             city: loc.city,
             postcode: loc.postcode,
@@ -233,6 +264,7 @@ const updateAdmin = async (userId: string, payload: UpdateAdminPayload) => {
   await Promise.all([
     redis.del(`admin:profile:${userId}`).catch(() => {}),
     WebsiteProjectionCacheService.invalidateAdminWebsite(adminId),
+    ...(scalarFields.businessHours !== undefined ? [invalidateAdminTimezoneCache(adminId)] : []),
   ]);
   return getAdmin(userId);
 };
@@ -250,9 +282,17 @@ const updateWorkLocation = async (
     throw new AppError(status.NOT_FOUND, "Work location not found");
   }
 
+  const profile = await prisma.adminProfile.findUnique({
+    where: { id: adminId },
+    select: { country: true },
+  });
+  if (!profile) throw new AppError(status.NOT_FOUND, "Admin profile not found");
+  assertTenantWorkLocationCountry(countryEnumToIso(profile.country), payload.countryIso);
+  const { countryIso: _countryIso, ...locationData } = payload;
+
   const updated = await prisma.workLocation.update({
     where: { id: locationId },
-    data: payload,
+    data: locationData,
   });
   await WebsiteProjectionCacheService.invalidateAdminWebsite(adminId);
   return updated;

@@ -34,6 +34,7 @@ import { nextReference } from "../../lib/utils/referenceNumber";
 import { observeBackgroundTask } from "../../lib/monitoring/observeBackgroundTask";
 import { queueBookingNotification } from "../../lib/notifications/businessNotificationEvents";
 import { bookingDetailSelect, bookingListSelect, bookingMutationSelect } from "./booking.projection";
+import { countryEnumToIso } from "../../lib/constants/countryIsoMap";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -75,8 +76,14 @@ const resolveOrCreateClient = async (
   });
   if (existing) return existing.id;
 
-  // Brand-new client — enforce plan limits before inserting.
+  // Brand-new client — enforce plan limits before inserting and inherit the
+  // immutable tenant country instead of creating a country-less CRM record.
   await assertWithinLimit(adminId, "client");
+  const profile = await prisma.adminProfile.findUnique({
+    where: { id: adminId },
+    select: { country: true },
+  });
+  const tenantCountryIso = countryEnumToIso(profile?.country) ?? "";
 
   const created = await prisma.client.create({
     data: {
@@ -87,7 +94,7 @@ const resolveOrCreateClient = async (
       addressLine1: payload.address,
       city: "",
       zipcode: "",
-      country: "",
+      country: tenantCountryIso,
     },
   });
 

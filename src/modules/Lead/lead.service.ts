@@ -12,6 +12,7 @@ import { acquireExtendedTextTransactionAdvisoryLock } from "../../lib/prisma/adv
 import { allocateLeadRef } from "./leadRef.service";
 import { requireE164Phone } from "../../lib/validation/phone";
 import { ensureLeadActivityAssignee } from "./leadActivity.service";
+import { invalidateFollowUpsCache } from "./followUpCache";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import { syncLeadWebsiteSubmissionsConverted } from "../Website/websiteSubmission.service";
 import {
@@ -287,6 +288,10 @@ const createLead = async (payload: CreateLeadPayload, user: IRequestUser) => {
 
     return createdLead;
   });
+
+  if (payload.initialFollowUp) {
+    await invalidateFollowUpsCache(adminProfile.id);
+  }
 
   return serializeLead(
     lead as Lead & Record<string, unknown>,

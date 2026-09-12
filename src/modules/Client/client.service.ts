@@ -21,6 +21,7 @@ import {
     geocodeAddressSafely,
 } from "../../lib/utils/geocoding";
 import { clientDetailSelect, clientListSelect, clientLookupSelect, clientMutationSelect } from "./client.projection";
+import { resolveCountryEnum } from "../../lib/constants/countryIsoMap";
 
 /**
  * Geocodes the client's structured address into lat/lng. Never throws —
@@ -66,6 +67,26 @@ const createClient = async (
 
     // Enforce plan limits before inserting
     await assertWithinLimit(adminId, "client");
+
+    const profile = await prisma.adminProfile.findUnique({
+        where: { id: adminId },
+        select: { country: true },
+    });
+    if (!profile?.country) {
+        throw new AppError(status.CONFLICT, "Set the business country before adding clients.", {
+            code: "BUSINESS_COUNTRY_REQUIRED",
+            retryable: false,
+            fieldErrors: { country: "Set the business country first." },
+        });
+    }
+    const submittedCountry = resolveCountryEnum(payload.country);
+    if (!submittedCountry || submittedCountry !== profile.country) {
+        throw new AppError(status.UNPROCESSABLE_ENTITY, "Client country must match the registered business country.", {
+            code: "CLIENT_COUNTRY_MISMATCH",
+            retryable: false,
+            fieldErrors: { country: "Clients must use the registered business country." },
+        });
+    }
 
     const { notes, servicePreference, email, phone, postcode, zipcode, ...rest } = payload;
     const canonicalPostcode = postcode ?? zipcode ?? "";

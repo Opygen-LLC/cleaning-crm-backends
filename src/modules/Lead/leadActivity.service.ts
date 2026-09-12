@@ -5,6 +5,8 @@ import redis from "../../config/redis";
 import { getAdminId } from "../../lib/utils/resolveAdminId";
 import type { Prisma } from "../../generated/prisma/client";
 import type { IRequestUser } from "../../types/requestUser.interface";
+import { adminTimezoneCacheKey, followUpVersionKey, invalidateFollowUpsCache } from "./followUpCache";
+import { addDaysToDateKey, dateKeyInZone, localMidnightToUtc, validTimeZone } from "./followUpTime";
 import type {
   LeadActivityStatusInput,
   LeadActivityTypeInput,
@@ -113,69 +115,6 @@ export interface FollowUpQuery {
   sort?: "asc" | "desc";
 }
 
-const validTimeZone = (value: unknown): string => {
-  if (typeof value !== "string" || !value.trim()) return "UTC";
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
-    return value;
-  } catch {
-    return "UTC";
-  }
-};
-
-const dateKeyInZone = (date: Date, timeZone: string): string => {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const pick = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  return `${pick("year")}-${pick("month")}-${pick("day")}`;
-};
-
-const addDaysToDateKey = (dateKey: string, days: number): string => {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  const value = new Date(Date.UTC(year, month - 1, day + days));
-  return value.toISOString().slice(0, 10);
-};
-
-const localMidnightToUtc = (dateKey: string, timeZone: string): Date => {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  const localAsUtc = Date.UTC(year, month - 1, day, 0, 0, 0);
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const offsetAt = (instant: Date) => {
-    const parts = formatter.formatToParts(instant);
-    const number = (type: Intl.DateTimeFormatPartTypes) =>
-      Number(parts.find((part) => part.type === type)?.value ?? 0);
-    const represented = Date.UTC(
-      number("year"),
-      number("month") - 1,
-      number("day"),
-      number("hour") % 24,
-      number("minute"),
-      number("second"),
-    );
-    return represented - instant.getTime();
-  };
-  const guess = new Date(localAsUtc);
-  let utc = new Date(localAsUtc - offsetAt(guess));
-  // Re-evaluate once so boundaries remain correct around DST transitions.
-  utc = new Date(localAsUtc - offsetAt(utc));
-  return utc;
-};
-
 const followUpSelect = {
   id: true,
   leadId: true,
@@ -203,7 +142,7 @@ const followUpSelect = {
 } satisfies Prisma.LeadActivitySelect;
 
 const getAdminTimezone = async (adminId: string): Promise<string> => {
-  const cacheKey = `admin:tz:${adminId}`;
+  const cacheKey = adminTimezoneCacheKey(adminId);
   const cached = await redis.get(cacheKey).catch(() => null);
   if (cached) return cached;
 
@@ -217,10 +156,6 @@ const getAdminTimezone = async (adminId: string): Promise<string> => {
   const timeZone = validTimeZone(businessHours?.timezone);
   await redis.setex(cacheKey, 300, timeZone).catch(() => {});
   return timeZone;
-};
-
-const invalidateFollowUpsCache = async (adminId: string) => {
-  await redis.incr(`followups:ver:${adminId}`).catch(() => {});
 };
 
 const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
@@ -238,7 +173,7 @@ const getFollowUps = async (query: FollowUpQuery, user: IRequestUser) => {
   const limit = Math.min(100, Math.max(1, Number(query.limit ?? 20) || 20));
   const sort = query.sort === "desc" ? "desc" : "asc";
 
-  const version = (await redis.get(`followups:ver:${adminId}`).catch(() => null)) || "1";
+  const version = (await redis.get(followUpVersionKey(adminId)).catch(() => null)) || "1";
   const filterKey = `${adminId}:v${version}:${query.scope ?? "today"}:${query.status ?? "PENDING"}:${query.assignedTo ?? "all"}:${query.date ?? ""}:${query.from ?? ""}:${query.to ?? ""}:${page}:${limit}:${sort}`;
   const cacheKey = `followups:${filterKey}`;
   const cached = await redis.get(cacheKey).catch(() => null);

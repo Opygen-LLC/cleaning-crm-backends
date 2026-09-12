@@ -27,6 +27,7 @@ const workLocationSchema = z
     city: z.string().trim().min(1, "City is required"),
     postcode: z.string().trim().max(32).optional(),
     notes: z.string().trim().max(500).optional(),
+    countryIso: z.string().trim().regex(/^[A-Za-z]{2}$/, "Country must be an ISO-3166 alpha-2 code").transform((value) => value.toUpperCase()).optional(),
   })
   .strict();
 
@@ -66,6 +67,7 @@ const updateWorkLocationSchema = z
     city: z.string().trim().min(1, "City is required").max(120).optional(),
     postcode: z.string().trim().max(32).optional(),
     notes: z.string().trim().max(500).optional(),
+    countryIso: z.string().trim().regex(/^[A-Za-z]{2}$/, "Country must be an ISO-3166 alpha-2 code").transform((value) => value.toUpperCase()).optional(),
   })
   .strict();
 
