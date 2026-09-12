@@ -8,7 +8,7 @@ const { buildInitialWebsitePages } = loadTypeScript(
   path.join(root, 'src/modules/Website/websiteProvisioningDefaults.ts'),
 );
 
-test('new websites provision all seven routes while booking and estimate stay fail-closed', () => {
+test('new websites provision all seven routes with booking on by default and estimate fail-closed', () => {
   let nextId = 0;
   const timestamp = new Date('2026-09-07T00:00:00.000Z');
   const rows = buildInitialWebsitePages('website-1', timestamp, () => `page-${++nextId}`);
@@ -22,7 +22,8 @@ test('new websites provision all seven routes while booking and estimate stay fa
   for (const page of rows.filter((page) => !['BOOK', 'ESTIMATE'].includes(page.kind))) {
     assert.equal(page.isEnabled, true, `${page.kind} should be enabled`);
   }
-  assert.equal(rows.find((page) => page.kind === 'BOOK').isEnabled, false);
+  assert.equal(rows.find((page) => page.kind === 'BOOK').isEnabled, true);
+  assert.equal(rows.find((page) => page.kind === 'BOOK').showInNavigation, true);
   assert.equal(rows.find((page) => page.kind === 'ESTIMATE').isEnabled, false);
 });
 

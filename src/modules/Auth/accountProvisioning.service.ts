@@ -18,7 +18,9 @@ import { adminService } from "../Admin/admin.service";
 import { subscriptionService } from "../Subscription/subscription.service";
 import { seedRecommendedCleaningServicesTx } from "../ServiceCatalog/recommendedCleaningServices";
 import { WebsiteHostResolverService } from "../Website/websiteHostResolver.service";
+import { WebsiteBookingProvisioningService } from "../Website/websiteBookingProvisioning.service";
 import { WebsiteProvisioningService } from "../Website/websiteProvisioning.service";
+import { WebsiteService } from "../Website/website.service";
 
 export interface ProvisionRegisteredAdminInput {
   name: string;
@@ -227,6 +229,20 @@ const runProvisioningTransaction = async (
             skipExistingCheck: true,
           },
         );
+
+      // Online booking is a product invariant for every plan. Provision the
+      // tenant-owned form inside the registration transaction and attach it to
+      // the draft immediately, but do not fabricate services or prices. The
+      // public launch guard still requires at least one real priced, active
+      // online-bookable service before /book can become live.
+      await WebsiteBookingProvisioningService.provisionDefaultDraftForNewTenantTx(tx, admin.id);
+      await WebsiteService.createRevisionSnapshotTx(
+        tx,
+        website.id,
+        input.userId,
+        "Default online booking provisioned",
+        website.draftRevisionNumber,
+      );
 
       // Seed a safe starter catalogue after website provisioning so the
       // transaction follows the documented advisory-lock order. Presets start

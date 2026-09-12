@@ -309,23 +309,27 @@ const getSetup = async (user: IRequestUser): Promise<WebsiteBookingSetupResult> 
   return getSetupByAdminId(adminId);
 };
 
-const ensureAtLeastOneBookableService = async (tx: Prisma.TransactionClient, adminId: string) => {
+type BookableService = { id: string; duration: string; legacyServiceType: ServiceType | null };
+
+const listBookableServices = async (
+  tx: Prisma.TransactionClient,
+  adminId: string,
+): Promise<BookableService[]> => {
   await lockServiceCatalogTx(tx, adminId);
-  const services = await tx.serviceCatalog.findMany({
+  return tx.serviceCatalog.findMany({
     where: {
       adminId,
       archivedAt: null,
       status: ServiceStatus.ACTIVE,
       onlineBookingEnabled: true,
     },
-    select: {
-      id: true,
-      duration: true,
-      legacyServiceType: true,
-    },
+    select: { id: true, duration: true, legacyServiceType: true },
     orderBy: { createdAt: "asc" },
   });
+};
 
+const ensureAtLeastOneBookableService = async (tx: Prisma.TransactionClient, adminId: string) => {
+  const services = await listBookableServices(tx, adminId);
   if (services.length === 0) {
     // Never fabricate a price just to make website booking launchable. New
     // tenants receive recommended services in an inactive/unpriced setup state
@@ -338,7 +342,6 @@ const ensureAtLeastOneBookableService = async (tx: Prisma.TransactionClient, adm
       },
     });
   }
-
   return services;
 };
 
@@ -538,6 +541,237 @@ const selectOrCreateBookingFormTx = async (
   return targetForm;
 };
 
+type DefaultBookingProvisionResult = {
+  websiteId: string;
+  primaryBookingFormId: string | null;
+  bookableServiceCount: number;
+  requiresSelection: boolean;
+  liveSnapshotUpdated: boolean;
+};
+
+/**
+ * Registration-only primitive. It creates one published, tenant-owned managed
+ * booking form and attaches it to the new website without inventing services or
+ * prices. Public launch remains guarded by ensureAttachedForLaunchTx().
+ */
+export const provisionDefaultDraftForNewTenantTx = async (
+  tx: Prisma.TransactionClient,
+  adminId: string,
+): Promise<DefaultBookingProvisionResult> => {
+  await acquireExtendedTextTransactionAdvisoryLock(tx, `website-booking-provision:${adminId}`);
+  const admin = await tx.adminProfile.findUnique({
+    where: { id: adminId },
+    select: {
+      id: true,
+      businessName: true,
+      businessWebsite: {
+        select: { id: true, accentColor: true, primaryBookingFormId: true },
+      },
+    },
+  });
+  if (!admin?.businessWebsite) {
+    throw new AppError(status.NOT_FOUND, "Business website not found", { code: "WEBSITE_NOT_FOUND", retryable: false });
+  }
+
+  let target = admin.businessWebsite.primaryBookingFormId
+    ? await tx.bookingForm.findFirst({
+        where: { id: admin.businessWebsite.primaryBookingFormId, adminId },
+        select: { id: true, published: true, websiteManaged: true },
+      })
+    : null;
+
+  if (target?.websiteManaged && !target.published) {
+    target = await tx.bookingForm.update({
+      where: { id: target.id },
+      data: { published: true },
+      select: { id: true, published: true, websiteManaged: true },
+    });
+  }
+  if (!target?.published) {
+    const reusable = await tx.bookingForm.findFirst({
+      where: { adminId, websiteManaged: true },
+      select: { id: true, published: true, websiteManaged: true },
+      orderBy: { createdAt: "asc" },
+    });
+    if (reusable) {
+      target = reusable.published
+        ? reusable
+        : await tx.bookingForm.update({
+            where: { id: reusable.id },
+            data: { published: true },
+            select: { id: true, published: true, websiteManaged: true },
+          });
+    } else {
+      const created = await createManagedBookingForm(tx, admin, admin.businessWebsite, []);
+      target = { id: created.id, published: true, websiteManaged: true };
+    }
+  }
+
+  await Promise.all([
+    tx.businessWebsite.update({
+      where: { id: admin.businessWebsite.id },
+      data: { bookingEnabled: true, primaryBookingFormId: target.id },
+    }),
+    tx.websitePage.updateMany({
+      where: { websiteId: admin.businessWebsite.id, kind: "BOOK" },
+      data: { isEnabled: true, showInNavigation: true },
+    }),
+  ]);
+
+  return {
+    websiteId: admin.businessWebsite.id,
+    primaryBookingFormId: target.id,
+    bookableServiceCount: 0,
+    requiresSelection: false,
+    liveSnapshotUpdated: false,
+  };
+};
+
+/**
+ * Idempotent migration primitive for existing tenants. It never rewrites a
+ * custom BookingForm. If multiple published custom forms exist without a
+ * current primary, it reports requiresSelection instead of guessing. For a
+ * published website, the live snapshot is patched only when at least one real
+ * bookable service exists, and only the booking-specific fields are changed so
+ * unrelated unpublished Studio edits never leak live.
+ */
+export const reconcileDefaultBookingForExistingTenantTx = async (
+  tx: Prisma.TransactionClient,
+  adminId: string,
+): Promise<DefaultBookingProvisionResult> => {
+  await acquireExtendedTextTransactionAdvisoryLock(tx, `website-booking-provision:${adminId}`);
+  const admin = await tx.adminProfile.findUnique({
+    where: { id: adminId },
+    select: {
+      id: true,
+      businessName: true,
+      businessWebsite: {
+        select: { id: true, status: true, accentColor: true, primaryBookingFormId: true, publishedSnapshot: true },
+      },
+    },
+  });
+  if (!admin?.businessWebsite) {
+    throw new AppError(status.NOT_FOUND, "Business website not found", { code: "WEBSITE_NOT_FOUND", retryable: false });
+  }
+
+  const services = await listBookableServices(tx, adminId);
+  let target: { id: string; websiteManaged: boolean; published: boolean } | null = null;
+  if (admin.businessWebsite.primaryBookingFormId) {
+    target = await tx.bookingForm.findFirst({
+      where: { id: admin.businessWebsite.primaryBookingFormId, adminId },
+      select: { id: true, websiteManaged: true, published: true },
+    });
+    if (target?.websiteManaged && !target.published) {
+      target = await tx.bookingForm.update({
+        where: { id: target.id },
+        data: { published: true },
+        select: { id: true, websiteManaged: true, published: true },
+      });
+    }
+    if (target && !target.published) target = null;
+  }
+
+  if (!target) {
+    const publishedForms = await tx.bookingForm.findMany({
+      where: { adminId, published: true },
+      select: { id: true, websiteManaged: true, published: true },
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      take: 2,
+    });
+    if (publishedForms.length > 1) {
+      return {
+        websiteId: admin.businessWebsite.id,
+        primaryBookingFormId: null,
+        bookableServiceCount: services.length,
+        requiresSelection: true,
+        liveSnapshotUpdated: false,
+      };
+    }
+    target = publishedForms[0] ?? null;
+  }
+
+  if (!target) {
+    const reusable = await tx.bookingForm.findFirst({
+      where: { adminId, websiteManaged: true },
+      select: { id: true, websiteManaged: true, published: true },
+      orderBy: { createdAt: "asc" },
+    });
+    if (reusable) {
+      target = reusable.published
+        ? reusable
+        : await tx.bookingForm.update({
+            where: { id: reusable.id },
+            data: { published: true },
+            select: { id: true, websiteManaged: true, published: true },
+          });
+    } else {
+      const created = await createManagedBookingForm(tx, admin, admin.businessWebsite, services);
+      target = { id: created.id, websiteManaged: true, published: true };
+    }
+  }
+
+  if (target.websiteManaged) await syncManagedFormServices(tx, target.id, services);
+  const targetBookableServiceCount = target.websiteManaged
+    ? services.length
+    : await tx.bookingFormService.count({
+        where: {
+          formId: target.id,
+          enabled: true,
+          serviceCatalog: {
+            is: {
+              adminId,
+              archivedAt: null,
+              status: ServiceStatus.ACTIVE,
+              onlineBookingEnabled: true,
+            },
+          },
+        },
+      });
+
+  await Promise.all([
+    tx.businessWebsite.update({
+      where: { id: admin.businessWebsite.id },
+      data: { bookingEnabled: true, primaryBookingFormId: target.id },
+    }),
+    tx.websitePage.updateMany({
+      where: { websiteId: admin.businessWebsite.id, kind: "BOOK" },
+      data: { isEnabled: true, showInNavigation: true },
+    }),
+  ]);
+
+  let liveSnapshotUpdated = false;
+  if (admin.businessWebsite.status === WEBSITE_STATUS.PUBLISHED && targetBookableServiceCount > 0) {
+    const published = parsePublishedSnapshot(admin.businessWebsite.publishedSnapshot);
+    if (published) {
+      const nextPublished = {
+        ...published,
+        website: {
+          ...published.website,
+          bookingEnabled: true,
+          primaryBookingFormId: target.id,
+          bookingShowNavigation: true,
+        },
+        pages: published.pages.map((page) =>
+          page.kind === "BOOK" ? { ...page, isEnabled: true, showInNavigation: true } : page,
+        ),
+      };
+      await tx.businessWebsite.update({
+        where: { id: admin.businessWebsite.id },
+        data: { publishedSnapshot: JSON.parse(JSON.stringify(nextPublished)) as Prisma.InputJsonValue },
+      });
+      liveSnapshotUpdated = true;
+    }
+  }
+
+  return {
+    websiteId: admin.businessWebsite.id,
+    primaryBookingFormId: target.id,
+    bookableServiceCount: services.length,
+    requiresSelection: false,
+    liveSnapshotUpdated,
+  };
+};
+
 /**
  * Transaction-level primitive used by the first website launch. It shares the
  * same selection/creation rules as the onboarding booking screen, but never
@@ -725,4 +959,6 @@ export const WebsiteBookingProvisioningService = {
   configure,
   configureForAdminTx,
   ensureAttachedForLaunchTx,
+  provisionDefaultDraftForNewTenantTx,
+  reconcileDefaultBookingForExistingTenantTx,
 };

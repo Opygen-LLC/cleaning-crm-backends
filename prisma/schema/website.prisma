@@ -23,7 +23,7 @@ model BusinessWebsite {
 
   // Website-specific presentation controls around the existing BookingForm.
   // These are draft values and are copied into publishedSnapshot on Publish.
-  bookingEnabled             Boolean @default(false)
+  bookingEnabled             Boolean @default(true)
   bookingShowNavigation      Boolean @default(true)
   bookingShowHeaderCta       Boolean @default(true)
   bookingShowServiceCtas     Boolean @default(true)

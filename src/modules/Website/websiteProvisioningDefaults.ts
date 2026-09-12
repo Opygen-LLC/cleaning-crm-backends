@@ -4,10 +4,10 @@ import { DEFAULT_WEBSITE_PAGES } from "./website.constant";
 /**
  * Build the initial page records for a newly provisioned website.
  *
- * BOOK and ESTIMATE are intentionally created but disabled. Keeping those rows
- * lets Website Studio enable them later without schema churn, while preventing
- * a new tenant from exposing dead /book or /estimate routes before a published
- * tenant-owned form has been configured.
+ * BOOK is enabled in the draft by default for every tenant; registration also
+ * provisions a published tenant-owned booking form and attaches it as primary.
+ * Public launch remains fail-closed until at least one real priced service is
+ * active for online booking. ESTIMATE remains created but disabled by default.
  */
 export const buildInitialWebsitePages = (
   websiteId: string,
